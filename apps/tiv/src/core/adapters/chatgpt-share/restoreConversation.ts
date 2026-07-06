@@ -13,26 +13,31 @@ export type RawChatGPTMessage = {
 };
 
 export function restoreConversation(root: unknown): RawChatGPTMessage[] {
-  const linearConversation = findByKey(root, "linear_conversation");
-  if (!Array.isArray(linearConversation)) {
+  const linearConversationCandidates = findAllByKey(root, "linear_conversation").filter(
+    Array.isArray
+  );
+  if (linearConversationCandidates.length === 0) {
     throw adapterError(
       "LINEAR_CONVERSATION_NOT_FOUND",
       "Could not find linear_conversation in share payload"
     );
   }
 
-  const messages = linearConversation
-    .map((item) => toRawMessage(item))
-    .filter((message): message is RawChatGPTMessage => message !== null);
+  for (const linearConversation of linearConversationCandidates) {
+    const messages = linearConversation
+      .map((item) => toRawMessage(item))
+      .filter((message): message is RawChatGPTMessage => message !== null);
 
-  if (messages.length === 0) {
-    throw adapterError("NO_MESSAGES_FOUND", "No messages found in linear_conversation");
+    if (messages.length > 0) {
+      return messages;
+    }
   }
 
-  return messages;
+  throw adapterError("NO_MESSAGES_FOUND", "No messages found in linear_conversation");
 }
 
-function findByKey(root: unknown, targetKey: string): unknown {
+function findAllByKey(root: unknown, targetKey: string): unknown[] {
+  const matches: unknown[] = [];
   const queue: unknown[] = [root];
   const seen = new WeakSet<object>();
 
@@ -47,14 +52,14 @@ function findByKey(root: unknown, targetKey: string): unknown {
     seen.add(value);
 
     if (!Array.isArray(value) && targetKey in value) {
-      return (value as Record<string, unknown>)[targetKey];
+      matches.push((value as Record<string, unknown>)[targetKey]);
     }
 
     const children = Array.isArray(value) ? value : Object.values(value);
     queue.push(...children);
   }
 
-  return null;
+  return matches;
 }
 
 function toRawMessage(value: unknown): RawChatGPTMessage | null {

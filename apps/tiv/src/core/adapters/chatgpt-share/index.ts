@@ -6,6 +6,7 @@ import { dereference } from "./dereference";
 import { extractEnqueuePayloads } from "./extractEnqueuePayloads";
 import { fetchShareHtml } from "./fetchShareHtml";
 import { normalizeConversation } from "./normalizeConversation";
+import { expandReactFlightPayloads } from "./parseReactFlightRows";
 import { restoreConversation } from "./restoreConversation";
 import { validateShareUrl } from "./validateShareUrl";
 import type { CanonicalConversation } from "../../types/conversation";
@@ -44,7 +45,8 @@ export async function importChatGPTShareUrl(
 
   const payloads = extractEnqueuePayloads(html);
   const decoded = decodePayloads(payloads);
-  const root = decoded.length === 1 ? decoded[0] : decoded;
+  const decodedRoot = decoded.length === 1 ? decoded[0] : decoded;
+  const root = expandReactFlightPayloads(decodedRoot);
   const dereferenced = dereference(root, {
     maxDepth: 100,
     maxNodes: 100_000,
@@ -75,7 +77,16 @@ export { ChatGPTShareAdapterError } from "./errors";
 export { extractEnqueuePayloads } from "./extractEnqueuePayloads";
 export { fetchShareHtml } from "./fetchShareHtml";
 export { normalizeConversation } from "./normalizeConversation";
+export { expandReactFlightPayloads } from "./parseReactFlightRows";
 export { restoreConversation } from "./restoreConversation";
+export { summarizePayloadStructure } from "./summarizePayloadStructure";
 export { validateShareUrl } from "./validateShareUrl";
 export type { RawEnqueuePayload } from "./extractEnqueuePayloads";
+export type { ReactFlightExpansion, ReactFlightRow } from "./parseReactFlightRows";
 export type { RawChatGPTMessage } from "./restoreConversation";
+export type {
+  PayloadChunkSummary,
+  PayloadStructureSummary,
+  StructureProbeSummary,
+  ValueShapeSummary
+} from "./summarizePayloadStructure";
