@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BiaDone — Personal Context OS</title>
+<meta name="description" content="BiaDone is a Personal Context OS that carries conversations, calendars, documents, decisions, and workflows forward into prepared next actions. Start with T.I.V by BiaDone.">
+
+<!-- Open Graph -->
+<meta property="og:title" content="BiaDone — Before I Ask, Done.">
+<meta property="og:description" content="Your context, carried forward. Your next action, prepared. Meet BiaDone, the Personal Context OS behind T.I.V.">
+<meta property="og:type" content="website">
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+
+<!-- Tailwind -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          navy: '#0F172A',
+          graphite: '#1F2937',
+          violet: '#6E5EF8',
+          focusblue: '#2F6BFF',
+          done: '#17B26A',
+          warmwhite: '#F8FAFC'
+        },
+        fontFamily: {
+          sans: ['Inter', 'sans-serif'],
+          mono: ['JetBrains Mono', 'monospace']
+        }
+      }
+    }
+  }
+</script>
+
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-warmwhite text-navy font-sans antialiased">
+
+<!-- ============ NAVIGATION ============ -->
+<header id="site-header" class="fixed top-0 left-0 w-full z-50 nav-bar">
+  <nav class="max-w-7xl mx-auto flex items-center justify-between px-6 lg:px-10 py-4" aria-label="Primary">
+    <a href="#hero-section" class="flex items-center gap-2 wordmark" aria-label="BiaDone home">
+      <span class="wordmark-mark" aria-hidden="true"></span>
+      <span class="wordmark-text">BiaDone</span>
+    </a>
+
+    <ul class="hidden lg:flex items-center gap-9 nav-links">
+      <li><a href="#what-is-biadone">Product</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="#tiv-section">T.I.V</a></li>
+      <li><a href="#trust-section">Trust</a></li>
+    </ul>
+
+    <div class="hidden lg:flex items-center gap-4">
+      <a href="#how-it-works" class="btn-nav-secondary">See How It Works</a>
+      <a href="#final-cta" class="btn-nav-primary">Join the T.I.V Beta</a>
+    </div>
+
+    <button id="mobile-menu-toggle" class="lg:hidden text-navy text-2xl" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="mobile-menu">
+      <i class="fa-solid fa-bars"></i>
+    </button>
+  </nav>
+
+  <div id="mobile-menu" class="mobile-menu lg:hidden" hidden>
+    <ul class="flex flex-col gap-1 px-6 py-4">
+      <li><a href="#what-is-biadone">Product</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="#tiv-section">T.I.V</a></li>
+      <li><a href="#trust-section">Trust</a></li>
+      <li class="pt-3"><a href="#final-cta" class="btn-nav-primary block text-center">Join the T.I.V Beta</a></li>
+      <li class="pt-2"><a href="#how-it-works" class="btn-nav-secondary-mobile block text-center">See How It Works</a></li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ HERO ============ -->
+<section id="hero-section" class="hero-section relative overflow-hidden">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 pt-36 pb-24 lg:pt-44 lg:pb-32 grid lg:grid-cols-2 gap-16 items-center relative z-10">
+
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>BiaDone · Personal Context OS</p>
+      <h1 class="hero-h1">Before I Ask, Done.</h1>
+      <p class="hero-sub">BiaDone carries your context across conversations, calendars, documents, and decisions — then prepares the next action before you have to start from scratch.</p>
+
+      <div class="flex flex-wrap gap-4 mt-8">
+        <a href="#final-cta" class="btn-primary">Join the T.I.V Beta</a>
+        <a href="#how-it-works" class="btn-secondary">See How It Works <i class="fa-solid fa-arrow-down text-xs ml-1"></i></a>
+      </div>
+
+      <p class="trust-microcopy"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Permissioned memory. Explainable preparation. User-controlled action.</p>
+    </div>
+
+    <div class="hero-visual" aria-hidden="false" role="img" aria-label="T.I.V Session dashboard showing a Context Pack, Decision Log, Action Queue, Permission Drawer, and Done Signal with their current status.">
+      <div class="mockup-panel hero-dashboard">
+        <div class="mockup-header">
+          <span class="mockup-dot"></span><span class="mockup-dot"></span><span class="mockup-dot"></span>
+          <span class="mockup-title">T.I.V Session</span>
+        </div>
+
+        <div class="hero-dashboard-body">
+          <div class="hero-module-row">
+            <span class="hero-module-icon"><i class="fa-solid fa-layer-group"></i></span>
+            <div class="hero-module-text">
+              <p class="hero-module-name">Context Pack</p>
+              <p class="hero-module-detail">Created from 4 selected sources</p>
+            </div>
+            <span class="hero-status-pill hero-status-ready">Ready</span>
+          </div>
+
+          <div class="hero-module-row">
+            <span class="hero-module-icon"><i class="fa-solid fa-clipboard-check"></i></span>
+            <div class="hero-module-text">
+              <p class="hero-module-name">Decision Log</p>
+              <p class="hero-module-detail">Updated with 3 confirmed decisions</p>
+            </div>
+            <span class="hero-status-pill hero-status-updated">Updated</span>
+          </div>
+
+          <div class="hero-module-row">
+            <span class="hero-module-icon"><i class="fa-solid fa-list-check"></i></span>
+            <div class="hero-module-text">
+              <p class="hero-module-name">Action Queue</p>
+              <p class="hero-module-detail">Prepared with 5 next steps</p>
+            </div>
+            <span class="hero-status-pill hero-status-prepared">Prepared</span>
+          </div>
+
+          <div class="hero-module-row hero-module-row-alert">
+            <span class="hero-module-icon hero-module-icon-alert"><i class="fa-solid fa-shield-halved"></i></span>
+            <div class="hero-module-text">
+              <p class="hero-module-name">Permission Drawer</p>
+              <p class="hero-module-detail">2 items need your confirmation</p>
+            </div>
+            <span class="hero-status-pill hero-status-review">Needs review</span>
+          </div>
+
+          <div class="hero-module-row">
+            <span class="hero-module-icon hero-module-icon-done"><i class="fa-solid fa-circle-check"></i></span>
+            <div class="hero-module-text">
+              <p class="hero-module-name">Done Signal</p>
+              <p class="hero-module-detail">Ready to continue</p>
+            </div>
+            <span class="hero-status-pill hero-status-done">Ready</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ CAPABILITY STRIP ============ -->
+<section id="capability-strip" class="capability-strip">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-14">
+    <p class="capability-intro">BiaDone turns everyday context into prepared momentum.</p>
+    <p class="capability-note">Designed for meeting briefs, decision recall, action queues, and prepared replies.</p>
+    <div class="chip-marquee-wrap">
+      <div class="chip-marquee">
+        <span class="cap-chip"><i class="fa-solid fa-file-lines"></i> Meeting briefs</span>
+        <span class="cap-chip"><i class="fa-solid fa-magnifying-glass"></i> Decision recall</span>
+        <span class="cap-chip"><i class="fa-solid fa-list-check"></i> Action queues</span>
+        <span class="cap-chip"><i class="fa-solid fa-reply"></i> Prepared replies</span>
+        <span class="cap-chip"><i class="fa-solid fa-rotate-right"></i> Work resumption</span>
+        <span class="cap-chip"><i class="fa-solid fa-magnifying-glass-chart"></i> Context search</span>
+        <span class="cap-chip"><i class="fa-solid fa-lock"></i> Permissioned memory</span>
+        <span class="cap-chip"><i class="fa-solid fa-circle-check"></i> Done signals</span>
+        <!-- duplicate for seamless marquee -->
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-file-lines"></i> Meeting briefs</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-magnifying-glass"></i> Decision recall</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-list-check"></i> Action queues</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-reply"></i> Prepared replies</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-rotate-right"></i> Work resumption</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-magnifying-glass-chart"></i> Context search</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-lock"></i> Permissioned memory</span>
+        <span class="cap-chip" aria-hidden="true"><i class="fa-solid fa-circle-check"></i> Done signals</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PROBLEM ============ -->
+<section id="problem-section" class="section-dark">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow eyebrow-light"><span class="eyebrow-dot"></span>The real cost is not the work. It is restarting the context.</p>
+      <h2 class="section-h2 text-warmwhite">Every scattered decision becomes time you have to recover later.</h2>
+      <p class="section-body text-slate-300">A meeting ends. A decision disappears into chat. A task loses the reason behind it. A document lives in one tool, the deadline in another, and the next step in someone's memory.</p>
+      <p class="section-body text-slate-300">BiaDone is built for the moments when you are forced to re-find, re-explain, re-organize, and re-start.</p>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-5 mt-16">
+      <article class="problem-card">
+        <span class="problem-icon"><i class="fa-solid fa-arrows-rotate"></i></span>
+        <h3>Re-explaining</h3>
+        <p>The same background gets repeated across meetings, messages, and tools.</p>
+      </article>
+      <article class="problem-card">
+        <span class="problem-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <h3>Re-finding</h3>
+        <p>Decisions, links, files, and reasons scatter across your workflow.</p>
+      </article>
+      <article class="problem-card">
+        <span class="problem-icon"><i class="fa-solid fa-folder-tree"></i></span>
+        <h3>Re-organizing</h3>
+        <p>Meeting notes become stale before the next action is clear.</p>
+      </article>
+      <article class="problem-card">
+        <span class="problem-icon"><i class="fa-solid fa-rotate-left"></i></span>
+        <h3>Re-starting</h3>
+        <p>Returning to a project means rebuilding the mental state from scratch.</p>
+      </article>
+      <article class="problem-card">
+        <span class="problem-icon"><i class="fa-solid fa-scale-balanced"></i></span>
+        <h3>Re-deciding</h3>
+        <p>Without context, every next step becomes another judgment call.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WHAT IS BIADONE ============ -->
+<section id="what-is-biadone" class="section-light">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>What is BiaDone?</p>
+      <h2 class="section-h2">A Personal Context OS for carrying work forward.</h2>
+      <p class="section-body">BiaDone connects the context behind your work — conversations, calendars, documents, decisions, and workflows — into a memory layer that can be recalled, prepared, confirmed, and completed.</p>
+      <p class="section-body">It does not wait for you to rebuild the story. It prepares the next step from the context you choose to keep.</p>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
+      <article class="definition-card">
+        <h3><span class="def-index">01</span> Context</h3>
+        <p>The connected background behind a decision, task, meeting, or workflow.</p>
+      </article>
+      <article class="definition-card">
+        <h3><span class="def-index">02</span> Memory</h3>
+        <p>The permissioned record of what should be available again later.</p>
+      </article>
+      <article class="definition-card">
+        <h3><span class="def-index">03</span> Recall</h3>
+        <p>Finding the right past decision, source, or thread at the right moment.</p>
+      </article>
+      <article class="definition-card">
+        <h3><span class="def-index">04</span> Prepare</h3>
+        <p>Turning context into a brief, reply, queue, or next action.</p>
+      </article>
+      <article class="definition-card">
+        <h3><span class="def-index">05</span> Confirm</h3>
+        <p>Asking before important memory, sharing, sending, scheduling, or updates.</p>
+      </article>
+      <article class="definition-card">
+        <h3><span class="def-index">06</span> Done</h3>
+        <p>Showing what is prepared, what needs review, and what has been completed.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section id="how-it-works" class="section-navy">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow eyebrow-light"><span class="eyebrow-dot"></span>Context-to-Action Loop</p>
+      <h2 class="section-h2 text-warmwhite">From scattered input to prepared action.</h2>
+      <p class="section-body text-slate-300">BiaDone captures selected context, structures it into memory, recalls what matters, prepares the next step, and asks for confirmation before important action.</p>
+    </div>
+
+    <div class="loop-diagram" role="list">
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-inbox"></i></span>
+        <span class="loop-label">Capture</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-layer-group"></i></span>
+        <span class="loop-label">Context</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-vault"></i></span>
+        <span class="loop-label">Memory</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <span class="loop-label">Recall</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+        <span class="loop-label">Prepare</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node"><i class="fa-solid fa-square-check"></i></span>
+        <span class="loop-label">Confirm</span>
+      </div>
+      <span class="loop-connector" aria-hidden="true"></span>
+      <div class="loop-step" role="listitem">
+        <span class="loop-node loop-node-done"><i class="fa-solid fa-circle-check"></i></span>
+        <span class="loop-label">Done</span>
+      </div>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-16">
+      <article class="step-card">
+        <span class="step-tag">Capture</span>
+        <p class="step-meaning">Selected conversations, documents, calendar events, and workflow signals are collected.</p>
+        <p class="step-exp">T.I.V Capture</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Context</span>
+        <p class="step-meaning">Scattered inputs become a structured context unit.</p>
+        <p class="step-exp">Context Pack</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Memory</span>
+        <p class="step-meaning">Important context is saved with permission.</p>
+        <p class="step-exp">Memory Vault</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Recall</span>
+        <p class="step-meaning">Relevant past decisions, sources, and threads are retrieved.</p>
+        <p class="step-exp">Recall Search</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Prepare</span>
+        <p class="step-meaning">The next action, brief, reply, or task queue is prepared.</p>
+        <p class="step-exp">Brief / Action Queue</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Confirm</span>
+        <p class="step-meaning">Important actions are reviewed before they happen.</p>
+        <p class="step-exp">Permission Drawer</p>
+      </article>
+      <article class="step-card">
+        <span class="step-tag">Done</span>
+        <p class="step-meaning">Prepared, confirmed, and completed states become visible.</p>
+        <p class="step-exp">Done Signal</p>
+      </article>
+      <article class="step-card step-card-quote">
+        <p>"BiaDone does not just answer a question. It keeps the operating context alive until the next action is ready."</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ QUICK START WITH T.I.V ============ -->
+<section id="tiv-section" class="section-light">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="grid lg:grid-cols-2 gap-16 items-start">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-dot"></span>Start with T.I.V</p>
+        <h2 class="section-h2">Time Is Value. Start by recovering the time lost to context switching.</h2>
+        <p class="section-body">T.I.V is BiaDone's first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.</p>
+
+        <ol class="quickstart-list">
+          <li>
+            <span class="qs-index">1</span>
+            <div>
+              <h3>Connect context</h3>
+              <p>Bring in selected meetings, documents, calendars, and conversations.</p>
+              <p class="qs-micro">Choose what BiaDone can remember.</p>
+            </div>
+          </li>
+          <li>
+            <span class="qs-index">2</span>
+            <div>
+              <h3>Review the Context Pack</h3>
+              <p>See decisions, sources, and open loops organized in one place.</p>
+              <p class="qs-micro">Edit or delete anything.</p>
+            </div>
+          </li>
+          <li>
+            <span class="qs-index">3</span>
+            <div>
+              <h3>Confirm the next action</h3>
+              <p>Approve prepared briefs, replies, reminders, or action queues.</p>
+              <p class="qs-micro">Nothing important happens without review.</p>
+            </div>
+          </li>
+          <li>
+            <span class="qs-index">4</span>
+            <div>
+              <h3>Move forward</h3>
+              <p>Start from the prepared state instead of rebuilding the context.</p>
+              <p class="qs-micro">Done Signal: Ready.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <div class="tiv-console" role="img" aria-label="T.I.V session console showing Context Pack creation, Decision Log update, Action Queue preparation, confirmation requests, and a ready done signal.">
+        <div class="console-header">
+          <span class="mockup-dot"></span><span class="mockup-dot"></span><span class="mockup-dot"></span>
+          <span class="mockup-title">T.I.V Session</span>
+        </div>
+        <div class="console-body">
+          <p class="console-line"><span class="console-caret">&gt;</span> Context Pack created from 4 sources</p>
+          <p class="console-line"><span class="console-caret">&gt;</span> Decision Log updated with 3 confirmed decisions</p>
+          <p class="console-line"><span class="console-caret">&gt;</span> Action Queue prepared with 5 next steps</p>
+          <p class="console-line console-warn"><span class="console-caret">&gt;</span> 2 items need your confirmation</p>
+          <p class="console-line console-success"><span class="console-caret">&gt;</span> Done Signal: Ready to continue</p>
+          <span class="console-cursor" aria-hidden="true"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRODUCT EXPERIENCE CARDS ============ -->
+<section id="product-experiences" class="section-dark">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow eyebrow-light"><span class="eyebrow-dot"></span>Product Experiences</p>
+      <h2 class="section-h2 text-warmwhite">The building blocks that turn context into momentum.</h2>
+      <p class="section-body text-slate-300">Each experience shows what was prepared, where it came from, and what still needs your confirmation.</p>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-layer-group"></i></span>
+        <h3>Context Pack</h3>
+        <p class="pe-definition">A structured bundle of the conversations, documents, decisions, links, and tasks behind a workflow.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Planning call &middot; Roadmap doc &middot; Project brief</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Edit sources, remove items, or choose not to remember this context.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> Context Pack ready.</p>
+      </article>
+
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-clipboard-check"></i></span>
+        <h3>Decision Log</h3>
+        <p class="pe-definition">A clear record of what was decided, when it was decided, and why it matters.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Planning call &middot; Roadmap doc &middot; Team thread</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Confirm, edit, or dismiss any recorded decision.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> 3 decisions confirmed. 1 needs review.</p>
+      </article>
+
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-list-check"></i></span>
+        <h3>Action Queue</h3>
+        <p class="pe-definition">A prepared list of what needs to happen next, connected to the context behind each action.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Decision Log &middot; Open tasks &middot; Calendar deadlines</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Reorder, dismiss, or confirm each action before it moves forward.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> Action Queue ready.</p>
+      </article>
+
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-file-lines"></i></span>
+        <h3>Brief</h3>
+        <p class="pe-definition">A concise preparation layer before a meeting, reply, handoff, or work session.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Calendar event &middot; Project doc &middot; Last Decision Log</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Review and edit before the session starts.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> Brief ready for review.</p>
+      </article>
+
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-bell"></i></span>
+        <h3>Cue</h3>
+        <p class="pe-definition">A quiet signal that something relevant needs attention now.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Upcoming deadline &middot; Related decision &middot; Open thread</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Snooze, dismiss, or act on it.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> Cue active.</p>
+      </article>
+
+      <article class="pe-card">
+        <span class="pe-icon"><i class="fa-solid fa-circle-check"></i></span>
+        <h3>Done Signal</h3>
+        <p class="pe-definition">A visible state showing what is ready, what needs confirmation, and what has been completed.</p>
+        <div class="pe-detail">
+          <p class="pe-detail-label">Prepared from</p>
+          <p class="pe-detail-value">Action Queue &middot; Confirmations &middot; Completed items</p>
+        </div>
+        <div class="pe-detail">
+          <p class="pe-detail-label">User control</p>
+          <p class="pe-detail-value">Review what changed and why at any time.</p>
+        </div>
+        <p class="pe-status"><span class="pe-status-label">Status</span> Done Signal: Ready.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ USE CASES ============ -->
+<section id="use-cases" class="section-light">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>Built for high-context work</p>
+      <h2 class="section-h2">When the thread breaks, BiaDone keeps the next step ready.</h2>
+    </div>
+
+    <ul class="audience-chip-list" aria-label="Who BiaDone is built for">
+      <li class="audience-chip">Founders</li>
+      <li class="audience-chip">Operators</li>
+      <li class="audience-chip">Product Managers</li>
+      <li class="audience-chip">Team Leads</li>
+      <li class="audience-chip">Knowledge Workers</li>
+      <li class="audience-chip">AI Power Users</li>
+    </ul>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-10" id="use-case-grid">
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-list-check"></i></span>
+        <h3>After a meeting</h3>
+        <p>Turn decisions, owners, rationale, and follow-ups into a prepared Action Queue.</p>
+        <p class="usecase-status">Prepared</p>
+      </article>
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-file-lines"></i></span>
+        <h3>Before a meeting</h3>
+        <p>Receive a Brief with relevant history, open questions, and decisions to revisit.</p>
+        <p class="usecase-status">Prepared</p>
+      </article>
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-rotate-right"></i></span>
+        <h3>When resuming work</h3>
+        <p>Return to the last meaningful context instead of reconstructing the project state manually.</p>
+        <p class="usecase-status">Ready</p>
+      </article>
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-reply"></i></span>
+        <h3>When replying</h3>
+        <p>Prepare a response draft with the right background and require confirmation before sending.</p>
+        <p class="usecase-status">Needs review</p>
+      </article>
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
+        <h3>When searching history</h3>
+        <p>Recall the decision, source, and rationale behind a task, document, or project.</p>
+        <p class="usecase-status">Ready</p>
+      </article>
+      <article class="usecase-card">
+        <span class="usecase-icon"><i class="fa-solid fa-calendar-day"></i></span>
+        <h3>When the day starts</h3>
+        <p>See what matters today based on calendar events, open loops, and recent context.</p>
+        <p class="usecase-status">Prepared</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TRUST & CONTROL ============ -->
+<section id="trust-section" class="section-navy">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="grid lg:grid-cols-2 gap-16 items-start">
+      <div>
+        <p class="eyebrow eyebrow-light"><span class="eyebrow-dot"></span>Trust by design</p>
+        <h2 class="section-h2 text-warmwhite">Prepared does not mean automatic. You stay in control.</h2>
+        <p class="section-body text-slate-300">BiaDone is designed around permissioned memory, explainable preparation, and controlled action. You choose what can be remembered, you can see why something was prepared, and important actions wait for your confirmation.</p>
+
+        <div class="grid sm:grid-cols-2 gap-4 mt-10">
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-key"></i></span>
+            <h3>Permissioned Memory</h3>
+            <p>Choose what BiaDone can remember, what it should ignore, and what should be deleted at any time.</p>
+          </div>
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-eye"></i></span>
+            <h3>Explainable Preparation</h3>
+            <p>See exactly which sources and reasons led to a prepared brief, reply, or queue.</p>
+          </div>
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-hand"></i></span>
+            <h3>Controlled Action</h3>
+            <p>Sending, sharing, scheduling, or updating requires your confirmation before it happens.</p>
+          </div>
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-trash-can"></i></span>
+            <h3>Easy Forgetting</h3>
+            <p>Exclude a source or delete a memory in the same place you review it.</p>
+          </div>
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-bell-slash"></i></span>
+            <h3>Quiet Signals</h3>
+            <p>Get useful cues without turning your workflow into an alert feed.</p>
+          </div>
+          <div class="trust-principle">
+            <span class="trust-icon"><i class="fa-solid fa-chart-line"></i></span>
+            <h3>Visible Time Value</h3>
+            <p>Understand where BiaDone saved time by reducing re-finding, re-explaining, and re-starting.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="permission-drawer" role="img" aria-label="Permission drawer showing the sources used to prepare a brief, the reason it was prepared, and controls to remember, exclude, delete, confirm, or dismiss it.">
+        <div class="pd-header">
+          <span class="pd-title"><i class="fa-solid fa-shield-halved"></i> Permission Drawer</span>
+        </div>
+        <div class="pd-body">
+          <p class="pd-text">This brief was prepared from:</p>
+          <ul class="pd-source-list">
+            <li><i class="fa-solid fa-calendar-days"></i> Calendar event</li>
+            <li><i class="fa-solid fa-file-lines"></i> Project document</li>
+            <li><i class="fa-solid fa-clipboard-check"></i> Last meeting's Decision Log</li>
+          </ul>
+
+          <div class="pd-reason">
+            <p class="pd-reason-label">Why it was prepared</p>
+            <p class="pd-reason-text">You have a related meeting starting today and two unresolved action items from the last discussion.</p>
+          </div>
+
+          <div class="pd-action">
+            <span class="pd-action-label"><i class="fa-solid fa-triangle-exclamation"></i> Action required: Review before sending.</span>
+
+      <div class="pd-controls">
+              <div class="pd-control-toggle">
+                <span>Remember this context</span>
+                <span class="pd-switch pd-switch-on"><span class="pd-slider"></span></span>
+              </div>
+              <span class="pd-control-btn"><i class="fa-solid fa-eye-slash"></i> Exclude this source</span>
+              <span class="pd-control-btn pd-control-btn-danger"><i class="fa-solid fa-trash-can"></i> Delete this memory</span>
+            </div>
+
+            <div class="flex gap-3 mt-4">
+              <span class="btn-pd-confirm">Confirm &amp; Send</span>
+              <span class="btn-pd-dismiss">Not now</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INTEGRATIONS / ECOSYSTEM ============ -->
+<section id="ecosystem-section" class="section-light">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24 lg:py-32">
+    <div class="max-w-3xl">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>Planned and beta integrations</p>
+      <h2 class="section-h2">Designed to work across the tools where context lives.</h2>
+      <p class="section-body">BiaDone is being built to connect with the places where work context already lives — meetings, calendars, documents, conversations, tasks, and AI tools. Availability may vary during beta.</p>
+    </div>
+
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-video"></i></span>
+        <h3>Meetings</h3>
+        <p>Zoom, Google Meet, Microsoft Teams</p>
+      </article>
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-calendar-days"></i></span>
+        <h3>Calendar</h3>
+        <p>Google Calendar, Outlook Calendar</p>
+      </article>
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-file-lines"></i></span>
+        <h3>Documents</h3>
+        <p>Google Docs, Notion, Drive, local files</p>
+      </article>
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-comments"></i></span>
+        <h3>Conversations</h3>
+        <p>Slack, email, chat apps</p>
+      </article>
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-list-check"></i></span>
+        <h3>Tasks</h3>
+        <p>Linear, Jira, Asana, Todoist</p>
+      </article>
+      <article class="eco-card">
+        <span class="eco-badge">Planned</span>
+        <span class="eco-icon"><i class="fa-solid fa-robot"></i></span>
+        <h3>AI Tools</h3>
+        <p>ChatGPT, Claude, Cursor, Copilot via context handoff</p>
+      </article>
+    </div>
+
+    <p class="eco-note">Some integrations may be planned, limited, or available only during selected beta programs.</p>
+  </div>
+</section>
+
+<!-- ============ MANIFESTO ============ -->
+<section id="manifesto-section" class="section-dark manifesto-section">
+  <div class="max-w-4xl mx-auto px-6 lg:px-10 py-24 lg:py-32 text-center">
+    <p class="eyebrow eyebrow-light justify-center"><span class="eyebrow-dot"></span>Why we are building BiaDone</p>
+    <h2 class="section-h2 text-warmwhite">People should not have to start from zero every time context changes.</h2>
+    <p class="section-body text-slate-300">Modern work is not short on tools. It is short on continuity.</p>
+    <p class="section-body text-slate-300">Every day, people lose time rebuilding the same background, searching for the same decision, and translating scattered information into the next action.</p>
+    <p class="section-body text-slate-300">BiaDone exists to make context continuous. We are building a Personal Context OS that remembers what matters with permission, prepares what comes next, and keeps people moving forward without taking control away from them.</p>
+    <p class="manifesto-tagline">Before I Ask, Done.</p>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section id="final-cta" class="final-cta-section">
+  <div class="max-w-4xl mx-auto px-6 lg:px-10 py-24 lg:py-28 text-center">
+    <h2 class="section-h2 text-warmwhite">Start with T.I.V.</h2>
+    <p class="section-body text-slate-300 max-w-2xl mx-auto">Join the beta and experience BiaDone's first step toward a Personal Context OS: turning scattered context into prepared next action.</p>
+    <div class="flex flex-wrap gap-4 justify-center mt-8">
+      <a href="#tiv-form" class="btn-primary">Join the T.I.V Beta</a>
+      <a href="#how-it-works" class="btn-secondary-dark">See How It Works</a>
+    </div>
+    <p class="cta-microcopy">Built for people and teams who lose too much time rebuilding context.</p>
+
+    <form id="tiv-form" class="beta-form" aria-label="Join the T.I.V beta waitlist form">
+      <label for="beta-email" class="sr-only">Work email</label>
+      <input type="email" id="beta-email" name="email" required placeholder="you@company.com" autocomplete="email">
+      <button type="submit">Join the T.I.V Beta</button>
+    </form>
+    <p id="beta-form-status" class="beta-form-status" role="status" aria-live="polite"></p>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer id="docs" class="site-footer">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-16">
+    <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-10">
+      <div class="lg:col-span-2">
+        <a href="#hero-section" class="flex items-center gap-2 wordmark wordmark-footer">
+          <span class="wordmark-mark" aria-hidden="true"></span>
+          <span class="wordmark-text">BiaDone</span>
+        </a>
+        <p class="footer-tagline">BiaDone — Before I Ask, Done.</p>
+      </div>
+
+      <div class="footer-col">
+        <h3>Product</h3>
+        <ul>
+          <li><a href="#tiv-section">T.I.V</a></li>
+          <li><a href="#how-it-works">How It Works</a></li>
+          <li><a href="#use-cases">Use Cases</a></li>
+          <li><a href="#trust-section">Trust</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h3>Company</h3>
+        <ul>
+          <li><a href="#what-is-biadone">About</a></li>
+          <li><a href="#manifesto-section">Manifesto</a></li>
+          <li><a href="mailto:hello@biadone.com">Contact</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h3>Resources</h3>
+        <ul>
+          <li><a href="#trust-section">Security</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h3>Connect</h3>
+        <ul>
+          <li><a href="mailto:hello@biadone.com">Email</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p>&copy; 2026 BiaDone. All rights reserved.</p>
+    </div>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>
