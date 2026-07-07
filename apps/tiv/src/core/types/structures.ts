@@ -38,7 +38,16 @@ export type TopicFlowItem = {
   changeReason: TopicChangeReason;
   evidenceMessageIndexes: number[];
   contextSignalRefs?: string[];
+  contextSummary?: TopicContextSummary;
   confidence: number;
+};
+
+export type TopicContextSummary = {
+  externalResearch: boolean;
+  sourceBacked: boolean;
+  signalCount: number;
+  signalTypes: string[];
+  citationCount: number;
 };
 
 export type TopicChangeReason =
@@ -153,6 +162,8 @@ export type ExtractionDiagnostics = {
   duplicateMessageIndexes: number[];
   excludedInternalCount: number;
   contextSignalCount: number;
+  contextSignalTypeCounts: Record<string, number>;
+  sourceBackedTopicCount: number;
   rulesFired: Record<string, number>;
   warnings: DiagnosticWarning[];
 };

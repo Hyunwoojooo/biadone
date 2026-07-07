@@ -98,6 +98,10 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
             label="Satisfaction"
             value={result.overview.satisfactionSummary}
           />
+          <KeyValue
+            label="Context signals"
+            value={`${result.diagnostics.contextSignalCount} total · ${result.diagnostics.sourceBackedTopicCount} source-backed topics`}
+          />
         </Section>
 
         <Section title={`Board`}>
@@ -185,11 +189,38 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
                   <span style={{ color: "#666" }}>
                     #{topic.startMessageIndex}-#{topic.endMessageIndex} ·{" "}
                     {topic.changeReason}
+                    {topic.contextSummary
+                      ? ` · ${topic.contextSummary.externalResearch ? "research-backed" : "context"} · ${topic.contextSummary.signalCount} signals`
+                      : ""}
                   </span>
+                  {topic.contextSummary ? (
+                    <div style={{ color: "#777", fontSize: 13 }}>
+                      {topic.contextSummary.sourceBacked ? "source-backed" : "no source backing"} ·{" "}
+                      {topic.contextSummary.signalTypes.join(", ")}
+                      {topic.contextSummary.citationCount > 0
+                        ? ` · citations ${topic.contextSummary.citationCount}`
+                        : ""}
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ol>
           )}
+        </Section>
+
+        <Section title="Diagnostics">
+          <KeyValue
+            label="Context signal types"
+            value={formatSignalCounts(result.diagnostics.contextSignalTypeCounts)}
+          />
+          <KeyValue
+            label="Excluded internal"
+            value={String(result.diagnostics.excludedInternalCount)}
+          />
+          <KeyValue
+            label="Warnings"
+            value={String(result.diagnostics.warnings.length)}
+          />
         </Section>
       </div>
     </section>
@@ -271,4 +302,12 @@ function ResultItem({
 
 function formatConfidence(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
+}
+
+function formatSignalCounts(counts: Record<string, number>): string {
+  const entries = Object.entries(counts);
+  if (entries.length === 0) {
+    return "none";
+  }
+  return entries.map(([type, count]) => `${type} ${count}`).join(", ");
 }

@@ -162,6 +162,61 @@ describe("extractMockStructure", () => {
       "Sprint 3 문서화"
     ]);
   });
+
+  it("connects context signals to topics without creating semantic decisions", () => {
+    const conversation = createConversation([
+      cleanMessage(1, "user", "최신 OpenAI 모델 정보를 찾아서 정리해줘."),
+      contextSignal(
+        2,
+        "assistant",
+        JSON.stringify({ system1_search_query: [{ q: "OpenAI models" }] }),
+        "search_query"
+      ),
+      contextSignal(
+        3,
+        "assistant",
+        JSON.stringify({ open: [{ ref_id: "turn0search0" }] }),
+        "opened_source"
+      ),
+      cleanMessage(4, "assistant", "공식 문서를 확인해 정리했습니다."),
+      cleanMessage(5, "user", "좋아.")
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.topicFlow[0]).toMatchObject({
+      contextSignalRefs: ["search_query:2", "opened_source:3"],
+      contextSummary: {
+        externalResearch: true,
+        sourceBacked: true,
+        signalCount: 2,
+        signalTypes: ["search_query", "opened_source"],
+        citationCount: 0
+      }
+    });
+    expect(result.diagnostics.contextSignalTypeCounts).toEqual({
+      search_query: 1,
+      opened_source: 1
+    });
+    expect(result.diagnostics.sourceBackedTopicCount).toBe(1);
+    expect(result.board.decisions).toEqual([]);
+    expect(result.preferenceSignals).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceMessageIndexes: expect.arrayContaining([2, 3])
+        })
+      ])
+    );
+    expect(result.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: "context_signal",
+          contextSignalRefs: ["search_query:2"],
+          evidenceMessageIndexes: []
+        })
+      ])
+    );
+  });
 });
 
 function createConversation(messages: CanonicalMessage[]): CanonicalConversation {
@@ -213,13 +268,14 @@ function cleanMessage(
 function contextSignal(
   index: number,
   role: "user" | "assistant",
-  text: string
+  text: string,
+  contextSignalType: CanonicalMessage["metadata"]["contextSignalType"] = "search_query"
 ): CanonicalMessage {
   return {
     ...message(index, role, text, "context_signal"),
     metadata: {
       messageCategory: "context_signal",
-      contextSignalType: "search_query"
+      contextSignalType
     }
   };
 }

@@ -1,6 +1,7 @@
 import type {
   CanonicalConversation,
-  CanonicalMessage
+  CanonicalMessage,
+  ContextSignalType
 } from "../types/conversation";
 import type {
   ActionItem,
@@ -40,6 +41,14 @@ type PreparedMessage = {
   message: CanonicalMessage;
   preparedText: string;
   matchedRules: RuleDefinition[];
+};
+
+type ContextSignalSummary = {
+  refs: string[];
+  externalResearch: boolean;
+  sourceBacked: boolean;
+  signalTypes: ContextSignalType[];
+  citationCount: number;
 };
 
 const USER_RULES: RuleDefinition[] = [
@@ -204,6 +213,9 @@ export function extractMockStructure(
   const cleanMessages = conversation.messages.filter(
     (message) => message.metadata.messageCategory === "clean_conversation"
   );
+  const contextSignals = conversation.messages.filter(
+    (message) => message.metadata.messageCategory === "context_signal"
+  );
   const userMessages = cleanMessages.filter((message) => message.role === "user");
   const duplicateMessageIndexes = findDuplicateMessageIndexes(cleanMessages);
   const rulesFired: Record<string, number> = {};
@@ -336,7 +348,20 @@ export function extractMockStructure(
   );
 
   const prioritizedDecisions = prioritizeDecisions(decisions);
-  const topicFlow = buildTopicFlow(cleanMessages, preparedMessages, rulesFired);
+  const topicFlow = enrichTopicFlowWithContextSignals(
+    buildTopicFlow(cleanMessages, preparedMessages, rulesFired),
+    contextSignals
+  );
+  evidence.push(
+    ...contextSignals.map((signal, index): EvidenceItem => ({
+      id: createItemId("evctx", index + 1),
+      evidenceMessageIndexes: [],
+      contextSignalRefs: [contextSignalRef(signal)],
+      quote: truncateQuote(signal.text),
+      sourceType: "context_signal",
+      evidenceStrength: "contextual_support"
+    }))
+  );
   const board: Board = {
     decisions: prioritizedDecisions,
     openQuestions: resolveOpenQuestions(
@@ -372,8 +397,20 @@ export function extractMockStructure(
       duplicateMessageIndexes,
       excludedInternalCount: conversation.stats.excludedInternalMessages,
       contextSignalCount: conversation.stats.contextSignalMessages,
+      contextSignalTypeCounts: countContextSignalTypes(contextSignals),
+      sourceBackedTopicCount: topicFlow.filter(
+        (topic) => topic.contextSummary?.sourceBacked
+      ).length,
       rulesFired,
-      warnings
+      warnings: [
+        ...warnings,
+        ...contextSignals.map((signal): DiagnosticWarning => ({
+          code: "CONTEXT_SIGNAL_ONLY_DOWNGRADED",
+          message:
+            "Context signal was used only as topic/answer quality metadata, not semantic evidence.",
+          messageIndexes: [signal.index]
+        }))
+      ]
     }
   };
 }
@@ -526,6 +563,87 @@ function buildTopicFlow(
       confidence: index === 0 ? 0.78 : 0.74
     };
   });
+}
+
+function enrichTopicFlowWithContextSignals(
+  topics: TopicFlowItem[],
+  contextSignals: CanonicalMessage[]
+): TopicFlowItem[] {
+  if (contextSignals.length === 0) {
+    return topics;
+  }
+
+  return topics.map((topic, index) => {
+    const nextTopicStart = topics[index + 1]?.startMessageIndex;
+    const matchingSignals = contextSignals.filter(
+      (signal) =>
+        signal.index >= topic.startMessageIndex &&
+        (nextTopicStart == null
+          ? signal.index <= topic.endMessageIndex
+          : signal.index < nextTopicStart)
+    );
+
+    if (matchingSignals.length === 0) {
+      return topic;
+    }
+
+    const summary = summarizeContextSignals(matchingSignals);
+
+    return {
+      ...topic,
+      changeReason:
+        topic.changeReason === "continuation" && summary.externalResearch
+          ? "external_research_started"
+          : topic.changeReason,
+      contextSignalRefs: summary.refs,
+      contextSummary: {
+        externalResearch: summary.externalResearch,
+        sourceBacked: summary.sourceBacked,
+        signalCount: matchingSignals.length,
+        signalTypes: summary.signalTypes,
+        citationCount: summary.citationCount
+      },
+      confidence: summary.sourceBacked
+        ? clampConfidence(topic.confidence + 0.03)
+        : topic.confidence
+    };
+  });
+}
+
+function summarizeContextSignals(
+  signals: CanonicalMessage[]
+): ContextSignalSummary {
+  const signalTypes = [
+    ...new Set(
+      signals
+        .map((signal) => signal.metadata.contextSignalType)
+        .filter((type): type is ContextSignalType => Boolean(type))
+    )
+  ];
+  const citationCount = signals.filter(
+    (signal) => signal.metadata.contextSignalType === "citation_or_ref"
+  ).length;
+
+  return {
+    refs: signals.map((signal) => contextSignalRef(signal)),
+    externalResearch: signalTypes.some((type) =>
+      [
+        "search_query",
+        "opened_source",
+        "clicked_source",
+        "find_pattern",
+        "search_result",
+        "citation_or_ref"
+      ].includes(type)
+    ),
+    sourceBacked: signalTypes.some((type) =>
+      ["opened_source", "clicked_source", "search_result", "citation_or_ref"].includes(
+        type
+      )
+    ),
+    signalTypes,
+    citationCount
+  };
 }
 
 function buildOverview(input: {
@@ -968,6 +1086,20 @@ function hasSharedTopic(left: string, right: string): boolean {
   return TOPIC_ENTITY_PATTERNS.some(
     (pattern) => pattern.regex.test(leftPrepared) && pattern.regex.test(rightPrepared)
   );
+}
+
+function countContextSignalTypes(
+  contextSignals: CanonicalMessage[]
+): Record<string, number> {
+  return contextSignals.reduce<Record<string, number>>((counts, signal) => {
+    const type = signal.metadata.contextSignalType ?? "unknown";
+    counts[type] = (counts[type] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function contextSignalRef(signal: CanonicalMessage): string {
+  return `${signal.metadata.contextSignalType ?? "context_signal"}:${signal.index}`;
 }
 
 function satisfactionRationale(status: SatisfactionStatus): string {
