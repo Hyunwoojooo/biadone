@@ -13,6 +13,24 @@ export type ReactFlightExpansion = {
 
 const MAX_NODES = 100_000;
 const MAX_ROWS = 10_000;
+const TOP_LEVEL_TABLE_KEYS = new Set(["linear_conversation"]);
+const MATERIALIZED_OBJECT_KEYS = new Set([
+  "id",
+  "message",
+  "parent",
+  "children",
+  "author",
+  "role",
+  "metadata",
+  "content",
+  "content_type",
+  "parts",
+  "text",
+  "create_time",
+  "createTime",
+  "update_time",
+  "updateTime"
+]);
 
 export function expandReactFlightPayloads(decodedPayloads: unknown): ReactFlightExpansion {
   return {
@@ -126,19 +144,18 @@ function collectReactFlightTables(root: unknown): unknown[] {
 }
 
 function materializeFlightTable(table: unknown[]): unknown {
-  const ctx = {
-    table,
-    visiting: new Set<number>(),
-    visited: 0
-  };
   const output: Record<string, unknown> = {};
 
   for (let index = 0; index < table.length - 1; index += 1) {
     const key = table[index];
-    if (typeof key !== "string" || !isLikelyObjectKey(key)) {
+    if (typeof key !== "string" || !TOP_LEVEL_TABLE_KEYS.has(key)) {
       continue;
     }
-    output[key] = materializeFlightValue(table[index + 1], ctx);
+    output[key] = materializeFlightValue(table[index + 1], {
+      table,
+      visiting: new Set<number>(),
+      visited: 0
+    });
   }
 
   return output;
@@ -179,6 +196,9 @@ function materializeFlightValue(
         keyIndex === null ? rawKey : materializeFlightValue(keyIndex, ctx);
       const outputKey =
         typeof materializedKey === "string" ? materializedKey : rawKey;
+      if (!MATERIALIZED_OBJECT_KEYS.has(outputKey)) {
+        continue;
+      }
       output[outputKey] = materializeFlightValue(rawChild, ctx);
     }
     return output;
@@ -190,10 +210,6 @@ function materializeFlightValue(
 function parseReferenceKey(key: string): number | null {
   const match = /^_(\d+)$/.exec(key);
   return match ? Number.parseInt(match[1], 10) : null;
-}
-
-function isLikelyObjectKey(value: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function looksJsonParseable(value: string): boolean {
