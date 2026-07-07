@@ -30,8 +30,25 @@ export type CanonicalMessage = {
     rawMessageId?: string;
     modelSlug?: string | null;
     hasUnsupportedContent?: boolean;
+    messageCategory: MessageCategory;
+    contextSignalType?: ContextSignalType;
+    internalContentType?: string;
   };
 };
+
+export type MessageCategory =
+  | "clean_conversation"
+  | "context_signal"
+  | "excluded_internal";
+
+export type ContextSignalType =
+  | "search_query"
+  | "opened_source"
+  | "clicked_source"
+  | "find_pattern"
+  | "search_result"
+  | "citation_or_ref"
+  | "other_tool_call";
 
 export type ContentBlock =
   | { type: "paragraph"; text: string }
@@ -54,6 +71,9 @@ export type ConversationStats = {
   userMessages: number;
   assistantMessages: number;
   unsupportedMessages: number;
+  cleanConversationMessages: number;
+  contextSignalMessages: number;
+  excludedInternalMessages: number;
   totalChars: number;
 };
 

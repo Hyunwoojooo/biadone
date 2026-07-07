@@ -1,6 +1,7 @@
 import type {
   CanonicalConversation,
   CanonicalMessage,
+  ContextSignalType,
   ContentBlock
 } from "../../types/conversation";
 import type { RawChatGPTMessage } from "./restoreConversation";
@@ -45,6 +46,15 @@ export function normalizeConversation(
   const unsupportedMessages = messages.filter(
     (message) => message.metadata.hasUnsupportedContent
   ).length;
+  const cleanConversationMessages = messages.filter(
+    (message) => message.metadata.messageCategory === "clean_conversation"
+  ).length;
+  const contextSignalMessages = messages.filter(
+    (message) => message.metadata.messageCategory === "context_signal"
+  ).length;
+  const excludedInternalMessages = messages.filter(
+    (message) => message.metadata.messageCategory === "excluded_internal"
+  ).length;
 
   return {
     id: `conv_${input.shareId}`,
@@ -67,6 +77,9 @@ export function normalizeConversation(
       assistantMessages: messages.filter((message) => message.role === "assistant")
         .length,
       unsupportedMessages,
+      cleanConversationMessages,
+      contextSignalMessages,
+      excludedInternalMessages,
       totalChars: messages.reduce((sum, message) => sum + message.text.length, 0)
     },
     warnings: unsupportedMessages
@@ -88,6 +101,12 @@ function normalizeMessage(
   const role = normalizeRole(rawMessage.role ?? rawMessage.authorRole);
   const content = extractContent(rawMessage.content);
   const rawId = rawMessage.id ?? `raw_${index}`;
+  const classification = classifyMessage({
+    role,
+    text: content.text,
+    blocks: content.blocks,
+    hasUnsupportedContent: content.hasUnsupportedContent
+  });
 
   if (!content.text.trim() && !content.hasUnsupportedContent) {
     return null;
@@ -108,10 +127,107 @@ function normalizeMessage(
     metadata: {
       rawMessageId: rawId,
       modelSlug: extractModelSlug(rawMessage.metadata),
-      hasUnsupportedContent: content.hasUnsupportedContent
+      hasUnsupportedContent: content.hasUnsupportedContent,
+      messageCategory: classification.messageCategory,
+      contextSignalType: classification.contextSignalType,
+      internalContentType: classification.internalContentType
     }
   };
 }
+
+function classifyMessage(input: {
+  role: CanonicalMessage["role"];
+  text: string;
+  blocks: ContentBlock[];
+  hasUnsupportedContent: boolean;
+}): {
+  messageCategory: CanonicalMessage["metadata"]["messageCategory"];
+  contextSignalType?: ContextSignalType;
+  internalContentType?: string;
+} {
+  const unsupportedLabel = input.blocks.find(
+    (block): block is Extract<ContentBlock, { type: "unsupported" }> =>
+      block.type === "unsupported"
+  )?.label;
+
+  if (unsupportedLabel && isExcludedInternalContentType(unsupportedLabel)) {
+    return {
+      messageCategory: "excluded_internal",
+      internalContentType: unsupportedLabel
+    };
+  }
+
+  const contextSignalType = detectContextSignalType(input.text);
+  if (contextSignalType) {
+    return {
+      messageCategory: "context_signal",
+      contextSignalType
+    };
+  }
+
+  if (
+    input.role === "assistant" &&
+    input.hasUnsupportedContent &&
+    unsupportedLabel
+  ) {
+    return {
+      messageCategory: "excluded_internal",
+      internalContentType: unsupportedLabel
+    };
+  }
+
+  return { messageCategory: "clean_conversation" };
+}
+
+function isExcludedInternalContentType(label: string): boolean {
+  return [
+    "thoughts",
+    "reasoning_recap",
+    "model_editable_context",
+    "system_context"
+  ].includes(label);
+}
+
+function detectContextSignalType(text: string): ContextSignalType | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const keys = new Set(Object.keys(parsed));
+  if (keys.has("system1_search_query")) {
+    return "search_query";
+  }
+  if (keys.has("open")) {
+    return "opened_source";
+  }
+  if (keys.has("click")) {
+    return "clicked_source";
+  }
+  if (keys.has("find")) {
+    return "find_pattern";
+  }
+  if (keys.has("system1_search_result")) {
+    return "search_result";
+  }
+  if (keys.has("ref_id") || keys.has("ref_ids")) {
+    return "citation_or_ref";
+  }
+
+  return null;
+}
+
 
 function normalizeRole(value: string | undefined): CanonicalMessage["role"] {
   if (value === "user" || value === "assistant" || value === "system" || value === "tool") {

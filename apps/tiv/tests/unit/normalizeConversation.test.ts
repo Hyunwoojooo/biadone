@@ -57,4 +57,51 @@ describe("normalizeConversation", () => {
       type: "unsupported"
     });
   });
+
+  it("classifies tool-call JSON as context signals", () => {
+    const rawMessages: RawChatGPTMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: {
+          parts: [
+            JSON.stringify({
+              system1_search_query: [{ q: "PlayMCP" }],
+              response_length: "medium"
+            })
+          ]
+        }
+      }
+    ];
+
+    const conversation = normalizeConversation({ ...baseInput, rawMessages });
+
+    expect(conversation.messages[0]?.metadata.messageCategory).toBe(
+      "context_signal"
+    );
+    expect(conversation.messages[0]?.metadata.contextSignalType).toBe(
+      "search_query"
+    );
+    expect(conversation.stats.contextSignalMessages).toBe(1);
+  });
+
+  it("classifies internal unsupported content separately", () => {
+    const rawMessages: RawChatGPTMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: { content_type: "thoughts" }
+      }
+    ];
+
+    const conversation = normalizeConversation({ ...baseInput, rawMessages });
+
+    expect(conversation.messages[0]?.metadata.messageCategory).toBe(
+      "excluded_internal"
+    );
+    expect(conversation.messages[0]?.metadata.internalContentType).toBe(
+      "thoughts"
+    );
+    expect(conversation.stats.excludedInternalMessages).toBe(1);
+  });
 });

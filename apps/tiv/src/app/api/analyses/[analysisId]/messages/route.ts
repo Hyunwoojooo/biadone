@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getAnalysisStore } from "@/core/storage/analysisStore";
+import type { CanonicalMessage } from "@/core/types/conversation";
 
 export const runtime = "nodejs";
 
@@ -37,6 +38,9 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
+  const messages =
+    record.conversation?.messages.map((message) => serializeMessage(message)) ?? [];
+
   return NextResponse.json({
     analysisId: record.id,
     status: record.status,
@@ -44,14 +48,32 @@ export async function GET(_request: Request, context: RouteContext) {
       title: record.conversation?.title,
       stats: record.conversation?.stats
     },
-    messages:
-      record.conversation?.messages.map((message) => ({
-        id: message.id,
-        index: message.index,
-        role: message.role,
-        text: message.text,
-        blocks: message.blocks,
-        sourceRef: message.sourceRef
-      })) ?? []
+    messages,
+    groups: {
+      cleanConversation: messages.filter(
+        (message) => message.metadata.messageCategory === "clean_conversation"
+      ),
+      contextSignals: messages.filter(
+        (message) => message.metadata.messageCategory === "context_signal"
+      ),
+      excludedInternal: messages.filter(
+        (message) => message.metadata.messageCategory === "excluded_internal"
+      )
+    }
   });
+}
+
+function serializeMessage(message: CanonicalMessage): Pick<
+  CanonicalMessage,
+  "id" | "index" | "role" | "text" | "blocks" | "sourceRef" | "metadata"
+> {
+  return {
+    id: message.id,
+    index: message.index,
+    role: message.role,
+    text: message.text,
+    blocks: message.blocks,
+    sourceRef: message.sourceRef,
+    metadata: message.metadata
+  };
 }

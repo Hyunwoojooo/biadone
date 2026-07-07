@@ -15,13 +15,23 @@ type MessagesResponse = {
   };
   messages?: Pick<
     CanonicalMessage,
-    "id" | "index" | "role" | "text" | "blocks" | "sourceRef"
+    "id" | "index" | "role" | "text" | "blocks" | "sourceRef" | "metadata"
   >[];
+  groups?: {
+    cleanConversation: MessageItem[];
+    contextSignals: MessageItem[];
+    excludedInternal: MessageItem[];
+  };
   error?: {
     code: string;
     message: string;
   };
 };
+
+type MessageItem = Pick<
+  CanonicalMessage,
+  "id" | "index" | "role" | "text" | "blocks" | "sourceRef" | "metadata"
+>;
 
 export function MessageViewer({ analysisId }: { analysisId: string }) {
   const [data, setData] = useState<MessagesResponse | null>(null);
@@ -78,96 +88,148 @@ export function MessageViewer({ analysisId }: { analysisId: string }) {
     );
   }
 
-  const messages = data?.messages ?? [];
+  const cleanMessages =
+    data?.groups?.cleanConversation ??
+    (data?.messages ?? []).filter(
+      (message) => message.metadata.messageCategory === "clean_conversation"
+    );
+  const contextSignals =
+    data?.groups?.contextSignals ??
+    (data?.messages ?? []).filter(
+      (message) => message.metadata.messageCategory === "context_signal"
+    );
+  const excludedInternal =
+    data?.groups?.excludedInternal ??
+    (data?.messages ?? []).filter(
+      (message) => message.metadata.messageCategory === "excluded_internal"
+    );
+  const totalMessages =
+    data?.conversation?.stats.totalMessages ??
+    cleanMessages.length + contextSignals.length + excludedInternal.length;
 
   return (
     <section>
       <header style={{ marginBottom: 24 }}>
-        <h1>복원된 대화 메시지</h1>
+        <h1>Clean Conversation</h1>
         <p style={{ color: "#555" }}>
-          총 {data?.conversation?.stats.totalMessages ?? messages.length}개 메시지
+          실제 대화 {cleanMessages.length}개 표시 중. Context Signals{" "}
+          {contextSignals.length}개, 내부 메시지 {excludedInternal.length}개는 접어뒀습니다.
         </p>
+        <p style={{ color: "#777", fontSize: 14 }}>전체 복원 메시지 {totalMessages}개</p>
       </header>
 
-      <div style={{ display: "grid", gap: 16 }}>
-        {messages.map((message) => (
-          <article
-            key={message.id}
+      <MessageList messages={cleanMessages} />
+
+      <details style={{ marginTop: 32 }}>
+        <summary>Context Signals {contextSignals.length}개</summary>
+        <p style={{ color: "#666" }}>
+          검색어, 열린 출처, 클릭/찾기 같은 맥락 분석용 보조 신호입니다.
+        </p>
+        <MessageList messages={contextSignals} compact />
+      </details>
+
+      <details style={{ marginTop: 24 }}>
+        <summary>Excluded/Internal {excludedInternal.length}개</summary>
+        <p style={{ color: "#666" }}>
+          thoughts, reasoning recap, model context 같은 내부 메시지입니다.
+        </p>
+        <MessageList messages={excludedInternal} compact />
+      </details>
+    </section>
+  );
+}
+
+function MessageList({
+  messages,
+  compact = false
+}: {
+  messages: MessageItem[];
+  compact?: boolean;
+}) {
+  if (messages.length === 0) {
+    return <p style={{ color: "#777" }}>표시할 메시지가 없습니다.</p>;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: compact ? 10 : 16, marginTop: 16 }}>
+      {messages.map((message) => (
+        <article
+          key={message.id}
+          style={{
+            border: "1px solid #d4d4d4",
+            borderRadius: 8,
+            padding: compact ? 12 : 16,
+            background: message.role === "user" ? "#f7fafc" : "#fff"
+          }}
+        >
+          <div
             style={{
-              border: "1px solid #d4d4d4",
-              borderRadius: 8,
-              padding: 16,
-              background: message.role === "user" ? "#f7fafc" : "#fff"
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: 12,
+              color: "#555",
+              fontSize: 14
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-                marginBottom: 12,
-                color: "#555",
-                fontSize: 14
-              }}
-            >
-              <strong>{message.role}</strong>
-              <span>#{message.index}</span>
-            </div>
-            {message.blocks.map((block, index) => {
-              if (block.type === "code") {
-                return (
-                  <pre
-                    key={`${message.id}-block-${index}`}
-                    style={{
-                      overflowX: "auto",
-                      padding: 12,
-                      background: "#111827",
-                      color: "#f9fafb",
-                      borderRadius: 6
-                    }}
-                  >
-                    <code>{block.text}</code>
-                  </pre>
-                );
-              }
-
-              if (block.type === "list") {
-                const ListTag = block.ordered ? "ol" : "ul";
-                return (
-                  <ListTag
-                    key={`${message.id}-block-${index}`}
-                    style={{ lineHeight: 1.6 }}
-                  >
-                    {block.items.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ListTag>
-                );
-              }
-
-              if (block.type === "unsupported") {
-                return (
-                  <p
-                    key={`${message.id}-block-${index}`}
-                    style={{ color: "#666", whiteSpace: "pre-wrap", lineHeight: 1.6 }}
-                  >
-                    {block.text}
-                  </p>
-                );
-              }
-
+            <strong>
+              {message.role}
+              {message.metadata.contextSignalType
+                ? ` · ${message.metadata.contextSignalType}`
+                : ""}
+              {message.metadata.internalContentType
+                ? ` · ${message.metadata.internalContentType}`
+                : ""}
+            </strong>
+            <span>#{message.index}</span>
+          </div>
+          {message.blocks.map((block, index) => {
+            if (block.type === "code") {
               return (
-                <p
+                <pre
                   key={`${message.id}-block-${index}`}
-                  style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}
+                  style={{
+                    overflowX: "auto",
+                    padding: 12,
+                    background: "#111827",
+                    color: "#f9fafb",
+                    borderRadius: 6
+                  }}
                 >
-                  {block.text}
-                </p>
+                  <code>{block.text}</code>
+                </pre>
               );
-            })}
-          </article>
-        ))}
-      </div>
-    </section>
+            }
+
+            if (block.type === "list") {
+              const ListTag = block.ordered ? "ol" : "ul";
+              return (
+                <ListTag
+                  key={`${message.id}-block-${index}`}
+                  style={{ lineHeight: 1.6 }}
+                >
+                  {block.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ListTag>
+              );
+            }
+
+            return (
+              <p
+                key={`${message.id}-block-${index}`}
+                style={{
+                  color: block.type === "unsupported" ? "#666" : undefined,
+                  whiteSpace: "pre-wrap",
+                  lineHeight: 1.6
+                }}
+              >
+                {block.text}
+              </p>
+            );
+          })}
+        </article>
+      ))}
+    </div>
   );
 }
