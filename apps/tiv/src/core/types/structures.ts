@@ -1,12 +1,172 @@
+export type MockStructureResult = {
+  extractor: {
+    name: "MockStructureExtractor";
+    version: string;
+    mode: "rule_based";
+  };
+  overview: Overview;
+  topicFlow: TopicFlowItem[];
+  preferenceSignals: PreferenceSignal[];
+  satisfactionSignals: SatisfactionSignal[];
+  board: Board;
+  evidence: EvidenceItem[];
+  diagnostics: ExtractionDiagnostics;
+};
+
 export type Overview = {
   title: string;
-  oneLineSummary: string;
-  coreProblem: string;
-  coreSolution: string;
-  keyDecisions: string[];
-  pendingIssues: string[];
-  nextActions: string[];
-  evidenceIds: string[];
+  mainSubject: string;
+  userCoreIntent: string;
+  currentStatus: "resolved" | "partially_resolved" | "in_progress" | "unclear";
+  resolutionSummary: string;
+  keyDecisionIds: string[];
+  openQuestionIds: string[];
+  actionIds: string[];
+  dominantPreferenceIds: string[];
+  satisfactionSummary: string;
+  evidenceMessageIndexes: number[];
+  confidence: number;
+};
+
+export type TopicFlowItem = {
+  id: string;
+  order: number;
+  label: string;
+  summary: string;
+  startMessageIndex: number;
+  endMessageIndex: number;
+  changeReason: TopicChangeReason;
+  evidenceMessageIndexes: number[];
+  contextSignalRefs?: string[];
+  confidence: number;
+};
+
+export type TopicChangeReason =
+  | "new_user_question"
+  | "scope_changed"
+  | "condition_changed"
+  | "format_changed"
+  | "perspective_changed"
+  | "external_research_started"
+  | "artifact_requested"
+  | "correction_or_revision"
+  | "implementation_phase_started"
+  | "continuation";
+
+export type PreferenceSignal = {
+  id: string;
+  category:
+    | "tone"
+    | "length"
+    | "language_expression"
+    | "format"
+    | "specificity_depth"
+    | "avoidance"
+    | "reinforced";
+  polarity: "positive" | "negative";
+  normalizedLabel: string;
+  description: string;
+  reinforced: boolean;
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+};
+
+export type SatisfactionSignal = {
+  id: string;
+  assistantMessageIndex: number;
+  userReactionMessageIndex: number | null;
+  status: SatisfactionStatus;
+  secondaryStatuses?: SatisfactionStatus[];
+  rationale: string;
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+};
+
+export type SatisfactionStatus =
+  | "satisfied"
+  | "partially_satisfied"
+  | "dissatisfied"
+  | "correction_requested"
+  | "clarification_requested"
+  | "continuing_without_clear_feedback";
+
+export type Board = {
+  decisions: DecisionItem[];
+  openQuestions: OpenQuestionItem[];
+  actions: ActionItem[];
+};
+
+export type DecisionItem = {
+  id: string;
+  title: string;
+  description: string;
+  status: "confirmed" | "excluded" | "deferred";
+  source: "explicit_user" | "assistant_suggestion_accepted" | "inferred";
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+};
+
+export type OpenQuestionItem = {
+  id: string;
+  question: string;
+  description: string;
+  status: "open" | "resolved" | "superseded";
+  evidenceMessageIndexes: number[];
+  resolvedByDecisionId?: string;
+  confidence: number;
+  rulesMatched: string[];
+};
+
+export type ActionItem = {
+  id: string;
+  title: string;
+  description: string;
+  actionType: "user_requested" | "team_next" | "assistant_suggested";
+  assignee: "assistant" | "user" | "team" | "unknown";
+  status: "requested" | "proposed" | "accepted" | "completed";
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+};
+
+export type EvidenceItem = {
+  id: string;
+  evidenceMessageIndexes: number[];
+  contextSignalRefs?: string[];
+  quote?: string;
+  sourceType: "clean_conversation" | "context_signal" | "mixed";
+  evidenceStrength:
+    | "explicit_user_statement"
+    | "explicit_assistant_statement"
+    | "accepted_assistant_suggestion"
+    | "paired_reaction"
+    | "contextual_support"
+    | "weak_inference";
+};
+
+export type ExtractionDiagnostics = {
+  analyzedMessageIndexes: number[];
+  skippedMessageIndexes: number[];
+  duplicateMessageIndexes: number[];
+  excludedInternalCount: number;
+  contextSignalCount: number;
+  rulesFired: Record<string, number>;
+  warnings: DiagnosticWarning[];
+};
+
+export type DiagnosticWarning = {
+  code:
+    | "EXAMPLE_TEXT_DETECTED"
+    | "CODE_BLOCK_SKIPPED"
+    | "ASSISTANT_ONLY_DECISION_DOWNGRADED"
+    | "CONTEXT_SIGNAL_ONLY_DOWNGRADED"
+    | "DUPLICATE_MESSAGE_SKIPPED"
+    | "LOW_CONFIDENCE_OUTPUT";
+  message: string;
+  messageIndexes?: number[];
 };
 
 export type TopicNode = {
@@ -32,38 +192,6 @@ export type ThoughtFlowStep = {
   };
   relatedDecisionIds: string[];
   relatedPendingIssueIds: string[];
-  evidenceIds: string[];
-};
-
-export type Board = {
-  decisions: DecisionCard[];
-  pendingIssues: PendingCard[];
-  actionItems: ActionCard[];
-};
-
-export type DecisionCard = {
-  id: string;
-  title: string;
-  description: string;
-  rationale: string | null;
-  status: "confirmed" | "rejected";
-  evidenceIds: string[];
-};
-
-export type PendingCard = {
-  id: string;
-  title: string;
-  description: string;
-  options: string[];
-  evidenceIds: string[];
-};
-
-export type ActionCard = {
-  id: string;
-  title: string;
-  description: string;
-  priority: "high" | "medium" | "low" | "unknown";
-  owner: "user" | "team" | "unknown";
   evidenceIds: string[];
 };
 

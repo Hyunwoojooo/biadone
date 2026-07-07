@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { MessageViewer } from "@/components/MessageViewer";
+import { StructureResultViewer } from "@/components/StructureResultViewer";
 
 type AnalysisMessagesPageProps = {
   params: Promise<{
@@ -18,6 +19,7 @@ export default async function AnalysisMessagesPage({
       <p>
         <Link href="/">새 링크 분석</Link>
       </p>
+      <StructureResultViewer analysisId={analysisId} />
       <MessageViewer analysisId={analysisId} />
     </main>
   );
