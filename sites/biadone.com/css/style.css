@@ -26,6 +26,27 @@
 
 body { overflow-x: hidden; }
 
+:lang(ko) body {
+  word-break: keep-all;
+}
+
+:lang(ko) .section-h2,
+:lang(ko) .hero-h1 {
+  letter-spacing: 0;
+}
+
+:lang(ko) .section-body,
+:lang(ko) .hero-sub,
+:lang(ko) .problem-card p,
+:lang(ko) .definition-card p,
+:lang(ko) .step-meaning,
+:lang(ko) .pe-definition,
+:lang(ko) .pe-detail-value,
+:lang(ko) .usecase-card p,
+:lang(ko) .trust-principle p {
+  line-height: 1.75;
+}
+
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;
@@ -100,6 +121,41 @@ body { overflow-x: hidden; }
 }
 .btn-nav-primary:hover { background: var(--violet); transform: translateY(-1px); }
 
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 34px;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid rgba(15,23,42,0.12);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.55);
+  color: #94A3B8;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.lang-switch button {
+  min-width: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748B;
+  font: inherit;
+  line-height: 1;
+  padding: 0.42rem 0.48rem;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.lang-switch button[aria-pressed="true"] {
+  background: var(--navy);
+  color: var(--warmwhite);
+}
+.lang-switch button:hover:not([aria-pressed="true"]) {
+  background: rgba(15,23,42,0.06);
+  color: var(--navy);
+}
+
 .mobile-menu {
   background: var(--warmwhite);
   border-top: 1px solid rgba(15,23,42,0.08);
@@ -117,6 +173,10 @@ body { overflow-x: hidden; }
 .mobile-menu li:has(> .btn-nav-primary) a,
 .mobile-menu li:has(> .btn-nav-secondary-mobile) a {
   border-bottom: none;
+}
+
+.mobile-lang-item {
+  padding: 0.8rem 0 0.2rem;
 }
 
 .btn-nav-secondary-mobile {

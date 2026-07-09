@@ -34,7 +34,7 @@
           warmwhite: '#F8FAFC'
         },
         fontFamily: {
-          sans: ['Inter', 'sans-serif'],
+          sans: ['Inter', 'Apple SD Gothic Neo', 'Noto Sans KR', 'sans-serif'],
           mono: ['JetBrains Mono', 'monospace']
         }
       }
@@ -61,7 +61,12 @@
       <li><a href="#trust-section">Trust</a></li>
     </ul>
 
-    <div class="hidden lg:flex items-center gap-4">
+    <div class="hidden lg:flex items-center gap-3">
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" data-lang-option="ko" aria-pressed="false">KO</button>
+        <span aria-hidden="true">|</span>
+        <button type="button" data-lang-option="en" aria-pressed="true">EN</button>
+      </div>
       <a href="#how-it-works" class="btn-nav-secondary">See How It Works</a>
       <a href="#final-cta" class="btn-nav-primary">Join the T.I.V Beta</a>
     </div>
@@ -77,6 +82,13 @@
       <li><a href="#how-it-works">How It Works</a></li>
       <li><a href="#tiv-section">T.I.V</a></li>
       <li><a href="#trust-section">Trust</a></li>
+      <li class="mobile-lang-item">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-lang-option="ko" aria-pressed="false">KO</button>
+          <span aria-hidden="true">|</span>
+          <button type="button" data-lang-option="en" aria-pressed="true">EN</button>
+        </div>
+      </li>
       <li class="pt-3"><a href="#final-cta" class="btn-nav-primary block text-center">Join the T.I.V Beta</a></li>
       <li class="pt-2"><a href="#how-it-works" class="btn-nav-secondary-mobile block text-center">See How It Works</a></li>
     </ul>
