@@ -8,6 +8,7 @@ export type MockStructureResult = {
   overviewSourceCandidates: OverviewSourceCandidates;
   topicFlow: TopicFlowItem[];
   preferenceSignals: PreferenceSignal[];
+  contentConstraints: ContentConstraint[];
   satisfactionSignals: SatisfactionSignal[];
   board: Board;
   evidence: EvidenceItem[];
@@ -214,6 +215,26 @@ export type ActionItem = {
   actionType: "user_requested" | "team_next" | "assistant_suggested";
   assignee: "assistant" | "user" | "team" | "unknown";
   status: "requested" | "proposed" | "accepted" | "completed";
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
+};
+
+export type ContentConstraint = {
+  id: string;
+  constraintType:
+    | "include_content"
+    | "exclude_content"
+    | "audience"
+    | "domain_point"
+    | "business_rule"
+    | "source_material";
+  title: string;
+  description: string;
+  triggerPhrase: string;
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];

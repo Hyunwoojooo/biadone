@@ -1465,6 +1465,83 @@ Overview가 마지막 user message의 국소/메타 요청에 과도하게 끌�
 - GPT audit 파일에서 overview 판단 근거를 검수할 수 있다.
 ```
 
+### Sprint 4.5K — Content Constraint 분리
+
+목표:
+
+```text
+사용자가 답변에 반드시 넣으라고 한 내용 조건과, 답변 형식 선호 및 실행 action을 분리한다.
+Preference는 “어떤 형식/톤/길이로 답할지”에 집중하고, Content Constraint는 “무슨 내용을 포함/제외할지”에 집중한다.
+```
+
+분리 기준:
+
+```text
+1. content constraint
+   - “외국인 포인트 넣고”
+   - “이 포인트들 반영해서”
+   - “사용자 사례를 포함해서”
+   - “고객 관점은 빼고”
+
+2. action
+   - “기획안 다시 만들어줘”
+   - “정리해줘”
+   - “분석해줘”
+   - “파일 만들어줘”
+
+3. format preference
+   - “노션에 넣을 수 있는 md파일로”
+   - “표로”
+   - “JSON schema로”
+   - “불렛으로”
+```
+
+구현 정책:
+
+```text
+1. 한 user message를 의미 단위 clause로 나눈 뒤 각각 분류한다.
+2. content constraint는 ContentConstraint[]에 별도로 저장한다.
+3. format keyword가 있는 clause는 preference.format으로 보낸다.
+4. action keyword만 있는 clause는 action으로 보낸다.
+5. decision/open question clause는 content constraint로 중복 추출하지 않는다.
+6. content constraint에도 evidenceMessageIndexes, triggerPhrase, confidence, reviewRequired metadata를 붙인다.
+7. UI에서는 Content Constraints 섹션과 Review Queue에서 별도로 검토할 수 있게 한다.
+8. GPT audit export에는 contentConstraints와 trigger phrase를 포함한다.
+```
+
+권장 schema:
+
+```ts
+type ContentConstraint = {
+  id: string;
+  constraintType:
+    | "include_content"
+    | "exclude_content"
+    | "audience"
+    | "domain_point"
+    | "business_rule"
+    | "source_material";
+  title: string;
+  description: string;
+  triggerPhrase: string;
+  evidenceMessageIndexes: number[];
+  confidence: number;
+  rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
+};
+```
+
+완료 기준:
+
+```text
+- “외국인 포인트 넣고”는 preference/action이 아니라 content constraint로 추출된다.
+- “기획안 다시 만들어줘”는 action으로 남는다.
+- “노션에 넣을 수 있는 md파일로”는 format preference로 남는다.
+- Sprint 4 UI와 GPT audit export에서 content constraint를 별도 항목으로 확인할 수 있다.
+```
+
 ---
 
 ## 12. 위험한 오판 케이스와 방지책

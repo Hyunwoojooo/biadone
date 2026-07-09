@@ -64,6 +64,7 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
       overviewSourceCandidates: result.overviewSourceCandidates,
       topicFlow: result.topicFlow,
       preferenceSignals: result.preferenceSignals,
+      contentConstraints: result.contentConstraints,
       satisfactionSignals: result.satisfactionSignals,
       board: result.board,
       diagnostics: result.diagnostics
@@ -130,6 +131,17 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
         triggerPhrase: item.triggerPhrase,
         evidenceMessageIndexes: item.evidenceMessageIndexes,
         confidence: item.confidence
+      })),
+      contentConstraints: result.contentConstraints.map((item) => ({
+        id: item.id,
+        constraintType: item.constraintType,
+        title: item.title,
+        triggerPhrase: item.triggerPhrase,
+        evidenceMessageIndexes: item.evidenceMessageIndexes,
+        confidence: item.confidence,
+        reviewRequired: item.reviewRequired,
+        reviewRequiredReason: item.reviewRequiredReason,
+        includeInMainBoard: item.includeInMainBoard
       }))
     }),
     "",

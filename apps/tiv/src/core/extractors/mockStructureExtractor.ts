@@ -6,6 +6,7 @@ import type {
 import type {
   ActionItem,
   Board,
+  ContentConstraint,
   DecisionItem,
   DiagnosticWarning,
   EvidenceItem,
@@ -51,6 +52,13 @@ type ContextSignalSummary = {
   sourceBacked: boolean;
   signalTypes: ContextSignalType[];
   citationCount: number;
+};
+
+type ContentConstraintRule = {
+  id: string;
+  constraintType: ContentConstraint["constraintType"];
+  regex: RegExp;
+  baseConfidence: number;
 };
 
 const USER_RULES: RuleDefinition[] = [
@@ -154,6 +162,45 @@ const USER_RULES: RuleDefinition[] = [
   }
 ];
 
+const CONTENT_CONSTRAINT_RULES: ContentConstraintRule[] = [
+  {
+    id: "content_constraint.include_content",
+    constraintType: "include_content",
+    regex: /(내용 넣|넣고|포함해서|포함해줘|반영해서|반영해|추가해서|추가해줘|중심으로)/i,
+    baseConfidence: 0.82
+  },
+  {
+    id: "content_constraint.exclude_content",
+    constraintType: "exclude_content",
+    regex: /(내용은 빼|내용 제외|빼고|제외하고|넣지 말고)/i,
+    baseConfidence: 0.82
+  },
+  {
+    id: "content_constraint.audience",
+    constraintType: "audience",
+    regex: /(대상은|사용자층|고객층|타겟|audience|persona)/i,
+    baseConfidence: 0.8
+  },
+  {
+    id: "content_constraint.domain_point",
+    constraintType: "domain_point",
+    regex: /(포인트|관점|이슈|문제|pain point|insight)/i,
+    baseConfidence: 0.78
+  },
+  {
+    id: "content_constraint.business_rule",
+    constraintType: "business_rule",
+    regex: /(조건은|기준은|정책|룰은|규칙은|제약|business rule)/i,
+    baseConfidence: 0.8
+  },
+  {
+    id: "content_constraint.source_material",
+    constraintType: "source_material",
+    regex: /(첨부한|위 내용|이 내용|이 포인트|자료|source material|reference)/i,
+    baseConfidence: 0.76
+  }
+];
+
 const SATISFACTION_RULES: RuleDefinition[] = [
   {
     id: "satisfaction.task_failed",
@@ -246,6 +293,7 @@ export function extractMockStructure(
   const warnings: DiagnosticWarning[] = [];
   const evidence: EvidenceItem[] = [];
   const preferences: PreferenceSignal[] = [];
+  const contentConstraints: ContentConstraint[] = [];
   const decisions: DecisionItem[] = [];
   const openQuestions: OpenQuestionItem[] = [];
   const actions: ActionItem[] = [];
@@ -301,6 +349,18 @@ export function extractMockStructure(
         questionLike: isQuestionLike(prepared.text)
       });
     const hasActionRequest = semanticRules.some((rule) => rule.kind === "action");
+    const contentConstraintMatches = prepared.isExampleLike
+      ? []
+      : extractContentConstraintsFromMessage(
+          message,
+          contentConstraints.length + 1
+        );
+    for (const constraint of contentConstraintMatches) {
+      contentConstraints.push(constraint);
+      for (const ruleId of constraint.rulesMatched) {
+        incrementRule(rulesFired, ruleId);
+      }
+    }
 
     for (const rule of semanticRules) {
       const ruleQuote = quoteForRule(message.text, rule);
@@ -418,6 +478,7 @@ export function extractMockStructure(
   );
 
   const aggregatedPreferences = aggregatePreferences(preferences);
+  const dedupedContentConstraints = dedupeContentConstraints(contentConstraints);
   const satisfactionSignals = extractSatisfactionSignals(cleanMessages, rulesFired);
   evidence.push(
     ...satisfactionSignals.map((signal, index): EvidenceItem => ({
@@ -463,6 +524,7 @@ export function extractMockStructure(
     userMessages,
     topicFlow,
     preferences: aggregatedPreferences,
+    contentConstraints: dedupedContentConstraints,
     satisfactionSignals,
     board,
     overviewSourceCandidates
@@ -478,6 +540,7 @@ export function extractMockStructure(
     overviewSourceCandidates,
     topicFlow,
     preferenceSignals: aggregatedPreferences,
+    contentConstraints: dedupedContentConstraints,
     satisfactionSignals,
     board,
     evidence,
@@ -957,6 +1020,7 @@ function buildOverview(input: {
   userMessages: CanonicalMessage[];
   topicFlow: TopicFlowItem[];
   preferences: PreferenceSignal[];
+  contentConstraints: ContentConstraint[];
   satisfactionSignals: SatisfactionSignal[];
   board: Board;
   overviewSourceCandidates: OverviewSourceCandidates;
@@ -1220,6 +1284,106 @@ function dedupeActions(actions: ActionItem[]): ActionItem[] {
   }));
 }
 
+function extractContentConstraintsFromMessage(
+  message: CanonicalMessage,
+  startOrder: number
+): ContentConstraint[] {
+  const constraints: ContentConstraint[] = [];
+  const fragments = splitMeaningfulFragments(message.text);
+
+  for (const fragment of fragments) {
+    const prepared = prepareText(fragment).text;
+    if (!prepared || shouldSkipContentConstraintClause(prepared)) {
+      continue;
+    }
+
+    const matchedRules = CONTENT_CONSTRAINT_RULES.filter((rule) =>
+      rule.regex.test(prepared)
+    );
+    if (matchedRules.length === 0) {
+      continue;
+    }
+
+    const primaryRule = strongestContentConstraintRule(matchedRules);
+    const confidence = adjustConfidence(primaryRule.baseConfidence, {
+      exampleLike: false,
+      questionLike: isQuestionLike(prepared)
+    });
+    const triggerPhrase = truncateQuote(cleanTriggerQuote(fragment), 90);
+
+    constraints.push({
+      id: createItemId("cc", startOrder + constraints.length),
+      constraintType: primaryRule.constraintType,
+      title: titleFromMessage(triggerPhrase),
+      description: triggerPhrase,
+      triggerPhrase,
+      evidenceMessageIndexes: [message.index],
+      confidence,
+      rulesMatched: matchedRules.map((rule) => rule.id),
+      ...reviewMetadataForContentConstraint({
+        confidence,
+        evidenceMessageIndexes: [message.index]
+      })
+    });
+  }
+
+  return constraints;
+}
+
+function strongestContentConstraintRule(
+  rules: ContentConstraintRule[]
+): ContentConstraintRule {
+  const priority: ContentConstraint["constraintType"][] = [
+    "exclude_content",
+    "audience",
+    "business_rule",
+    "source_material",
+    "domain_point",
+    "include_content"
+  ];
+
+  return [...rules].sort(
+    (left, right) =>
+      priority.indexOf(left.constraintType) - priority.indexOf(right.constraintType)
+  )[0] as ContentConstraintRule;
+}
+
+function shouldSkipContentConstraintClause(preparedText: string): boolean {
+  return (
+    USER_RULES.some(
+      (rule) =>
+        (rule.kind === "decision" || rule.kind === "open_question") &&
+        rule.regex.test(preparedText)
+    ) ||
+    /(\.md|md파일|markdown|json|schema|표로|리스트|불렛|파일로|문서로|코드블록)/i.test(
+      preparedText
+    )
+  );
+}
+
+function dedupeContentConstraints(
+  constraints: ContentConstraint[]
+): ContentConstraint[] {
+  const seen = new Map<string, ContentConstraint>();
+
+  for (const constraint of constraints) {
+    const key = [
+      constraint.evidenceMessageIndexes.join(","),
+      constraint.constraintType,
+      normalizeText(constraint.triggerPhrase)
+    ].join(":");
+    const existing = seen.get(key);
+    if (!existing || constraint.confidence > existing.confidence) {
+      seen.set(key, constraint);
+    }
+  }
+
+  return [...seen.values()].map((constraint, index) => ({
+    ...constraint,
+    id: createItemId("cc", index + 1)
+  }));
+}
+
 function reviewMetadataForDecision(input: {
   status: DecisionItem["status"];
   source: DecisionItem["source"];
@@ -1271,6 +1435,22 @@ function reviewMetadataForAction(input: {
     reviewRequired: Boolean(reason),
     reviewRequiredReason: reason,
     includeInMainBoard
+  };
+}
+
+function reviewMetadataForContentConstraint(input: {
+  confidence: number;
+  evidenceMessageIndexes: number[];
+}): Pick<
+  ContentConstraint,
+  "reviewRequired" | "reviewRequiredReason" | "includeInMainBoard"
+> {
+  const reason = reviewReasonFromCoreSignals(input);
+
+  return {
+    reviewRequired: Boolean(reason),
+    reviewRequiredReason: reason,
+    includeInMainBoard: !reason && input.confidence >= 0.7
   };
 }
 

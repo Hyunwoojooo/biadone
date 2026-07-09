@@ -606,6 +606,74 @@ describe("extractMockStructure", () => {
       "명시적 만족도 신호가 부족해 보수적으로 판단했다."
     );
   });
+
+  it("separates content constraints from actions and format preferences by clause", () => {
+    const conversation = createConversation([
+      cleanMessage(
+        1,
+        "user",
+        "외국인 포인트 넣고, 이 포인트들 반영해서, 기획안 다시 만들어줘, 노션에 넣을 수 있는 md파일로 만들어줘."
+      )
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.contentConstraints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          constraintType: "domain_point",
+          triggerPhrase: "외국인 포인트 넣고",
+          reviewRequired: false,
+          includeInMainBoard: true
+        }),
+        expect.objectContaining({
+          constraintType: "source_material",
+          triggerPhrase: "이 포인트들 반영해서",
+          reviewRequired: false,
+          includeInMainBoard: true
+        })
+      ])
+    );
+    expect(result.board.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionType: "user_requested",
+          triggerPhrase: "기획안 다시 만들어줘"
+        })
+      ])
+    );
+    expect(result.preferenceSignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "format",
+          triggerPhrase: "노션에 넣을 수 있는 md파일로 만들어줘"
+        })
+      ])
+    );
+    expect(result.preferenceSignals).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          triggerPhrase: "외국인 포인트 넣고"
+        })
+      ])
+    );
+  });
+
+  it("extracts content constraints with review metadata", () => {
+    const conversation = createConversation([
+      cleanMessage(1, "user", "외국인 사용자 사례를 포함해서 정리해줘.")
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.contentConstraints[0]).toMatchObject({
+      constraintType: "include_content",
+      triggerPhrase: "외국인 사용자 사례를 포함해서 정리해줘",
+      reviewRequired: false,
+      includeInMainBoard: true,
+      evidenceMessageIndexes: [1]
+    });
+  });
 });
 
 function createConversation(messages: CanonicalMessage[]): CanonicalConversation {

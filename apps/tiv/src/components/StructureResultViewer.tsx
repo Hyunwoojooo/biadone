@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import type {
   ActionItem,
+  ContentConstraint,
   DecisionItem,
   EvidenceItem,
   MockStructureResult,
@@ -405,6 +406,12 @@ function Sprint4Panel({
   const weakSatisfactionSignals = result.satisfactionSignals.filter(
     (item) => item.confidence < 0.7
   );
+  const confidentContentConstraints = result.contentConstraints.filter(
+    (item) => item.includeInMainBoard
+  );
+  const weakContentConstraints = result.contentConstraints.filter(
+    (item) => !item.includeInMainBoard
+  );
   const overviewNarrative = buildOverviewNarrative(
     result,
     primaryPreferenceInsights,
@@ -611,6 +618,18 @@ function Sprint4Panel({
               ))}
             </Group>
             <Group
+              title="Content Constraints"
+              empty={confidentContentConstraints.length === 0}
+            >
+              {confidentContentConstraints.map((item) => (
+                <ContentConstraintCard
+                  key={item.id}
+                  item={item}
+                  evidenceByMessage={evidenceByMessage}
+                />
+              ))}
+            </Group>
+            <Group
               title="Satisfaction"
               empty={confidentSatisfactionSignals.length === 0}
             >
@@ -623,10 +642,13 @@ function Sprint4Panel({
               ))}
             </Group>
           </div>
-          {weakPreferenceSignals.length + weakSatisfactionSignals.length > 0 ? (
+          {weakPreferenceSignals.length +
+            weakContentConstraints.length +
+            weakSatisfactionSignals.length >
+          0 ? (
             <details style={{ marginTop: 14 }}>
               <summary style={{ cursor: "pointer", color: "#737373" }}>
-                Weak Signals {weakPreferenceSignals.length + weakSatisfactionSignals.length}개
+                Weak Signals {weakPreferenceSignals.length + weakContentConstraints.length + weakSatisfactionSignals.length}개
               </summary>
               <div
                 style={{
@@ -639,6 +661,18 @@ function Sprint4Panel({
                 <Group title="Weak Preferences" empty={weakPreferenceSignals.length === 0}>
                   {weakPreferenceSignals.map((item) => (
                     <PreferenceCard
+                      key={item.id}
+                      item={item}
+                      evidenceByMessage={evidenceByMessage}
+                    />
+                  ))}
+                </Group>
+                <Group
+                  title="Weak Content Constraints"
+                  empty={weakContentConstraints.length === 0}
+                >
+                  {weakContentConstraints.map((item) => (
+                    <ContentConstraintCard
                       key={item.id}
                       item={item}
                       evidenceByMessage={evidenceByMessage}
@@ -1160,6 +1194,9 @@ function buildReviewItems(
     ...result.preferenceSignals.map((item) =>
       reviewItem("Preference", item.normalizedLabel, item, result, evidenceByMessage)
     ),
+    ...result.contentConstraints.map((item) =>
+      reviewItem("Content Constraint", item.title, item, result, evidenceByMessage)
+    ),
     ...result.satisfactionSignals.map((item) =>
       reviewItem("Satisfaction", item.status, item, result, evidenceByMessage)
     ),
@@ -1437,6 +1474,30 @@ function PreferenceCard({
       description={item.description}
       triggerPhrase={item.triggerPhrase}
       badges={[item.category, item.polarity, item.reinforced ? "reinforced" : "single signal"]}
+      confidence={item.confidence}
+      evidenceMessageIndexes={item.evidenceMessageIndexes}
+      evidenceByMessage={evidenceByMessage}
+      compact
+    />
+  );
+}
+
+function ContentConstraintCard({
+  item,
+  evidenceByMessage
+}: {
+  item: ContentConstraint;
+  evidenceByMessage: EvidenceMap;
+}) {
+  return (
+    <InsightCard
+      title={item.title}
+      description={item.description}
+      triggerPhrase={item.triggerPhrase}
+      badges={[
+        item.constraintType,
+        item.reviewRequired ? item.reviewRequiredReason ?? "review" : "main"
+      ]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
       evidenceByMessage={evidenceByMessage}
