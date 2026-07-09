@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:tiv": "NEXT_PUBLIC_BASE_PATH=/tiv next build",
-    "start:tiv": "next start --hostname 127.0.0.1 --port 3200",
+    "start:tiv": "NEXT_PUBLIC_BASE_PATH=/tiv next start --hostname 127.0.0.1 --port 3200",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "fetcher": "node tools/chatgpt-fetcher/server.mjs",

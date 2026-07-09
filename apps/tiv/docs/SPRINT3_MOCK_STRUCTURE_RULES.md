@@ -1147,6 +1147,326 @@ Context Signals를 사용자 의도 판단에는 쓰지 않되, research-backed 
 
 ---
 
+## 11.5 Sprint 4.5 — Parser / Normalizer Hardening
+
+Sprint 4.5는 Sprint 3/4 결과를 GPT audit 파일로 검수한 뒤 발견된 오염을 줄이는 보정 단계다.
+
+목표:
+
+```text
+Clean Conversation에는 실제 user message와 assistant final answer만 남긴다.
+tool call, shell/python 실행 로그, sandbox artifact 로그, 예시/룰 스펙 본문이 구조화 결과를 오염시키지 않게 한다.
+UI 개선보다 parser/extractor 신뢰도 보정을 우선한다.
+```
+
+### Sprint 4.5A — Tool / Operation Message 분류 일반화
+
+목표:
+
+```text
+ChatGPT share payload 안에 assistant 메시지처럼 들어온 tool/operation 로그를 Context Signal로 분류한다.
+```
+
+포함 범위:
+
+```text
+1. {"queries": ...}, {"pointers": ...}, {"search_query": ...} 형태 감지
+2. open/click/find/search_result/citation/ref id 감지
+3. bash -lc, python - <<, cat > /mnt/data, sandbox:/mnt/data 감지
+4. container/file_search/browser/web.run 계열 operation log 감지
+5. semantic extraction 입력에서 제외되도록 context_signal / other_tool_call로 이동
+```
+
+완료 기준:
+
+```text
+- 위 패턴이 clean_conversation에 남지 않는다.
+- contextSignalMessages count와 contextSignalTypeCounts에 반영된다.
+- 기존 Clean Conversation parsing 테스트가 통과한다.
+```
+
+### Sprint 4.5B — Satisfaction / Example Rule-Spec 오염 방지
+
+목표:
+
+```text
+assistant의 실제 최종 답변 1개만 user reaction과 연결한다.
+예시/룰 스펙 메시지에 포함된 sample 문장을 사용자 preference/decision/open question으로 오판하지 않는다.
+```
+
+포함 범위:
+
+```text
+1. 연속 assistant 메시지가 있으면 다음 user reaction 직전 assistant만 satisfaction pair 대상으로 사용
+2. “그럼 이제”, “다음으로”, “그렇다면” 같은 topic transition은 continuing_without_clear_feedback으로 우선 처리
+3. 예시/룰 스펙 메시지에서는 action/topic만 유지하고 preference/decision/open question 추출 제외
+4. EXAMPLE_TEXT_DETECTED warning은 유지해 audit에서 검토 가능하게 표시
+```
+
+완료 기준:
+
+```text
+- tool/partial/update assistant 조각 때문에 satisfaction signal이 중복 생성되지 않는다.
+- topic shift 문장이 correction/dissatisfied로 과하게 분류되지 않는다.
+- 긴 rule spec 요청 메시지가 format/tone/length preference를 대량 생성하지 않는다.
+- 관련 unit test가 통과한다.
+```
+
+### Sprint 4.5C — Board Item 분리와 Evidence Quote 정밀화
+
+목표:
+
+```text
+복합 user message 안의 decision/action/open question을 문장 기능별로 더 정확히 나눈다.
+Board 항목의 evidence quote는 긴 원문 전체가 아니라 판단을 만든 짧은 trigger phrase로 저장한다.
+```
+
+포함 범위:
+
+```text
+1. 한 메시지 안에 confirmed/deferred/excluded decision이 섞이면 별도 DecisionItem으로 분리
+2. “PDF는 추후, 링크는 확정” 같은 복합 결정을 하나의 deferred decision으로 뭉개지 않음
+3. “어떻게 작업하면 될지 정리해줘”처럼 질문어가 있어도 명령형이면 Action 우선으로 처리
+4. Decision / Action / Preference description에 rule이 실제로 매칭된 짧은 fragment 저장
+5. 같은 message index라도 status와 trigger phrase가 다르면 별도 Board item으로 유지
+```
+
+완료 기준:
+
+```text
+- 복합 결정 메시지에서 deferred decision과 confirmed decision이 동시에 나온다.
+- action request가 open question으로 중복 생성되지 않는다.
+- Board와 Evidence Viewer에서 확인하는 quote가 짧고 직접적인 원문 조각으로 보인다.
+- 관련 unit test가 통과한다.
+```
+
+### Sprint 4.5D — Topic Flow 중복 제거와 Label 구체화
+
+목표:
+
+```text
+Topic Flow가 단순한 메시지 시간축이 아니라 논점 이동만 보여주도록 보정한다.
+중복 user message와 짧은 긍정/확인 반응은 별도 topic으로 만들지 않는다.
+```
+
+포함 범위:
+
+```text
+1. duplicateMessageIndexes에 포함된 user message는 topic start 후보에서 제외
+2. “좋아”, “오케이”, “확인”, “완료” 같은 짧은 reaction-only 메시지는 topic start 후보에서 제외
+3. 공유 링크 파싱, 공유 링크 분석, 기획안 재작성, 기획안 문서화, MockExtractor 규칙 설계처럼 자주 나오는 label을 구체화
+4. 기존 topic start/end index 계산은 clean message 기준으로 유지
+```
+
+완료 기준:
+
+```text
+- 복사/중복 메시지가 Topic Flow에 반복 topic을 만들지 않는다.
+- 단순 만족/확인 반응이 독립 topic으로 표시되지 않는다.
+- label이 “수정”, “분석” 같은 일반어보다 “기획안 재작성”, “공유 링크 파싱 방식 검토”처럼 구체적으로 나온다.
+- 관련 unit test가 통과한다.
+```
+
+### Sprint 4.5E — 복합 Decision Split
+
+목표:
+
+```text
+한 user message 안에 여러 결정이 섞여 있을 때 핵심 confirmed decision이 사라지지 않게 한다.
+긴 문장 전체를 하나의 deferred/excluded decision으로 뭉개지 않는다.
+```
+
+포함 범위:
+
+```text
+1. confirmed / deferred / excluded / candidate decision 상태 구분
+2. “PDF 업로드는 추후 기능”은 deferred로 분리
+3. “링크로만 대화 내용 파악하는 걸 기술로 잡자”는 confirmed로 분리
+4. assistant가 제안했지만 user가 확정하지 않은 decision은 candidate로 낮은 confidence 부여
+5. 같은 message index라도 status와 trigger phrase가 다르면 별도 DecisionItem 유지
+```
+
+완료 기준:
+
+```text
+- #70 같은 복합 메시지에서 confirmed 방향이 deferred 문장에 묻히지 않는다.
+- assistant-only 제안은 confirmed가 아니라 candidate로 표시된다.
+```
+
+### Sprint 4.5F — Topic Flow De-duplication / Merge
+
+목표:
+
+```text
+중복/반복 요청이 새 topic을 계속 만들지 않게 하고, 필요한 경우 기존 topic에 merge metadata로 남긴다.
+```
+
+포함 범위:
+
+```text
+1. duplicate warning이 붙은 메시지는 Topic Flow 생성 전에 제거
+2. 중복 메시지는 직전 topic의 mergedMessageIndexes에 기록
+3. 연속으로 같은 label의 topic이 생기면 새 topic을 만들지 않고 merge
+4. label 구체화 패턴 보강
+   - 기획안 재작성
+   - 공유 링크 파싱 방식 검토
+   - Codex 구현 지시서 작성
+   - GPT 검수 결과 반영
+   - Parser 정규화 개선
+```
+
+완료 기준:
+
+```text
+- #25, #88 같은 반복 요청이 중복 topic으로 보이지 않는다.
+- topic label이 사람이 봐도 논점 이동을 이해할 수 있게 나온다.
+```
+
+### Sprint 4.5G — Evidence Trigger Phrase
+
+목표:
+
+```text
+구조화 항목이 왜 추출됐는지 긴 quote를 읽지 않아도 바로 이해할 수 있게 한다.
+```
+
+포함 범위:
+
+```text
+1. DecisionItem / ActionItem / PreferenceSignal에 triggerPhrase 필드 추가
+2. triggerPhrase는 rule이 실제로 매칭된 짧은 원문 fragment로 저장
+3. UI Board / Preference card에서 Trigger를 별도 표시
+4. GPT audit export에 Trigger Phrases 섹션 추가
+```
+
+완료 기준:
+
+```text
+- UI에서 “pdf 업로드는 추후”, “링크로만 대화 내용 파악”, “.md파일로 만들어줘” 같은 핵심 근거가 바로 보인다.
+- GPT audit 파일에서 decision/action/preference별 trigger phrase를 검수할 수 있다.
+```
+
+### Sprint 4.5H — Open Question 상태 확장
+
+목표:
+
+```text
+Open Question을 단순 open/resolved로 보지 않고, 어떻게 처리됐는지 추적한다.
+```
+
+포함 범위:
+
+```text
+1. OpenQuestionItem.status 확장
+   - open
+   - answered
+   - resolved_by_user_decision
+   - superseded_by_scope_change
+2. resolvedBy 구조 추가
+   - assistant_answer
+   - user_decision
+   - superseded_by_scope_change
+3. 질문 직후 assistant가 답하면 answered 처리
+4. 이후 user decision이 나오면 resolved_by_user_decision 처리
+5. deferred/excluded decision으로 질문 범위가 사라지면 superseded_by_scope_change 처리
+6. action/correction 요청은 open question보다 우선 처리
+7. UI와 GPT audit export에 resolvedBy 표시
+```
+
+완료 기준:
+
+```text
+- assistant 답변, user decision, scope change가 서로 다른 open question 상태로 표시된다.
+- “정리해줘/확인해봐/진행해봐” 같은 명령형 요청은 open question이 아니라 action으로 남는다.
+- GPT audit 파일에서 open question의 status와 resolvedBy를 검수할 수 있다.
+```
+
+### Sprint 4.5I — Review Queue Schema
+
+목표:
+
+```text
+Main Board / Review Queue 분리 기준을 UI 추론이 아니라 구조화 결과 schema에 명시한다.
+candidate, low-confidence, assistant_suggestion, example-derived, multi-status 항목이 확정 결과처럼 보이지 않게 한다.
+```
+
+포함 범위:
+
+```text
+1. ReviewRequiredReason 타입 추가
+   - low_confidence
+   - very_low_confidence
+   - assistant_suggestion
+   - candidate_decision
+   - example_derived
+   - weak_evidence
+   - missing_quote
+   - multi_status_satisfaction
+   - context_signal_only
+2. DecisionItem / ActionItem / OpenQuestionItem / SatisfactionSignal에 review metadata 추가
+   - reviewRequired
+   - reviewRequiredReason
+   - includeInMainBoard
+   - includeInKeyDecisionIds(Decision only)
+3. Extractor가 item 생성 시 review metadata를 계산
+4. Overview keyDecisionIds는 includeInKeyDecisionIds를 사용
+5. Sprint 4 UI Main Board는 includeInMainBoard를 사용
+6. Review First는 reviewRequiredReason을 우선 표시
+7. GPT audit export에 review metadata 포함
+```
+
+완료 기준:
+
+```text
+- candidate decision은 reviewRequired=true, includeInMainBoard=false, includeInKeyDecisionIds=false다.
+- explicit user confirmed decision은 조건 충족 시 includeInMainBoard=true, includeInKeyDecisionIds=true다.
+- multi-status satisfaction은 reviewRequiredReason=multi_status_satisfaction으로 표시된다.
+- UI와 audit 파일 모두 schema의 review metadata를 기준으로 검수 가능하다.
+```
+
+### Sprint 4.5J — Weighted Overview Builder
+
+목표:
+
+```text
+Overview가 마지막 user message의 국소/메타 요청에 과도하게 끌리지 않게 한다.
+첫 user intent, high-confidence confirmed decision, 반복 topic, 최신 non-meta topic을 중심으로 전체 대화의 주제를 만든다.
+```
+
+포함 범위:
+
+```text
+1. meta request / rule spec / example-like message 감지
+2. overviewSourceCandidates 추가
+   - firstUserIntent
+   - confirmedDecisionIds
+   - recurringTopicLabels
+   - latestNonMetaTopicId
+   - latestMetaRequest
+   - excludedMetaMessageIndexes
+3. mainSubject 생성 우선순위 보정
+   - confirmed decision
+   - recurring topic label
+   - latest non-meta topic
+   - first user intent
+4. userCoreIntent가 마지막 프롬프트/문서화 요청으로 덮이지 않게 보정
+5. currentStatus 계산에서 마지막 meta request action은 blocking action으로 보지 않음
+6. satisfactionSummary는 reviewRequired satisfaction signal을 제외하고 계산
+7. resolutionSummary는 전체 중심 주제와 최근 meta request를 분리해 표현
+8. GPT audit export에 overviewSourceCandidates 포함
+```
+
+완료 기준:
+
+```text
+- 마지막 메시지가 “프롬프트 만들어줘”여도 overview.userCoreIntent가 해당 문장으로 덮이지 않는다.
+- confirmed decision과 반복 topic이 overview 중심 후보에 반영된다.
+- latest meta request는 낮은 가중치 보조 정보로만 남는다.
+- GPT audit 파일에서 overview 판단 근거를 검수할 수 있다.
+```
+
+---
+
 ## 12. 위험한 오판 케이스와 방지책
 
 ### 12.1 예시 문장을 실제 decision/action으로 오판
@@ -1156,8 +1476,9 @@ Context Signals를 사용자 의도 판단에는 쓰지 않되, research-backed 
 ```text
 1. “예:”, “예시”, “example” 이후 block은 example zone으로 표시
 2. code block / quote block 내부는 extraction 제외
-3. example zone에서 match된 item은 confidence max 0.35
-4. Board에는 기본 표시하지 않음
+3. example-like 메시지에서는 preference / decision / open question을 생성하지 않음
+4. 사용자가 실제로 요청한 action과 topic shift만 유지
+5. Board에는 기본 semantic 판단으로 표시하지 않음
 ```
 
 ### 12.2 assistant 제안을 user decision으로 오판

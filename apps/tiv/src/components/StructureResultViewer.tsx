@@ -9,6 +9,7 @@ import type {
   MockStructureResult,
   OpenQuestionItem,
   PreferenceSignal,
+  ReviewRequiredReason,
   SatisfactionSignal,
   TopicFlowItem
 } from "@/core/types/structures";
@@ -32,12 +33,7 @@ type ReviewItem = {
   type: string;
   label: string;
   confidence: number;
-  reason:
-    | "low_confidence"
-    | "very_low_confidence"
-    | "example_like"
-    | "missing_quote"
-    | "weak_evidence";
+  reason: ReviewRequiredReason | "example_like" | "missing_quote";
   evidenceMessageIndexes: number[];
 };
 
@@ -73,6 +69,7 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
   const [data, setData] = useState<StructureResultResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [auditExporting, setAuditExporting] = useState(false);
   const [activeSprint, setActiveSprint] = useState<"sprint3" | "sprint4">(
     "sprint4"
   );
@@ -134,6 +131,32 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
   const reviewItems = buildReviewItems(result, evidenceByMessage);
   const quotedEvidenceCount = result.evidence.filter((item) => item.quote?.trim()).length;
 
+  async function downloadGptAuditFile() {
+    setAuditExporting(true);
+    try {
+      const response = await fetch(
+        `${basePath}/api/analyses/${analysisId}/gpt-audit`
+      );
+      if (!response.ok) {
+        throw new Error("GPT audit export failed.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `tiv-gpt-audit-${analysisId}.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("GPT 검수 파일을 만들지 못했습니다.");
+    } finally {
+      setAuditExporting(false);
+    }
+  }
+
   return (
     <section style={{ marginBottom: 40, color: "#171717" }}>
       <header style={{ marginBottom: 20 }}>
@@ -146,6 +169,23 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
         <p style={{ color: "#404040", lineHeight: 1.65, margin: 0 }}>
           {result.overview.resolutionSummary}
         </p>
+        <button
+          type="button"
+          onClick={downloadGptAuditFile}
+          disabled={auditExporting}
+          style={{
+            marginTop: 14,
+            border: "1px solid #111827",
+            borderRadius: 8,
+            background: auditExporting ? "#f5f5f5" : "#111827",
+            color: auditExporting ? "#737373" : "#fff",
+            padding: "9px 12px",
+            cursor: auditExporting ? "not-allowed" : "pointer",
+            fontWeight: 700
+          }}
+        >
+          {auditExporting ? "GPT 검수 파일 생성 중..." : "GPT 검수 파일 만들기"}
+        </button>
       </header>
 
       <SprintTabs activeSprint={activeSprint} onChange={setActiveSprint} />
@@ -370,6 +410,15 @@ function Sprint4Panel({
     primaryPreferenceInsights,
     reviewItems
   );
+  const mainBoardDecisions = result.board.decisions.filter(
+    (item) => item.includeInMainBoard
+  );
+  const mainBoardOpenQuestions = result.board.openQuestions.filter(
+    (item) => item.includeInMainBoard
+  );
+  const mainBoardActions = result.board.actions.filter(
+    (item) => item.includeInMainBoard
+  );
 
   return (
     <>
@@ -499,8 +548,8 @@ function Sprint4Panel({
         </Section>
 
         <Section title="Board">
-          <Group title="Decisions" empty={result.board.decisions.length === 0}>
-            {result.board.decisions.map((item) => (
+          <Group title="Decisions" empty={mainBoardDecisions.length === 0}>
+            {mainBoardDecisions.map((item) => (
               <DecisionCard
                 key={item.id}
                 item={item}
@@ -508,8 +557,8 @@ function Sprint4Panel({
               />
             ))}
           </Group>
-          <Group title="Open Questions" empty={result.board.openQuestions.length === 0}>
-            {result.board.openQuestions.map((item) => (
+          <Group title="Open Questions" empty={mainBoardOpenQuestions.length === 0}>
+            {mainBoardOpenQuestions.map((item) => (
               <OpenQuestionCard
                 key={item.id}
                 item={item}
@@ -517,8 +566,8 @@ function Sprint4Panel({
               />
             ))}
           </Group>
-          <Group title="Actions" empty={result.board.actions.length === 0}>
-            {result.board.actions.map((item) => (
+          <Group title="Actions" empty={mainBoardActions.length === 0}>
+            {mainBoardActions.map((item) => (
               <ActionCard
                 key={item.id}
                 item={item}
@@ -1127,7 +1176,13 @@ function buildReviewItems(
 function reviewItem(
   type: string,
   label: string,
-  item: { id: string; confidence: number; evidenceMessageIndexes: number[] },
+  item: {
+    id: string;
+    confidence: number;
+    evidenceMessageIndexes: number[];
+    reviewRequired?: boolean;
+    reviewRequiredReason?: ReviewRequiredReason;
+  },
   result: MockStructureResult,
   evidenceByMessage: EvidenceMap
 ): ReviewItem {
@@ -1144,10 +1199,18 @@ function reviewItem(
 }
 
 function reviewReasonFor(
-  item: { confidence: number; evidenceMessageIndexes: number[] },
+  item: {
+    confidence: number;
+    evidenceMessageIndexes: number[];
+    reviewRequired?: boolean;
+    reviewRequiredReason?: ReviewRequiredReason;
+  },
   result: MockStructureResult,
   evidenceByMessage: EvidenceMap
 ): ReviewItem["reason"] {
+  if (item.reviewRequired && item.reviewRequiredReason) {
+    return item.reviewRequiredReason;
+  }
   if (item.evidenceMessageIndexes.length === 0) {
     return "weak_evidence";
   }
@@ -1265,6 +1328,7 @@ function DecisionCard({
     <InsightCard
       title={item.title}
       description={item.description}
+      triggerPhrase={item.triggerPhrase}
       badges={[item.status, item.source]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
@@ -1284,12 +1348,29 @@ function OpenQuestionCard({
     <InsightCard
       title={item.question}
       description={item.description}
-      badges={[item.status]}
+      triggerPhrase={item.triggerPhrase}
+      badges={[
+        item.status,
+        item.resolvedBy ? resolvedByLabel(item.resolvedBy) : "unresolved"
+      ]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
       evidenceByMessage={evidenceByMessage}
     />
   );
+}
+
+function resolvedByLabel(resolvedBy: OpenQuestionItem["resolvedBy"]): string {
+  if (!resolvedBy) {
+    return "unresolved";
+  }
+  if (resolvedBy.type === "assistant_answer") {
+    return `answered by #${resolvedBy.messageIndex}`;
+  }
+  if (resolvedBy.type === "user_decision") {
+    return `resolved by ${resolvedBy.decisionId}`;
+  }
+  return `superseded by ${resolvedBy.decisionId}`;
 }
 
 function ActionCard({
@@ -1303,6 +1384,7 @@ function ActionCard({
     <InsightCard
       title={item.title}
       description={item.description}
+      triggerPhrase={item.triggerPhrase}
       badges={[item.actionType, item.status, item.assignee]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
@@ -1327,9 +1409,16 @@ function TopicCard({
       evidenceMessageIndexes={topic.evidenceMessageIndexes}
       evidenceByMessage={evidenceByMessage}
       footer={
-        topic.contextSummary
-          ? `${topic.contextSummary.sourceBacked ? "source-backed" : "no source backing"} · ${topic.contextSummary.signalCount} context signals`
-          : undefined
+        [
+          topic.mergedMessageIndexes?.length
+            ? `merged #${topic.mergedMessageIndexes.join(", #")}`
+            : null,
+          topic.contextSummary
+            ? `${topic.contextSummary.sourceBacked ? "source-backed" : "no source backing"} · ${topic.contextSummary.signalCount} context signals`
+            : null
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined
       }
     />
   );
@@ -1346,6 +1435,7 @@ function PreferenceCard({
     <InsightCard
       title={item.normalizedLabel}
       description={item.description}
+      triggerPhrase={item.triggerPhrase}
       badges={[item.category, item.polarity, item.reinforced ? "reinforced" : "single signal"]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
@@ -1383,6 +1473,7 @@ function SatisfactionCard({
 function InsightCard({
   title,
   description,
+  triggerPhrase,
   badges,
   confidence,
   evidenceMessageIndexes,
@@ -1392,6 +1483,7 @@ function InsightCard({
 }: {
   title: string;
   description: string;
+  triggerPhrase?: string;
   badges: string[];
   confidence: number;
   evidenceMessageIndexes: number[];
@@ -1425,6 +1517,18 @@ function InsightCard({
       {description ? (
         <p style={{ margin: "8px 0 0", color: "#404040", lineHeight: 1.55 }}>
           {description}
+        </p>
+      ) : null}
+      {triggerPhrase ? (
+        <p
+          style={{
+            margin: "8px 0 0",
+            color: "#171717",
+            fontSize: 13,
+            lineHeight: 1.45
+          }}
+        >
+          <strong>Trigger:</strong> {triggerPhrase}
         </p>
       ) : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
@@ -1548,6 +1652,16 @@ function reviewReasonLabel(reason: ReviewItem["reason"]): string {
       return "근거 quote 누락";
     case "weak_evidence":
       return "직접 근거 부족";
+    case "assistant_suggestion":
+      return "assistant 제안";
+    case "candidate_decision":
+      return "후보 decision";
+    case "example_derived":
+      return "예시 기반 항목";
+    case "multi_status_satisfaction":
+      return "복수 satisfaction 충돌";
+    case "context_signal_only":
+      return "context signal 단독 근거";
     case "low_confidence":
       return "낮은 신뢰도";
   }

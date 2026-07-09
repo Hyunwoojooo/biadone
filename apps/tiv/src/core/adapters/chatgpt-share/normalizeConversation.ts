@@ -129,6 +129,10 @@ function normalizeMessage(
       modelSlug: extractModelSlug(rawMessage.metadata),
       hasUnsupportedContent: content.hasUnsupportedContent,
       messageCategory: classification.messageCategory,
+      visibility: classification.visibility,
+      contentType: classification.contentType,
+      semanticAnalyzable: classification.semanticAnalyzable,
+      assistantMessageType: classification.assistantMessageType,
       contextSignalType: classification.contextSignalType,
       internalContentType: classification.internalContentType
     }
@@ -144,6 +148,10 @@ function classifyMessage(input: {
   messageCategory: CanonicalMessage["metadata"]["messageCategory"];
   contextSignalType?: ContextSignalType;
   internalContentType?: string;
+  visibility?: CanonicalMessage["metadata"]["visibility"];
+  contentType?: CanonicalMessage["metadata"]["contentType"];
+  semanticAnalyzable?: boolean;
+  assistantMessageType?: CanonicalMessage["metadata"]["assistantMessageType"];
 } {
   const unsupportedLabel = input.blocks.find(
     (block): block is Extract<ContentBlock, { type: "unsupported" }> =>
@@ -153,7 +161,24 @@ function classifyMessage(input: {
   if (unsupportedLabel && isExcludedInternalContentType(unsupportedLabel)) {
     return {
       messageCategory: "excluded_internal",
-      internalContentType: unsupportedLabel
+      internalContentType: unsupportedLabel,
+      visibility: "not_user_visible",
+      contentType: "internal",
+      semanticAnalyzable: false
+    };
+  }
+
+  if (isAssistantFinalAnswer(input.role, input.text)) {
+    return {
+      messageCategory: "clean_conversation",
+      visibility: "user_visible",
+      contentType: input.text.includes("sandbox:/mnt/data/")
+        ? "artifact_delivery"
+        : contentTypeForCleanText(input.text),
+      semanticAnalyzable: true,
+      assistantMessageType: input.text.includes("sandbox:/mnt/data/")
+        ? "final_answer_with_artifact"
+        : "final_answer"
     };
   }
 
@@ -161,7 +186,11 @@ function classifyMessage(input: {
   if (contextSignalType) {
     return {
       messageCategory: "context_signal",
-      contextSignalType
+      contextSignalType,
+      visibility: "not_user_visible",
+      contentType: contentTypeForContextSignal(input.text, contextSignalType),
+      semanticAnalyzable: false,
+      assistantMessageType: "tool_operation"
     };
   }
 
@@ -172,11 +201,20 @@ function classifyMessage(input: {
   ) {
     return {
       messageCategory: "excluded_internal",
-      internalContentType: unsupportedLabel
+      internalContentType: unsupportedLabel,
+      visibility: "not_user_visible",
+      contentType: "internal",
+      semanticAnalyzable: false
     };
   }
 
-  return { messageCategory: "clean_conversation" };
+  return {
+    messageCategory: "clean_conversation",
+    visibility: "user_visible",
+    contentType: contentTypeForCleanText(input.text),
+    semanticAnalyzable: true,
+    assistantMessageType: input.role === "assistant" ? "final_answer" : undefined
+  };
 }
 
 function isExcludedInternalContentType(label: string): boolean {
@@ -190,27 +228,49 @@ function isExcludedInternalContentType(label: string): boolean {
 
 function detectContextSignalType(text: string): ContextSignalType | null {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    return null;
+
+  const commandSignalType = detectCommandLikeContextSignal(trimmed);
+  if (commandSignalType) {
+    return commandSignalType;
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return null;
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    return detectJsonContextSignalType(parsed as Record<string, unknown>);
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
+  return null;
+}
 
+function detectJsonContextSignalType(
+  parsed: Record<string, unknown>
+): ContextSignalType | null {
   const keys = new Set(Object.keys(parsed));
-  if (keys.has("system1_search_query")) {
+  if (keys.has("uri") && typeof parsed.uri === "string" && parsed.uri.startsWith("skill://")) {
+    return "skill_read";
+  }
+  if (keys.has("paths") || keys.has("query")) {
+    return "connector_tool_call";
+  }
+  if (
+    keys.has("system1_search_query") ||
+    keys.has("search_query") ||
+    keys.has("queries")
+  ) {
     return "search_query";
   }
-  if (keys.has("open")) {
-    return "opened_source";
+  if (keys.has("open") || keys.has("pointers")) {
+    return keys.has("pointers") ? "pointer_reference" : "opened_source";
   }
   if (keys.has("click")) {
     return "clicked_source";
@@ -218,14 +278,171 @@ function detectContextSignalType(text: string): ContextSignalType | null {
   if (keys.has("find")) {
     return "find_pattern";
   }
-  if (keys.has("system1_search_result")) {
+  if (
+    keys.has("system1_search_result") ||
+    keys.has("search_result") ||
+    keys.has("results")
+  ) {
     return "search_result";
   }
-  if (keys.has("ref_id") || keys.has("ref_ids")) {
+  if (
+    keys.has("ref_id") ||
+    keys.has("ref_ids") ||
+    keys.has("citation") ||
+    keys.has("citations")
+  ) {
     return "citation_or_ref";
+  }
+  if (
+    keys.has("bash") ||
+    keys.has("python") ||
+    keys.has("container") ||
+    keys.has("file_search") ||
+    keys.has("browser") ||
+    keys.has("web.run") ||
+    keys.has("tool")
+  ) {
+    if (keys.has("bash")) {
+      return "bash_execution";
+    }
+    if (keys.has("python")) {
+      return "python_execution";
+    }
+    return "connector_tool_call";
   }
 
   return null;
+}
+
+function detectCommandLikeContextSignal(trimmed: string): ContextSignalType | null {
+  if (!trimmed) {
+    return null;
+  }
+
+  if (
+    /^bash\s+-lc/.test(trimmed) ||
+    /^(sh|zsh|node)\s+(-lc|-c|-?\s*<<)/.test(trimmed)
+  ) {
+    return "bash_execution";
+  }
+
+  if (/^python3?\b/.test(trimmed) || /^from pathlib import Path\b/.test(trimmed)) {
+    return "python_execution";
+  }
+
+  if (/^html\s*=\s*r'''/.test(trimmed) || /^<!doctype html/i.test(trimmed)) {
+    return "artifact_generation_code";
+  }
+
+  if (
+    /^cat\s+>?\s*\/mnt\/data\//.test(trimmed) ||
+    /^\/mnt\/data\//.test(trimmed) ||
+    /^ls\s+-(la|r)\b/i.test(trimmed)
+  ) {
+    return "file_write_operation";
+  }
+
+  if (/^The output of this plugin was redacted\.?$/i.test(trimmed)) {
+    return "redacted_tool_result";
+  }
+
+  if (/Code executed with no return value/i.test(trimmed)) {
+    return "connector_tool_result";
+  }
+
+  if (/^(container|file_search|browser|web\.run)\b/.test(trimmed)) {
+    return "connector_tool_call";
+  }
+
+  if (isSandboxDownloadOnly(trimmed)) {
+    return "artifact_delivery_candidate";
+  }
+
+  return null;
+}
+
+function isSandboxDownloadOnly(trimmed: string): boolean {
+  if (!trimmed.includes("sandbox:/mnt/data/")) {
+    return false;
+  }
+
+  const withoutLinks = trimmed
+    .replace(/\[[^\]]+\]\(sandbox:\/mnt\/data\/[^)]+\)/g, "")
+    .replace(/sandbox:\/mnt\/data\/\S+/g, "")
+    .replace(/[\s\d.·\-_*()[\]]+/g, "")
+    .trim();
+
+  return (
+    withoutLinks.length === 0 ||
+    /^(다운로드|파일|완료|생성|첨부|링크|md|markdown)+$/i.test(withoutLinks)
+  );
+}
+
+function isAssistantFinalAnswer(
+  role: CanonicalMessage["role"],
+  text: string
+): boolean {
+  if (role !== "assistant") {
+    return false;
+  }
+
+  const trimmed = text.trim();
+  if (
+    !hasNaturalLanguage(trimmed) ||
+    isPureToolOperation(trimmed) ||
+    isSandboxDownloadOnly(trimmed)
+  ) {
+    return false;
+  }
+
+  return /(완료했습니다|완성했습니다|만들었습니다|만들었어|정리했습니다|아래처럼|시작은 가능합니다|맞아|좋아|파일 다운로드|zip 다운로드|다운로드|실행은|구성은|이번 버전|다음 작업은|수정 반영|반영해서|가능합니다|다만)/i.test(
+    trimmed
+  );
+}
+
+function hasNaturalLanguage(text: string): boolean {
+  return /[가-힣a-zA-Z]/.test(text) && text.replace(/\s+/g, " ").length >= 12;
+}
+
+function isPureToolOperation(text: string): boolean {
+  return Boolean(detectCommandLikeContextSignal(text)) && !isSandboxDownloadOnly(text);
+}
+
+function contentTypeForContextSignal(
+  text: string,
+  signalType: ContextSignalType
+): CanonicalMessage["metadata"]["contentType"] {
+  if (signalType === "bash_execution") {
+    return "bash";
+  }
+  if (signalType === "python_execution") {
+    return "python";
+  }
+  if (signalType === "artifact_generation_code") {
+    return "html_code";
+  }
+  if (signalType === "redacted_tool_result") {
+    return "redacted_plugin_result";
+  }
+  if (signalType === "connector_tool_result") {
+    return "plugin_result";
+  }
+  if (text.trim().startsWith("{")) {
+    return "json_tool_call";
+  }
+  return "plain_text";
+}
+
+function contentTypeForCleanText(
+  text: string
+): CanonicalMessage["metadata"]["contentType"] {
+  if (text.includes("sandbox:/mnt/data/")) {
+    return "artifact_delivery";
+  }
+  if (/^#|\n[-*]\s|\[[^\]]+\]\([^)]+\)/m.test(text)) {
+    return "markdown";
+  }
+  return "plain_text";
 }
 
 

@@ -5,6 +5,7 @@ export type MockStructureResult = {
     mode: "rule_based";
   };
   overview: Overview;
+  overviewSourceCandidates: OverviewSourceCandidates;
   topicFlow: TopicFlowItem[];
   preferenceSignals: PreferenceSignal[];
   satisfactionSignals: SatisfactionSignal[];
@@ -28,6 +29,27 @@ export type Overview = {
   confidence: number;
 };
 
+export type OverviewSourceCandidates = {
+  firstUserIntent?: {
+    messageIndex: number;
+    preview: string;
+    weight: number;
+  };
+  confirmedDecisionIds: string[];
+  recurringTopicLabels: Array<{
+    label: string;
+    count: number;
+    weight: number;
+  }>;
+  latestNonMetaTopicId?: string;
+  latestMetaRequest?: {
+    messageIndex: number;
+    preview: string;
+    weight: number;
+  };
+  excludedMetaMessageIndexes: number[];
+};
+
 export type TopicFlowItem = {
   id: string;
   order: number;
@@ -37,6 +59,7 @@ export type TopicFlowItem = {
   endMessageIndex: number;
   changeReason: TopicChangeReason;
   evidenceMessageIndexes: number[];
+  mergedMessageIndexes?: number[];
   contextSignalRefs?: string[];
   contextSummary?: TopicContextSummary;
   confidence: number;
@@ -75,10 +98,29 @@ export type PreferenceSignal = {
   polarity: "positive" | "negative";
   normalizedLabel: string;
   description: string;
+  triggerPhrase?: string;
   reinforced: boolean;
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];
+};
+
+export type ReviewRequiredReason =
+  | "low_confidence"
+  | "very_low_confidence"
+  | "assistant_suggestion"
+  | "candidate_decision"
+  | "example_derived"
+  | "weak_evidence"
+  | "missing_quote"
+  | "multi_status_satisfaction"
+  | "context_signal_only";
+
+export type ReviewMetadata = {
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
+  includeInKeyDecisionIds?: boolean;
 };
 
 export type SatisfactionSignal = {
@@ -91,6 +133,9 @@ export type SatisfactionSignal = {
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
 };
 
 export type SatisfactionStatus =
@@ -99,6 +144,13 @@ export type SatisfactionStatus =
   | "dissatisfied"
   | "correction_requested"
   | "clarification_requested"
+  | "problem_reported"
+  | "task_failed"
+  | "direction_changed"
+  | "alternative_proposed"
+  | "new_requirement_added"
+  | "meta_request"
+  | "topic_shift"
   | "continuing_without_clear_feedback";
 
 export type Board = {
@@ -111,34 +163,63 @@ export type DecisionItem = {
   id: string;
   title: string;
   description: string;
-  status: "confirmed" | "excluded" | "deferred";
-  source: "explicit_user" | "assistant_suggestion_accepted" | "inferred";
+  triggerPhrase?: string;
+  status: "confirmed" | "excluded" | "deferred" | "candidate";
+  source:
+    | "explicit_user"
+    | "assistant_suggestion"
+    | "assistant_suggestion_accepted"
+    | "inferred";
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
+  includeInKeyDecisionIds: boolean;
 };
 
 export type OpenQuestionItem = {
   id: string;
   question: string;
   description: string;
-  status: "open" | "resolved" | "superseded";
+  triggerPhrase?: string;
+  status: OpenQuestionStatus;
   evidenceMessageIndexes: number[];
+  resolvedBy?: OpenQuestionResolvedBy;
   resolvedByDecisionId?: string;
   confidence: number;
   rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
 };
+
+export type OpenQuestionStatus =
+  | "open"
+  | "answered"
+  | "resolved_by_user_decision"
+  | "superseded_by_scope_change";
+
+export type OpenQuestionResolvedBy =
+  | { type: "assistant_answer"; messageIndex: number }
+  | { type: "user_decision"; decisionId: string }
+  | { type: "superseded_by_scope_change"; decisionId: string };
 
 export type ActionItem = {
   id: string;
   title: string;
   description: string;
+  triggerPhrase?: string;
   actionType: "user_requested" | "team_next" | "assistant_suggested";
   assignee: "assistant" | "user" | "team" | "unknown";
   status: "requested" | "proposed" | "accepted" | "completed";
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];
+  reviewRequired: boolean;
+  reviewRequiredReason?: ReviewRequiredReason;
+  includeInMainBoard: boolean;
 };
 
 export type EvidenceItem = {

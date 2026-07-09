@@ -31,6 +31,25 @@ export type CanonicalMessage = {
     modelSlug?: string | null;
     hasUnsupportedContent?: boolean;
     messageCategory: MessageCategory;
+    visibility?: "user_visible" | "not_user_visible" | "unknown";
+    contentType?:
+      | "plain_text"
+      | "markdown"
+      | "json_tool_call"
+      | "bash"
+      | "python"
+      | "html_code"
+      | "artifact_delivery"
+      | "plugin_result"
+      | "redacted_plugin_result"
+      | "internal";
+    semanticAnalyzable?: boolean;
+    assistantMessageType?:
+      | "final_answer"
+      | "partial_answer"
+      | "final_answer_with_artifact"
+      | "tool_operation"
+      | "tool_result";
     contextSignalType?: ContextSignalType;
     internalContentType?: string;
   };
@@ -48,6 +67,16 @@ export type ContextSignalType =
   | "find_pattern"
   | "search_result"
   | "citation_or_ref"
+  | "pointer_reference"
+  | "bash_execution"
+  | "python_execution"
+  | "file_write_operation"
+  | "artifact_generation_code"
+  | "connector_tool_call"
+  | "connector_tool_result"
+  | "redacted_tool_result"
+  | "skill_read"
+  | "artifact_delivery_candidate"
   | "other_tool_call";
 
 export type ContentBlock =
