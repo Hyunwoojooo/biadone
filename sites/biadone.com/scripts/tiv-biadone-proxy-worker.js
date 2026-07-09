@@ -6,7 +6,7 @@ export default {
       return fetch(request);
     }
 
-    url.hostname = "biadone.pages.dev";
+    url.hostname = "chatgpt-fetcher.biadone.com";
     url.protocol = "https:";
 
     const response = await fetch(new Request(url, request));
