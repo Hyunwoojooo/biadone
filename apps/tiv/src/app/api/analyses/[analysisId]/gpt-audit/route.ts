@@ -53,12 +53,13 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
-  const result = extractMockStructure(record.conversation);
+  const result = record.structureResult ?? extractMockStructure(record.conversation);
   const markdown = buildGptAuditMarkdown({
     analysisId: record.id,
     shareUrl: record.shareUrl,
     conversation: record.conversation,
-    result
+    result,
+    hybridExtraction: record.hybridExtraction
   });
 
   return new NextResponse(markdown, {

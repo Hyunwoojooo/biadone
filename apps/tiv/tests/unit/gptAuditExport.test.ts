@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildGptAuditMarkdown } from "../../src/core/export/gptAuditExport";
 import { extractMockStructure } from "../../src/core/extractors/mockStructureExtractor";
+import { convertRuleResultToSemanticItems } from "../../src/core/extractors/ruleSemanticAdapter";
 import type {
   CanonicalConversation,
   CanonicalMessage
@@ -38,7 +39,21 @@ describe("buildGptAuditMarkdown", () => {
       analysisId: "ana_test",
       shareUrl: "https://chatgpt.com/share/test",
       conversation,
-      result
+      result,
+      hybridExtraction: {
+        mode: "shadow",
+        createdAt: "2026-07-10T00:00:00.000Z",
+        ruleResult: {
+          extractorVersion: result.extractor.version,
+          items: convertRuleResultToSemanticItems(result)
+        },
+        llmResult: {
+          status: "disabled",
+          model: null,
+          items: [],
+          error: { code: "SHADOW_DISABLED", message: "disabled in test" }
+        }
+      }
     });
 
     expect(markdown).toContain("# TIV GPT Audit File");
@@ -52,9 +67,13 @@ describe("buildGptAuditMarkdown", () => {
     expect(markdown).toContain('"reviewRequired"');
     expect(markdown).toContain('"includeInMainBoard"');
     expect(markdown).toContain('"openQuestions"');
-    expect(markdown).toContain("## 7. Clean Conversation Messages");
-    expect(markdown).toContain("## 8. Context Signals");
-    expect(markdown).toContain("## 9. Excluded/Internal Messages");
+    expect(markdown).toContain("## 7. Sprint 5A Shadow Comparison");
+    expect(markdown).toContain('"llmStatus": "disabled"');
+    expect(markdown).toContain('"ruleItems"');
+    expect(markdown).toContain('"llmItems": []');
+    expect(markdown).toContain("## 8. Clean Conversation Messages");
+    expect(markdown).toContain("## 9. Context Signals");
+    expect(markdown).toContain("## 10. Excluded/Internal Messages");
   });
 });
 

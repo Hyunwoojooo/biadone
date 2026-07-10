@@ -1,10 +1,14 @@
 import type { CanonicalConversation } from "../types/conversation";
+import type { HybridExtractionResult } from "../types/semantic";
+import type { MockStructureResult } from "../types/structures";
 
 export type AnalysisRecord = {
   id: string;
   status: "completed" | "failed";
   shareUrl: string;
   conversation?: CanonicalConversation;
+  structureResult?: MockStructureResult;
+  hybridExtraction?: HybridExtractionResult;
   error?: {
     code: string;
     message: string;
@@ -18,6 +22,8 @@ export interface AnalysisStore {
   createCompleted(input: {
     shareUrl: string;
     conversation: CanonicalConversation;
+    structureResult: MockStructureResult;
+    hybridExtraction: HybridExtractionResult;
   }): AnalysisRecord;
   createFailed(input: {
     shareUrl: string;
@@ -32,6 +38,8 @@ export class MemoryAnalysisStore implements AnalysisStore {
   createCompleted(input: {
     shareUrl: string;
     conversation: CanonicalConversation;
+    structureResult: MockStructureResult;
+    hybridExtraction: HybridExtractionResult;
   }): AnalysisRecord {
     const now = new Date().toISOString();
     const record: AnalysisRecord = {
@@ -39,6 +47,8 @@ export class MemoryAnalysisStore implements AnalysisStore {
       status: "completed",
       shareUrl: input.shareUrl,
       conversation: input.conversation,
+      structureResult: input.structureResult,
+      hybridExtraction: input.hybridExtraction,
       createdAt: now,
       updatedAt: now
     };

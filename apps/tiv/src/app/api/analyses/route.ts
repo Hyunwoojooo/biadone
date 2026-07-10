@@ -6,6 +6,8 @@ import {
   importChatGPTShareUrl
 } from "@/core/adapters/chatgpt-share";
 import { getAnalysisStore } from "@/core/storage/analysisStore";
+import { extractMockStructure } from "@/core/extractors/mockStructureExtractor";
+import { runShadowExtraction } from "@/core/extractors/runShadowExtraction";
 
 const createAnalysisRequestSchema = z.object({
   shareUrl: z.string().min(1)
@@ -31,14 +33,22 @@ export async function POST(request: Request) {
 
   try {
     const result = await importChatGPTShareUrl({ url: parsed.data.shareUrl });
+    const structureResult = extractMockStructure(result.conversation);
+    const hybridExtraction = await runShadowExtraction({
+      conversation: result.conversation,
+      ruleResult: structureResult
+    });
     const record = store.createCompleted({
       shareUrl: parsed.data.shareUrl,
-      conversation: result.conversation
+      conversation: result.conversation,
+      structureResult,
+      hybridExtraction
     });
 
     return NextResponse.json({
       analysisId: record.id,
-      status: record.status
+      status: record.status,
+      shadowStatus: record.hybridExtraction?.llmResult.status
     });
   } catch (error) {
     const normalizedError = normalizeAnalysisError(error);

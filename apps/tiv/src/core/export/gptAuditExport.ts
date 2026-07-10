@@ -1,15 +1,17 @@
 import type { CanonicalConversation, CanonicalMessage } from "../types/conversation";
 import type { MockStructureResult } from "../types/structures";
+import type { HybridExtractionResult, SemanticItem } from "../types/semantic";
 
 type GptAuditExportInput = {
   analysisId: string;
   shareUrl: string;
   conversation: CanonicalConversation;
   result: MockStructureResult;
+  hybridExtraction?: HybridExtractionResult;
 };
 
 export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
-  const { analysisId, shareUrl, conversation, result } = input;
+  const { analysisId, shareUrl, conversation, result, hybridExtraction } = input;
   const cleanMessages = conversation.messages.filter(
     (message) => message.metadata.messageCategory === "clean_conversation"
   );
@@ -149,20 +151,65 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
       decisionConflicts: result.diagnostics.decisionConflicts
     }),
     "",
-    "## 7. Clean Conversation Messages",
+    "## 7. Sprint 5A Shadow Comparison",
+    "",
+    hybridExtraction
+      ? fencedJson({
+          mode: hybridExtraction.mode,
+          createdAt: hybridExtraction.createdAt,
+          llmStatus: hybridExtraction.llmResult.status,
+          llmModel: hybridExtraction.llmResult.model,
+          llmError: hybridExtraction.llmResult.error,
+          comparison: compareSemanticItems(
+            hybridExtraction.ruleResult.items,
+            hybridExtraction.llmResult.items
+          ),
+          ruleItems: hybridExtraction.ruleResult.items,
+          llmItems: hybridExtraction.llmResult.items
+        })
+      : "_Shadow extraction was not stored for this analysis._",
+    "",
+    "## 8. Clean Conversation Messages",
     "",
     renderMessages(cleanMessages),
     "",
-    "## 8. Context Signals",
+    "## 9. Context Signals",
     "",
     renderMessages(contextSignals),
     "",
-    "## 9. Excluded/Internal Messages",
+    "## 10. Excluded/Internal Messages",
     "",
     "내부 메시지는 semantic 분석 대상이 아니므로 원문 전체 대신 type과 짧은 preview만 제공합니다.",
     "",
     renderInternalMessages(excludedInternal)
   ].join("\n");
+}
+
+function compareSemanticItems(ruleItems: SemanticItem[], llmItems: SemanticItem[]) {
+  return {
+    ruleItemCount: ruleItems.length,
+    llmItemCount: llmItems.length,
+    ruleTypeCounts: countSemanticTypes(ruleItems),
+    llmTypeCounts: countSemanticTypes(llmItems),
+    typesOnlyInRule: difference(typesOf(ruleItems), typesOf(llmItems)),
+    typesOnlyInLlm: difference(typesOf(llmItems), typesOf(ruleItems))
+  };
+}
+
+function countSemanticTypes(items: SemanticItem[]): Record<string, number> {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.type] = (counts[item.type] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function typesOf(items: SemanticItem[]): string[] {
+  return [...new Set(items.map((item) => item.type))];
+}
+
+function difference(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return left.filter((item) => !rightSet.has(item));
 }
 
 function renderMessages(messages: CanonicalMessage[]): string {

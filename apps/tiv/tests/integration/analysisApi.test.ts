@@ -5,13 +5,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "../../src/app/api/analyses/route";
 import { GET as GET_MESSAGES } from "../../src/app/api/analyses/[analysisId]/messages/route";
+import { GET as GET_RESULT } from "../../src/app/api/analyses/[analysisId]/result/route";
+import { getAnalysisStore } from "../../src/core/storage/analysisStore";
 
 describe("analysis API Sprint 2 flow", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("creates an analysis and returns restored messages", async () => {
+    vi.stubEnv("TIV_LLM_SHADOW_ENABLED", "false");
     const fixture = await readFile(
       join(process.cwd(), "tests/fixtures/chatgpt-share/simple-ko.html"),
       "utf8"
@@ -40,11 +44,21 @@ describe("analysis API Sprint 2 flow", () => {
     const createPayload = (await createResponse.json()) as {
       analysisId: string;
       status: string;
+      shadowStatus: string;
     };
 
     expect(createResponse.status).toBe(200);
     expect(createPayload.status).toBe("completed");
     expect(createPayload.analysisId).toMatch(/^ana_/);
+    expect(createPayload.shadowStatus).toBe("disabled");
+
+    const stored = getAnalysisStore().get(createPayload.analysisId);
+    expect(stored?.structureResult?.extractor.name).toBe("MockStructureExtractor");
+    expect(stored?.hybridExtraction).toMatchObject({
+      mode: "shadow",
+      llmResult: { status: "disabled", items: [] }
+    });
+    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(0);
 
     const messagesResponse = await GET_MESSAGES(
       new Request(
@@ -67,5 +81,73 @@ describe("analysis API Sprint 2 flow", () => {
       "assistant"
     ]);
     expect(messagesPayload.messages[0]?.text).toContain("JARVIS Context Mapper");
+
+    const resultResponse = await GET_RESULT(
+      new Request(`http://localhost/api/analyses/${createPayload.analysisId}/result`),
+      { params: Promise.resolve({ analysisId: createPayload.analysisId }) }
+    );
+    const resultPayload = (await resultResponse.json()) as Record<string, unknown>;
+    expect(resultResponse.status).toBe(200);
+    expect(resultPayload).toHaveProperty("result");
+    expect(resultPayload).not.toHaveProperty("hybridExtraction");
+  });
+
+  it("keeps analysis completed and serves rule results when LLM shadow fails", async () => {
+    const fixture = await readFile(
+      join(process.cwd(), "tests/fixtures/chatgpt-share/simple-ko.html"),
+      "utf8"
+    );
+    vi.stubEnv("TIV_LLM_SHADOW_ENABLED", "true");
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("api.openai.com")) {
+          return new Response("shadow failure", { status: 500 });
+        }
+        return new Response(fixture, {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        });
+      })
+    );
+
+    const createResponse = await POST(
+      new Request("http://localhost/api/analyses", {
+        method: "POST",
+        body: JSON.stringify({
+          shareUrl: "https://chatgpt.com/share/shadow-failure-fixture"
+        })
+      })
+    );
+    const createPayload = (await createResponse.json()) as {
+      analysisId: string;
+      status: string;
+      shadowStatus: string;
+    };
+
+    expect(createResponse.status).toBe(200);
+    expect(createPayload).toMatchObject({
+      status: "completed",
+      shadowStatus: "failed"
+    });
+
+    const stored = getAnalysisStore().get(createPayload.analysisId);
+    expect(stored?.hybridExtraction?.llmResult.status).toBe("failed");
+    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(0);
+
+    const resultResponse = await GET_RESULT(
+      new Request(`http://localhost/api/analyses/${createPayload.analysisId}/result`),
+      { params: Promise.resolve({ analysisId: createPayload.analysisId }) }
+    );
+    const resultPayload = (await resultResponse.json()) as {
+      status: string;
+      result?: { extractor?: { name?: string } };
+    };
+
+    expect(resultResponse.status).toBe(200);
+    expect(resultPayload.status).toBe("completed");
+    expect(resultPayload.result?.extractor?.name).toBe("MockStructureExtractor");
   });
 });
