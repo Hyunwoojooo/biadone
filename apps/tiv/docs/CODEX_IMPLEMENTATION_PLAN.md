@@ -2,7 +2,7 @@
 
 ## JARVIS Context Mapper v0.1
 
-문서 상태: Draft v0.1  
+문서 상태: Draft v0.1 (Sprint 4.5 Audit 개정)
 문서 목적: Codex 또는 개발 에이전트가 바로 구현을 시작할 수 있도록, 개발 순서·모듈 책임·완료 기준·금지 범위를 명확히 정의한다.  
 기준 문서:
 
@@ -26,10 +26,12 @@ ChatGPT Share URL
 → ChatGPTShareAdapter
 → CanonicalConversation
 → Segmenter
-→ LLM Context Extractor
-→ Context Validator
+├─ RuleExtractor
+└─ LLMExtractor (Shadow Mode)
+→ Evidence Verifier
+→ Conflict Resolver
 → Structure Builder
-→ UI / Export
+→ Main Board / Review Queue / Export
 ```
 
 v0.1에서 가장 중요한 성공 조건은 다음이다.
@@ -57,16 +59,18 @@ v0.1에서 가장 중요한 성공 조건은 다음이다.
 9. CanonicalConversation JSON 생성
 10. 원문 메시지 Viewer
 11. Conversation Segment 생성
-12. LLM 기반 Context Extraction
-13. Context Validation
-14. Overview 생성
-15. Topic Map 생성
-16. Thought Flow 생성
-17. Decision / Pending / Action Board 생성
-18. Entity Graph 데이터 생성
-19. Source Evidence 연결
-20. Markdown Export
-21. JSON Export
+12. Rule 기반 Guardrail Extraction
+13. LLM 기반 Context Extraction (Shadow Mode)
+14. Evidence / Semantic / Conflict Validation
+15. Overview 생성
+16. Topic Map 생성
+17. Thought Flow 생성
+18. Decision / Pending / Action Board 생성
+19. Main Board / Review Queue 분리
+20. Entity Graph 데이터 생성
+21. Source Evidence 연결
+22. Markdown Export
+23. JSON Export
 ```
 
 ### 1.2 v0.1에서 절대 구현하지 말 것
@@ -826,11 +830,58 @@ Sprint 5에서 LLM으로 개선한다.
 
 ---
 
-## 10. Sprint 5 — LLM Context Extraction
+## 9.5 Sprint 4.5 — Parser / Normalizer / Rule Guardrail 보정
 
 ### 목표
 
-Segment에서 Topic, Decision, Pending, Action, Entity, Relation 후보를 추출한다.
+LLM을 붙이기 전에 Clean Conversation과 규칙 기반 구조화 결과가 안정적인 기준선이 되도록 만든다.
+
+### 작업
+
+```text
+1. tool/plugin/search/connector 로그를 Context Signal 또는 Internal로 분리
+2. 사용자-visible assistant final answer와 transition을 구분
+3. 복합 발화를 clause 단위 Decision / Action / Preference / Constraint로 분리
+4. deferred / excluded / confirmed / candidate 충돌 해소
+5. Preference / Content Constraint / Problem Signal / Open Question 분리
+6. Satisfaction pairing과 Open Question resolvedBy 보정
+7. confidence 0.75 및 Review Queue 정책 적용
+8. trigger phrase, matched span, conflict diagnostics를 Audit Export에 포함
+```
+
+### 완료 기준
+
+```text
+- Clean Conversation에 순수 tool operation이 없음
+- 사용자-visible assistant final answer가 누락되지 않음
+- 같은 evidence에서 Decision status 충돌이 없음
+- pain point가 Open Question으로 추출되지 않음
+- explicit user action이 team_next로 오분류되지 않음
+- example-derived semantic item이 Main Board에 노출되지 않음
+- confidence 0.75 미만 항목이 Main Board에 노출되지 않음
+```
+
+---
+
+## 10. Sprint 5 — Hybrid LLM Extraction
+
+Sprint 5에서는 LLM을 RuleExtractor의 대체재로 바로 사용하지 않는다. 같은 Canonical Conversation을 RuleExtractor와 LLMExtractor에 병렬로 입력하고, LLM 결과를 Shadow Mode에서 비교한다.
+
+```text
+Canonical Conversation
+├─ RuleExtractor
+└─ LLMExtractor
+
+→ Evidence Verifier
+→ Rule vs LLM Conflict Resolver
+→ Main Board / Review Queue
+```
+
+### Sprint 5A — LLMExtractor Shadow Mode
+
+### 목표
+
+Segment에서 SemanticItem 후보를 추출하되, LLM 결과를 Main Board에 직접 반영하지 않는다.
 
 ### 구현 파일
 
@@ -850,6 +901,9 @@ src/core/extraction/
 3. JSON Schema 또는 Zod schema로 검증한다.
 4. OPENAI_API_KEY가 없으면 MockExtractor로 동작해야 한다.
 5. LLM 호출 실패가 전체 import 실패로 이어지지 않게 한다.
+6. LLM 결과는 Rule 결과와 분리 저장하고 Shadow Mode 비교에만 사용한다.
+7. LLM은 clause 분리, 의미 후보, topic label, overview, satisfaction nuance를 제안한다.
+8. Clean 분리, message ID, duplicate, schema, 확정 조건, 노출 여부는 Rule/Validator가 통제한다.
 ```
 
 ### Extractor Interface
@@ -869,6 +923,17 @@ export type SegmentExtractionInput = {
   segment: ConversationSegment;
   messages: CanonicalMessage[];
   language: "ko" | "en" | "unknown";
+};
+```
+
+```ts
+export type HybridExtractionResult = {
+  ruleResult: RuleExtractionResult;
+  llmResult: LlmExtractionResult;
+  verifiedItems: SemanticItem[];
+  rejectedItems: RejectedItem[];
+  conflicts: ExtractionConflict[];
+  reviewQueue: ReviewItem[];
 };
 ```
 
@@ -901,21 +966,68 @@ MockExtractor는 개발 중 UI와 파이프라인 테스트를 위해 필요하�
 - evidenceMessageIndexes 포함
 ```
 
-### 완료 기준
+### Sprint 5A 완료 기준
 
 ```text
 - MockExtractor로 전체 구조화 파이프라인이 동작함
 - LLMExtractor는 schema validation을 통과하는 결과만 반환함
-- evidenceMessageIndexes가 message 범위를 벗어나면 validator에서 제거됨
+- 동일 입력의 Rule 결과와 LLM 결과를 별도로 저장하고 비교할 수 있음
+- LLM 비활성화 또는 실패 시 기존 Rule 결과가 그대로 유지됨
+```
+
+### Sprint 5B — Evidence Verifier
+
+모든 SemanticItem의 근거를 다음 계약으로 검증한다.
+
+```ts
+export type EvidenceMatch = {
+  messageId: string;
+  messageIndex: number;
+  quote: string;
+  startChar: number | null;
+  endChar: number | null;
+  supportType: "explicit" | "accepted_context" | "inferred" | "unsupported";
+  verificationStatus: "verified" | "rejected" | "review_required";
+};
+```
+
+완료 기준:
+
+```text
+- quote와 character span이 원문과 일치함
+- message index 존재만으로 evidence verified가 되지 않음
+- unsupported evidence는 rejectedItems로 이동함
+- inferred evidence는 Review Queue로 이동함
+```
+
+### Sprint 5C — Rule vs LLM Conflict Resolver
+
+Rule과 LLM이 같은 발화를 다르게 해석한 경우 다음을 비교한다.
+
+```text
+- semantic type
+- decision status
+- trigger/evidence span
+- confidence
+- user explicitness
+```
+
+완료 기준:
+
+```text
+- deferred/excluded 같은 상태 충돌이 하나의 확정 결과로 노출되지 않음
+- explicit user evidence가 assistant suggestion보다 우선함
+- 자동 해소할 수 없는 충돌은 Review Queue에 기록됨
+- 모든 충돌에 선택 결과와 사유가 남음
 ```
 
 ---
 
-## 11. Sprint 6 — Context Validator
+## 11. Sprint 6 — Hybrid Result Builder
 
 ### 목표
 
-LLM이 생성한 후보 중 근거 없는 항목, 중복 항목, 잘못된 relation을 제거한다.
+Rule/LLM 후보와 검증 결과를 결합해 Main Board, Review Queue, Overview 및 후속 Structure Builder 입력을 생성한다.
 
 ### 구현 파일
 
@@ -923,6 +1035,10 @@ LLM이 생성한 후보 중 근거 없는 항목, 중복 항목, 잘못된 relat
 src/core/validation/
   validateExtraction.ts
   validateEvidence.ts
+  validateSemanticType.ts
+  resolveTemporalState.ts
+  resolveConflicts.ts
+  validateMainBoardEligibility.ts
   validateGraph.ts
 ```
 
@@ -936,17 +1052,21 @@ src/core/validation/
 5. 같은 title의 decision은 병합
 6. 같은 canonical name의 entity는 병합 후보로 처리
 7. weak inference는 UI에서 약한 추론으로 표시
+8. Preference / Content Constraint / Problem Signal / Decision / Action 타입 혼합을 검사
+9. Open Question의 answered / superseded / open 상태를 검증
+10. confidence 0.75 미만, example-derived, assistant suggestion은 Review Queue로 이동
 ```
 
 ### Evidence 생성
 
-LLM이 message index만 주면 validator가 quote를 생성한다.
+LLM이 message index만 주면 validator가 quote 후보를 생성하되, 자동으로 verified 처리하지 않는다.
 
 ```text
 1. 해당 message text에서 관련 문장 후보 추출
 2. span을 찾을 수 있으면 startChar/endChar 저장
-3. 정확한 span을 못 찾으면 message 전체 일부를 quote로 사용
-4. quote 길이는 적절히 제한
+3. 정확한 span을 못 찾으면 verificationStatus를 review_required로 지정
+4. 원문이 판단을 지지하지 않으면 rejectedItems로 이동
+5. quote 길이는 적절히 제한
 ```
 
 ### 완료 기준
@@ -956,6 +1076,8 @@ LLM이 message index만 주면 validator가 quote를 생성한다.
 - 범위 밖 message index는 rejectedItems로 기록됨
 - EntityGraph edge는 모두 valid node를 가짐
 - validation warnings를 UI에서 확인 가능
+- Main Board 항목은 explicit 또는 accepted context evidence가 verified 상태임
+- Review Queue에 제외 사유와 Rule/LLM 충돌 정보가 표시됨
 ```
 
 ---
@@ -1392,13 +1514,16 @@ Codex는 각 gate를 순서대로 통과해야 한다.
 
 ```text
 입력: 실제 대화 segment
-처리: LLMExtractor
-출력: SegmentExtraction JSON
+처리: RuleExtractor + LLMExtractor Shadow Mode + Evidence Verifier + Conflict Resolver
+출력: HybridExtractionResult
 
 통과 기준:
 - schema validation 통과
-- evidenceMessageIndexes 포함
-- invalid output은 validator에서 제거됨
+- Rule 결과와 LLM 결과가 분리 저장됨
+- EvidenceMatch의 quote/span이 원문과 일치함
+- invalid output은 rejectedItems로 이동함
+- unresolved conflict와 low-confidence item은 Review Queue로 이동함
+- LLM 결과가 검증 없이 Main Board에 직접 노출되지 않음
 ```
 
 ### Gate 5 — Full MVP Gate
@@ -1425,13 +1550,14 @@ Codex는 다음 규칙을 따른다.
 1. 한 번에 전체 서비스를 만들지 말고 Sprint 순서대로 구현한다.
 2. 먼저 ChatGPTShareAdapter를 완성한다.
 3. LLMExtractor보다 MockExtractor를 먼저 만든다.
-4. UI보다 CanonicalConversation JSON 생성을 우선한다.
-5. 타입과 테스트를 먼저 작성한다.
-6. 실패 케이스를 정상 케이스만큼 중요하게 다룬다.
-7. 외부 서비스 HTML 구조에 의존하는 코드는 adapter 내부에만 둔다.
-8. 기술명세서에 없는 기능을 임의로 추가하지 않는다.
-9. PDF 관련 코드는 만들지 않는다.
-10. Ask/RAG 관련 코드는 만들지 않는다.
+4. LLMExtractor는 Shadow Mode로 시작하며 최종 결정권을 갖지 않는다.
+5. UI보다 CanonicalConversation JSON 생성을 우선한다.
+6. 타입과 테스트를 먼저 작성한다.
+7. 실패 케이스를 정상 케이스만큼 중요하게 다룬다.
+8. 외부 서비스 HTML 구조에 의존하는 코드는 adapter 내부에만 둔다.
+9. 기술명세서에 없는 기능을 임의로 추가하지 않는다.
+10. PDF 관련 코드는 만들지 않는다.
+11. Ask/RAG 관련 코드는 만들지 않는다.
 ```
 
 각 작업 완료 후 다음 명령이 통과해야 한다.

@@ -2,7 +2,7 @@
 
 ## v0.1 — ChatGPT 공유 링크 기반 대화 구조화 시스템
 
-문서 상태: Draft v0.1  
+문서 상태: Draft v0.1 (Sprint 4.5 Audit 개정)
 작성 목적: 개발팀이 바로 시스템 설계, 모듈 분리, 구현 범위 산정에 사용할 수 있는 기술 명세서  
 입력 방식: ChatGPT 공유 링크  
 후순위 기능: PDF 업로드, Chrome Extension, 여러 대화 병합, Ask/RAG
@@ -26,7 +26,8 @@ ChatGPT Share URL
 → linear_conversation 복원
 → Canonical Conversation Format 변환
 → Segment 분리
-→ LLM 기반 맥락 추출
+→ RuleExtractor / LLMExtractor 병렬 후보 추출
+→ Evidence Verifier / Conflict Resolver
 → Topic Map / Thought Flow / Board / Entity Graph 생성
 → Source Evidence 연결
 → Export
@@ -117,11 +118,12 @@ v0.1에서는 `ChatGPTShareAdapter`만 구현한다.
                │
                ▼
 ┌────────────────────────────┐
-│ Context Pipeline            │
+│ Hybrid Context Pipeline     │
 │ - segmentation              │
-│ - LLM extraction             │
-│ - validation                │
-│ - merge                     │
+│ - rule extraction           │
+│ - LLM shadow extraction     │
+│ - evidence verification     │
+│ - conflict resolution       │
 └──────────────┬─────────────┘
                │
                ▼
@@ -775,6 +777,16 @@ type EvidenceAnchor = {
   quote: string;
   evidenceType: "direct_quote" | "paraphrase" | "inferred_from_context";
 };
+
+type EvidenceMatch = {
+  messageId: string;
+  messageIndex: number;
+  quote: string;
+  startChar: number | null;
+  endChar: number | null;
+  supportType: "explicit" | "accepted_context" | "inferred" | "unsupported";
+  verificationStatus: "verified" | "rejected" | "review_required";
+};
 ```
 
 ### 11.2 Evidence 정책
@@ -785,6 +797,8 @@ type EvidenceAnchor = {
 3. Action Item은 evidence가 없으면 “suggested” 상태로 표시한다.
 4. Entity relation은 evidence가 없으면 graph에 표시하지 않는다.
 5. LLM이 만든 모든 항목은 source message index를 가져야 한다.
+6. message index 존재만으로 evidence를 통과시키지 않고, quote가 실제 원문에 존재하며 해당 판단을 지지하는지 검증한다.
+7. Main Board 항목은 최소 1개의 `verified` EvidenceMatch를 가져야 한다.
 ```
 
 ### 11.3 Evidence 품질 등급
@@ -881,7 +895,7 @@ Segment boundary는 규칙 기반 + LLM 보조를 섞는다.
 
 ### 13.1 역할
 
-LLM은 원문 대화에서 다음 맥락 후보를 추출한다.
+LLM은 원문 대화에서 다음 맥락 후보를 추출한다. LLM은 최종 결정권자가 아니며, 후보 생성과 의미 보조에만 사용한다.
 
 ```text
 1. Topic
@@ -893,10 +907,16 @@ LLM은 원문 대화에서 다음 맥락 후보를 추출한다.
 7. Action Item
 8. Entity
 9. Relationship
-10. Constraint
-11. Assumption
-12. Alternative
-13. Rationale
+10. User Intent
+11. Preference
+12. Content Constraint
+13. Problem Signal
+14. Satisfaction Signal
+15. Open Question
+16. Change Event
+17. Assumption
+18. Alternative
+19. Rationale
 ```
 
 이 작업은 JSON Schema 기반 structured extraction으로 수행한다.
@@ -922,6 +942,29 @@ type SegmentExtraction = {
   entities: ExtractedEntity[];
   relations: ExtractedRelation[];
   constraints: ExtractedConstraint[];
+};
+
+type SemanticItem =
+  | Intent
+  | ExtractedTopic
+  | ExtractedDecision
+  | OpenQuestion
+  | ExtractedActionItem
+  | Preference
+  | ContentConstraint
+  | ProblemSignal
+  | SatisfactionSignal
+  | ChangeEvent
+  | ExtractedEntity
+  | ExtractedRelation;
+
+type HybridExtractionResult = {
+  ruleResult: RuleExtractionResult;
+  llmResult: LlmExtractionResult;
+  verifiedItems: SemanticItem[];
+  rejectedItems: RejectedItem[];
+  conflicts: ExtractionConflict[];
+  reviewQueue: ReviewItem[];
 };
 
 type ExtractedTopic = {
@@ -1002,6 +1045,18 @@ type ExtractedConstraint = {
 };
 ```
 
+`ExtractedConstraint`는 이전 schema 호환용으로만 유지한다. 신규 구현에서는 다음 타입을 분리한다.
+
+```text
+Preference: 답변 형식, 길이, 표현, 깊이 선호
+Content Constraint: 결과물에 넣거나 뺄 내용 및 산출 범위
+Problem Signal: 사용자가 겪는 문제, 불편, 실패
+Decision: 제품 또는 작업 방향의 확정·보류·제외·대체
+Action: 사용자나 팀이 실제로 수행할 작업
+```
+
+LLM이 잘하는 역할은 clause 분리, 의미 후보 추출, topic label, overview, satisfaction nuance다. Clean Conversation 분리, message ID 관리, duplicate 제거, schema 강제, decision 확정 조건, evidence 검증, Main Board 노출 여부는 Rule/Validator가 담당한다.
+
 ### 13.4 Decision 판정 정책
 
 Decision은 엄격하게 판단한다.
@@ -1049,6 +1104,27 @@ LLM 출력은 최종 결과가 아니라 후보군이다.
 8. relation source / target entity 존재 여부 확인
 9. relation type whitelist 확인
 10. hallucination 의심 항목 제거 또는 weak 표시
+11. Evidence Entailment Verifier로 원문이 추출 판단을 실제로 지지하는지 확인
+12. Conflict Resolver로 동일 문장의 status 충돌과 Rule/LLM 불일치를 해소
+13. Semantic Type Validator로 Preference, Content Constraint, Problem Signal, Decision, Action 혼합 여부 확인
+14. Temporal State Resolver로 Open Question의 open/answered/superseded 상태 결정
+15. Main Board Eligibility Validator로 low-confidence, example-derived, assistant suggestion 노출 차단
+```
+
+검증 순서는 다음과 같다.
+
+```text
+Canonical Conversation
+├─ RuleExtractor
+└─ LLMExtractor (Shadow Mode)
+
+→ Schema Validator
+→ Evidence Entailment Verifier
+→ Semantic Type Validator
+→ Temporal State Resolver
+→ Conflict Resolver
+→ Main Board Eligibility Validator
+→ Main Board / Review Queue
 ```
 
 ### 14.2 Validator Output
@@ -1072,6 +1148,18 @@ type RejectedItem = {
     | "WEAK_INFERENCE";
 };
 ```
+
+Main Board 포함 조건은 다음을 모두 만족해야 한다.
+
+```text
+1. explicit user evidence 또는 accepted context가 있음
+2. EvidenceMatch.verificationStatus가 verified임
+3. confidence가 0.75 이상임
+4. unresolved conflict가 없음
+5. example-derived 또는 tool/internal-derived 항목이 아님
+```
+
+그 외 후보는 제거하지 않고 Review Queue에 사유와 함께 보존한다.
 
 ---
 
@@ -1951,11 +2039,11 @@ v0.1에서 가장 중요한 기술 자산은 PDF 파서가 아니다.
 3. Evidence Anchor
    모든 구조화 결과를 원문 메시지와 연결하는 기술
 
-4. Context Extraction Schema
-   LLM이 주제 / 결정 / 보류 / 액션 / 개념 / 관계를 일관되게 뽑도록 하는 스키마
+4. Semantic Extraction Schema
+   Rule과 LLM이 Intent / Preference / Constraint / Problem / Decision / Action을 같은 계약으로 생성하는 스키마
 
-5. Context Validator
-   LLM 출력의 hallucination, 중복, 근거 부족을 걸러내는 검증기
+5. Hybrid Context Validator
+   Evidence를 검증하고 Rule/LLM 충돌, 중복, 근거 부족, Main Board 자격을 판정하는 검증기
 
 6. Entity Graph Normalizer
    entity alias를 병합하고 relation type을 제한해 깨끗한 graph를 만드는 기술
@@ -1968,11 +2056,15 @@ ChatGPT Share Link
 → ChatGPTShareAdapter
 → CanonicalConversation
 → Segmenter
-→ LLM Context Extractor
-→ Context Validator
+├─ RuleExtractor
+└─ LLMExtractor (Shadow Mode)
+→ Evidence Verifier
+→ Semantic / Temporal Validator
+→ Conflict Resolver
+→ Main Board Eligibility Validator
 → Structure Builder
 → Entity Graph Normalizer
-→ UI / Export
+→ Main Board / Review Queue / Export
 ```
 
 한 문장으로 정리하면:
@@ -2020,4 +2112,3 @@ ChatGPT Share Link
 - OpenAI Help — Delete or invalidate a shared link
 - OpenAI Help — Update a shared link
 - OpenAI Platform Docs — Structured Outputs
-

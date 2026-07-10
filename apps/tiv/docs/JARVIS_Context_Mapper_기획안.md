@@ -2,6 +2,7 @@
 
 > ChatGPT 공유 링크 기반 대화 구조화·가시화 도구  
 > 문서 목적: 구현 방식이 아닌 **제품 기획·범위·화면·사용자 가치·우선순위** 정리
+> 개정: Sprint 4.5 Audit 결과를 반영해 Semantic Signals와 Main Board / Review Queue 정책 추가
 
 ---
 
@@ -186,6 +187,28 @@ AI가 정리한 결과는 사용자가 검증할 수 있어야 한다.
 
 정리된 결과는 외부 문서, 팀 공유, 회의 자료, 기획안으로 바로 활용할 수 있어야 한다.
 
+### 원칙 6. 의미가 다른 사용자 신호를 섞지 않는다
+
+TIV는 단순히 주제와 결정을 추출하는 것을 넘어, 사용자의 의도, 응답 형식 선호, 산출물 내용 조건, 문제 인식, 만족도, 질문의 해결 상태와 방향 변화를 구분해 구조화한다.
+
+내부 분석 데이터는 최소한 다음 의미 타입을 구분해야 한다.
+
+```text
+User Intent
+Preference
+Content Constraint
+Problem Signal
+Satisfaction
+Open Question
+Decision
+Action
+Change Event
+Topic
+Entity
+```
+
+`Preference`는 답변의 형식·길이·표현·깊이에 대한 선호이고, `Content Constraint`는 결과물에 넣거나 뺄 내용이다. `Problem Signal`은 사용자가 겪는 문제와 불편이며, `Decision`과 `Action`은 각각 방향의 확정과 실제 수행 요청을 의미한다.
+
 ---
 
 ## 7. 타깃 사용자
@@ -292,6 +315,7 @@ PM은 이 결과를 PRD 초안이나 회의 준비 자료로 활용한다.
 | 요약 | Overview | 대화 전체를 한 장으로 정리 |
 | 구조화 | Topic Map | 대화의 주요 주제와 하위 주제를 계층적으로 표시 |
 | 흐름 | Thought Flow | 시간 대신 논점 전개 순서를 표시 |
+| 맥락 분석 | Semantic Signals | Intent, Preference, Content Constraint, Problem Signal, Satisfaction, Open Question, Change Event를 구분해 내부 데이터로 생성 |
 | 실행 관리 | Decision Board | 결정사항을 별도로 정리 |
 | 실행 관리 | Pending Board | 아직 정하지 않은 쟁점을 정리 |
 | 실행 관리 | Action Board | 다음 액션을 정리 |
@@ -471,6 +495,24 @@ Board는 대화에서 나온 실행 가능한 정보를 세 가지로 나누어 
 - 원문 근거
 
 이 화면은 사용자가 “그래서 뭘 정했고, 뭘 안 정했고, 다음에 뭘 해야 하지?”를 가장 빠르게 확인하는 영역이다.
+
+Board는 확정 결과와 검토 필요 결과를 구분한다.
+
+```text
+Main Board
+- 사용자의 명시적 근거가 있음
+- evidence가 검증됨
+- confidence 0.75 이상
+- 상태 충돌이 없음
+
+Review Queue
+- candidate 또는 assistant suggestion
+- confidence 0.75 미만
+- example-derived 가능성이 있음
+- evidence 불일치 또는 다중 상태 충돌이 있음
+```
+
+Preference, Content Constraint, Problem Signal, Satisfaction, Open Question, Change Event를 모두 기본 화면에 노출할 필요는 없다. 그러나 Overview와 Board가 신뢰할 수 있는 결과를 만들려면 내부 분석 데이터와 검수 화면에서는 이 타입을 유지해야 한다.
 
 ---
 
