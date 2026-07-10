@@ -27,7 +27,7 @@ describe("normalizeConversation", () => {
     expect(conversation.messages.map((message) => message.index)).toEqual([1, 2]);
   });
 
-  it("filters system, tool, and empty messages", () => {
+  it("filters system and empty messages while retaining tool results as context", () => {
     const rawMessages: RawChatGPTMessage[] = [
       { id: "s1", role: "system", content: { parts: ["hidden"] } },
       { id: "t1", role: "tool", content: { parts: ["internal"] } },
@@ -37,8 +37,12 @@ describe("normalizeConversation", () => {
 
     const conversation = normalizeConversation({ ...baseInput, rawMessages });
 
-    expect(conversation.messages).toHaveLength(1);
-    expect(conversation.messages[0]?.text).toBe("visible");
+    expect(conversation.messages).toHaveLength(2);
+    expect(conversation.messages[0]?.metadata).toMatchObject({
+      messageCategory: "context_signal",
+      contextSignalType: "connector_tool_result"
+    });
+    expect(conversation.messages[1]?.text).toBe("visible");
   });
 
   it("turns unsupported content into a placeholder", () => {
@@ -192,6 +196,25 @@ describe("normalizeConversation", () => {
       "final_answer_with_artifact"
     );
     expect(conversation.messages[0]?.metadata.semanticAnalyzable).toBe(true);
+  });
+
+  it("marks short assistant preambles as transitions", () => {
+    const rawMessages: RawChatGPTMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: { parts: ["좋습니다. 이제 나눠 보겠습니다."] }
+      }
+    ];
+
+    const conversation = normalizeConversation({ ...baseInput, rawMessages });
+
+    expect(conversation.messages[0]?.metadata.messageCategory).toBe(
+      "clean_conversation"
+    );
+    expect(conversation.messages[0]?.metadata.assistantMessageType).toBe(
+      "transition"
+    );
   });
 
   it("classifies connector, skill read, and redacted plugin outputs as context signals", () => {

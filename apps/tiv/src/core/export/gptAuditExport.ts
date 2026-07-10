@@ -65,6 +65,7 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
       topicFlow: result.topicFlow,
       preferenceSignals: result.preferenceSignals,
       contentConstraints: result.contentConstraints,
+      problemSignals: result.problemSignals,
       satisfactionSignals: result.satisfactionSignals,
       board: result.board,
       diagnostics: result.diagnostics
@@ -129,6 +130,7 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
         category: item.category,
         normalizedLabel: item.normalizedLabel,
         triggerPhrase: item.triggerPhrase,
+        matchedRegexSpan: item.matchedRegexSpan,
         evidenceMessageIndexes: item.evidenceMessageIndexes,
         confidence: item.confidence
       })),
@@ -142,7 +144,9 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
         reviewRequired: item.reviewRequired,
         reviewRequiredReason: item.reviewRequiredReason,
         includeInMainBoard: item.includeInMainBoard
-      }))
+      })),
+      problemSignals: result.problemSignals,
+      decisionConflicts: result.diagnostics.decisionConflicts
     }),
     "",
     "## 7. Clean Conversation Messages",

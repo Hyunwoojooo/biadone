@@ -388,23 +388,23 @@ function Sprint4Panel({
 }) {
   const preferenceInsights = buildPreferenceInsights(result.preferenceSignals);
   const primaryPreferenceInsights = preferenceInsights.filter(
-    (insight) => insight.confidence >= 0.7
+    (insight) => insight.confidence >= 0.75
   );
   const weakPreferenceInsights = preferenceInsights.filter(
-    (insight) => insight.confidence < 0.7
+    (insight) => insight.confidence < 0.75
   );
   const evidenceQuotes = buildEvidenceQuoteItems(result.evidence);
   const confidentPreferenceSignals = result.preferenceSignals.filter(
-    (item) => item.confidence >= 0.7
+    (item) => item.confidence >= 0.75
   );
   const weakPreferenceSignals = result.preferenceSignals.filter(
-    (item) => item.confidence < 0.7
+    (item) => item.confidence < 0.75
   );
   const confidentSatisfactionSignals = result.satisfactionSignals.filter(
-    (item) => item.confidence >= 0.7
+    (item) => item.confidence >= 0.75
   );
   const weakSatisfactionSignals = result.satisfactionSignals.filter(
-    (item) => item.confidence < 0.7
+    (item) => item.confidence < 0.75
   );
   const confidentContentConstraints = result.contentConstraints.filter(
     (item) => item.includeInMainBoard
@@ -1030,7 +1030,7 @@ function overviewReviewFocus(
   if (result.board.openQuestions.some((item) => item.status === "open")) {
     focus.push("아직 resolved 처리되지 않은 open question이 실제로 남아 있는지 확인");
   }
-  if (result.preferenceSignals.some((item) => item.confidence < 0.7)) {
+  if (result.preferenceSignals.some((item) => item.confidence < 0.75)) {
     focus.push("Weak Signals에 들어간 낮은 confidence 선호는 기본 판단에서 제외할지 검토");
   }
   if (focus.length === 0) {
@@ -1206,7 +1206,7 @@ function buildReviewItems(
   ];
 
   return items
-    .filter((item) => item.reason !== "low_confidence" || item.confidence < 0.7)
+    .filter((item) => item.reason !== "low_confidence" || item.confidence < 0.75)
     .sort((a, b) => a.confidence - b.confidence);
 }
 

@@ -674,6 +674,77 @@ describe("extractMockStructure", () => {
       evidenceMessageIndexes: [1]
     });
   });
+
+  it("keeps deferred decisions from also becoming excluded", () => {
+    const conversation = createConversation([
+      cleanMessage(1, "user", "PDF 업로드는 일단 추후 기능으로 빼자.")
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.board.decisions).toHaveLength(1);
+    expect(result.board.decisions[0]).toMatchObject({ status: "deferred" });
+    expect(result.board.decisions.some((item) => item.status === "excluded")).toBe(false);
+  });
+
+  it("classifies pain points as problem signals instead of open questions", () => {
+    const conversation = createConversation([
+      cleanMessage(
+        1,
+        "user",
+        "이전 대화가 궁금해서 또 프롬프트를 입력하면 대화가 더 쌓여 복잡해진다."
+      )
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.problemSignals).toEqual([
+      expect.objectContaining({
+        category: "workflow_friction",
+        evidenceMessageIndexes: [1]
+      })
+    ]);
+    expect(result.board.openQuestions).toEqual([]);
+  });
+
+  it("does not reinforce format preferences from existing artifact references", () => {
+    const conversation = createConversation([
+      cleanMessage(1, "user", "노션에 넣을 수 있는 md 파일로 만들어줘."),
+      cleanMessage(2, "user", "만든 md 파일 2개면 충분하겠지?")
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    const format = result.preferenceSignals.find((item) => item.category === "format");
+    expect(format?.evidenceMessageIndexes).toEqual([1]);
+    expect(format?.reinforced).toBe(false);
+  });
+
+  it("resolves open questions with the substantive answer after a preamble", () => {
+    const conversation = createConversation([
+      cleanMessage(1, "user", "PDF를 어떻게 읽고 파싱하고 그래프화할지 알려줘."),
+      {
+        ...cleanMessage(2, "assistant", "좋습니다. 나눠 보겠습니다."),
+        metadata: {
+          messageCategory: "clean_conversation",
+          assistantMessageType: "transition"
+        }
+      },
+      cleanMessage(
+        3,
+        "assistant",
+        "PDF 입력은 텍스트 추출, 문단 정규화, 엔티티 추출 순서로 처리합니다. 이후 관계를 구성해 그래프 노드와 엣지로 저장하고 각 결과에는 원문 근거 인덱스를 연결합니다."
+      )
+    ]);
+
+    const result = extractMockStructure(conversation);
+
+    expect(result.board.openQuestions[0]?.resolvedBy).toEqual({
+      type: "assistant_answer",
+      messageIndex: 3,
+      answerStrength: "partial"
+    });
+  });
 });
 
 function createConversation(messages: CanonicalMessage[]): CanonicalConversation {

@@ -9,6 +9,7 @@ export type MockStructureResult = {
   topicFlow: TopicFlowItem[];
   preferenceSignals: PreferenceSignal[];
   contentConstraints: ContentConstraint[];
+  problemSignals: ProblemSignal[];
   satisfactionSignals: SatisfactionSignal[];
   board: Board;
   evidence: EvidenceItem[];
@@ -100,10 +101,12 @@ export type PreferenceSignal = {
   normalizedLabel: string;
   description: string;
   triggerPhrase?: string;
+  matchedRegexSpan?: string;
   reinforced: boolean;
   evidenceMessageIndexes: number[];
   confidence: number;
   rulesMatched: string[];
+  rejectedEvidence?: Array<{ messageIndex: number; reason: string }>;
 };
 
 export type ReviewRequiredReason =
@@ -165,7 +168,7 @@ export type DecisionItem = {
   title: string;
   description: string;
   triggerPhrase?: string;
-  status: "confirmed" | "excluded" | "deferred" | "candidate";
+  status: "confirmed" | "excluded" | "deferred" | "candidate" | "replaced";
   source:
     | "explicit_user"
     | "assistant_suggestion"
@@ -178,6 +181,8 @@ export type DecisionItem = {
   reviewRequiredReason?: ReviewRequiredReason;
   includeInMainBoard: boolean;
   includeInKeyDecisionIds: boolean;
+  conflictGroup?: string;
+  replacesDecisionId?: string;
 };
 
 export type OpenQuestionItem = {
@@ -203,7 +208,11 @@ export type OpenQuestionStatus =
   | "superseded_by_scope_change";
 
 export type OpenQuestionResolvedBy =
-  | { type: "assistant_answer"; messageIndex: number }
+  | {
+      type: "assistant_answer";
+      messageIndex: number;
+      answerStrength: "partial" | "full";
+    }
   | { type: "user_decision"; decisionId: string }
   | { type: "superseded_by_scope_change"; decisionId: string };
 
@@ -243,6 +252,15 @@ export type ContentConstraint = {
   includeInMainBoard: boolean;
 };
 
+export type ProblemSignal = {
+  id: string;
+  title: string;
+  category: "pain_point" | "workflow_friction" | "product_problem" | "task_failure";
+  triggerPhrase: string;
+  evidenceMessageIndexes: number[];
+  confidence: number;
+};
+
 export type EvidenceItem = {
   id: string;
   evidenceMessageIndexes: number[];
@@ -267,7 +285,16 @@ export type ExtractionDiagnostics = {
   contextSignalTypeCounts: Record<string, number>;
   sourceBackedTopicCount: number;
   rulesFired: Record<string, number>;
+  decisionConflicts: DecisionConflictDiagnostic[];
   warnings: DiagnosticWarning[];
+};
+
+export type DecisionConflictDiagnostic = {
+  issueType: "duplicate_decision_conflict";
+  evidenceMessageIndexes: number[];
+  triggerPhrase: string;
+  discardedStatuses: DecisionItem["status"][];
+  resolution: string;
 };
 
 export type DiagnosticWarning = {

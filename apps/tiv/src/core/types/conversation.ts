@@ -46,6 +46,7 @@ export type CanonicalMessage = {
     semanticAnalyzable?: boolean;
     assistantMessageType?:
       | "final_answer"
+      | "transition"
       | "partial_answer"
       | "final_answer_with_artifact"
       | "tool_operation"

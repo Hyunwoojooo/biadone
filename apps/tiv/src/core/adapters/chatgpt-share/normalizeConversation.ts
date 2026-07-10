@@ -26,7 +26,7 @@ export function normalizeConversation(
       if (!message) {
         return false;
       }
-      if (message.role === "system" || message.role === "tool") {
+      if (message.role === "system") {
         return false;
       }
       return (
@@ -165,6 +165,27 @@ function classifyMessage(input: {
       visibility: "not_user_visible",
       contentType: "internal",
       semanticAnalyzable: false
+    };
+  }
+
+  if (input.role === "tool") {
+    return {
+      messageCategory: "context_signal",
+      contextSignalType: detectContextSignalType(input.text) ?? "connector_tool_result",
+      visibility: "not_user_visible",
+      contentType: "plugin_result",
+      semanticAnalyzable: false,
+      assistantMessageType: "tool_result"
+    };
+  }
+
+  if (isAssistantTransition(input.role, input.text)) {
+    return {
+      messageCategory: "clean_conversation",
+      visibility: "user_visible",
+      contentType: contentTypeForCleanText(input.text),
+      semanticAnalyzable: true,
+      assistantMessageType: "transition"
     };
   }
 
@@ -330,12 +351,12 @@ function detectCommandLikeContextSignal(trimmed: string): ContextSignalType | nu
     return "python_execution";
   }
 
-  if (/^html\s*=\s*r'''/.test(trimmed) || /^<!doctype html/i.test(trimmed)) {
+  if (/^html\s*=\s*r?["']{3}/.test(trimmed) || /^<!doctype html/i.test(trimmed)) {
     return "artifact_generation_code";
   }
 
   if (
-    /^cat\s+>?\s*\/mnt\/data\//.test(trimmed) ||
+    /^cat\s*>\s*\/mnt\/data\//.test(trimmed) ||
     /^\/mnt\/data\//.test(trimmed) ||
     /^ls\s+-(la|r)\b/i.test(trimmed)
   ) {
@@ -350,7 +371,7 @@ function detectCommandLikeContextSignal(trimmed: string): ContextSignalType | nu
     return "connector_tool_result";
   }
 
-  if (/^(container|file_search|browser|web\.run)\b/.test(trimmed)) {
+  if (/^(container|file_search|browser|web\.run|connector)\b/.test(trimmed)) {
     return "connector_tool_call";
   }
 
@@ -397,6 +418,18 @@ function isAssistantFinalAnswer(
 
   return /(완료했습니다|완성했습니다|만들었습니다|만들었어|정리했습니다|아래처럼|시작은 가능합니다|맞아|좋아|파일 다운로드|zip 다운로드|다운로드|실행은|구성은|이번 버전|다음 작업은|수정 반영|반영해서|가능합니다|다만)/i.test(
     trimmed
+  );
+}
+
+function isAssistantTransition(
+  role: CanonicalMessage["role"],
+  text: string
+): boolean {
+  if (role !== "assistant" || text.trim().length > 100) {
+    return false;
+  }
+  return /^(좋습니다[.!]?\s*)?(이제 |다음 |먼저 |확인해 |나눠 |정리해 |살펴보겠습니다|진행하겠습니다)/i.test(
+    text.trim()
   );
 }
 

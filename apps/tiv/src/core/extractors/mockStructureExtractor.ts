@@ -15,6 +15,7 @@ import type {
   OpenQuestionItem,
   OverviewSourceCandidates,
   PreferenceSignal,
+  ProblemSignal,
   ReviewRequiredReason,
   SatisfactionSignal,
   SatisfactionStatus,
@@ -136,7 +137,7 @@ const USER_RULES: RuleDefinition[] = [
     id: "open_question.uncertainty",
     kind: "open_question",
     subtype: "uncertainty",
-    regex: /(모르겠|고민|어떻게 .*까|가능할까|맞을까|좋을까|정해야|선택해야|편하려나|어때|의미가 없을 것 같은데|궁금|되나|되어있나|연동 되어있나|not sure|wonder|how should|should we|which|whether)/i,
+    regex: /(\?|모르겠|고민|어떻게|왜|가능할까|맞을까|좋을까|정해야|선택해야|편하려나|어때|궁금(?:해|한|하다)|되나|되어있나|연동 되어있나|not sure|wonder|how should|should we|which|whether)/i,
     baseConfidence: 0.72
   },
   {
@@ -263,6 +264,11 @@ const SATISFACTION_RULES: RuleDefinition[] = [
 const CONTINUING_PATTERN =
   /(그렇다면|그럼 이제|다음으로|이제|그럼|next|then|now)/i;
 
+const PAIN_POINT_PATTERN =
+  /(어려움|불편|반복|문제|페인\s*포인트|힘들|복잡해|복잡해진|실패)/i;
+const EXPLICIT_QUESTION_PATTERN =
+  /(\?|어떻게|왜|무엇|뭐야|가능할까|할까|되나|되어있나|편하려나|궁금(?:해|한|하다)(?:\s|[?.!]|$)|생각하냐|맞을까|좋을까|어때)/i;
+
 const TOPIC_ENTITY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   { label: "MockExtractor", regex: /mock\s*extractor|mockextractor/i },
   { label: "Context Signals", regex: /context signals?|context signal|컨텍스트 신호/i },
@@ -294,6 +300,7 @@ export function extractMockStructure(
   const evidence: EvidenceItem[] = [];
   const preferences: PreferenceSignal[] = [];
   const contentConstraints: ContentConstraint[] = [];
+  const problemSignals: ProblemSignal[] = [];
   const decisions: DecisionItem[] = [];
   const openQuestions: OpenQuestionItem[] = [];
   const actions: ActionItem[] = [];
@@ -349,6 +356,10 @@ export function extractMockStructure(
         questionLike: isQuestionLike(prepared.text)
       });
     const hasActionRequest = semanticRules.some((rule) => rule.kind === "action");
+    if (isProblemStatement(prepared.text)) {
+      problemSignals.push(createProblemSignal(message, problemSignals.length + 1));
+      incrementRule(rulesFired, "problem.explicit_statement");
+    }
     const contentConstraintMatches = prepared.isExampleLike
       ? []
       : extractContentConstraintsFromMessage(
@@ -365,6 +376,9 @@ export function extractMockStructure(
     for (const rule of semanticRules) {
       const ruleQuote = quoteForRule(message.text, rule);
       if (rule.kind === "preference") {
+        if (!acceptsPreferenceRule(message.text, rule)) {
+          continue;
+        }
         preferences.push({
           id: createItemId("pref", preferences.length + 1),
           category: preferenceCategoryFor(rule.subtype),
@@ -372,6 +386,7 @@ export function extractMockStructure(
           normalizedLabel: preferenceLabelFor(rule.subtype),
           description: ruleQuote,
           triggerPhrase: ruleQuote,
+          matchedRegexSpan: message.text.match(rule.regex)?.[0],
           reinforced: false,
           evidenceMessageIndexes: [message.index],
           confidence: confidenceFor(rule),
@@ -380,7 +395,7 @@ export function extractMockStructure(
       }
 
       if (rule.kind === "decision") {
-        const status = decisionStatusFor(rule.subtype);
+        const status = classifyDecisionStatus(ruleQuote);
         const source = "explicit_user" as const;
         const confidence = confidenceFor(rule);
         decisions.push({
@@ -403,7 +418,11 @@ export function extractMockStructure(
       }
 
       if (rule.kind === "open_question") {
-        if (hasActionRequest && isImperativeActionText(ruleQuote)) {
+        if (
+          !isExplicitQuestion(ruleQuote) ||
+          isProblemStatement(ruleQuote) ||
+          (hasActionRequest && isImperativeActionText(ruleQuote))
+        ) {
           continue;
         }
         openQuestions.push({
@@ -489,7 +508,8 @@ export function extractMockStructure(
     }))
   );
 
-  const prioritizedDecisions = prioritizeDecisions(decisions);
+  const decisionResolution = prioritizeDecisions(decisions);
+  const prioritizedDecisions = decisionResolution.decisions;
   const topicFlow = enrichTopicFlowWithContextSignals(
     buildTopicFlow(cleanMessages, preparedMessages, duplicateMessageIndexes, rulesFired),
     contextSignals
@@ -525,6 +545,7 @@ export function extractMockStructure(
     topicFlow,
     preferences: aggregatedPreferences,
     contentConstraints: dedupedContentConstraints,
+    problemSignals,
     satisfactionSignals,
     board,
     overviewSourceCandidates
@@ -541,6 +562,7 @@ export function extractMockStructure(
     topicFlow,
     preferenceSignals: aggregatedPreferences,
     contentConstraints: dedupedContentConstraints,
+    problemSignals,
     satisfactionSignals,
     board,
     evidence,
@@ -555,6 +577,7 @@ export function extractMockStructure(
         (topic) => topic.contextSummary?.sourceBacked
       ).length,
       rulesFired,
+      decisionConflicts: decisionResolution.conflicts,
       warnings: [
         ...warnings,
         ...contextSignals.map((signal): DiagnosticWarning => ({
@@ -610,6 +633,25 @@ function extractSatisfactionSignals(
     }
 
     const prepared = prepareText(nextUser.text);
+    if (isRuleSpecMessage(nextUser.text)) {
+      const confidence = 0.25;
+      signals.push({
+        id: createItemId("sat", signals.length + 1),
+        assistantMessageIndex: assistantMessage.index,
+        userReactionMessageIndex: nextUser.index,
+        status: "meta_request",
+        rationale: satisfactionRationale("meta_request"),
+        evidenceMessageIndexes: [assistantMessage.index, nextUser.index],
+        confidence,
+        rulesMatched: ["satisfaction.meta_request"],
+        ...reviewMetadataForSatisfaction({
+          confidence,
+          evidenceMessageIndexes: [assistantMessage.index, nextUser.index],
+          secondaryStatuses: []
+        })
+      });
+      continue;
+    }
     const rawMatched = SATISFACTION_RULES.filter((rule) =>
       rule.regex.test(prepared.text)
     );
@@ -1021,6 +1063,7 @@ function buildOverview(input: {
   topicFlow: TopicFlowItem[];
   preferences: PreferenceSignal[];
   contentConstraints: ContentConstraint[];
+  problemSignals: ProblemSignal[];
   satisfactionSignals: SatisfactionSignal[];
   board: Board;
   overviewSourceCandidates: OverviewSourceCandidates;
@@ -1155,31 +1198,56 @@ function aggregatePreferences(preferences: PreferenceSignal[]): PreferenceSignal
   return [...byKey.values()];
 }
 
-function prioritizeDecisions(decisions: DecisionItem[]): DecisionItem[] {
+function prioritizeDecisions(decisions: DecisionItem[]): {
+  decisions: DecisionItem[];
+  conflicts: MockStructureResult["diagnostics"]["decisionConflicts"];
+} {
   const byEvidence = new Map<string, DecisionItem>();
+  const conflicts: MockStructureResult["diagnostics"]["decisionConflicts"] = [];
 
   for (const decision of decisions) {
     const key = [
       decision.evidenceMessageIndexes.join(","),
-      decision.status,
-      normalizeText(decision.description)
+      normalizeText(decision.triggerPhrase ?? decision.description)
     ].join(":");
     const existing = byEvidence.get(key);
-    if (!existing || decisionPriority(decision) > decisionPriority(existing)) {
+    if (!existing) {
+      byEvidence.set(key, decision);
+      continue;
+    }
+    if (existing.status !== decision.status) {
+      const sourceText = decision.triggerPhrase ?? decision.description;
+      const resolvedStatus = classifyDecisionStatus(sourceText);
+      const keep = decision.status === resolvedStatus ? decision : existing;
+      const discard = keep === decision ? existing : decision;
+      conflicts.push({
+        issueType: "duplicate_decision_conflict",
+        evidenceMessageIndexes: decision.evidenceMessageIndexes,
+        triggerPhrase: sourceText,
+        discardedStatuses: [discard.status],
+        resolution: `keep_${keep.status}_remove_${discard.status}`
+      });
       byEvidence.set(key, {
-        ...decision,
-        confidence: Math.max(decision.confidence, existing?.confidence ?? 0),
+        ...keep,
+        confidence: Math.max(decision.confidence, existing.confidence),
         rulesMatched: [
-          ...new Set([...(existing?.rulesMatched ?? []), ...decision.rulesMatched])
+          ...new Set([...existing.rulesMatched, ...decision.rulesMatched])
         ]
       });
+      continue;
+    }
+    if (decisionPriority(decision) > decisionPriority(existing)) {
+      byEvidence.set(key, decision);
     }
   }
 
-  return [...byEvidence.values()].map((decision, index) => ({
-    ...decision,
-    id: createItemId("dec", index + 1)
-  }));
+  return {
+    decisions: [...byEvidence.values()].map((decision, index) => ({
+      ...decision,
+      id: createItemId("dec", index + 1)
+    })),
+    conflicts
+  };
 }
 
 function resolveOpenQuestions(
@@ -1230,11 +1298,15 @@ function resolveOpenQuestions(
       };
     }
 
-    const assistantAnswer = cleanMessages.find(
+    const answerCandidates = cleanMessages.filter(
       (message) =>
         message.index > question.evidenceMessageIndexes[0] &&
-        message.role === "assistant"
+        message.role === "assistant" &&
+        message.metadata.assistantMessageType !== "transition"
     );
+    const assistantAnswer =
+      answerCandidates.find((message) => answerStrength(message.text) === "full") ??
+      answerCandidates.find((message) => answerStrength(message.text) === "partial");
 
     if (!assistantAnswer) {
       return question;
@@ -1246,7 +1318,8 @@ function resolveOpenQuestions(
       status: "answered",
       resolvedBy: {
         type: "assistant_answer",
-        messageIndex: assistantAnswer.index
+        messageIndex: assistantAnswer.index,
+        answerStrength: answerStrength(assistantAnswer.text) as "partial" | "full"
       },
       confidence,
       ...reviewMetadataForItem({
@@ -1350,6 +1423,7 @@ function strongestContentConstraintRule(
 
 function shouldSkipContentConstraintClause(preparedText: string): boolean {
   return (
+    isProblemStatement(preparedText) ||
     USER_RULES.some(
       (rule) =>
         (rule.kind === "decision" || rule.kind === "open_question") &&
@@ -1450,7 +1524,7 @@ function reviewMetadataForContentConstraint(input: {
   return {
     reviewRequired: Boolean(reason),
     reviewRequiredReason: reason,
-    includeInMainBoard: !reason && input.confidence >= 0.7
+    includeInMainBoard: !reason && input.confidence >= 0.75
   };
 }
 
@@ -1466,7 +1540,7 @@ function reviewMetadataForItem(input: {
   return {
     reviewRequired: Boolean(reason),
     reviewRequiredReason: reason,
-    includeInMainBoard: !reason && input.confidence >= 0.7
+    includeInMainBoard: !reason && input.confidence >= 0.75
   };
 }
 
@@ -1486,7 +1560,7 @@ function reviewMetadataForSatisfaction(input: {
   return {
     reviewRequired: Boolean(reason),
     reviewRequiredReason: reason,
-    includeInMainBoard: !reason && input.confidence >= 0.7
+    includeInMainBoard: !reason && input.confidence >= 0.75
   };
 }
 
@@ -1508,7 +1582,7 @@ function reviewReasonFromCoreSignals(input: {
   if (input.confidence <= 0.35) {
     return "very_low_confidence";
   }
-  if (input.confidence < 0.7) {
+  if (input.confidence < 0.75) {
     return "low_confidence";
   }
   return undefined;
@@ -1670,6 +1744,83 @@ function isQuestionLike(text: string): boolean {
   return /(\?|뭐야|무엇|어떻게|왜|가능할까|어때|should|how|why|what)/i.test(
     text
   );
+}
+
+function isExplicitQuestion(text: string): boolean {
+  return EXPLICIT_QUESTION_PATTERN.test(prepareText(text).text);
+}
+
+function isProblemStatement(text: string): boolean {
+  const prepared = prepareText(text).text;
+  return PAIN_POINT_PATTERN.test(prepared) && !EXPLICIT_QUESTION_PATTERN.test(prepared);
+}
+
+function createProblemSignal(
+  message: CanonicalMessage,
+  order: number
+): ProblemSignal {
+  const triggerPhrase = truncateQuote(cleanTriggerQuote(message.text), 120);
+  const category: ProblemSignal["category"] = /실패|안 돼|안 보|작동 안/i.test(
+    triggerPhrase
+  )
+    ? "task_failure"
+    : /반복|복잡|불편|흐름|과정/i.test(triggerPhrase)
+      ? "workflow_friction"
+      : /제품|서비스|기능/i.test(triggerPhrase)
+        ? "product_problem"
+        : "pain_point";
+
+  return {
+    id: createItemId("problem", order),
+    title: titleFromMessage(triggerPhrase),
+    category,
+    triggerPhrase,
+    evidenceMessageIndexes: [message.index],
+    confidence: 0.86
+  };
+}
+
+function acceptsPreferenceRule(text: string, rule: RuleDefinition): boolean {
+  if (!rule.regex.test(text)) {
+    return false;
+  }
+  if (rule.subtype !== "format") {
+    return true;
+  }
+
+  const prepared = prepareText(text).text;
+  const referencesExistingArtifact =
+    /(만든|생성된|첨부된|그|이)\s*(?:\.?(?:md|markdown)|파일).*(있|충분|가능|맞|되)/i.test(
+      prepared
+    );
+  return !referencesExistingArtifact;
+}
+
+function classifyDecisionStatus(text: string): DecisionItem["status"] {
+  const prepared = prepareText(text).text;
+  if (/(추후|나중|후순위|later|v0?\.?(?:2|3)|다음 버전)/i.test(prepared)) {
+    return "deferred";
+  }
+  if (/(아예 제외|영구 제외|하지 않기로|안 넣기로|폐기|제거|넣지 말자)/i.test(prepared)) {
+    return "excluded";
+  }
+  if (/(이걸로 하자|그걸로 하자|이 방향으로 가자|확정|고정|기술로 잡|링크로만|웹으로 전환|진행하자)/i.test(prepared)) {
+    return "confirmed";
+  }
+  return "candidate";
+}
+
+function answerStrength(text: string): "preamble" | "partial" | "full" {
+  const prepared = prepareText(text).text;
+  if (
+    prepared.length < 90 &&
+    /^(좋습니다|확인해 보겠습니다|확인하겠습니다|나눠 보겠습니다|다음 구조로 정리하겠습니다|정리해 보겠습니다)/i.test(
+      prepared
+    )
+  ) {
+    return "preamble";
+  }
+  return text.length >= 240 || /\n[-*#]|```|\d+\./m.test(text) ? "full" : "partial";
 }
 
 function findDuplicateMessageIndexes(messages: CanonicalMessage[]): number[] {
