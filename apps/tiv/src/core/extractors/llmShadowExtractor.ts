@@ -4,14 +4,22 @@ import {
   type SemanticItem,
   type ShadowLlmResult
 } from "../types/semantic";
+import {
+  getLlmProvider,
+  type LlmProviderId
+} from "./providers";
 
-const DEFAULT_MODEL = "gpt-4o-mini";
-const RESPONSES_API_URL = "https://api.openai.com/v1/responses";
+const DEFAULT_MODELS: Record<LlmProviderId, string> = {
+  openai: "gpt-4o-mini",
+  qwen: "qwen3.7-plus"
+};
 
 export type LlmShadowExtractorOptions = {
   enabled?: boolean;
+  provider?: LlmProviderId;
   apiKey?: string;
   model?: string;
+  baseUrl?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -20,68 +28,45 @@ export async function extractLlmShadow(
   options: LlmShadowExtractorOptions = {}
 ): Promise<ShadowLlmResult> {
   const enabled = options.enabled ?? process.env.TIV_LLM_SHADOW_ENABLED === "true";
-  const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
-  const model = options.model ?? process.env.OPENAI_MODEL ?? DEFAULT_MODEL;
+  const providerId = options.provider ?? resolveProviderId(process.env.TIV_LLM_PROVIDER);
+  const apiKey = options.apiKey ?? apiKeyFor(providerId);
+  const model = options.model ?? modelFor(providerId);
+  const baseUrl = options.baseUrl ?? baseUrlFor(providerId);
 
   if (!enabled || !apiKey) {
     return {
       status: "disabled",
+      provider: enabled ? providerId : null,
       model: enabled ? model : null,
       items: [],
       error: {
         code: "SHADOW_DISABLED",
         message: !enabled
           ? "TIV_LLM_SHADOW_ENABLED is not true."
-          : "OPENAI_API_KEY is not configured."
+          : `${apiKeyEnvironmentName(providerId)} is not configured.`
       }
     };
   }
 
   try {
-    const response = await (options.fetchImpl ?? fetch)(RESPONSES_API_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: buildShadowPrompt(conversation),
-        text: {
-          format: {
-            type: "json_schema",
-            name: "tiv_semantic_items",
-            strict: true,
-            schema: LLM_SEMANTIC_JSON_SCHEMA
-          }
-        }
-      })
+    const outputText = await getLlmProvider(providerId).generateJson({
+      apiKey,
+      model,
+      prompt: buildShadowPrompt(conversation),
+      baseUrl,
+      fetchImpl: options.fetchImpl ?? fetch
     });
-
-    if (!response.ok) {
-      return failedResult(
-        model,
-        "LLM_REQUEST_FAILED",
-        `OpenAI Responses API returned HTTP ${response.status}.`
-      );
-    }
-
-    const payload = (await response.json()) as unknown;
-    const outputText = readResponseOutputText(payload);
-    if (!outputText) {
-      return failedResult(model, "LLM_INVALID_OUTPUT", "Response had no output text.");
-    }
 
     let decoded: unknown;
     try {
       decoded = JSON.parse(outputText);
     } catch {
-      return failedResult(model, "LLM_INVALID_OUTPUT", "Output text was not valid JSON.");
+      return failedResult(providerId, model, "LLM_INVALID_OUTPUT", "Output text was not valid JSON.");
     }
     const parsed = llmSemanticOutputSchema.safeParse(decoded);
     if (!parsed.success) {
       return failedResult(
+        providerId,
         model,
         "LLM_INVALID_OUTPUT",
         "Structured output did not match the SemanticItem schema."
@@ -96,14 +81,37 @@ export async function extractLlmShadow(
       reviewRequired: true
     }));
 
-    return { status: "completed", model, items };
+    return { status: "completed", provider: providerId, model, items };
   } catch (error) {
     return failedResult(
+      providerId,
       model,
       "LLM_REQUEST_FAILED",
       error instanceof Error ? error.message : "Unknown LLM request failure."
     );
   }
+}
+
+function resolveProviderId(value: string | undefined): LlmProviderId {
+  return value === "qwen" ? "qwen" : "openai";
+}
+
+function apiKeyFor(provider: LlmProviderId): string | undefined {
+  return provider === "qwen" ? process.env.DASHSCOPE_API_KEY : process.env.OPENAI_API_KEY;
+}
+
+function modelFor(provider: LlmProviderId): string {
+  const configured =
+    provider === "qwen" ? process.env.QWEN_MODEL : process.env.OPENAI_MODEL;
+  return configured ?? DEFAULT_MODELS[provider];
+}
+
+function baseUrlFor(provider: LlmProviderId): string | undefined {
+  return provider === "qwen" ? process.env.QWEN_BASE_URL : process.env.OPENAI_BASE_URL;
+}
+
+function apiKeyEnvironmentName(provider: LlmProviderId): string {
+  return provider === "qwen" ? "DASHSCOPE_API_KEY" : "OPENAI_API_KEY";
 }
 
 function buildShadowPrompt(conversation: CanonicalConversation): string {
@@ -131,90 +139,11 @@ function buildShadowPrompt(conversation: CanonicalConversation): string {
   ].join("\n\n");
 }
 
-function readResponseOutputText(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const record = payload as Record<string, unknown>;
-  if (typeof record.output_text === "string") {
-    return record.output_text;
-  }
-  if (!Array.isArray(record.output)) {
-    return null;
-  }
-  for (const output of record.output) {
-    if (!output || typeof output !== "object") continue;
-    const content = (output as Record<string, unknown>).content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const text = (part as Record<string, unknown>).text;
-      if (typeof text === "string") return text;
-    }
-  }
-  return null;
-}
-
 function failedResult(
+  provider: LlmProviderId,
   model: string,
   code: "LLM_REQUEST_FAILED" | "LLM_INVALID_OUTPUT",
   message: string
 ): ShadowLlmResult {
-  return { status: "failed", model, items: [], error: { code, message } };
+  return { status: "failed", provider, model, items: [], error: { code, message } };
 }
-
-const nullableString = { type: ["string", "null"] } as const;
-
-const LLM_SEMANTIC_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["items"],
-  properties: {
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "type",
-          "label",
-          "description",
-          "status",
-          "category",
-          "triggerPhrase",
-          "evidenceMessageIndexes",
-          "confidence"
-        ],
-        properties: {
-          type: {
-            type: "string",
-            enum: [
-              "intent",
-              "topic",
-              "decision",
-              "open_question",
-              "action",
-              "preference",
-              "content_constraint",
-              "problem_signal",
-              "satisfaction",
-              "change_event",
-              "entity",
-              "relation"
-            ]
-          },
-          label: { type: "string", minLength: 1 },
-          description: { type: "string" },
-          status: nullableString,
-          category: nullableString,
-          triggerPhrase: nullableString,
-          evidenceMessageIndexes: {
-            type: "array",
-            items: { type: "integer", minimum: 1 }
-          },
-          confidence: { type: "number", minimum: 0, maximum: 1 }
-        }
-      }
-    }
-  }
-} as const;

@@ -157,6 +157,7 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
       ? fencedJson({
           mode: hybridExtraction.mode,
           createdAt: hybridExtraction.createdAt,
+          llmProvider: hybridExtraction.llmResult.provider,
           llmStatus: hybridExtraction.llmResult.status,
           llmModel: hybridExtraction.llmResult.model,
           llmError: hybridExtraction.llmResult.error,

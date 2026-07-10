@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       analysisId: record.id,
       status: record.status,
+      shadowProvider: record.hybridExtraction?.llmResult.provider,
       shadowStatus: record.hybridExtraction?.llmResult.status
     });
   } catch (error) {

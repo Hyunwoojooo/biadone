@@ -50,6 +50,7 @@ export type LlmSemanticOutput = z.infer<typeof llmSemanticOutputSchema>;
 
 export type ShadowLlmResult = {
   status: "disabled" | "completed" | "failed";
+  provider: "openai" | "qwen" | null;
   model: string | null;
   items: SemanticItem[];
   error?: {
@@ -67,3 +68,46 @@ export type HybridExtractionResult = {
   };
   llmResult: ShadowLlmResult;
 };
+
+const nullableString = { type: ["string", "null"] } as const;
+
+export const LLM_SEMANTIC_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items"],
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "type",
+          "label",
+          "description",
+          "status",
+          "category",
+          "triggerPhrase",
+          "evidenceMessageIndexes",
+          "confidence"
+        ],
+        properties: {
+          type: {
+            type: "string",
+            enum: semanticItemTypeSchema.options
+          },
+          label: { type: "string", minLength: 1 },
+          description: { type: "string" },
+          status: nullableString,
+          category: nullableString,
+          triggerPhrase: nullableString,
+          evidenceMessageIndexes: {
+            type: "array",
+            items: { type: "integer", minimum: 1 }
+          },
+          confidence: { type: "number", minimum: 0, maximum: 1 }
+        }
+      }
+    }
+  }
+} as const;

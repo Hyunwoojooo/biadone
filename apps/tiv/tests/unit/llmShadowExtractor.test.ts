@@ -18,7 +18,7 @@ describe("extractLlmShadow", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("uses Responses API structured output and marks LLM items as review-only", async () => {
+  it("uses OpenAI Responses API structured output and marks LLM items as review-only", async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const requestBody = JSON.parse(String(init?.body)) as {
         text: { format: { type: string; strict: boolean } };
@@ -63,6 +63,72 @@ describe("extractLlmShadow", () => {
     expect(result.items[0]).toMatchObject({
       source: "llm",
       sourceItemId: null,
+      reviewRequired: true
+    });
+  });
+
+  it("uses Qwen JSON mode in non-thinking mode and parses the common schema", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        "https://qwen.example/compatible-mode/v1/chat/completions"
+      );
+      const requestBody = JSON.parse(String(init?.body)) as {
+        model: string;
+        response_format: { type: string };
+        enable_thinking: boolean;
+        messages: Array<{ role: string; content: string }>;
+      };
+      expect(requestBody).toMatchObject({
+        model: "qwen3.7-plus",
+        response_format: { type: "json_object" },
+        enable_thinking: false
+      });
+      expect(requestBody.messages[0]?.content).toContain("JSON");
+
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  items: [
+                    {
+                      type: "topic",
+                      label: "공유 링크 분석",
+                      description: "대화 분석 논의",
+                      status: null,
+                      category: null,
+                      triggerPhrase: "공유 링크로 분석해줘",
+                      evidenceMessageIndexes: [1],
+                      confidence: 0.8
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      );
+    });
+
+    const result = await extractLlmShadow(conversation(), {
+      enabled: true,
+      provider: "qwen",
+      apiKey: "dashscope-test-key",
+      model: "qwen3.7-plus",
+      baseUrl: "https://qwen.example/compatible-mode/v1/",
+      fetchImpl: fetchImpl as typeof fetch
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      provider: "qwen",
+      model: "qwen3.7-plus"
+    });
+    expect(result.items[0]).toMatchObject({
+      type: "topic",
+      source: "llm",
       reviewRequired: true
     });
   });

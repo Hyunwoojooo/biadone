@@ -49,6 +49,7 @@ describe("buildGptAuditMarkdown", () => {
         },
         llmResult: {
           status: "disabled",
+          provider: null,
           model: null,
           items: [],
           error: { code: "SHADOW_DISABLED", message: "disabled in test" }
