@@ -2,6 +2,7 @@ import { LLM_SEMANTIC_JSON_SCHEMA } from "../../types/semantic";
 import {
   LlmProviderError,
   type LlmProviderRequest,
+  type LlmProviderResponse,
   type LlmShadowProvider
 } from "./types";
 
@@ -9,7 +10,9 @@ const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1";
 
 export const geminiProvider: LlmShadowProvider = {
   id: "gemini",
-  async generateJson(request: LlmProviderRequest): Promise<string> {
+  async generateJson(
+    request: LlmProviderRequest
+  ): Promise<LlmProviderResponse> {
     const response = await request.fetchImpl(
       `${trimTrailingSlash(request.baseUrl ?? DEFAULT_BASE_URL)}/interactions`,
       {
@@ -54,7 +57,20 @@ export const geminiProvider: LlmShadowProvider = {
         "Gemini response had no output text."
       );
     }
-    return outputText;
+    const record = payload as Record<string, unknown>;
+    const usage = readRecord(record.usage);
+    return {
+      outputText,
+      requestId: readString(record.id),
+      responseModel: readString(record.model),
+      usage: {
+        inputTokens: readNumber(usage?.total_input_tokens),
+        outputTokens: readNumber(usage?.total_output_tokens),
+        totalTokens: readNumber(usage?.total_tokens),
+        cachedInputTokens: readNumber(usage?.total_cached_tokens),
+        thoughtTokens: readNumber(usage?.total_thought_tokens)
+      }
+    };
   }
 };
 
@@ -89,4 +105,18 @@ function readGeminiOutputText(payload: unknown): string | null {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

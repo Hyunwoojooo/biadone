@@ -1,4 +1,7 @@
-import type { CanonicalConversation, CanonicalMessage } from "../types/conversation";
+import type {
+  CanonicalConversation,
+  CanonicalMessage
+} from "../types/conversation";
 import type { MockStructureResult } from "../types/structures";
 import type { HybridExtractionResult, SemanticItem } from "../types/semantic";
 
@@ -11,7 +14,8 @@ type GptAuditExportInput = {
 };
 
 export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
-  const { analysisId, shareUrl, conversation, result, hybridExtraction } = input;
+  const { analysisId, shareUrl, conversation, result, hybridExtraction } =
+    input;
   const cleanMessages = conversation.messages.filter(
     (message) => message.metadata.messageCategory === "clean_conversation"
   );
@@ -36,6 +40,8 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
     "4. Preference, Decision, Action, Satisfaction, Topic Flow가 원문 evidence와 맞나요?",
     "5. confidence가 낮거나 example-derived로 보이는 항목은 기본 판단에서 제외하는 게 맞나요?",
     "6. 사람이 이 결과를 보고 사용자의 의도와 선호를 이해할 수 있나요?",
+    "7. 모든 Clean Conversation 메시지가 LLM segment에 빠짐없이 포함됐고 실패한 segment가 없나요?",
+    "8. LLM semantic type coverage, evidence coverage, 토큰 사용량이 품질 대비 합리적인가요?",
     "",
     "## 2. Analysis Metadata",
     "",
@@ -157,10 +163,14 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
       ? fencedJson({
           mode: hybridExtraction.mode,
           createdAt: hybridExtraction.createdAt,
+          llmExtractorVersion: hybridExtraction.llmResult.extractorVersion,
           llmProvider: hybridExtraction.llmResult.provider,
           llmStatus: hybridExtraction.llmResult.status,
           llmModel: hybridExtraction.llmResult.model,
           llmError: hybridExtraction.llmResult.error,
+          llmMetrics: hybridExtraction.llmResult.metrics,
+          llmCoverage: hybridExtraction.llmResult.coverage,
+          llmSegments: hybridExtraction.llmResult.segments,
           comparison: compareSemanticItems(
             hybridExtraction.ruleResult.items,
             hybridExtraction.llmResult.items
@@ -186,7 +196,10 @@ export function buildGptAuditMarkdown(input: GptAuditExportInput): string {
   ].join("\n");
 }
 
-function compareSemanticItems(ruleItems: SemanticItem[], llmItems: SemanticItem[]) {
+function compareSemanticItems(
+  ruleItems: SemanticItem[],
+  llmItems: SemanticItem[]
+) {
   return {
     ruleItemCount: ruleItems.length,
     llmItemCount: llmItems.length,

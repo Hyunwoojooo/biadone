@@ -11,8 +11,18 @@ import type {
 describe("buildGptAuditMarkdown", () => {
   it("renders GPT-readable audit sections with separation data", () => {
     const conversation = createConversation([
-      message(1, "user", "MockExtractor 규칙을 구체적으로 만들어줘.", "clean_conversation"),
-      message(2, "assistant", "규칙 초안을 만들었습니다.", "clean_conversation"),
+      message(
+        1,
+        "user",
+        "MockExtractor 규칙을 구체적으로 만들어줘.",
+        "clean_conversation"
+      ),
+      message(
+        2,
+        "assistant",
+        "규칙 초안을 만들었습니다.",
+        "clean_conversation"
+      ),
       {
         ...message(
           3,
@@ -48,10 +58,37 @@ describe("buildGptAuditMarkdown", () => {
           items: convertRuleResultToSemanticItems(result)
         },
         llmResult: {
+          extractorVersion: "5A-2.0",
           status: "disabled",
           provider: null,
           model: null,
           items: [],
+          segments: [],
+          metrics: {
+            requestCount: 0,
+            completedRequestCount: 0,
+            failedRequestCount: 0,
+            totalDurationMs: 0,
+            providerDurationMs: 0,
+            usage: {
+              reportedRequestCount: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cachedInputTokens: 0,
+              thoughtTokens: 0
+            }
+          },
+          coverage: {
+            cleanMessageCount: 2,
+            analyzedMessageCount: 0,
+            segmentCount: 0,
+            semanticTypeCounts: {},
+            representedMessageIndexes: [],
+            evidenceMessageCoverageRatio: 0,
+            unrepresentedSemanticTypes: [],
+            invalidEvidenceItemIds: []
+          },
           error: { code: "SHADOW_DISABLED", message: "disabled in test" }
         }
       }
@@ -64,12 +101,18 @@ describe("buildGptAuditMarkdown", () => {
     expect(markdown).toContain('"contextSignalCount": 1');
     expect(markdown).toContain('"excludedInternalCount": 1');
     expect(markdown).toContain("## 6. Trigger Phrases");
-    expect(markdown).toContain('"triggerPhrase": "MockExtractor 규칙을 구체적으로 만들어줘"');
+    expect(markdown).toContain(
+      '"triggerPhrase": "MockExtractor 규칙을 구체적으로 만들어줘"'
+    );
     expect(markdown).toContain('"reviewRequired"');
     expect(markdown).toContain('"includeInMainBoard"');
     expect(markdown).toContain('"openQuestions"');
     expect(markdown).toContain("## 7. Sprint 5A Shadow Comparison");
     expect(markdown).toContain('"llmStatus": "disabled"');
+    expect(markdown).toContain('"llmExtractorVersion": "5A-2.0"');
+    expect(markdown).toContain('"llmMetrics"');
+    expect(markdown).toContain('"llmCoverage"');
+    expect(markdown).toContain('"llmSegments"');
     expect(markdown).toContain('"ruleItems"');
     expect(markdown).toContain('"llmItems": []');
     expect(markdown).toContain("## 8. Clean Conversation Messages");
@@ -78,7 +121,9 @@ describe("buildGptAuditMarkdown", () => {
   });
 });
 
-function createConversation(messages: CanonicalMessage[]): CanonicalConversation {
+function createConversation(
+  messages: CanonicalMessage[]
+): CanonicalConversation {
   return {
     id: "conv_test",
     source: {
@@ -97,7 +142,8 @@ function createConversation(messages: CanonicalMessage[]): CanonicalConversation
     stats: {
       totalMessages: messages.length,
       userMessages: messages.filter((item) => item.role === "user").length,
-      assistantMessages: messages.filter((item) => item.role === "assistant").length,
+      assistantMessages: messages.filter((item) => item.role === "assistant")
+        .length,
       unsupportedMessages: 0,
       cleanConversationMessages: messages.filter(
         (item) => item.metadata.messageCategory === "clean_conversation"

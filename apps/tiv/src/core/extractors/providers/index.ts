@@ -17,5 +17,6 @@ export { LlmProviderError } from "./types";
 export type {
   LlmProviderId,
   LlmProviderRequest,
+  LlmProviderResponse,
   LlmShadowProvider
 } from "./types";

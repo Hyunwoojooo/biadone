@@ -49,7 +49,12 @@ export async function POST(request: Request) {
       analysisId: record.id,
       status: record.status,
       shadowProvider: record.hybridExtraction?.llmResult.provider,
-      shadowStatus: record.hybridExtraction?.llmResult.status
+      shadowStatus: record.hybridExtraction?.llmResult.status,
+      shadowRequestCount:
+        record.hybridExtraction?.llmResult.metrics.requestCount,
+      shadowItemCount: record.hybridExtraction?.llmResult.items.length,
+      shadowDurationMs:
+        record.hybridExtraction?.llmResult.metrics.totalDurationMs
     });
   } catch (error) {
     const normalizedError = normalizeAnalysisError(error);

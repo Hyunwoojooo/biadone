@@ -1,6 +1,7 @@
 import {
   LlmProviderError,
   type LlmProviderRequest,
+  type LlmProviderResponse,
   type LlmShadowProvider
 } from "./types";
 
@@ -8,7 +9,9 @@ const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
 export const qwenProvider: LlmShadowProvider = {
   id: "qwen",
-  async generateJson(request: LlmProviderRequest): Promise<string> {
+  async generateJson(
+    request: LlmProviderRequest
+  ): Promise<LlmProviderResponse> {
     const response = await request.fetchImpl(
       `${trimTrailingSlash(request.baseUrl ?? DEFAULT_BASE_URL)}/chat/completions`,
       {
@@ -44,9 +47,26 @@ export const qwenProvider: LlmShadowProvider = {
     const payload = (await response.json()) as unknown;
     const content = readQwenContent(payload);
     if (!content) {
-      throw new LlmProviderError("qwen", null, "Qwen response had no message content.");
+      throw new LlmProviderError(
+        "qwen",
+        null,
+        "Qwen response had no message content."
+      );
     }
-    return content;
+    const record = payload as Record<string, unknown>;
+    const usage = readRecord(record.usage);
+    return {
+      outputText: content,
+      requestId: readString(record.id) ?? readString(record.request_id),
+      responseModel: readString(record.model),
+      usage: {
+        inputTokens: readNumber(usage?.prompt_tokens),
+        outputTokens: readNumber(usage?.completion_tokens),
+        totalTokens: readNumber(usage?.total_tokens),
+        cachedInputTokens: readNumber(usage?.prompt_cache_hit_tokens),
+        thoughtTokens: null
+      }
+    };
   }
 };
 
@@ -64,4 +84,18 @@ function readQwenContent(payload: unknown): string | null {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

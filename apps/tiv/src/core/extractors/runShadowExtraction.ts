@@ -1,7 +1,10 @@
 import type { CanonicalConversation } from "../types/conversation";
 import type { HybridExtractionResult } from "../types/semantic";
 import type { MockStructureResult } from "../types/structures";
-import { extractLlmShadow, type LlmShadowExtractorOptions } from "./llmShadowExtractor";
+import {
+  extractLlmShadow,
+  type LlmShadowExtractorOptions
+} from "./llmShadowExtractor";
 import { convertRuleResultToSemanticItems } from "./ruleSemanticAdapter";
 
 export async function runShadowExtraction(input: {
@@ -11,7 +14,10 @@ export async function runShadowExtraction(input: {
   now?: () => string;
 }): Promise<HybridExtractionResult> {
   const ruleItems = convertRuleResultToSemanticItems(input.ruleResult);
-  const llmResult = await extractLlmShadow(input.conversation, input.llmOptions);
+  const llmResult = await extractLlmShadow(input.conversation, {
+    ...input.llmOptions,
+    topicFlow: input.llmOptions?.topicFlow ?? input.ruleResult.topicFlow
+  });
 
   return {
     mode: "shadow",

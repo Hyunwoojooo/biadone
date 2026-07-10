@@ -975,6 +975,41 @@ MockExtractor는 개발 중 UI와 파이프라인 테스트를 위해 필요하�
 - LLM 비활성화 또는 실패 시 기존 Rule 결과가 그대로 유지됨
 ```
 
+### Sprint 5A-2 — Segment Coverage 및 품질 보정
+
+긴 Clean Conversation을 한 번에 요약하면 LLM이 소수 핵심 항목만 반환할 수 있으므로 Topic Flow 기반 구간 추출을 추가한다.
+
+```text
+Canonical Conversation + Rule Topic Flow
+→ Topic 경계 우선 segment 생성
+→ 큰 topic만 message 단위 분할
+→ 구간별 SemanticItem 전체 category 점검
+→ exact duplicate 병합
+→ usage / latency / coverage diagnostics 저장
+```
+
+구현 원칙:
+
+```text
+1. 구간당 기본 28,000자, 40개 메시지, 전체 최대 12개 구간을 사용한다.
+2. 최대 3개 구간을 병렬 호출하되 환경변수로 조정할 수 있다.
+3. 직전 assistant final answer 한 개를 context-only로 겹쳐 satisfaction과 accepted suggestion 판단을 보존한다.
+4. LLM에게 top-N 요약이 아니라 모든 semantic category의 evidence-backed 후보 추출을 요구한다.
+5. 구간 실패는 전체 import를 실패시키지 않고 completed / partial / failed 상태를 구분한다.
+6. 모든 provider는 input/output/total/cached/thought token과 response model/request ID를 가능한 범위에서 반환한다.
+7. GPT Audit에 segment 결과와 message/evidence/type coverage를 노출한다.
+```
+
+완료 기준:
+
+```text
+- Clean Conversation의 모든 분석 가능 메시지가 정확히 하나의 main segment에 포함됨
+- segment boundary의 assistant-user reaction은 context-only overlap으로 해석 가능함
+- 구간별 schema validation과 실패 상태가 독립적으로 기록됨
+- provider usage와 전체/구간 latency가 합산됨
+- LLM 결과의 semantic type 분포와 evidence message coverage를 Audit에서 확인 가능함
+```
+
 ### Sprint 5B — Evidence Verifier
 
 모든 SemanticItem의 근거를 다음 계약으로 검증한다.

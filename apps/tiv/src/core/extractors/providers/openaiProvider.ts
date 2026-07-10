@@ -2,6 +2,7 @@ import { LLM_SEMANTIC_JSON_SCHEMA } from "../../types/semantic";
 import {
   LlmProviderError,
   type LlmProviderRequest,
+  type LlmProviderResponse,
   type LlmShadowProvider
 } from "./types";
 
@@ -9,7 +10,9 @@ const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 export const openAiProvider: LlmShadowProvider = {
   id: "openai",
-  async generateJson(request: LlmProviderRequest): Promise<string> {
+  async generateJson(
+    request: LlmProviderRequest
+  ): Promise<LlmProviderResponse> {
     const response = await request.fetchImpl(
       `${trimTrailingSlash(request.baseUrl ?? DEFAULT_BASE_URL)}/responses`,
       {
@@ -45,11 +48,36 @@ export const openAiProvider: LlmShadowProvider = {
     const payload = (await response.json()) as unknown;
     const outputText = readResponseOutputText(payload);
     if (!outputText) {
-      throw new LlmProviderError("openai", null, "Response had no output text.");
+      throw new LlmProviderError(
+        "openai",
+        null,
+        "Response had no output text."
+      );
     }
-    return outputText;
+    const record = payload as Record<string, unknown>;
+    return {
+      outputText,
+      requestId: readString(record.id),
+      responseModel: readString(record.model),
+      usage: readOpenAiUsage(record.usage)
+    };
   }
 };
+
+function readOpenAiUsage(value: unknown) {
+  const usage = readRecord(value);
+  return {
+    inputTokens: readNumber(usage?.input_tokens),
+    outputTokens: readNumber(usage?.output_tokens),
+    totalTokens: readNumber(usage?.total_tokens),
+    cachedInputTokens: readNumber(
+      readRecord(usage?.input_tokens_details)?.cached_tokens
+    ),
+    thoughtTokens: readNumber(
+      readRecord(usage?.output_tokens_details)?.reasoning_tokens
+    )
+  };
+}
 
 function readResponseOutputText(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
@@ -71,4 +99,18 @@ function readResponseOutputText(payload: unknown): string | null {
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

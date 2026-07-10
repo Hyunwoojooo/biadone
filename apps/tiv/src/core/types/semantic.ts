@@ -35,24 +35,89 @@ export const semanticItemSchema = z.object({
 
 export type SemanticItem = z.infer<typeof semanticItemSchema>;
 
+const llmSemanticItemSchema = semanticItemSchema
+  .omit({
+    id: true,
+    source: true,
+    sourceItemId: true,
+    reviewRequired: true
+  })
+  .extend({
+    evidenceMessageIndexes: z.array(z.number().int().positive()).min(1)
+  });
+
 export const llmSemanticOutputSchema = z.object({
-  items: z.array(
-    semanticItemSchema.omit({
-      id: true,
-      source: true,
-      sourceItemId: true,
-      reviewRequired: true
-    })
-  )
+  items: z.array(llmSemanticItemSchema)
 });
 
 export type LlmSemanticOutput = z.infer<typeof llmSemanticOutputSchema>;
 
+export type LlmTokenUsage = {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  cachedInputTokens: number | null;
+  thoughtTokens: number | null;
+};
+
+export type ShadowLlmSegmentResult = {
+  id: string;
+  order: number;
+  label: string;
+  topicIds: string[];
+  startMessageIndex: number;
+  endMessageIndex: number;
+  messageIndexes: number[];
+  contextMessageIndexes: number[];
+  inputChars: number;
+  status: "completed" | "failed";
+  itemCount: number;
+  durationMs: number;
+  requestId: string | null;
+  responseModel: string | null;
+  usage: LlmTokenUsage;
+  error?: {
+    code: "LLM_REQUEST_FAILED" | "LLM_INVALID_OUTPUT";
+    message: string;
+  };
+};
+
+export type ShadowLlmMetrics = {
+  requestCount: number;
+  completedRequestCount: number;
+  failedRequestCount: number;
+  totalDurationMs: number;
+  providerDurationMs: number;
+  usage: {
+    reportedRequestCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cachedInputTokens: number;
+    thoughtTokens: number;
+  };
+};
+
+export type ShadowLlmCoverage = {
+  cleanMessageCount: number;
+  analyzedMessageCount: number;
+  segmentCount: number;
+  semanticTypeCounts: Partial<Record<SemanticItemType, number>>;
+  representedMessageIndexes: number[];
+  evidenceMessageCoverageRatio: number;
+  unrepresentedSemanticTypes: SemanticItemType[];
+  invalidEvidenceItemIds: string[];
+};
+
 export type ShadowLlmResult = {
-  status: "disabled" | "completed" | "failed";
+  extractorVersion: string;
+  status: "disabled" | "completed" | "partial" | "failed";
   provider: "openai" | "qwen" | "gemini" | null;
   model: string | null;
   items: SemanticItem[];
+  segments: ShadowLlmSegmentResult[];
+  metrics: ShadowLlmMetrics;
+  coverage: ShadowLlmCoverage;
   error?: {
     code: "SHADOW_DISABLED" | "LLM_REQUEST_FAILED" | "LLM_INVALID_OUTPUT";
     message: string;
@@ -94,18 +159,49 @@ export const LLM_SEMANTIC_JSON_SCHEMA = {
         properties: {
           type: {
             type: "string",
-            enum: semanticItemTypeSchema.options
+            enum: semanticItemTypeSchema.options,
+            description: "Semantic category of this evidence-backed item."
           },
-          label: { type: "string", minLength: 1 },
-          description: { type: "string" },
-          status: nullableString,
-          category: nullableString,
-          triggerPhrase: nullableString,
+          label: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Short, specific Korean label that identifies the extracted meaning."
+          },
+          description: {
+            type: "string",
+            description:
+              "Conservative explanation supported by the cited messages."
+          },
+          status: {
+            ...nullableString,
+            description:
+              "Type-appropriate state such as confirmed, deferred, open, or satisfied."
+          },
+          category: {
+            ...nullableString,
+            description:
+              "Optional subtype such as tone, format, product, or architecture."
+          },
+          triggerPhrase: {
+            ...nullableString,
+            description:
+              "Short direct phrase copied from a cited message, never a paraphrase."
+          },
           evidenceMessageIndexes: {
             type: "array",
-            items: { type: "integer", minimum: 1 }
+            minItems: 1,
+            items: { type: "integer", minimum: 1 },
+            description:
+              "One or more messageIndex values from the supplied clean messages."
           },
-          confidence: { type: "number", minimum: 0, maximum: 1 }
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+            description:
+              "Confidence in semantic correctness and evidence support."
+          }
         }
       }
     }

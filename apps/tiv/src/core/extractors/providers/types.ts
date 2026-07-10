@@ -1,3 +1,5 @@
+import type { LlmTokenUsage } from "../../types/semantic";
+
 export type LlmProviderId = "openai" | "qwen" | "gemini";
 
 export type LlmProviderRequest = {
@@ -8,9 +10,16 @@ export type LlmProviderRequest = {
   fetchImpl: typeof fetch;
 };
 
+export type LlmProviderResponse = {
+  outputText: string;
+  requestId: string | null;
+  responseModel: string | null;
+  usage: LlmTokenUsage;
+};
+
 export interface LlmShadowProvider {
   readonly id: LlmProviderId;
-  generateJson(request: LlmProviderRequest): Promise<string>;
+  generateJson(request: LlmProviderRequest): Promise<LlmProviderResponse>;
 }
 
 export class LlmProviderError extends Error {
