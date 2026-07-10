@@ -1,4 +1,4 @@
-export type LlmProviderId = "openai" | "qwen";
+export type LlmProviderId = "openai" | "qwen" | "gemini";
 
 export type LlmProviderRequest = {
   apiKey: string;

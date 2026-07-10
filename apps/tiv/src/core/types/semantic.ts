@@ -50,7 +50,7 @@ export type LlmSemanticOutput = z.infer<typeof llmSemanticOutputSchema>;
 
 export type ShadowLlmResult = {
   status: "disabled" | "completed" | "failed";
-  provider: "openai" | "qwen" | null;
+  provider: "openai" | "qwen" | "gemini" | null;
   model: string | null;
   items: SemanticItem[];
   error?: {

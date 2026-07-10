@@ -10,6 +10,7 @@ import {
 } from "./providers";
 
 const DEFAULT_MODELS: Record<LlmProviderId, string> = {
+  gemini: "gemini-3.1-flash-lite",
   openai: "gpt-4o-mini",
   qwen: "qwen3.7-plus"
 };
@@ -93,25 +94,44 @@ export async function extractLlmShadow(
 }
 
 function resolveProviderId(value: string | undefined): LlmProviderId {
-  return value === "qwen" ? "qwen" : "openai";
+  if (value === "gemini" || value === "qwen") return value;
+  return "openai";
 }
 
 function apiKeyFor(provider: LlmProviderId): string | undefined {
-  return provider === "qwen" ? process.env.DASHSCOPE_API_KEY : process.env.OPENAI_API_KEY;
+  switch (provider) {
+    case "gemini":
+      return process.env.GEMINI_API_KEY;
+    case "qwen":
+      return process.env.DASHSCOPE_API_KEY;
+    default:
+      return process.env.OPENAI_API_KEY;
+  }
 }
 
 function modelFor(provider: LlmProviderId): string {
-  const configured =
-    provider === "qwen" ? process.env.QWEN_MODEL : process.env.OPENAI_MODEL;
+  const configured = {
+    gemini: process.env.GEMINI_MODEL,
+    openai: process.env.OPENAI_MODEL,
+    qwen: process.env.QWEN_MODEL
+  }[provider];
   return configured ?? DEFAULT_MODELS[provider];
 }
 
 function baseUrlFor(provider: LlmProviderId): string | undefined {
-  return provider === "qwen" ? process.env.QWEN_BASE_URL : process.env.OPENAI_BASE_URL;
+  return {
+    gemini: process.env.GEMINI_BASE_URL,
+    openai: process.env.OPENAI_BASE_URL,
+    qwen: process.env.QWEN_BASE_URL
+  }[provider];
 }
 
 function apiKeyEnvironmentName(provider: LlmProviderId): string {
-  return provider === "qwen" ? "DASHSCOPE_API_KEY" : "OPENAI_API_KEY";
+  return {
+    gemini: "GEMINI_API_KEY",
+    openai: "OPENAI_API_KEY",
+    qwen: "DASHSCOPE_API_KEY"
+  }[provider];
 }
 
 function buildShadowPrompt(conversation: CanonicalConversation): string {

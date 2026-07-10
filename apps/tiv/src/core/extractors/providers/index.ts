@@ -1,8 +1,10 @@
+import { geminiProvider } from "./geminiProvider";
 import { openAiProvider } from "./openaiProvider";
 import { qwenProvider } from "./qwenProvider";
 import type { LlmProviderId, LlmShadowProvider } from "./types";
 
 const providers: Record<LlmProviderId, LlmShadowProvider> = {
+  gemini: geminiProvider,
   openai: openAiProvider,
   qwen: qwenProvider
 };
@@ -12,4 +14,8 @@ export function getLlmProvider(id: LlmProviderId): LlmShadowProvider {
 }
 
 export { LlmProviderError } from "./types";
-export type { LlmProviderId, LlmProviderRequest, LlmShadowProvider } from "./types";
+export type {
+  LlmProviderId,
+  LlmProviderRequest,
+  LlmShadowProvider
+} from "./types";

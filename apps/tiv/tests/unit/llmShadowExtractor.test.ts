@@ -133,6 +133,98 @@ describe("extractLlmShadow", () => {
     });
   });
 
+  it("uses stateless Gemini structured output and parses the common schema", async () => {
+    const fetchImpl = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        expect(String(url)).toBe("https://gemini.example/v1/interactions");
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-goog-api-key")).toBe("gemini-test-key");
+
+        const requestBody = JSON.parse(String(init?.body)) as {
+          model: string;
+          input: string;
+          store: boolean;
+          response_format: {
+            type: string;
+            mime_type: string;
+            schema: { required: string[] };
+          };
+          generation_config: {
+            thinking_level: string;
+            thinking_summaries: string;
+          };
+        };
+        expect(requestBody).toMatchObject({
+          model: "gemini-3.1-flash-lite",
+          store: false,
+          response_format: {
+            type: "text",
+            mime_type: "application/json"
+          },
+          generation_config: {
+            thinking_level: "minimal",
+            thinking_summaries: "none"
+          }
+        });
+        expect(requestBody.response_format.schema.required).toEqual(["items"]);
+        expect(requestBody.input).toContain('"messageIndex":1');
+        expect(requestBody.input).not.toContain("internal tool payload");
+
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            model: "gemini-3.1-flash-lite",
+            steps: [
+              {
+                type: "model_output",
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      items: [
+                        {
+                          type: "decision",
+                          label: "공유 링크 분석 채택",
+                          description: "공유 링크를 분석 입력으로 사용한다",
+                          status: "confirmed",
+                          category: null,
+                          triggerPhrase: "공유 링크로 분석해줘",
+                          evidenceMessageIndexes: [1],
+                          confidence: 0.86
+                        }
+                      ]
+                    })
+                  }
+                ]
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }
+    );
+
+    const result = await extractLlmShadow(conversation(), {
+      enabled: true,
+      provider: "gemini",
+      apiKey: "gemini-test-key",
+      model: "gemini-3.1-flash-lite",
+      baseUrl: "https://gemini.example/v1/",
+      fetchImpl: fetchImpl as typeof fetch
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      provider: "gemini",
+      model: "gemini-3.1-flash-lite"
+    });
+    expect(result.items[0]).toMatchObject({
+      type: "decision",
+      source: "llm",
+      reviewRequired: true
+    });
+  });
+
   it("keeps the rule result when the LLM request fails", async () => {
     const source = conversation();
     const ruleResult = extractMockStructure(source);
