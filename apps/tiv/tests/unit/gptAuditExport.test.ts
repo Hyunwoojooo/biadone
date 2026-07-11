@@ -90,6 +90,25 @@ describe("buildGptAuditMarkdown", () => {
             invalidEvidenceItemIds: []
           },
           error: { code: "SHADOW_DISABLED", message: "disabled in test" }
+        },
+        evidenceVerifier: {
+          name: "EvidenceVerifier",
+          version: "5B-1.0",
+          mode: "rule_based"
+        },
+        verifiedItems: [],
+        reviewQueue: [],
+        rejectedItems: [],
+        evidenceDiagnostics: {
+          candidateCount: 0,
+          verifiedItemCount: 0,
+          reviewItemCount: 0,
+          rejectedItemCount: 0,
+          evidenceMatchCount: 0,
+          verifiedMatchCount: 0,
+          reviewMatchCount: 0,
+          rejectedMatchCount: 0,
+          reasonCounts: {}
         }
       }
     });
@@ -115,9 +134,14 @@ describe("buildGptAuditMarkdown", () => {
     expect(markdown).toContain('"llmSegments"');
     expect(markdown).toContain('"ruleItems"');
     expect(markdown).toContain('"llmItems": []');
-    expect(markdown).toContain("## 8. Clean Conversation Messages");
-    expect(markdown).toContain("## 9. Context Signals");
-    expect(markdown).toContain("## 10. Excluded/Internal Messages");
+    expect(markdown).toContain("## 8. Sprint 5B Evidence Verification");
+    expect(markdown).toContain('"evidenceVerifier"');
+    expect(markdown).toContain('"verifiedItems": []');
+    expect(markdown).toContain('"reviewQueue": []');
+    expect(markdown).toContain('"rejectedItems": []');
+    expect(markdown).toContain("## 9. Clean Conversation Messages");
+    expect(markdown).toContain("## 10. Context Signals");
+    expect(markdown).toContain("## 11. Excluded/Internal Messages");
   });
 });
 

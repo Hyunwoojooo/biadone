@@ -787,6 +787,29 @@ type EvidenceMatch = {
   supportType: "explicit" | "accepted_context" | "inferred" | "unsupported";
   verificationStatus: "verified" | "rejected" | "review_required";
 };
+
+type EvidenceEvaluation = {
+  status: "verified" | "rejected" | "review_required";
+  matches: EvidenceMatch[];
+  issues: Array<{
+    code: string;
+    message: string;
+    messageIndexes: number[];
+  }>;
+};
+
+type EvidenceEvaluatedItem = SemanticItem & {
+  evidenceVerification: EvidenceEvaluation;
+};
+
+type EvidenceVerificationDiagnostics = {
+  candidateCount: number;
+  verifiedItemCount: number;
+  reviewItemCount: number;
+  rejectedItemCount: number;
+  evidenceMatchCount: number;
+  reasonCounts: Record<string, number>;
+};
 ```
 
 ### 11.2 Evidence 정책
@@ -961,10 +984,16 @@ type SemanticItem =
 type HybridExtractionResult = {
   ruleResult: RuleExtractionResult;
   llmResult: LlmExtractionResult;
-  verifiedItems: SemanticItem[];
-  rejectedItems: RejectedItem[];
+  evidenceVerifier: {
+    name: "EvidenceVerifier";
+    version: string;
+    mode: "rule_based";
+  };
+  verifiedItems: EvidenceEvaluatedItem[];
+  rejectedItems: EvidenceEvaluatedItem[];
   conflicts: ExtractionConflict[];
-  reviewQueue: ReviewItem[];
+  reviewQueue: EvidenceEvaluatedItem[];
+  evidenceDiagnostics: EvidenceVerificationDiagnostics;
 };
 
 type ExtractedTopic = {

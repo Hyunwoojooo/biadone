@@ -55,6 +55,7 @@ export async function GET(_request: Request, context: RouteContext) {
   return NextResponse.json({
     analysisId: record.id,
     status: record.status,
-    result: record.structureResult ?? extractMockStructure(record.conversation)
+    result: record.structureResult ?? extractMockStructure(record.conversation),
+    sprint5: record.hybridExtraction ?? null
   });
 }

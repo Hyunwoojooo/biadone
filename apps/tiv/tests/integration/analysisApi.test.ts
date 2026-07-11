@@ -45,20 +45,35 @@ describe("analysis API Sprint 2 flow", () => {
       analysisId: string;
       status: string;
       shadowStatus: string;
+      shadowVerifiedCount: number;
+      shadowReviewCount: number;
+      shadowRejectedCount: number;
     };
 
     expect(createResponse.status).toBe(200);
     expect(createPayload.status).toBe("completed");
     expect(createPayload.analysisId).toMatch(/^ana_/);
     expect(createPayload.shadowStatus).toBe("disabled");
+    expect(createPayload).toMatchObject({
+      shadowVerifiedCount: 0,
+      shadowReviewCount: 0,
+      shadowRejectedCount: 0
+    });
 
     const stored = getAnalysisStore().get(createPayload.analysisId);
-    expect(stored?.structureResult?.extractor.name).toBe("MockStructureExtractor");
+    expect(stored?.structureResult?.extractor.name).toBe(
+      "MockStructureExtractor"
+    );
     expect(stored?.hybridExtraction).toMatchObject({
       mode: "shadow",
-      llmResult: { status: "disabled", items: [] }
+      llmResult: { status: "disabled", items: [] },
+      verifiedItems: [],
+      reviewQueue: [],
+      rejectedItems: []
     });
-    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(0);
+    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(
+      0
+    );
 
     const messagesResponse = await GET_MESSAGES(
       new Request(
@@ -80,16 +95,30 @@ describe("analysis API Sprint 2 flow", () => {
       "user",
       "assistant"
     ]);
-    expect(messagesPayload.messages[0]?.text).toContain("JARVIS Context Mapper");
+    expect(messagesPayload.messages[0]?.text).toContain(
+      "JARVIS Context Mapper"
+    );
 
     const resultResponse = await GET_RESULT(
-      new Request(`http://localhost/api/analyses/${createPayload.analysisId}/result`),
+      new Request(
+        `http://localhost/api/analyses/${createPayload.analysisId}/result`
+      ),
       { params: Promise.resolve({ analysisId: createPayload.analysisId }) }
     );
-    const resultPayload = (await resultResponse.json()) as Record<string, unknown>;
+    const resultPayload = (await resultResponse.json()) as {
+      result: unknown;
+      sprint5: {
+        llmResult: { status: string };
+        evidenceDiagnostics: { candidateCount: number };
+      };
+    };
     expect(resultResponse.status).toBe(200);
     expect(resultPayload).toHaveProperty("result");
     expect(resultPayload).not.toHaveProperty("hybridExtraction");
+    expect(resultPayload.sprint5).toMatchObject({
+      llmResult: { status: "disabled" },
+      evidenceDiagnostics: { candidateCount: 0 }
+    });
   });
 
   it("keeps analysis completed and serves rule results when LLM shadow fails", async () => {
@@ -135,10 +164,14 @@ describe("analysis API Sprint 2 flow", () => {
 
     const stored = getAnalysisStore().get(createPayload.analysisId);
     expect(stored?.hybridExtraction?.llmResult.status).toBe("failed");
-    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(0);
+    expect(stored?.hybridExtraction?.ruleResult.items.length).toBeGreaterThan(
+      0
+    );
 
     const resultResponse = await GET_RESULT(
-      new Request(`http://localhost/api/analyses/${createPayload.analysisId}/result`),
+      new Request(
+        `http://localhost/api/analyses/${createPayload.analysisId}/result`
+      ),
       { params: Promise.resolve({ analysisId: createPayload.analysisId }) }
     );
     const resultPayload = (await resultResponse.json()) as {
@@ -148,6 +181,8 @@ describe("analysis API Sprint 2 flow", () => {
 
     expect(resultResponse.status).toBe(200);
     expect(resultPayload.status).toBe("completed");
-    expect(resultPayload.result?.extractor?.name).toBe("MockStructureExtractor");
+    expect(resultPayload.result?.extractor?.name).toBe(
+      "MockStructureExtractor"
+    );
   });
 });

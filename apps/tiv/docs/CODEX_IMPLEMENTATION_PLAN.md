@@ -1026,6 +1026,40 @@ export type EvidenceMatch = {
 };
 ```
 
+구현 파일:
+
+```text
+src/core/validation/evidenceVerifier.ts
+src/core/types/semantic.ts
+src/core/extractors/runShadowExtraction.ts
+src/core/export/gptAuditExport.ts
+tests/unit/evidenceVerifier.test.ts
+```
+
+검증 순서:
+
+```text
+LLM SemanticItem
+→ evidenceMessageIndexes 존재/범위 확인
+→ Clean Conversation 및 semanticAnalyzable 여부 확인
+→ triggerPhrase 원문 exact span 생성
+→ semantic type별 user/assistant evidence 역할 확인
+→ assistant final answer와 next user reaction pair 확인
+→ verifiedItems / reviewQueue / rejectedItems 분류
+→ GPT Audit diagnostics 저장
+```
+
+보수적 분류 정책:
+
+```text
+- verified: 직접 user 근거, 명시적 결정/질문/작업, 검증된 accepted context
+- review_required: trigger span 불일치, 암시적 판단, candidate, confidence < 0.75
+- rejected: 존재하지 않는 index, Context/Internal 근거, assistant-only 사용자 의도/결정/만족도
+- assistant transition/partial answer는 Satisfaction 기준 답변으로 사용하지 않음
+- 검증기는 추가 LLM 호출 없이 결정적으로 실행함
+- Rule/LLM semantic type 및 status 충돌은 Sprint 5C 범위로 유지함
+```
+
 완료 기준:
 
 ```text

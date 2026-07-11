@@ -1,6 +1,7 @@
 import type { CanonicalConversation } from "../types/conversation";
 import type { HybridExtractionResult } from "../types/semantic";
 import type { MockStructureResult } from "../types/structures";
+import { verifyLlmEvidence } from "../validation/evidenceVerifier";
 import {
   extractLlmShadow,
   type LlmShadowExtractorOptions
@@ -18,6 +19,10 @@ export async function runShadowExtraction(input: {
     ...input.llmOptions,
     topicFlow: input.llmOptions?.topicFlow ?? input.ruleResult.topicFlow
   });
+  const evidenceVerification = verifyLlmEvidence(
+    input.conversation,
+    llmResult.items
+  );
 
   return {
     mode: "shadow",
@@ -26,6 +31,7 @@ export async function runShadowExtraction(input: {
       extractorVersion: input.ruleResult.extractor.version,
       items: ruleItems
     },
-    llmResult
+    llmResult,
+    ...evidenceVerification
   };
 }

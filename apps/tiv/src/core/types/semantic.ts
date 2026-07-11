@@ -35,6 +35,70 @@ export const semanticItemSchema = z.object({
 
 export type SemanticItem = z.infer<typeof semanticItemSchema>;
 
+export type EvidenceSupportType =
+  "explicit" | "accepted_context" | "inferred" | "unsupported";
+
+export type EvidenceVerificationStatus =
+  "verified" | "rejected" | "review_required";
+
+export type EvidenceMatch = {
+  messageId: string;
+  messageIndex: number;
+  quote: string;
+  startChar: number | null;
+  endChar: number | null;
+  supportType: EvidenceSupportType;
+  verificationStatus: EvidenceVerificationStatus;
+};
+
+export type EvidenceVerificationReason =
+  | "MISSING_EVIDENCE"
+  | "OUT_OF_RANGE_MESSAGE_INDEX"
+  | "NON_CLEAN_EVIDENCE"
+  | "MISSING_TRIGGER_PHRASE"
+  | "TRIGGER_PHRASE_NOT_FOUND"
+  | "ASSISTANT_ONLY_USER_CLAIM"
+  | "SATISFACTION_PAIR_REQUIRED"
+  | "DECISION_NOT_EXPLICIT"
+  | "OPEN_QUESTION_NOT_EXPLICIT"
+  | "ACTION_NOT_EXPLICIT"
+  | "LOW_CONFIDENCE"
+  | "INFERRED_SUPPORT";
+
+export type EvidenceVerificationIssue = {
+  code: EvidenceVerificationReason;
+  message: string;
+  messageIndexes: number[];
+};
+
+export type EvidenceEvaluation = {
+  status: EvidenceVerificationStatus;
+  matches: EvidenceMatch[];
+  issues: EvidenceVerificationIssue[];
+};
+
+export type EvidenceEvaluatedItem = SemanticItem & {
+  evidenceVerification: EvidenceEvaluation;
+};
+
+export type EvidenceVerificationDiagnostics = {
+  candidateCount: number;
+  verifiedItemCount: number;
+  reviewItemCount: number;
+  rejectedItemCount: number;
+  evidenceMatchCount: number;
+  verifiedMatchCount: number;
+  reviewMatchCount: number;
+  rejectedMatchCount: number;
+  reasonCounts: Partial<Record<EvidenceVerificationReason, number>>;
+};
+
+export type EvidenceVerifierMetadata = {
+  name: "EvidenceVerifier";
+  version: string;
+  mode: "rule_based";
+};
+
 const llmSemanticItemSchema = semanticItemSchema
   .omit({
     id: true,
@@ -132,6 +196,11 @@ export type HybridExtractionResult = {
     items: SemanticItem[];
   };
   llmResult: ShadowLlmResult;
+  evidenceVerifier: EvidenceVerifierMetadata;
+  verifiedItems: EvidenceEvaluatedItem[];
+  reviewQueue: EvidenceEvaluatedItem[];
+  rejectedItems: EvidenceEvaluatedItem[];
+  evidenceDiagnostics: EvidenceVerificationDiagnostics;
 };
 
 const nullableString = { type: ["string", "null"] } as const;

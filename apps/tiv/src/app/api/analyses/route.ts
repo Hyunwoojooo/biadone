@@ -54,7 +54,10 @@ export async function POST(request: Request) {
         record.hybridExtraction?.llmResult.metrics.requestCount,
       shadowItemCount: record.hybridExtraction?.llmResult.items.length,
       shadowDurationMs:
-        record.hybridExtraction?.llmResult.metrics.totalDurationMs
+        record.hybridExtraction?.llmResult.metrics.totalDurationMs,
+      shadowVerifiedCount: record.hybridExtraction?.verifiedItems.length,
+      shadowReviewCount: record.hybridExtraction?.reviewQueue.length,
+      shadowRejectedCount: record.hybridExtraction?.rejectedItems.length
     });
   } catch (error) {
     const normalizedError = normalizeAnalysisError(error);

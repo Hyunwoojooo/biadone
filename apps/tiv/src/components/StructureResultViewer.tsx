@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { Sprint5Panel } from "@/components/Sprint5Panel";
+import type { HybridExtractionResult } from "@/core/types/semantic";
 import type {
   ActionItem,
   ContentConstraint,
@@ -21,6 +23,7 @@ type StructureResultResponse = {
   analysisId: string;
   status: "completed" | "failed";
   result?: MockStructureResult;
+  sprint5?: HybridExtractionResult | null;
   error?: {
     code: string;
     message: string;
@@ -65,22 +68,23 @@ type OverviewNarrative = {
 };
 
 type BadgeTone = "good" | "warning" | "danger" | "neutral";
+type SprintId = "sprint3" | "sprint4" | "sprint5";
 
 export function StructureResultViewer({ analysisId }: { analysisId: string }) {
   const [data, setData] = useState<StructureResultResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [auditExporting, setAuditExporting] = useState(false);
-  const [activeSprint, setActiveSprint] = useState<"sprint3" | "sprint4">(
-    "sprint4"
-  );
+  const [activeSprint, setActiveSprint] = useState<SprintId>("sprint5");
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadResult() {
       try {
-        const response = await fetch(`${basePath}/api/analyses/${analysisId}/result`);
+        const response = await fetch(
+          `${basePath}/api/analyses/${analysisId}/result`
+        );
         const payload = (await response.json()) as StructureResultResponse;
 
         if (cancelled) {
@@ -88,7 +92,9 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
         }
 
         if (!response.ok || payload.status === "failed") {
-          setError(payload.error?.message ?? "구조화 결과를 불러오지 못했습니다.");
+          setError(
+            payload.error?.message ?? "구조화 결과를 불러오지 못했습니다."
+          );
           return;
         }
 
@@ -130,7 +136,9 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
   const { result } = data;
   const evidenceByMessage = buildEvidenceByMessage(result.evidence);
   const reviewItems = buildReviewItems(result, evidenceByMessage);
-  const quotedEvidenceCount = result.evidence.filter((item) => item.quote?.trim()).length;
+  const quotedEvidenceCount = result.evidence.filter((item) =>
+    item.quote?.trim()
+  ).length;
 
   async function downloadGptAuditFile() {
     setAuditExporting(true);
@@ -193,13 +201,15 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
 
       {activeSprint === "sprint3" ? (
         <Sprint3Panel result={result} />
-      ) : (
+      ) : activeSprint === "sprint4" ? (
         <Sprint4Panel
           result={result}
           evidenceByMessage={evidenceByMessage}
           reviewItems={reviewItems}
           quotedEvidenceCount={quotedEvidenceCount}
         />
+      ) : (
+        <Sprint5Panel sprint5={data.sprint5 ?? null} />
       )}
     </section>
   );
@@ -209,8 +219,8 @@ function SprintTabs({
   activeSprint,
   onChange
 }: {
-  activeSprint: "sprint3" | "sprint4";
-  onChange: (sprint: "sprint3" | "sprint4") => void;
+  activeSprint: SprintId;
+  onChange: (sprint: SprintId) => void;
 }) {
   return (
     <div
@@ -218,6 +228,7 @@ function SprintTabs({
       aria-label="분석 결과 버전"
       style={{
         display: "flex",
+        flexWrap: "wrap",
         gap: 8,
         borderBottom: "1px solid #d4d4d4",
         marginBottom: 18
@@ -234,6 +245,12 @@ function SprintTabs({
         label="Sprint 4"
         description="사람이 읽기 쉬운 판단 UI"
         onClick={() => onChange("sprint4")}
+      />
+      <SprintTabButton
+        active={activeSprint === "sprint5"}
+        label="Sprint 5"
+        description="LLM 추출 및 근거 검증"
+        onClick={() => onChange("sprint5")}
       />
     </div>
   );
@@ -261,6 +278,8 @@ function SprintTabButton({
         border: 0,
         borderBottom: `3px solid ${active ? "#111827" : "transparent"}`,
         background: "transparent",
+        flex: "1 1 150px",
+        minWidth: 0,
         padding: "10px 12px 9px",
         cursor: "pointer",
         textAlign: "left",
@@ -279,18 +298,36 @@ function Sprint3Panel({ result }: { result: MockStructureResult }) {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Section title="Sprint 3 Raw Structure">
-        <KeyValue label="Extractor" value={`${result.extractor.name} ${result.extractor.version}`} />
-        <KeyValue label="Overview confidence" value={formatConfidence(result.overview.confidence)} />
-        <KeyValue label="Current status" value={result.overview.currentStatus} />
-        <KeyValue label="Context signals" value={`${result.diagnostics.contextSignalCount} total`} />
+        <KeyValue
+          label="Extractor"
+          value={`${result.extractor.name} ${result.extractor.version}`}
+        />
+        <KeyValue
+          label="Overview confidence"
+          value={formatConfidence(result.overview.confidence)}
+        />
+        <KeyValue
+          label="Current status"
+          value={result.overview.currentStatus}
+        />
+        <KeyValue
+          label="Context signals"
+          value={`${result.diagnostics.contextSignalCount} total`}
+        />
       </Section>
 
       <Section title="Overview">
         <KeyValue label="Title" value={result.overview.title} />
         <KeyValue label="Main subject" value={result.overview.mainSubject} />
         <KeyValue label="Core intent" value={result.overview.userCoreIntent} />
-        <KeyValue label="Resolution" value={result.overview.resolutionSummary} />
-        <KeyValue label="Satisfaction" value={result.overview.satisfactionSummary} />
+        <KeyValue
+          label="Resolution"
+          value={result.overview.resolutionSummary}
+        />
+        <KeyValue
+          label="Satisfaction"
+          value={result.overview.satisfactionSummary}
+        />
       </Section>
 
       <Section title="Board">
@@ -367,9 +404,18 @@ function Sprint3Panel({ result }: { result: MockStructureResult }) {
           label="Context signal types"
           value={formatSignalCounts(result.diagnostics.contextSignalTypeCounts)}
         />
-        <KeyValue label="Rules fired" value={formatSignalCounts(result.diagnostics.rulesFired)} />
-        <KeyValue label="Warnings" value={String(result.diagnostics.warnings.length)} />
-        <KeyValue label="Excluded internal" value={String(result.diagnostics.excludedInternalCount)} />
+        <KeyValue
+          label="Rules fired"
+          value={formatSignalCounts(result.diagnostics.rulesFired)}
+        />
+        <KeyValue
+          label="Warnings"
+          value={String(result.diagnostics.warnings.length)}
+        />
+        <KeyValue
+          label="Excluded internal"
+          value={String(result.diagnostics.excludedInternalCount)}
+        />
       </Section>
     </div>
   );
@@ -543,8 +589,14 @@ function Sprint4Panel({
               원본 overview 필드 보기
             </summary>
             <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-              <KeyValue label="Main subject" value={result.overview.mainSubject} />
-              <KeyValue label="Core intent" value={result.overview.userCoreIntent} />
+              <KeyValue
+                label="Main subject"
+                value={result.overview.mainSubject}
+              />
+              <KeyValue
+                label="Core intent"
+                value={result.overview.userCoreIntent}
+              />
               <KeyValue label="Status" value={result.overview.currentStatus} />
               <KeyValue
                 label="Satisfaction"
@@ -564,7 +616,10 @@ function Sprint4Panel({
               />
             ))}
           </Group>
-          <Group title="Open Questions" empty={mainBoardOpenQuestions.length === 0}>
+          <Group
+            title="Open Questions"
+            empty={mainBoardOpenQuestions.length === 0}
+          >
             {mainBoardOpenQuestions.map((item) => (
               <OpenQuestionCard
                 key={item.id}
@@ -608,7 +663,10 @@ function Sprint4Panel({
               gap: 14
             }}
           >
-            <Group title="Preferences" empty={confidentPreferenceSignals.length === 0}>
+            <Group
+              title="Preferences"
+              empty={confidentPreferenceSignals.length === 0}
+            >
               {confidentPreferenceSignals.map((item) => (
                 <PreferenceCard
                   key={item.id}
@@ -648,7 +706,11 @@ function Sprint4Panel({
           0 ? (
             <details style={{ marginTop: 14 }}>
               <summary style={{ cursor: "pointer", color: "#737373" }}>
-                Weak Signals {weakPreferenceSignals.length + weakContentConstraints.length + weakSatisfactionSignals.length}개
+                Weak Signals{" "}
+                {weakPreferenceSignals.length +
+                  weakContentConstraints.length +
+                  weakSatisfactionSignals.length}
+                개
               </summary>
               <div
                 style={{
@@ -658,7 +720,10 @@ function Sprint4Panel({
                   marginTop: 12
                 }}
               >
-                <Group title="Weak Preferences" empty={weakPreferenceSignals.length === 0}>
+                <Group
+                  title="Weak Preferences"
+                  empty={weakPreferenceSignals.length === 0}
+                >
                   {weakPreferenceSignals.map((item) => (
                     <PreferenceCard
                       key={item.id}
@@ -710,7 +775,9 @@ function Sprint4Panel({
           <div style={{ marginTop: 14 }}>
             <KeyValue
               label="Context signal types"
-              value={formatSignalCounts(result.diagnostics.contextSignalTypeCounts)}
+              value={formatSignalCounts(
+                result.diagnostics.contextSignalTypeCounts
+              )}
             />
             <KeyValue
               label="Context signals"
@@ -771,7 +838,9 @@ function RawList({
               <p style={{ margin: "4px 0 0", color: "#666", fontSize: 13 }}>
                 {item.meta} · {formatConfidence(item.confidence)} · evidence{" "}
                 {item.evidenceMessageIndexes.length > 0
-                  ? item.evidenceMessageIndexes.map((index) => `#${index}`).join(", ")
+                  ? item.evidenceMessageIndexes
+                      .map((index) => `#${index}`)
+                      .join(", ")
                   : "none"}
               </p>
             </article>
@@ -825,7 +894,9 @@ function EvidenceQuoteCard({
         background: item.sourceType === "context_signal" ? "#fafafa" : "#fff"
       }}
     >
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}
+      >
         <Badge tone={item.sourceType === "context_signal" ? "neutral" : "good"}>
           {item.sourceType}
         </Badge>
@@ -933,7 +1004,9 @@ function buildEvidenceByMessage(evidence: EvidenceItem[]): EvidenceMap {
   return map;
 }
 
-function buildEvidenceQuoteItems(evidence: EvidenceItem[]): EvidenceQuoteItem[] {
+function buildEvidenceQuoteItems(
+  evidence: EvidenceItem[]
+): EvidenceQuoteItem[] {
   return evidence
     .map((item, index): EvidenceQuoteItem | null => {
       const quote = item.quote?.trim();
@@ -1028,10 +1101,14 @@ function overviewReviewFocus(
     focus.push("evidence index는 있으나 quote가 없는 항목의 원문 근거 확인");
   }
   if (result.board.openQuestions.some((item) => item.status === "open")) {
-    focus.push("아직 resolved 처리되지 않은 open question이 실제로 남아 있는지 확인");
+    focus.push(
+      "아직 resolved 처리되지 않은 open question이 실제로 남아 있는지 확인"
+    );
   }
   if (result.preferenceSignals.some((item) => item.confidence < 0.75)) {
-    focus.push("Weak Signals에 들어간 낮은 confidence 선호는 기본 판단에서 제외할지 검토");
+    focus.push(
+      "Weak Signals에 들어간 낮은 confidence 선호는 기본 판단에서 제외할지 검토"
+    );
   }
   if (focus.length === 0) {
     focus.push("Board의 decisions/actions가 실제 대화 흐름과 맞는지 최종 확인");
@@ -1093,7 +1170,9 @@ function preferenceInsightTitle(
     return `${avoidanceSubjectLabel(subject)} 제외 또는 후순위 선호`;
   }
   if (category === "length") {
-    return subject === "detailed" ? "충분히 자세한 답변을 선호함" : "짧고 압축된 답변을 선호함";
+    return subject === "detailed"
+      ? "충분히 자세한 답변을 선호함"
+      : "짧고 압축된 답변을 선호함";
   }
   if (category === "tone") {
     return "답변 톤에 대한 선호 신호";
@@ -1186,16 +1265,34 @@ function buildReviewItems(
       reviewItem("Decision", item.title, item, result, evidenceByMessage)
     ),
     ...result.board.openQuestions.map((item) =>
-      reviewItem("Open Question", item.question, item, result, evidenceByMessage)
+      reviewItem(
+        "Open Question",
+        item.question,
+        item,
+        result,
+        evidenceByMessage
+      )
     ),
     ...result.board.actions.map((item) =>
       reviewItem("Action", item.title, item, result, evidenceByMessage)
     ),
     ...result.preferenceSignals.map((item) =>
-      reviewItem("Preference", item.normalizedLabel, item, result, evidenceByMessage)
+      reviewItem(
+        "Preference",
+        item.normalizedLabel,
+        item,
+        result,
+        evidenceByMessage
+      )
     ),
     ...result.contentConstraints.map((item) =>
-      reviewItem("Content Constraint", item.title, item, result, evidenceByMessage)
+      reviewItem(
+        "Content Constraint",
+        item.title,
+        item,
+        result,
+        evidenceByMessage
+      )
     ),
     ...result.satisfactionSignals.map((item) =>
       reviewItem("Satisfaction", item.status, item, result, evidenceByMessage)
@@ -1206,7 +1303,9 @@ function buildReviewItems(
   ];
 
   return items
-    .filter((item) => item.reason !== "low_confidence" || item.confidence < 0.75)
+    .filter(
+      (item) => item.reason !== "low_confidence" || item.confidence < 0.75
+    )
     .sort((a, b) => a.confidence - b.confidence);
 }
 
@@ -1324,7 +1423,9 @@ function MetricCard({
         background: "#fff"
       }}
     >
-      <p style={{ margin: "0 0 6px", color: "#737373", fontSize: 12 }}>{label}</p>
+      <p style={{ margin: "0 0 6px", color: "#737373", fontSize: 12 }}>
+        {label}
+      </p>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <strong style={{ fontSize: 22 }}>{value}</strong>
         <Badge tone={tone}>{toneLabel(tone)}</Badge>
@@ -1441,7 +1542,10 @@ function TopicCard({
     <InsightCard
       title={`${topic.order}. ${topic.label}`}
       description={topic.summary}
-      badges={[`#${topic.startMessageIndex}-#${topic.endMessageIndex}`, topic.changeReason]}
+      badges={[
+        `#${topic.startMessageIndex}-#${topic.endMessageIndex}`,
+        topic.changeReason
+      ]}
       confidence={topic.confidence}
       evidenceMessageIndexes={topic.evidenceMessageIndexes}
       evidenceByMessage={evidenceByMessage}
@@ -1473,7 +1577,11 @@ function PreferenceCard({
       title={item.normalizedLabel}
       description={item.description}
       triggerPhrase={item.triggerPhrase}
-      badges={[item.category, item.polarity, item.reinforced ? "reinforced" : "single signal"]}
+      badges={[
+        item.category,
+        item.polarity,
+        item.reinforced ? "reinforced" : "single signal"
+      ]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
       evidenceByMessage={evidenceByMessage}
@@ -1496,7 +1604,7 @@ function ContentConstraintCard({
       triggerPhrase={item.triggerPhrase}
       badges={[
         item.constraintType,
-        item.reviewRequired ? item.reviewRequiredReason ?? "review" : "main"
+        item.reviewRequired ? (item.reviewRequiredReason ?? "review") : "main"
       ]}
       confidence={item.confidence}
       evidenceMessageIndexes={item.evidenceMessageIndexes}
@@ -1570,10 +1678,14 @@ function InsightCard({
           alignItems: "flex-start"
         }}
       >
-        <h4 style={{ margin: 0, fontSize: compact ? 14 : 16, lineHeight: 1.35 }}>
+        <h4
+          style={{ margin: 0, fontSize: compact ? 14 : 16, lineHeight: 1.35 }}
+        >
           {title}
         </h4>
-        <Badge tone={confidenceTone(confidence)}>{formatConfidence(confidence)}</Badge>
+        <Badge tone={confidenceTone(confidence)}>
+          {formatConfidence(confidence)}
+        </Badge>
       </div>
       {description ? (
         <p style={{ margin: "8px 0 0", color: "#404040", lineHeight: 1.55 }}>
@@ -1604,7 +1716,9 @@ function InsightCard({
         evidenceByMessage={evidenceByMessage}
       />
       {footer ? (
-        <p style={{ margin: "8px 0 0", color: "#737373", fontSize: 13 }}>{footer}</p>
+        <p style={{ margin: "8px 0 0", color: "#737373", fontSize: 13 }}>
+          {footer}
+        </p>
       ) : null}
     </article>
   );
@@ -1629,7 +1743,9 @@ function EvidenceBlock({
   );
 
   return (
-    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+    <div
+      style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}
+    >
       <p style={{ margin: "0 0 6px", color: "#737373", fontSize: 13 }}>
         Evidence{" "}
         {evidenceMessageIndexes.length > 0
@@ -1647,7 +1763,14 @@ function EvidenceBlock({
               background: "#fafafa"
             }}
           >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                marginBottom: 6
+              }}
+            >
               <Badge tone="neutral">#{item.messageIndex}</Badge>
               <Badge tone="neutral">{item.sourceType}</Badge>
               <Badge tone="neutral">{item.evidenceStrength}</Badge>
@@ -1741,7 +1864,13 @@ function EmptyState({ text }: { text: string }) {
   return <p style={{ margin: 0, color: "#777", lineHeight: 1.5 }}>{text}</p>;
 }
 
-function Badge({ tone, children }: { tone: BadgeTone; children: React.ReactNode }) {
+function Badge({
+  tone,
+  children
+}: {
+  tone: BadgeTone;
+  children: React.ReactNode;
+}) {
   const colors = {
     good: { background: "#ecfdf3", color: "#027a48", border: "#abefc6" },
     warning: { background: "#fffaeb", color: "#b54708", border: "#fedf89" },

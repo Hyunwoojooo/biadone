@@ -38,3 +38,15 @@ TIV_LLM_SEGMENT_CONCURRENCY=3
 - 여러 구간에서 생성된 exact duplicate는 evidence와 trigger phrase 기준으로 병합합니다.
 - 일부 구간만 실패하면 전체 상태를 `partial`로 기록하고 성공한 구간의 후보는 보존합니다.
 - GPT Audit에는 구간별 상태, 토큰 사용량, 응답시간, semantic type coverage, evidence message coverage를 함께 기록합니다.
+
+### Sprint 5B Evidence Verifier
+
+LLM 후보를 원문과 다시 대조해 `verifiedItems`, `reviewQueue`, `rejectedItems`로 분리합니다. 검증기는 규칙 기반으로 실행되므로 추가 LLM API 호출이나 토큰 비용이 발생하지 않습니다.
+
+- `triggerPhrase`가 인용한 Clean Conversation 메시지에 실제로 존재하는지 확인하고 정확한 `startChar/endChar`를 저장합니다.
+- intent, preference, content constraint, problem signal, change event는 직접적인 user evidence가 있어야 검증됩니다.
+- decision은 명시적인 user 결정 표현 또는 assistant 제안 직후의 user 수락 반응이 필요합니다.
+- satisfaction은 assistant final answer와 그다음 user reaction이 함께 인용되고 상태 표현이 일치해야 합니다.
+- 잘못된 index와 Context/Internal 근거는 `rejectedItems`, span 불일치·암시적 판단·낮은 confidence는 `reviewQueue`로 이동합니다.
+- RuleExtractor와 Sprint 3/4 결과는 변경하지 않으며, Rule/LLM 충돌 해소는 Sprint 5C에서 수행합니다.
+- 분석 결과 화면의 Sprint 5 탭에서 LLM 실행 지표, segment 상태, Rule/LLM 타입 분포와 Evidence 검증 결과를 확인할 수 있습니다.

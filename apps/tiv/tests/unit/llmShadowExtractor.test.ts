@@ -452,6 +452,54 @@ describe("extractLlmShadow", () => {
     expect(result.error).toBeUndefined();
   });
 
+  it("runs evidence verification for successful shadow candidates", async () => {
+    const source = conversation();
+    const ruleResult = extractMockStructure(source);
+    const hybrid = await runShadowExtraction({
+      conversation: source,
+      ruleResult,
+      llmOptions: {
+        enabled: true,
+        apiKey: "test-key",
+        fetchImpl: vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                output_text: JSON.stringify({
+                  items: [
+                    {
+                      type: "action",
+                      label: "공유 링크 분석",
+                      description: "공유 링크를 분석한다",
+                      status: "requested",
+                      category: null,
+                      triggerPhrase: "공유 링크로 분석해줘",
+                      evidenceMessageIndexes: [1],
+                      confidence: 0.9
+                    }
+                  ]
+                })
+              }),
+              { status: 200 }
+            )
+        ) as typeof fetch
+      },
+      now: () => "2026-07-11T00:00:00.000Z"
+    });
+
+    expect(hybrid.llmResult.items).toHaveLength(1);
+    expect(hybrid.verifiedItems).toHaveLength(1);
+    expect(hybrid.reviewQueue).toHaveLength(0);
+    expect(hybrid.rejectedItems).toHaveLength(0);
+    expect(
+      hybrid.verifiedItems[0]?.evidenceVerification.matches[0]
+    ).toMatchObject({
+      messageIndex: 1,
+      quote: "공유 링크로 분석해줘",
+      verificationStatus: "verified"
+    });
+  });
+
   it("keeps the rule result when the LLM request fails", async () => {
     const source = conversation();
     const ruleResult = extractMockStructure(source);
@@ -474,6 +522,16 @@ describe("extractLlmShadow", () => {
       error: { code: "LLM_REQUEST_FAILED" }
     });
     expect(hybrid.ruleResult.items.length).toBeGreaterThan(0);
+    expect(hybrid.evidenceVerifier).toMatchObject({
+      name: "EvidenceVerifier",
+      version: "5B-1.0"
+    });
+    expect(hybrid.evidenceDiagnostics).toMatchObject({
+      candidateCount: 0,
+      verifiedItemCount: 0,
+      reviewItemCount: 0,
+      rejectedItemCount: 0
+    });
   });
 });
 
