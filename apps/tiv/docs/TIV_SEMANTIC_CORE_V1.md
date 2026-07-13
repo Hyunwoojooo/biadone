@@ -76,15 +76,15 @@ relation
 
 ### 2.4 빠른 판정표
 
-| Type                 | 한 문장 판정 질문                                 | 최소 근거                              |
-| -------------------- | ------------------------------------------------- | -------------------------------------- |
-| `intent`             | 사용자가 명시적으로 이루려는 결과는 무엇인가?     | 사용자 목표 표현 또는 명확한 수락 문맥 |
-| `topic`              | 이 대화 구간은 무엇을 논의하는가?                 | 실제 논의 메시지 범위                  |
-| `content_constraint` | 무엇이 반드시 포함·제외·제한돼야 하는가?          | 규범적인 포함·제외·제한 표현           |
-| `problem_signal`     | 무엇이 어렵고, 실패했고, 불편하거나 위험한가?     | 명시적인 문제 진술                     |
-| `change_event`       | 무엇이 이전 상태에서 이후 상태로 바뀌었는가?      | before, after, 전환 표현               |
-| `entity`             | 다른 구간에서도 동일 대상으로 다시 가리킬 만한가? | 이름 또는 고유 식별 표현               |
-| `relation`           | 두 Entity 사이의 어떤 연결이 명시됐는가?          | 두 endpoint와 관계 표현                |
+| Type                 | 한 문장 판정 질문                                 | 최소 근거                           |
+| -------------------- | ------------------------------------------------- | ----------------------------------- |
+| `intent`             | 사용자가 명시적으로 이루려는 결과는 무엇인가?     | 목적 내용이 포함된 직접 사용자 표현 |
+| `topic`              | 이 대화 구간은 무엇을 논의하는가?                 | 실제 논의 메시지 범위               |
+| `content_constraint` | 무엇이 반드시 포함·제외·제한돼야 하는가?          | 규범적인 포함·제외·제한 표현        |
+| `problem_signal`     | 무엇이 어렵고, 실패했고, 불편하거나 위험한가?     | 명시적인 문제 진술                  |
+| `change_event`       | 무엇이 이전 상태에서 이후 상태로 바뀌었는가?      | before, after, 전환 표현            |
+| `entity`             | 다른 구간에서도 동일 대상으로 다시 가리킬 만한가? | 이름 또는 고유 식별 표현            |
+| `relation`           | 두 Entity 사이의 어떤 연결이 명시됐는가?          | 두 endpoint와 관계 표현             |
 
 이 7개는 객관적으로 관찰 가능한 대화 정보 전체를 완전하게 분류하려는 온톨로지가 아니다. 1차 정리 제품에서 보존하기로 선택한 7개의 관찰 축이다.
 
@@ -402,6 +402,8 @@ type SemanticCoreSnapshotV1 = {
 
 `conversationRevision`은 Evidence span이 어느 불변 원문을 기준으로 계산됐는지 확인할 수 있는 hash 또는 revision ID다.
 
+`createdAt`은 UTC offset 또는 `Z`를 포함한 ISO 8601 datetime 문자열이어야 한다.
+
 Snapshot은 한 번 생성된 분석 결과를 재현할 수 있도록 불변 데이터로 저장한다. 재분석 시 기존 Snapshot을 덮어쓰지 않고 새 버전을 만든다.
 
 ### 7.2 공통 Semantic Item
@@ -468,6 +470,7 @@ type EvidenceAnchorV1 = {
 하나의 Evidence Anchor는 하나의 실제 원문 span을 가리킨다. 같은 span을 여러 Semantic Item이 참조할 수 있다.
 
 - `explicit` Item의 Evidence Ref는 `direct_support`다.
+- `explicit` Item의 모든 direct Evidence는 Item attribution과 같은 화자여야 한다. `conversation` attribution의 Topic·Entity·Relation은 user와 assistant Evidence를 함께 사용할 수 있다.
 - `accepted_context` Item은 최소 하나의 `proposition` Ref와 그 뒤의 `acceptance` Ref를 모두 가져야 한다.
 - Evidence Anchor는 공유 가능한 원문 span이고, `SemanticEvidenceRefV1.role`은 그 span이 특정 Item에서 수행하는 역할이다.
 - Item 전체의 근거 수준은 `CoreSemanticItemBaseV1.supportType`이 결정한다.
@@ -502,6 +505,8 @@ type SemanticCandidateV1 = {
 | `relation`           | 허용       | 조건부 허용        | 관계 제안과 사용자 수락을 모두 인용       |
 
 `accepted_context`는 숨은 의미를 추론하는 방식이 아니다. assistant가 명시한 하나의 semantic proposition 또는 서로 경쟁하지 않는 하나의 결합된 패키지를 사용자가 분명하게 수락·확인했을 때만 앞 문장의 내용을 문맥적으로 복원하는 방식이다.
+
+`accepted_context`로 검증된 Item의 `attribution`은 반드시 `user`여야 한다.
 
 Public Summary에서 사용하는 기본 attribution은 다음과 같다.
 
@@ -686,7 +691,8 @@ Topic
 #### 검증 규칙
 
 - `startMessageIndex <= endMessageIndex`여야 한다.
-- `order`, `startMessageIndex`, `endMessageIndex`는 음수가 아닌 정수여야 한다.
+- `order`는 음수가 아닌 정수여야 한다.
+- 현재 1-based Canonical Message 계약에 따라 `startMessageIndex`와 `endMessageIndex`는 양의 정수여야 한다.
 - `main` Topic의 `parentTopicId`는 `null`, `subtopic`의 `parentTopicId`는 같은 Snapshot의 유효한 Topic ID여야 한다.
 - Topic parent는 자기 자신을 가리킬 수 없고 cycle을 만들 수 없다.
 - Topic Item 자체의 공통 `topicIds`는 항상 빈 배열이다. 계층은 `parentTopicId`로만 표현한다.
@@ -910,6 +916,7 @@ Change Event
 #### 검증 규칙
 
 - `before`와 `after`가 모두 비어 있지 않아야 한다.
+- 공백과 대소문자를 정규화한 `before`와 `after`가 같으면 Change Event를 생성하지 않는다.
 - 두 상태를 연결하는 변화 표현이나 문맥 근거가 있어야 한다.
 - `reasonText`는 이유가 원문에 명시된 경우에만 기록한다.
 - 상태 변화와 단순 Topic 이동을 구분한다.
@@ -1089,6 +1096,7 @@ Relation
 #### 검증 규칙
 
 - `sourceEntityId`와 `targetEntityId`가 같은 Snapshot에 존재해야 한다.
+- `sourceEntityId`와 `targetEntityId`는 서로 다른 Entity여야 한다.
 - 두 endpoint는 Relation이 없어도 각각 독립적으로 Entity 기준을 통과해야 한다.
 - predicate는 whitelist 안에 있어야 한다.
 - 관계 자체를 지지하는 동사 또는 구문이 Evidence에 있어야 한다.
