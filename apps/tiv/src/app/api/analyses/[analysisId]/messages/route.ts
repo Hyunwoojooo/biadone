@@ -39,14 +39,16 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const messages =
-    record.conversation?.messages.map((message) => serializeMessage(message)) ?? [];
+    record.conversation?.messages.map((message) => serializeMessage(message)) ??
+    [];
 
   return NextResponse.json({
     analysisId: record.id,
     status: record.status,
     conversation: {
       title: record.conversation?.title,
-      stats: record.conversation?.stats
+      stats: record.conversation?.stats,
+      source: record.conversation?.source
     },
     messages,
     groups: {
@@ -63,7 +65,9 @@ export async function GET(_request: Request, context: RouteContext) {
   });
 }
 
-function serializeMessage(message: CanonicalMessage): Pick<
+function serializeMessage(
+  message: CanonicalMessage
+): Pick<
   CanonicalMessage,
   "id" | "index" | "role" | "text" | "blocks" | "sourceRef" | "metadata"
 > {

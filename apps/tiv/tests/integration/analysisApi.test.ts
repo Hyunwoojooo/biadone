@@ -86,10 +86,22 @@ describe("analysis API Sprint 2 flow", () => {
       }
     );
     const messagesPayload = (await messagesResponse.json()) as {
+      conversation: {
+        source: {
+          originalUrl: string;
+          adapterName: string;
+          adapterVersion: string;
+        };
+      };
       messages: { role: string; text: string }[];
     };
 
     expect(messagesResponse.status).toBe(200);
+    expect(messagesPayload.conversation.source).toMatchObject({
+      originalUrl: "https://chatgpt.com/share/sprint2-fixture",
+      adapterName: "ChatGPTShareAdapter"
+    });
+    expect(messagesPayload.conversation.source.adapterVersion).toBeTruthy();
     expect(messagesPayload.messages).toHaveLength(2);
     expect(messagesPayload.messages.map((message) => message.role)).toEqual([
       "user",

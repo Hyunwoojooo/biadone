@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import "./global.css";
+
 export const metadata: Metadata = {
   title: "JARVIS Context Mapper",
   description: "Structure long ChatGPT shared conversations."
