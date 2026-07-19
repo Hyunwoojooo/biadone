@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "fetcher": "node tools/chatgpt-fetcher/server.mjs",
+    "golden:baseline": "vite-node tools/run-golden-baseline.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

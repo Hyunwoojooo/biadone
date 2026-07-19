@@ -23,6 +23,31 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 - LLM 호출 또는 schema 검증이 실패해도 Rule 결과와 기존 UI는 정상 유지됩니다.
 - Shadow Mode를 활성화하면 Clean Conversation 내용이 선택한 외부 LLM API로 전송됩니다. 민감한 대화에는 사용하지 마세요.
 
+## Golden Core v0.1 베이스라인
+
+S-001~S-020에서 사람이 승인한 `02_프롬프트판정!H:K`와
+`03_세션요약!C:J`만 Gold Core v0.1로 사용합니다. 검수하지 않은 사용자
+만족도(`02!Q`)와 `04_예상추출항목`은 제외합니다.
+
+```text
+set -a; source /Users/nika/.tiv/tiv.env; set +a
+npm run golden:baseline -- \
+  --input .local/golden-v01-input.json \
+  --output .local/golden-v01-results.json \
+  --html-dir /private/tmp \
+  --concurrency 3
+```
+
+- Gemini가 Gold를 보지 않고 02의 현재 프롬프트 단독(B1), 이전 맥락 포함(B2),
+  03의 전체 세션 요약을 생성합니다.
+- 별도의 Gemini 평가 호출이 각 Gold 필드의 의미 일치도·완전성·근거성을
+  0~2점으로 판정합니다. 같은 모델 계열의 자동 채점이므로 사람 검수를 대체하지
+  않고 검수 우선순위를 정하는 기준으로 사용합니다.
+- 실행 결과는 중간 저장되므로 같은 출력 경로로 재실행하면 완료된 대상을
+  건너뜁니다.
+- v0.1은 모델 개발에 사용한 `dev` 데이터이므로 일반화 성능이 아니라 초기
+  비교 기준으로만 해석합니다.
+
 ### Sprint 5A-2 품질 보정
 
 긴 대화를 한 번에 요약하지 않도록 RuleExtractor의 Topic Flow를 구간 힌트로 사용합니다. 기본적으로 구간당 28,000자, 최대 40개 메시지로 묶고 최대 12개 구간을 3개씩 병렬 분석합니다. 직전 assistant 메시지는 첫 user reaction의 satisfaction/acceptance 판단을 위한 context-only 메시지로만 겹쳐 전달합니다.
