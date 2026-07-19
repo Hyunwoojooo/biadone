@@ -2,5 +2,5 @@
 
 Product applications live here.
 
-- `blabase/` - reserved for the blabase product application.
-
+- `blabase/` - active Next.js application for ChatGPT conversation restoration,
+  semantic extraction, Conversation Atlas, and Golden Dataset workflows.

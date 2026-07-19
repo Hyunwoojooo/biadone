@@ -5,7 +5,8 @@ This repository is the working space for BiaDone, the `biadone.com` website, and
 ## Structure
 
 - `sites/biadone.com/` - production source for the public `biadone.com` website.
-- `apps/blabase/` - future blabase product application code.
+- `sites/blabase.com/` - production source for the public `blabase.com` landing page.
+- `apps/blabase/` - active blabase product application.
 - `docs/` - brand notes, product plans, decisions, and research.
 - `packages/` - shared code or design-system packages when needed.
 - `ops/` - deployment, infrastructure, DNS, and operational notes.
@@ -30,14 +31,17 @@ codex --cd apps/blabase
 
 Codex reads the root `AGENTS.md` first, then any nested `AGENTS.md` files under the active working directory.
 
-## Current Website
+## Current Websites
 
-The current public website source lives in `sites/biadone.com/`.
+The public website sources live in `sites/biadone.com/` and
+`sites/blabase.com/`.
 
-Deploy from that directory:
+Deploy each site from its own directory:
 
 ```bash
 cd sites/biadone.com
 ./scripts/deploy-cloudflare.sh
-```
 
+cd ../blabase.com
+./scripts/deploy-cloudflare.sh
+```
