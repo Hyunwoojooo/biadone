@@ -80,6 +80,20 @@ npm run golden:validate -- \
 - 베이스라인 runner도 같은 검사를 자동 실행하며, 구조 오류가 있으면 LLM API를
   호출하기 전에 중단합니다.
 
+서버는 최신 로컬 보고서를 read-only API로 제공합니다.
+
+```text
+GET /api/golden/quality
+```
+
+응답에는 `datasetVersion`, `goldSnapshotSha256`, `qualityReportVersion`,
+`generatedAt`, 오류·경고 개수, 경고 코드와 대상 ID만 포함됩니다. Gold 원문,
+이슈 설명, 필드명, 공유 URL, Spreadsheet ID는 반환하지 않으며 모든 응답은
+`Cache-Control: no-store`입니다. 기본 파일은
+`.local/golden-v01-quality.json`이고 서버 환경변수
+`BLABASE_GOLDEN_QUALITY_REPORT_PATH`로 다른 비공개 경로를 지정할 수 있습니다.
+보고서가 없으면 `404`, 읽을 수 없거나 계약에 맞지 않으면 `503`을 반환합니다.
+
 ```text
 set -a; source /Users/nika/.blabase/blabase.env; set +a
 npm run golden:baseline -- \
