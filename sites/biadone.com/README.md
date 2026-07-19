@@ -6,7 +6,7 @@
 
 - **브랜드 프로미스**: *Before I Ask, Done.*
 - **외부 태그라인**: *Your context, carried forward. Your next action, prepared.*
-- **첫 제품**: T.I.V by Biadone — *Time Is Value*
+- **첫 제품**: blabase by Biadone
 - **핵심 루프**: Capture → Context → Memory → Recall → Prepare → Confirm → Done
 
 본 웹사이트는 첨부된 빌드 지침서(`biadone_company_intro_page_instructions_en_openclaw_reference.md`)를 기반으로 제작된 **1페이지 영문 회사 소개/제품 랜딩 페이지**입니다. 참고 문서에서 명시한 대로 특정 외부 서비스 명칭이나 마스코트, 브랜드 아이덴티티는 페이지 어디에도 노출하지 않았습니다.
@@ -35,13 +35,13 @@ codex --cd sites/biadone.com
 - **Problem Section**: Re-explaining / Re-finding / Re-organizing / Re-starting / Re-deciding 5개 문제 카드
 - **What Is Biadone?**: Context / Memory / Recall / Prepare / Confirm / Done 6개 정의 카드
 - **How It Works**: Context-to-Action Loop 다이어그램(7단계) + 단계별 설명 카드
-- **Quick Start with T.I.V**: Connect → Review → Confirm → Move forward 4단계 온보딩 + 터미널 스타일 세션 콘솔(상태 메시지, 커서 깜빡임)
+- **Quick Start with blabase**: Connect → Review → Confirm → Move forward 4단계 온보딩 + 터미널 스타일 세션 콘솔(상태 메시지, 커서 깜빡임)
 - **Product Experience Cards**: Context Pack / Decision Log / Action Queue / Brief / Cue / Done Signal — hover/focus 시 뒷면(출처·컨트롤 포인트·상태 메시지) 노출되는 플립 카드
 - **Use Cases**: 5개 오디언스 탭(Founders & Operators / Product Managers / Team Leads / Knowledge Workers / AI Power Users)에 따라 JS로 동적으로 바뀌는 유스케이스 카드
 - **Trust & Control**: 6개 신뢰 원칙 카드 + Permission Drawer(출처 목록, 토글 스위치, Confirm & Send / Not now 버튼) 인터랙티브 목업
 - **Ecosystem / Integrations**: 6개 카테고리 카드(Meetings, Calendar, Documents, Conversations, Tasks, AI Tools) — 과장 없는 "designed to connect" 톤
 - **Manifesto**: 회사 존재 이유 및 "Before I Ask, Done." 태그라인 강조
-- **Final CTA**: Join the T.I.V Beta / Request a Demo 버튼 + 클라이언트 사이드 이메일 대기열 폼(제출 시 확인 메시지 표시, 실제 저장은 되지 않음)
+- **Final CTA**: Join the blabase Beta / Request a Demo 버튼 + 클라이언트 사이드 이메일 대기열 폼(제출 시 확인 메시지 표시, 실제 저장은 되지 않음)
 - **Footer**: Product / Company / Resources / Connect 4개 컬럼, 카피라이트
 - **접근성**: 시맨틱 HTML, aria-label/aria-live, 키보드 포커스 스타일, prefers-reduced-motion 대응, 색상 대비 고려
 - **SEO**: title, meta description, Open Graph 태그 포함
@@ -58,13 +58,13 @@ codex --cd sites/biadone.com
 | Problem | `#problem-section` |
 | What Is Biadone? | `#what-is-biadone` |
 | How It Works | `#how-it-works` |
-| Quick Start with T.I.V | `#tiv-section` |
+| Quick Start with blabase | `#blabase-section` |
 | Product Experiences | `#product-experiences` |
 | Use Cases | `#use-cases` |
 | Trust & Control | `#trust-section` |
 | Ecosystem / Integrations | `#ecosystem-section` |
 | Manifesto | `#manifesto-section` |
-| Final CTA (+ 이메일 폼) | `#final-cta` / `#tiv-form` |
+| Final CTA (+ 이메일 폼) | `#final-cta` / `#blabase-form` |
 | Footer (Docs 포함) | `#docs` |
 
 이 사이트는 정적 단일 페이지(`index.html`)로 구성되어 있으며 별도의 쿼리 파라미터나 라우팅은 없습니다.
@@ -75,7 +75,7 @@ codex --cd sites/biadone.com
 
 ```
 index.html          메인 페이지 (모든 섹션 포함)
-tiv/index.html      T.I.V 하위 페이지
+blabase/index.html      blabase 하위 페이지
 css/style.css        커스텀 스타일 (디자인 토큰, 카드, 애니메이션, 반응형)
 js/main.js           모바일 메뉴, 스크롤 reveal, 오디언스 탭 전환, 폼 처리
 reference/           원본 빌드 지침 마크다운 보관용(사이트에 노출되지 않음)
@@ -92,7 +92,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 현재 이 프로젝트는 **정적 콘텐츠 전용**이며 백엔드 데이터베이스나 Table API를 사용하지 않습니다.
 
-- **T.I.V 베타 가입 폼**은 프론트엔드에서만 동작하며, 제출 시 확인 메시지만 표시할 뿐 실제로 이메일이 저장되지 않습니다. (정적 사이트의 한계로, 실제 이메일 수집이 필요하면 Table API 또는 외부 폼 서비스 연동이 필요합니다.)
+- **blabase 베타 가입 폼**은 프론트엔드에서만 동작하며, 제출 시 확인 메시지만 표시할 뿐 실제로 이메일이 저장되지 않습니다. (정적 사이트의 한계로, 실제 이메일 수집이 필요하면 Table API 또는 외부 폼 서비스 연동이 필요합니다.)
 
 ---
 
@@ -140,7 +140,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 index.html
 css/
 js/
-tiv/
+blabase/
 ```
 
 `README.md`, `reference/`, `.wrangler/` 같은 문서/로컬 캐시 파일은 공개 배포 대상에 포함하지 않습니다.
@@ -161,7 +161,7 @@ CNAME  www.biadone.com  biadone.pages.dev  Proxied
 - [x] 전체 페이지 영어로 작성
 - [x] Hero에서 10–15초 내 핵심 메시지 전달
 - [x] Personal Context OS로 명확히 포지셔닝
-- [x] T.I.V를 첫 제품으로 명시
+- [x] blabase를 첫 제품으로 명시
 - [x] "시간 회복" 관점 강조 (re-finding/re-explaining/re-starting)
 - [x] 챗봇/미팅노트 앱처럼 들리지 않도록 카피 작성
 - [x] 사용자 승인/확인(permission & confirmation) 시각적으로 노출

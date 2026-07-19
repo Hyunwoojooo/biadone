@@ -11,7 +11,7 @@
 ## Commands
 
 - Install: Not configured at the repository root.
-- Dev: Use the relevant subproject command, usually from `sites/biadone.com/` or `apps/tiv/`.
+- Dev: Use the relevant subproject command, usually from `sites/biadone.com/` or `apps/blabase/`.
 - Build: Not configured at the repository root.
 - Typecheck: Not configured at the repository root.
 - Lint: Not configured at the repository root.
@@ -22,7 +22,7 @@
 ## Project Structure
 
 - `sites/biadone.com/` contains the public website deployed to `biadone.com`.
-- `apps/tiv/` is reserved for the T.I.V product application.
+- `apps/blabase/` is reserved for the blabase product application.
 - `docs/` contains brand, product, decision, and research documents.
 - `packages/` is reserved for shared libraries, UI, or config packages.
 - `ops/` contains deployment, infrastructure, DNS, and operational notes.

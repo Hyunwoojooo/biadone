@@ -55,8 +55,8 @@ const KOREAN_COPY = {
   "Prepared, confirmed, and completed states become visible.": "준비됨, 확인됨, 완료됨 상태가 보이게 됩니다.",
   "\"BiaDone does not just answer a question. It keeps the operating context alive until the next action is ready.\"": "\"BiaDone은 질문에 답하는 데서 끝나지 않습니다. 다음 행동이 준비될 때까지 업무 맥락을 살아 있게 유지합니다.\"",
 
-  "Time Is Value. Start by recovering the time lost to context switching.": "Time Is Value. 맥락 전환으로 잃는 시간부터 되찾으세요.",
-  "T.I.V is BiaDone's first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.": "T.I.V는 BiaDone의 첫 번째 제품입니다. 대화와 업무 세션을 Context Pack, Decision Log, Action Queue로 바꿔, 다음 단계가 준비된 상태로 다시 업무에 돌아오게 합니다.",
+  "Start by recovering the time lost to context switching.": "맥락 전환으로 잃는 시간부터 되찾으세요.",
+  "blabase is BiaDone's first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.": "blabase는 BiaDone의 첫 번째 제품입니다. 대화와 업무 세션을 Context Pack, Decision Log, Action Queue로 바꿔, 다음 단계가 준비된 상태로 다시 업무에 돌아오게 합니다.",
   "Connect context": "맥락 연결",
   "Bring in selected meetings, documents, calendars, and conversations.": "선택한 회의, 문서, 캘린더, 대화를 가져옵니다.",
   "Choose what BiaDone can remember.": "BiaDone이 기억할 수 있는 대상을 사용자가 정합니다.",
@@ -175,18 +175,18 @@ const KOREAN_COPY = {
 
 const META_COPY = {
   en: {
-    description: 'BiaDone is a Personal Context OS that carries conversations, calendars, documents, decisions, and workflows forward into prepared next actions. Start with T.I.V by BiaDone.',
-    ogDescription: 'Your context, carried forward. Your next action, prepared. Meet BiaDone, the Personal Context OS behind T.I.V.'
+    description: 'BiaDone is a Personal Context OS that carries conversations, calendars, documents, decisions, and workflows forward into prepared next actions. Start with blabase by BiaDone.',
+    ogDescription: 'Your context, carried forward. Your next action, prepared. Meet BiaDone, the Personal Context OS behind blabase.'
   },
   ko: {
-    description: 'BiaDone은 대화, 캘린더, 문서, 결정, 워크플로우의 맥락을 이어받아 다음 행동을 준비하는 Personal Context OS입니다. T.I.V에서 시작하세요.',
-    ogDescription: '맥락은 이어지고, 다음 행동은 준비됩니다. T.I.V 뒤에 있는 Personal Context OS, BiaDone을 만나보세요.'
+    description: 'BiaDone은 대화, 캘린더, 문서, 결정, 워크플로우의 맥락을 이어받아 다음 행동을 준비하는 Personal Context OS입니다. blabase에서 시작하세요.',
+    ogDescription: '맥락은 이어지고, 다음 행동은 준비됩니다. blabase 뒤에 있는 Personal Context OS, BiaDone을 만나보세요.'
   }
 };
 
 const FORM_STATUS_COPY = {
-  en: (email) => `Thanks — we'll reach out to ${email} when the T.I.V beta opens.`,
-  ko: (email) => `감사합니다. T.I.V beta가 열리면 ${email}로 연락드리겠습니다.`
+  en: (email) => `Thanks — we'll reach out to ${email} when the blabase beta opens.`,
+  ko: (email) => `감사합니다. blabase beta가 열리면 ${email}로 연락드리겠습니다.`
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -345,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* ---------------- Beta waitlist form (client-side only) ---------------- */
-  const betaForm = document.getElementById('tiv-form');
+  const betaForm = document.getElementById('blabase-form');
   const betaStatus = document.getElementById('beta-form-status');
 
   if (betaForm) {

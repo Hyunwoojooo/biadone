@@ -13,7 +13,7 @@ rsync -a \
   "$ROOT_DIR/index.html" \
   "$ROOT_DIR/css" \
   "$ROOT_DIR/js" \
-  "$ROOT_DIR/tiv" \
+  "$ROOT_DIR/blabase" \
   "$UPLOAD_DIR/"
 
 npx -y wrangler@latest pages deploy "$UPLOAD_DIR" \

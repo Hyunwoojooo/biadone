@@ -23,7 +23,7 @@
 ## Project Structure
 
 - `index.html` is the main `biadone.com` landing page.
-- `tiv/` contains the T.I.V subpage.
+- `blabase/` contains the blabase subpage.
 - `css/` contains site styles.
 - `js/` contains site interactions.
 - `reference/` contains source briefs and internal reference material that should not be publicly deployed.
@@ -35,7 +35,7 @@
 - Do not publish `README.md`, `reference/`, `.wrangler/`, local caches, or environment files.
 - Keep public copy in English unless the user asks for a Korean or multilingual version.
 - Do not add unsupported claims, fake testimonials, fake metrics, or unverified integration availability.
-- Preserve the positioning: BiaDone is a Personal Context OS, and T.I.V is the first proof product.
+- Preserve the positioning: BiaDone is a Personal Context OS, and blabase is the first proof product.
 - Important actions should be described as prepared first and confirmed by the user.
 
 ## Done Means
