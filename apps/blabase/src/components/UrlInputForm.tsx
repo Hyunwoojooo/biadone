@@ -3,8 +3,6 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-
 export function UrlInputForm() {
   const router = useRouter();
   const [shareUrl, setShareUrl] = useState("");
@@ -27,7 +25,7 @@ export function UrlInputForm() {
     setPhase("analysis");
 
     try {
-      const response = await fetch(`${basePath}/api/analyses`, {
+      const response = await fetch("/api/analyses", {
         method: "POST",
         headers: {
           "content-type": "application/json"
@@ -51,7 +49,7 @@ export function UrlInputForm() {
 
       setPhase("sheet");
       const sheetResponse = await fetch(
-        `${basePath}/api/analyses/${data.analysisId}/golden-sheet`,
+        `/api/analyses/${data.analysisId}/golden-sheet`,
         { method: "POST" }
       );
       const sheetData = (await sheetResponse.json()) as {
@@ -120,7 +118,7 @@ export function UrlInputForm() {
             <>
               <br />
               <a
-                href={`${basePath}/atlas?analysisId=${encodeURIComponent(completedAnalysisId)}`}
+                href={`/atlas?analysisId=${encodeURIComponent(completedAnalysisId)}`}
               >
                 완료된 Structure Map에서 다시 시도
               </a>

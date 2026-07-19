@@ -5,8 +5,6 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:blabase": "NEXT_PUBLIC_BASE_PATH=/blabase next build",
-    "start:blabase": "NEXT_PUBLIC_BASE_PATH=/blabase next start --hostname 127.0.0.1 --port 3200",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "fetcher": "node tools/chatgpt-fetcher/server.mjs",

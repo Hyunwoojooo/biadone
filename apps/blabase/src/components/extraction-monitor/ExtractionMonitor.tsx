@@ -17,6 +17,7 @@ import {
   Search,
   Table2
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -53,8 +54,6 @@ import {
   type MonitorTurn,
   type MonitorVerificationStatus
 } from "./monitorModel";
-
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 type MonitorTab = "structure" | "turns" | "review" | "diagnostics";
 type ResultFilter = "All" | MonitorVerificationStatus;
@@ -157,8 +156,8 @@ export function ExtractionMonitor({
 
       try {
         const [resultResponse, messagesResponse] = await Promise.all([
-          fetch(`${basePath}/api/analyses/${analysisId}/result`),
-          fetch(`${basePath}/api/analyses/${analysisId}/messages`)
+          fetch(`/api/analyses/${analysisId}/result`),
+          fetch(`/api/analyses/${analysisId}/messages`)
         ]);
         const [resultPayload, messagesPayload] = (await Promise.all([
           resultResponse.json(),
@@ -279,7 +278,7 @@ export function ExtractionMonitor({
     setError(null);
     try {
       const response = await fetch(
-        `${basePath}/api/analyses/${analysisId}/gpt-audit`
+        `/api/analyses/${analysisId}/gpt-audit`
       );
       if (!response.ok) throw new Error();
       const blob = await response.blob();
@@ -308,7 +307,7 @@ export function ExtractionMonitor({
     setRerunning(true);
     setError(null);
     try {
-      const response = await fetch(`${basePath}/api/analyses`, {
+      const response = await fetch("/api/analyses", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ shareUrl })
@@ -339,7 +338,7 @@ export function ExtractionMonitor({
     setError(null);
     try {
       const response = await fetch(
-        `${basePath}/api/analyses/${analysisId}/golden-sheet`,
+        `/api/analyses/${analysisId}/golden-sheet`,
         { method: "POST" }
       );
       const payload = (await response.json()) as GoldenSheetSyncResponse;
@@ -536,13 +535,13 @@ function MonitorHeader({
   return (
     <header className={styles.header}>
       <div className={styles.headerMain}>
-        <a href={basePath || "/"} className={styles.brand} title="새 링크 분석">
+        <Link href="/" className={styles.brand} title="새 링크 분석">
           <span className={styles.logo}>blabase</span>
           <span>
             <strong>blabase Extraction Monitor</strong>
             <small>INTERNAL OPERATIONS</small>
           </span>
-        </a>
+        </Link>
         <span className={styles.headerDivider} />
         <div className={styles.analysisIdentity}>
           <strong>{title || "Untitled ChatGPT conversation"}</strong>
@@ -1523,9 +1522,9 @@ function MonitorError({ message }: { message: string }) {
     <main className={styles.centerState}>
       <CircleX size={24} />
       <strong>{message}</strong>
-      <a href={basePath || "/"}>
+      <Link href="/">
         <Home size={15} /> 새 링크 분석
-      </a>
+      </Link>
     </main>
   );
 }

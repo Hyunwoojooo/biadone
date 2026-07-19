@@ -1,6 +1,7 @@
 "use client";
 
 import { CircleX, LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
@@ -18,7 +19,6 @@ import type { HybridExtractionResult } from "@/core/types/semantic";
 import { ATLAS_DEMO_STRUCTURE } from "./atlasDemoStructure";
 import styles from "./AtlasStructurePage.module.css";
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const LAST_ANALYSIS_KEY = "blabase:last-atlas-analysis";
 
 type ResultResponse = {
@@ -87,8 +87,8 @@ export function AtlasStructurePage({
 
       try {
         const [resultResponse, messagesResponse] = await Promise.all([
-          fetch(`${basePath}/api/analyses/${requestedAnalysisId}/result`),
-          fetch(`${basePath}/api/analyses/${requestedAnalysisId}/messages`)
+          fetch(`/api/analyses/${requestedAnalysisId}/result`),
+          fetch(`/api/analyses/${requestedAnalysisId}/messages`)
         ]);
         const [resultPayload, messagesPayload] = (await Promise.all([
           resultResponse.json(),
@@ -158,7 +158,7 @@ export function AtlasStructurePage({
       <ThreadStructure
         standalone
         demo
-        actionHref={basePath || "/"}
+        actionHref="/"
         analysisId="demo"
         title="Demo · Codex CLI relay"
         turns={[]}
@@ -185,9 +185,9 @@ export function AtlasStructurePage({
           />
           <button type="submit">다시 열기</button>
         </form>
-        <a href={basePath || "/"} className={styles.secondaryLink}>
+        <Link href="/" className={styles.secondaryLink}>
           새 대화 분석
-        </a>
+        </Link>
       </AtlasState>
     );
   }

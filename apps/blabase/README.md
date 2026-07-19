@@ -5,10 +5,9 @@ ChatGPT 공유 링크의 대화를 복원하고 구조화하는 Next.js 애플�
 ## Conversation Atlas
 
 분석 완료 후 `/atlas?analysisId=ana_...`로 이동해 개념 관계와 대화 흐름을
-탐색합니다. `NEXT_PUBLIC_BASE_PATH=/blabase` 배포에서는 공개 경로가
-`https://biadone.com/blabase/atlas`가 됩니다. 같은 브라우저에서는 마지막으로 연
-Atlas 분석 ID를 기억합니다. 분석 기록이 없는 직접 방문자는 인터랙티브 데모를
-볼 수 있고, 새 분석이 완료되면 실제 세션 데이터로 자동 전환됩니다.
+탐색합니다. 같은 브라우저에서는 마지막으로 연 Atlas 분석 ID를 기억합니다.
+분석 기록이 없는 직접 방문자는 인터랙티브 데모를 볼 수 있고, 새 분석이 완료되면
+실제 세션 데이터로 자동 전환됩니다.
 
 ## Golden Dataset Sheet 자동 등록
 

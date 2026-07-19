@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 
 import type { CanonicalMessage, ConversationStats } from "@/core/types/conversation";
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-
 type MessagesResponse = {
   analysisId: string;
   status: "completed" | "failed";
@@ -60,7 +58,7 @@ export function MessageViewer({ analysisId }: { analysisId: string }) {
     async function loadMessages() {
       try {
         const response = await fetch(
-          `${basePath}/api/analyses/${analysisId}/messages`
+          `/api/analyses/${analysisId}/messages`
         );
         const payload = (await response.json()) as MessagesResponse;
 

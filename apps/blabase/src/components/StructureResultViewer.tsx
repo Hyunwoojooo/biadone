@@ -17,8 +17,6 @@ import type {
   TopicFlowItem
 } from "@/core/types/structures";
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-
 type StructureResultResponse = {
   analysisId: string;
   status: "completed" | "failed";
@@ -83,7 +81,7 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
     async function loadResult() {
       try {
         const response = await fetch(
-          `${basePath}/api/analyses/${analysisId}/result`
+          `/api/analyses/${analysisId}/result`
         );
         const payload = (await response.json()) as StructureResultResponse;
 
@@ -144,7 +142,7 @@ export function StructureResultViewer({ analysisId }: { analysisId: string }) {
     setAuditExporting(true);
     try {
       const response = await fetch(
-        `${basePath}/api/analyses/${analysisId}/gpt-audit`
+        `/api/analyses/${analysisId}/gpt-audit`
       );
       if (!response.ok) {
         throw new Error("GPT audit export failed.");
