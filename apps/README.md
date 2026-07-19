@@ -2,5 +2,5 @@
 
 Product applications live here.
 
-- `tiv/` - reserved for the T.I.V product application.
+- `blabase/` - reserved for the blabase product application.
 

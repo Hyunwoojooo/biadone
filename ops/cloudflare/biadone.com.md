@@ -29,7 +29,7 @@ sites/biadone.com/
 index.html
 css/
 js/
-tiv/
+blabase/
 ```
 
 공개 배포 대상에서 제외해야 하는 파일과 디렉터리:
@@ -64,7 +64,7 @@ cd sites/biadone.com
 index.html
 css/
 js/
-tiv/
+blabase/
 ```
 
 현재 스크립트의 핵심 배포 명령:

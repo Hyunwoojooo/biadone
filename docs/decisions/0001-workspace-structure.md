@@ -2,7 +2,7 @@
 
 ## Decision
 
-Use `~/BiaDone` as a single Git-backed workspace for BiaDone, `biadone.com`, T.I.V, shared docs, and future products.
+Use `~/BiaDone` as a single Git-backed workspace for BiaDone, `biadone.com`, blabase, shared docs, and future products.
 
 ## Structure
 

@@ -20,7 +20,7 @@
 4. **Do not mention OpenClaw on the final public page.**
 5. Do not imitate OpenClaw’s mascot, humor, command-line install flow, lobster references, brand language, or visual identity.
 6. Do not position Biadone as a generic chatbot, AI secretary, meeting notes app, or unlimited automation tool.
-7. Always position Biadone as a **Personal Context OS** and T.I.V as the first proof product.
+7. Always position Biadone as a **Personal Context OS** and blabase as the first proof product.
 8. Important execution, sharing, saving, scheduling, or sending should always be described as **prepared first, then confirmed by the user**.
 
 ---
@@ -62,7 +62,7 @@ OpenClaw's directness and product clarity
 +
 Biadone's quiet, premium, context-first trust system
 +
-T.I.V's time-value promise
+blabase's time-value promise
 ```
 
 It should not feel like a clone.
@@ -79,7 +79,7 @@ Use this table as the definitive brand reference for the page.
 | Category | **Personal Context OS** |
 | Brand Promise | **Before I Ask, Done.** |
 | External Tagline | **Your context, carried forward. Your next action, prepared.** |
-| Product | **T.I.V by Biadone — Time Is Value** |
+| Product | **blabase by Biadone** |
 | Core Loop | **Capture → Context → Memory → Recall → Prepare → Confirm → Done** |
 | Brand Essence | **Context into Action** |
 | Product Experience Terms | **Context Pack / Decision Log / Action Queue / Brief / Cue / Done Signal** |
@@ -95,10 +95,10 @@ Biadone is a Personal Context OS that turns scattered conversations, calendars, 
 
 ### 2.2 Product One-Liner
 
-Use this for T.I.V:
+Use this for blabase:
 
 ```text
-T.I.V by Biadone turns the time you lose re-finding, re-explaining, and re-organizing context into time spent moving forward.
+blabase by Biadone turns the time you lose re-finding, re-explaining, and re-organizing context into time spent moving forward.
 ```
 
 ### 2.3 Brand Promise Explanation
@@ -219,7 +219,7 @@ Build this as a one-page company intro landing page with a product-led structure
 4. Problem
 5. What Is Biadone?
 6. How It Works
-7. Quick Start with T.I.V
+7. Quick Start with blabase
 8. Product Experience Cards
 9. Use Cases
 10. Trust & Control
@@ -245,7 +245,7 @@ Recommended nav items:
 Biadone
 Product
 How It Works
-T.I.V
+blabase
 Trust
 Docs
 Join Beta
@@ -314,7 +314,7 @@ Recall decisions. Prepare briefs. Build action queues. Resume work from the last
 **Primary CTA**
 
 ```text
-Join the T.I.V Beta
+Join the blabase Beta
 ```
 
 **Secondary CTA**
@@ -529,7 +529,7 @@ Capture → Context → Memory → Recall → Prepare → Confirm → Done
 
 | Step | User-Facing Meaning | Product Experience |
 |---|---|---|
-| Capture | Selected conversations, documents, calendar events, and workflow signals are collected. | T.I.V Capture |
+| Capture | Selected conversations, documents, calendar events, and workflow signals are collected. | blabase Capture |
 | Context | Scattered inputs become a structured context unit. | Context Pack |
 | Memory | Important context is saved with permission. | Memory Vault |
 | Recall | Relevant past decisions, sources, and threads are retrieved. | Recall Search |
@@ -545,7 +545,7 @@ Biadone does not just answer a question. It keeps the operating context alive un
 
 ---
 
-## 12. Quick Start with T.I.V
+## 12. Quick Start with blabase
 
 ### 12.1 Purpose
 
@@ -556,19 +556,19 @@ Use an OpenClaw-inspired “Quick Start” pattern, but translate it into a prod
 **Eyebrow**
 
 ```text
-Start with T.I.V
+Start with blabase
 ```
 
 **H2**
 
 ```text
-Time Is Value. Start by recovering the time lost to context switching.
+Start by recovering the time lost to context switching.
 ```
 
 **Body**
 
 ```text
-T.I.V is Biadone’s first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.
+blabase is Biadone’s first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.
 ```
 
 ### 12.3 Quick Start Cards
@@ -587,7 +587,7 @@ This section can use a code-block-like container, but it should show product sta
 Example:
 
 ```text
-T.I.V Session
+blabase Session
 > Context Pack created from 4 sources
 > Decision Log updated with 3 confirmed decisions
 > Action Queue prepared with 5 next steps
@@ -846,7 +846,7 @@ Before I Ask, Done.
 **H2**
 
 ```text
-Start with T.I.V.
+Start with blabase.
 ```
 
 **Body**
@@ -858,7 +858,7 @@ Join the beta and experience Biadone’s first step toward a Personal Context OS
 **Primary CTA**
 
 ```text
-Join the T.I.V Beta
+Join the blabase Beta
 ```
 
 **Secondary CTA**
@@ -883,7 +883,7 @@ Recommended footer columns:
 
 ```text
 Product
-- T.I.V
+- blabase
 - How It Works
 - Use Cases
 - Trust
@@ -1056,7 +1056,7 @@ Biadone — Personal Context OS
 ### 22.2 Meta Description
 
 ```text
-Biadone is a Personal Context OS that carries conversations, calendars, documents, decisions, and workflows forward into prepared next actions. Start with T.I.V by Biadone.
+Biadone is a Personal Context OS that carries conversations, calendars, documents, decisions, and workflows forward into prepared next actions. Start with blabase by Biadone.
 ```
 
 ### 22.3 Open Graph Title
@@ -1068,7 +1068,7 @@ Biadone — Before I Ask, Done.
 ### 22.4 Open Graph Description
 
 ```text
-Your context, carried forward. Your next action, prepared. Meet Biadone, the Personal Context OS behind T.I.V.
+Your context, carried forward. Your next action, prepared. Meet Biadone, the Personal Context OS behind blabase.
 ```
 
 ### 22.5 Target Keywords
@@ -1085,7 +1085,7 @@ meeting brief
 action queue
 personal productivity AI
 context management
-T.I.V by Biadone
+blabase by Biadone
 ```
 
 ---
@@ -1105,7 +1105,7 @@ Biadone carries your context across conversations, calendars, documents, decisio
 
 Recall decisions. Prepare briefs. Build action queues. Resume work from the last context. Confirm before anything important happens.
 
-[Join the T.I.V Beta] [See How It Works]
+[Join the blabase Beta] [See How It Works]
 
 Permissioned memory. Explainable preparation. User-controlled action.
 ```
@@ -1154,14 +1154,14 @@ Biadone captures selected context, structures it into memory, recalls what matte
 Capture → Context → Memory → Recall → Prepare → Confirm → Done
 ```
 
-### 23.6 T.I.V
+### 23.6 blabase
 
 ```text
-Start with T.I.V
+Start with blabase
 
-Time Is Value. Start by recovering the time lost to context switching.
+Start by recovering the time lost to context switching.
 
-T.I.V is Biadone’s first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.
+blabase is Biadone’s first product. It turns conversations and work sessions into Context Packs, Decision Logs, and Action Queues — so you can return to work with the next step already prepared.
 ```
 
 ### 23.7 Trust
@@ -1193,11 +1193,11 @@ Before I Ask, Done.
 ### 23.9 Final CTA
 
 ```text
-Start with T.I.V.
+Start with blabase.
 
 Join the beta and experience Biadone’s first step toward a Personal Context OS: turning scattered context into prepared next action.
 
-[Join the T.I.V Beta] [Request a Demo]
+[Join the blabase Beta] [Request a Demo]
 
 Built for people and teams who lose too much time rebuilding context.
 ```
@@ -1230,11 +1230,11 @@ Use one primary H1, not all of them.
 
 | Use | CTA |
 |---|---|
-| Primary | Join the T.I.V Beta |
-| Primary Alternative | Start with T.I.V |
+| Primary | Join the blabase Beta |
+| Primary Alternative | Start with blabase |
 | Secondary | See How It Works |
 | Secondary Alternative | Request a Demo |
-| Product | Explore T.I.V |
+| Product | Explore blabase |
 | Trust | View Trust Principles |
 
 ### 24.4 Status Message Options
@@ -1288,11 +1288,11 @@ Paste the following prompt into an AI website builder, design agent, or implemen
 ```text
 Create a polished English-language company intro landing page for Biadone.
 
-Biadone is a Personal Context OS. Its brand promise is “Before I Ask, Done.” Its first product is T.I.V by Biadone — Time Is Value.
+Biadone is a Personal Context OS. Its brand promise is “Before I Ask, Done.” Its first product is blabase by Biadone.
 
 The page must communicate that Biadone carries context across conversations, calendars, documents, decisions, and workflows, then prepares the next action before the user has to start from scratch.
 
-Use a direct, product-led structure inspired by modern AI product pages with docs-like clarity: strong hero, concrete capability examples, “What is Biadone?”, “How it works”, quick-start style T.I.V section, product experience cards, trust and control section, ecosystem/integrations section, manifesto, and final CTA.
+Use a direct, product-led structure inspired by modern AI product pages with docs-like clarity: strong hero, concrete capability examples, “What is Biadone?”, “How it works”, quick-start style blabase section, product experience cards, trust and control section, ecosystem/integrations section, manifesto, and final CTA.
 
 Do not mention the reference site or any competitor in the final page. Do not make Biadone sound like a chatbot, meeting notes app, AI secretary, or fully autonomous agent. Biadone should feel like a calm, premium, trustworthy operating layer for context-to-action.
 
@@ -1301,7 +1301,7 @@ Eyebrow: “Biadone · Personal Context OS”
 H1: “The Personal Context OS that keeps your next action ready.”
 Subheadline: “Biadone carries your context across conversations, calendars, documents, decisions, and workflows — then prepares the next step before you have to start from scratch.”
 Capability line: “Recall decisions. Prepare briefs. Build action queues. Resume work from the last context. Confirm before anything important happens.”
-Primary CTA: “Join the T.I.V Beta”
+Primary CTA: “Join the blabase Beta”
 Secondary CTA: “See How It Works”
 Trust microcopy: “Permissioned memory. Explainable preparation. User-controlled action.”
 
@@ -1322,19 +1322,19 @@ Visual direction:
 - Avoid robots, brain icons, surveillance eyes, CCTV imagery, mascot humor, and neon sci-fi overload.
 
 Suggested sections:
-1. Sticky navigation: Product, How It Works, T.I.V, Trust, Docs, Join Beta.
+1. Sticky navigation: Product, How It Works, blabase, Trust, Docs, Join Beta.
 2. Hero with product mockup.
 3. Capability strip.
 4. Problem section about re-finding, re-explaining, re-organizing, re-starting, and re-deciding.
 5. What is Biadone? Define Personal Context OS.
 6. How it works: Context-to-Action Loop.
-7. Quick Start with T.I.V: Connect context, Review the Context Pack, Confirm the next action, Move forward.
+7. Quick Start with blabase: Connect context, Review the Context Pack, Confirm the next action, Move forward.
 8. Product experience cards.
 9. Use cases for founders, PMs, team leads, knowledge workers, and AI power users.
 10. Trust & Control section.
 11. Ecosystem/integrations section with careful, non-overclaiming language.
 12. Mission/manifesto.
-13. Final CTA: Join the T.I.V Beta / Request a Demo.
+13. Final CTA: Join the blabase Beta / Request a Demo.
 14. Footer.
 
 All copy must be in English. Keep the tone calm, precise, direct, and trustworthy. The final page should make visitors understand within 10–15 seconds that Biadone turns scattered context into prepared action.
@@ -1349,7 +1349,7 @@ Before shipping the page, verify:
 - [ ] The entire page is in English.
 - [ ] The hero explains Biadone within 10–15 seconds.
 - [ ] Biadone is clearly positioned as a Personal Context OS.
-- [ ] T.I.V is clearly introduced as the first product.
+- [ ] blabase is clearly introduced as the first product.
 - [ ] The page emphasizes time recovered from context recovery.
 - [ ] The page does not sound like a meeting notes app.
 - [ ] The page does not sound like a generic chatbot.

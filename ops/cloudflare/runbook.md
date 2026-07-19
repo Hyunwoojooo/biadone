@@ -25,7 +25,7 @@ curl -sSI https://biadone.pages.dev
 - `https://www.biadone.com`
 - 주요 앵커 이동
 - CSS/JS 로딩
-- `tiv/` 하위 페이지
+- `blabase/` 하위 페이지
 
 ## 장애 대응
 

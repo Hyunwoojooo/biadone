@@ -1,0 +1,245 @@
+.statePage,
+.statePage * {
+  box-sizing: border-box;
+}
+
+.statePage {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  background:
+    linear-gradient(rgb(123 145 168 / 7%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(123 145 168 / 7%) 1px, transparent 1px), #17212c;
+  background-size: 32px 32px;
+  color: #eef4fa;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  padding: 24px;
+}
+
+.ambient {
+  position: absolute;
+  width: min(760px, 80vw);
+  height: min(520px, 70vh);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 40%, rgb(86 217 202 / 12%), transparent 32%),
+    radial-gradient(circle at 64% 48%, rgb(158 156 255 / 18%), transparent 38%);
+  filter: blur(18px);
+  pointer-events: none;
+}
+
+.landingCard,
+.stateCard {
+  position: relative;
+  z-index: 1;
+  width: min(540px, 100%);
+  border: 1px solid rgb(221 232 244 / 14%);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgb(45 60 76 / 94%), rgb(28 39 51 / 96%)), #24313f;
+  padding: 38px;
+  box-shadow: 0 30px 90px rgb(3 9 16 / 32%);
+  text-align: center;
+}
+
+.stateCard {
+  width: min(480px, 100%);
+}
+
+.stateMark,
+.stateIcon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto;
+  place-items: center;
+  border: 1px solid rgb(177 175 255 / 36%);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #b0aeff, #7774db);
+  color: #141a24;
+  box-shadow: 0 0 30px rgb(158 156 255 / 24%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.stateIcon {
+  background: rgb(158 156 255 / 12%);
+  color: #b4b2ff;
+}
+
+.eyebrow {
+  margin: 20px 0 0;
+  color: #aaa9ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.landingCard h1,
+.stateCard h1 {
+  margin: 10px 0 0;
+  color: #f2f6fb;
+  font-size: clamp(24px, 4vw, 34px);
+  letter-spacing: -0.045em;
+  line-height: 1.16;
+}
+
+.stateCard h1 {
+  font-size: clamp(20px, 3vw, 27px);
+}
+
+.description {
+  max-width: 430px;
+  margin: 14px auto 0;
+  color: #aebbc9;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.featureRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 23px;
+}
+
+.featureRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgb(221 232 244 / 12%);
+  border-radius: 999px;
+  background: rgb(12 20 29 / 24%);
+  color: #c7d1dc;
+  padding: 7px 11px;
+  font-size: 10px;
+}
+
+.featureRow span:first-child svg {
+  color: #aaa9ff;
+}
+
+.featureRow span:last-child svg {
+  color: #55d9ca;
+}
+
+.openForm {
+  margin-top: 25px;
+  text-align: left;
+}
+
+.openForm label {
+  display: block;
+  margin-bottom: 7px;
+  color: #8999a9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.openForm > div,
+.inlineForm {
+  display: flex;
+  gap: 8px;
+}
+
+.openForm input,
+.inlineForm input {
+  min-width: 0;
+  height: 40px;
+  flex: 1;
+  border: 1px solid rgb(221 232 244 / 15%);
+  border-radius: 11px;
+  outline: none;
+  background: rgb(11 19 28 / 42%);
+  color: #eef4fa;
+  padding: 0 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.openForm input:focus,
+.inlineForm input:focus {
+  border-color: rgb(158 156 255 / 65%);
+  box-shadow: 0 0 0 3px rgb(158 156 255 / 10%);
+}
+
+.openForm button,
+.inlineForm button,
+.primaryLink {
+  display: inline-flex;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgb(177 175 255 / 42%);
+  border-radius: 11px;
+  background: linear-gradient(145deg, #aaa8ff, #8582e5);
+  color: #151b25;
+  cursor: pointer;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.openForm button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.primaryLink {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.inlineForm {
+  margin-top: 22px;
+}
+
+.secondaryLink {
+  display: inline-block;
+  margin-top: 16px;
+  color: #b8c4d0;
+  font-size: 11px;
+  text-underline-offset: 4px;
+}
+
+.spinning {
+  animation: spin 850ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 560px) {
+  .landingCard,
+  .stateCard {
+    border-radius: 18px;
+    padding: 28px 20px;
+  }
+
+  .openForm > div,
+  .inlineForm {
+    flex-direction: column;
+  }
+
+  .openForm button,
+  .inlineForm button {
+    width: 100%;
+  }
+}

@@ -1,11 +1,11 @@
 # BiaDone Workspace
 
-This repository is the working space for BiaDone, the `biadone.com` website, and related products such as T.I.V.
+This repository is the working space for BiaDone, the `biadone.com` website, and related products such as blabase.
 
 ## Structure
 
 - `sites/biadone.com/` - production source for the public `biadone.com` website.
-- `apps/tiv/` - future T.I.V product application code.
+- `apps/blabase/` - future blabase product application code.
 - `docs/` - brand notes, product plans, decisions, and research.
 - `packages/` - shared code or design-system packages when needed.
 - `ops/` - deployment, infrastructure, DNS, and operational notes.
@@ -25,7 +25,7 @@ Use a narrower working directory for focused work:
 
 ```bash
 codex --cd sites/biadone.com
-codex --cd apps/tiv
+codex --cd apps/blabase
 ```
 
 Codex reads the root `AGENTS.md` first, then any nested `AGENTS.md` files under the active working directory.

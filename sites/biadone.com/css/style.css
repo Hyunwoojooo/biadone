@@ -597,7 +597,7 @@ body { overflow-x: hidden; }
   line-height: 1.6;
 }
 
-/* ---------- Quick Start T.I.V ---------- */
+/* ---------- Quick Start blabase ---------- */
 .quickstart-list {
   list-style: none;
   margin-top: 2rem;
@@ -630,7 +630,7 @@ body { overflow-x: hidden; }
   font-weight: 600;
 }
 
-.tiv-console {
+.blabase-console {
   background: var(--navy);
   border-radius: 18px;
   overflow: hidden;
@@ -1080,5 +1080,5 @@ a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-vis
 }
 
 @media (max-width: 1024px) {
-  .tiv-console, .permission-drawer { position: static; }
+  .blabase-console, .permission-drawer { position: static; }
 }
