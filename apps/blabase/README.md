@@ -93,6 +93,9 @@ GET /api/golden/quality
 `.local/golden-v01-quality.json`이고 서버 환경변수
 `BLABASE_GOLDEN_QUALITY_REPORT_PATH`로 다른 비공개 경로를 지정할 수 있습니다.
 보고서가 없으면 `404`, 읽을 수 없거나 계약에 맞지 않으면 `503`을 반환합니다.
+Extraction Monitor 헤더의 방패 아이콘 또는 `/golden/quality`에서 데이터셋
+메타데이터, 오류·경고 집계, 경고 코드 분류와 검수 대상 목록을 확인하고 최신
+보고서를 다시 불러올 수 있습니다.
 
 ```text
 set -a; source /Users/nika/.blabase/blabase.env; set +a

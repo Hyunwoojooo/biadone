@@ -187,6 +187,7 @@
   background: var(--surface);
   color: #53606d;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .iconButton:hover:not(:disabled) {

@@ -15,6 +15,7 @@ import {
   LoaderCircle,
   RotateCw,
   Search,
+  ShieldCheck,
   Table2
 } from "lucide-react";
 import Link from "next/link";
@@ -578,6 +579,14 @@ function MonitorHeader({
         >
           <Table2 size={16} className={sheetSyncing ? styles.spinning : ""} />
         </IconButton>
+        <Link
+          href="/golden/quality"
+          className={styles.iconButton}
+          aria-label="Golden Dataset 품질 화면"
+          title="Golden Dataset 품질 화면"
+        >
+          <ShieldCheck size={16} />
+        </Link>
         <IconButton
           label={
             auditExporting ? "GPT 검수 파일 생성 중" : "GPT 검수 파일 내보내기"
