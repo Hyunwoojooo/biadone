@@ -26,6 +26,12 @@ import {
   summarySheetRows
 } from "../src/core/golden-baseline/evaluation";
 import {
+  GOLD_CORE_V01_QUALITY_PROFILE,
+  GOLDEN_DATA_QUALITY_VERSION,
+  inspectGoldenDataset,
+  type GoldenDatasetQualityReport
+} from "../src/core/golden-baseline/dataQuality";
+import {
   GOLDEN_BASELINE_DATASET_VERSION,
   GOLDEN_BASELINE_GUARDRAIL_VERSION,
   GOLDEN_BASELINE_JUDGE_VERSION,
@@ -143,7 +149,7 @@ const selectedSession = args.get("--session")?.trim() || null;
 const allowLiveFetch = args.has("--allow-live-fetch");
 
 const input = JSON.parse(await readFile(inputPath, "utf8")) as GoldenBaselineInput;
-validateInput(input);
+const qualityReport = validateInput(input);
 const frozenInputHash = await hashFrozenInputs(input, htmlDir);
 
 const existing = await readExistingOutput(outputPath);
@@ -167,6 +173,13 @@ const output: GoldenBaselineRunOutput = {
     datasetSplit: "dev",
     snapshotUrl,
     sha256: frozenInputHash,
+    qualityReportVersion: qualityReport.reportVersion,
+    qualityStatus: qualityReport.status,
+    qualityIssueCounts: {
+      error: qualityReport.issueCounts.error,
+      warning: qualityReport.issueCounts.warning,
+      info: qualityReport.issueCounts.info
+    },
     note: "개발셋(in-sample) 베이스라인. 일반화 성능은 별도 잠금 테스트셋에서 확인"
   },
   run: {
@@ -1048,20 +1061,35 @@ function clearRetriedSummaryError(errorsToClean: string[], sessionId: string) {
   }
 }
 
-function validateInput(inputValue: GoldenBaselineInput) {
+function validateInput(
+  inputValue: GoldenBaselineInput
+): GoldenDatasetQualityReport {
   if (inputValue.datasetVersion !== GOLDEN_BASELINE_DATASET_VERSION) {
     throw new Error(`Unexpected dataset version: ${inputValue.datasetVersion}`);
   }
-  const invalidPrompts = inputValue.prompts.filter(
-    (row) => row.reviewResult !== "승인"
-  );
-  const invalidSummaries = inputValue.summaries.filter(
-    (row) => row.reviewResult !== "승인"
-  );
-  if (invalidPrompts.length || invalidSummaries.length) {
+  const report = inspectGoldenDataset(inputValue, {
+    profile: GOLD_CORE_V01_QUALITY_PROFILE
+  });
+  if (report.issueCounts.error > 0) {
+    const codes = Object.entries(report.issueCounts.byCode)
+      .filter(([code]) =>
+        report.issues.some(
+          (issue) => issue.code === code && issue.severity === "error"
+        )
+      )
+      .map(([code, count]) => `${code}=${count}`)
+      .join(", ");
     throw new Error(
-      `Only approved rows can be frozen: prompts=${invalidPrompts.length}, summaries=${invalidSummaries.length}`
+      `Golden Dataset quality check failed (${codes || "unknown error"})`
     );
+  }
+  if (report.issueCounts.warning > 0) {
+    progress("dataset_quality_warning", {
+      reportVersion: report.reportVersion,
+      warnings: report.issueCounts.warning,
+      affectedRecords: report.counts.affectedRecords,
+      byCode: report.issueCounts.byCode
+    });
   }
   if (
     selectedSession &&
@@ -1069,11 +1097,7 @@ function validateInput(inputValue: GoldenBaselineInput) {
   ) {
     throw new Error(`Unknown --session value: ${selectedSession}`);
   }
-  if (!selectedSession && (inputValue.prompts.length !== 233 || inputValue.summaries.length !== 20)) {
-    throw new Error(
-      `Gold Core v0.1 count mismatch: prompts=${inputValue.prompts.length}, summaries=${inputValue.summaries.length}`
-    );
-  }
+  return report;
 }
 
 function validateExistingOutput(
@@ -1086,6 +1110,10 @@ function validateExistingOutput(
       ? null
       : "dataset version",
     existingOutput.manifest.sha256 === expectedHash ? null : "frozen input hash",
+    !existingOutput.manifest.qualityReportVersion ||
+    existingOutput.manifest.qualityReportVersion === GOLDEN_DATA_QUALITY_VERSION
+      ? null
+      : "quality report version",
     existingOutput.manifest.sessionScope === expectedScope ? null : "session scope",
     existingOutput.manifest.snapshotUrl === snapshotUrl ? null : "snapshot URL",
     existingOutput.run.candidateModel === candidateModel ? null : "candidate model",

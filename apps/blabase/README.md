@@ -62,6 +62,24 @@ S-001~S-020에서 사람이 승인한 `02_프롬프트판정!H:K`와
 `03_세션요약!C:J`만 Gold Core v0.1로 사용합니다. 검수하지 않은 사용자
 만족도(`02!Q`)와 `04_예상추출항목`은 제외합니다.
 
+베이스라인 실행 전에는 결정적 품질 검사기를 실행합니다. 검사기는 Gold를
+수정하거나 원문을 출력하지 않고 구조 오류는 `error`, 사람 확인이 필요한 빈값,
+취소 입력, 보류 판정은 `warning`으로 보고합니다.
+
+```text
+npm run golden:validate -- \
+  --input .local/golden-v01-input.json \
+  --output .local/golden-v01-quality.json
+```
+
+- 기본 실행은 `error`가 있을 때 실패하며, `warning`도 배포 gate로 사용할 때는
+  `--fail-on-warning`을 추가합니다.
+- 알려진 동결 데이터셋의 세션 범위와 레코드 수도 검사합니다. 임시 fixture에는
+  `--no-profile`을 사용할 수 있습니다.
+- 전체 JSON을 표준 출력으로 확인할 때는 `--json`을 사용합니다.
+- 베이스라인 runner도 같은 검사를 자동 실행하며, 구조 오류가 있으면 LLM API를
+  호출하기 전에 중단합니다.
+
 ```text
 set -a; source /Users/nika/.blabase/blabase.env; set +a
 npm run golden:baseline -- \

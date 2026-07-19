@@ -192,6 +192,13 @@ export type GoldenBaselineRunOutput = {
     datasetSplit: "dev";
     snapshotUrl: string;
     sha256: string;
+    qualityReportVersion: string;
+    qualityStatus: "pass" | "warning" | "error";
+    qualityIssueCounts: {
+      error: number;
+      warning: number;
+      info: number;
+    };
     note: string;
   };
   run: {
