@@ -2,8 +2,8 @@
 
 ## Stack
 
-- Framework: Static HTML/CSS/JavaScript for the current website; future apps may define their own stack.
-- Language: HTML, CSS, JavaScript, Markdown.
+- Framework: Static HTML/CSS/JavaScript for public sites; Next.js for `apps/blabase/`.
+- Language: HTML, CSS, JavaScript, TypeScript, Markdown.
 - Package manager: None at the repository root.
 - Database: None at the repository root.
 - Test framework: None configured yet.
@@ -12,17 +12,19 @@
 
 - Install: Not configured at the repository root.
 - Dev: Use the relevant subproject command, usually from `sites/biadone.com/` or `apps/blabase/`.
-- Build: Not configured at the repository root.
-- Typecheck: Not configured at the repository root.
-- Lint: Not configured at the repository root.
-- Unit test: Not configured at the repository root.
+- Build: `cd apps/blabase && npm run build`
+- Typecheck: `cd apps/blabase && npm run typecheck`
+- Lint: `cd apps/blabase && npm run lint`
+- Unit test: `cd apps/blabase && npm test`
 - E2E test: Not configured at the repository root.
 - Deploy website: `cd sites/biadone.com && ./scripts/deploy-cloudflare.sh`
+- Deploy blabase landing: `cd sites/blabase.com && ./scripts/deploy-cloudflare.sh`
 
 ## Project Structure
 
 - `sites/biadone.com/` contains the public website deployed to `biadone.com`.
-- `apps/blabase/` is reserved for the blabase product application.
+- `sites/blabase.com/` contains the public landing page deployed to `blabase.com`.
+- `apps/blabase/` contains the active blabase product application and semantic extraction engine.
 - `docs/` contains brand, product, decision, and research documents.
 - `packages/` is reserved for shared libraries, UI, or config packages.
 - `ops/` contains deployment, infrastructure, DNS, and operational notes.
@@ -39,6 +41,7 @@
 - Do not modify secrets, credentials, tokens, private keys, or production environment files.
 - Do not commit, push, merge, rebase, delete branches, or rewrite Git history without explicit human approval.
 - When modifying behavior, add or update relevant tests when practical.
+- When modifying the blabase engine, evaluation, Golden Dataset, prompts, schemas, or evidence rules, read and follow `apps/blabase/AGENTS.md` and `apps/blabase/docs/ENGINE_DEVELOPMENT_RECORDS.md`.
 - When tests cannot be run, explain why and describe what should be verified manually.
 
 ## Done Means
@@ -48,4 +51,3 @@
 - Lint passes when applicable.
 - Changed behavior is covered by tests or documented when practical.
 - The final report includes what changed, files changed, checks run, risks, and remaining follow-up tasks when the work is substantial.
-

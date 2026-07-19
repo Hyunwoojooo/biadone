@@ -2,6 +2,13 @@
 
 ChatGPT 공유 링크의 대화를 복원하고 구조화하는 Next.js 애플리케이션입니다.
 
+## Engine Development Records
+
+엔진, Golden Dataset, 평가, 프롬프트, Evidence 규칙을 변경하기 전에
+[`docs/ENGINE_DEVELOPMENT_RECORDS.md`](docs/ENGINE_DEVELOPMENT_RECORDS.md)를
+읽습니다. 이 문서는 Codex CLI와 사람이 반드시 남겨야 하는 실행 버전, 데이터
+출처, Evidence, 평가, 사용자 수정, 개인정보, 릴리스 기록을 정의합니다.
+
 ## Conversation Atlas
 
 분석 완료 후 `/atlas?analysisId=ana_...`로 이동해 개념 관계와 대화 흐름을
