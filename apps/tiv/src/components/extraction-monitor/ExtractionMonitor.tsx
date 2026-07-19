@@ -39,6 +39,7 @@ import type {
 import type { MockStructureResult } from "@/core/types/structures";
 
 import styles from "./ExtractionMonitor.module.css";
+import { ThreadStructure } from "./ThreadStructure";
 import {
   buildComparisonRows,
   buildMonitorTurns,
@@ -54,7 +55,7 @@ import {
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
-type MonitorTab = "turns" | "review" | "diagnostics";
+type MonitorTab = "structure" | "turns" | "review" | "diagnostics";
 type ResultFilter = "All" | MonitorVerificationStatus;
 
 type ResultResponse = {
@@ -104,13 +105,25 @@ const STATUS_HELP: Record<ResultFilter, string> = {
   Rejected: "근거가 부족해 제외된 항목"
 };
 
-export function ExtractionMonitor({ analysisId }: { analysisId: string }) {
+export function ExtractionMonitor({
+  analysisId,
+  initialTab,
+  initialTurnId
+}: {
+  analysisId: string;
+  initialTab?: string;
+  initialTurnId?: number;
+}) {
   const router = useRouter();
   const [data, setData] = useState<MonitorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<MonitorTab>("turns");
-  const [selectedTurnId, setSelectedTurnId] = useState(1);
+  const [tab, setTab] = useState<MonitorTab>(
+    isMonitorTab(initialTab) ? initialTab : "structure"
+  );
+  const [selectedTurnId, setSelectedTurnId] = useState(
+    initialTurnId && initialTurnId > 0 ? initialTurnId : 1
+  );
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [signalsOpen, setSignalsOpen] = useState(true);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -292,7 +305,9 @@ export function ExtractionMonitor({ analysisId }: { analysisId: string }) {
       if (!response.ok || !payload.analysisId) {
         throw new Error(payload.error?.message ?? "다시 분석하지 못했습니다.");
       }
-      router.push(`/analyses/${payload.analysisId}`);
+      router.push(
+        `/atlas?analysisId=${encodeURIComponent(payload.analysisId)}`
+      );
     } catch (rerunError) {
       setError(
         rerunError instanceof Error
@@ -320,14 +335,14 @@ export function ExtractionMonitor({ analysisId }: { analysisId: string }) {
   }
 
   const conversation = data.messages.conversation;
+  const conversationTitle =
+    conversation?.title ?? data.result.result?.overview.title ?? null;
 
   return (
     <main className={styles.monitor}>
       <MonitorHeader
         analysisId={analysisId}
-        title={
-          conversation?.title ?? data.result.result?.overview.title ?? null
-        }
+        title={conversationTitle}
         source={conversation?.source}
         tab={tab}
         onTabChange={setTab}
@@ -338,6 +353,20 @@ export function ExtractionMonitor({ analysisId }: { analysisId: string }) {
       />
       <PipelineStrip source={conversation?.source} sprint5={sprint5} />
       {error ? <div className={styles.inlineError}>{error}</div> : null}
+
+      {tab === "structure" ? (
+        <ThreadStructure
+          analysisId={analysisId}
+          title={conversationTitle}
+          turns={turns}
+          sprint5={sprint5}
+          onOpenTurn={(turnId) => {
+            setSelectedTurnId(turnId);
+            setSelectedRowId(null);
+            setTab("turns");
+          }}
+        />
+      ) : null}
 
       {tab === "turns" ? (
         <section className={styles.inspector}>
@@ -429,6 +458,7 @@ function MonitorHeader({
   auditExporting: boolean;
 }) {
   const tabs: Array<{ id: MonitorTab; label: string }> = [
+    { id: "structure", label: "Structure Map" },
     { id: "turns", label: "Turn Inspector" },
     { id: "review", label: "Review Queue" },
     { id: "diagnostics", label: "Run Diagnostics" }
@@ -1530,6 +1560,10 @@ function verificationTone(status: MonitorVerificationStatus) {
   if (status === "Verified") return "verified" as const;
   if (status === "Rejected") return "rejected" as const;
   return "review" as const;
+}
+
+function isMonitorTab(value: string | undefined): value is MonitorTab {
+  return ["structure", "turns", "review", "diagnostics"].includes(value ?? "");
 }
 
 function llmRunTone(status: HybridExtractionResult["llmResult"]["status"]) {

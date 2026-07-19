@@ -2,6 +2,14 @@
 
 ChatGPT 공유 링크의 대화를 복원하고 구조화하는 Next.js 애플리케이션입니다.
 
+## Conversation Atlas
+
+분석 완료 후 `/atlas?analysisId=ana_...`로 이동해 개념 관계와 대화 흐름을
+탐색합니다. `NEXT_PUBLIC_BASE_PATH=/tiv` 배포에서는 공개 경로가
+`https://biadone.com/tiv/atlas`가 됩니다. 같은 브라우저에서는 마지막으로 연
+Atlas 분석 ID를 기억합니다. 분석 기록이 없는 직접 방문자는 인터랙티브 데모를
+볼 수 있고, 새 분석이 완료되면 실제 세션 데이터로 자동 전환됩니다.
+
 ## Sprint 5A LLM Shadow Mode
 
 LLM Shadow Mode는 기존 RuleExtractor 결과를 대체하지 않습니다. 같은 Clean Conversation을 LLM으로 별도 분석하고, Rule/LLM 공통 `SemanticItem` 결과를 분석 레코드와 GPT Audit 파일에 함께 저장합니다.

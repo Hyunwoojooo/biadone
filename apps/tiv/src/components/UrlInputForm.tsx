@@ -43,7 +43,7 @@ export function UrlInputForm() {
         return;
       }
 
-      router.push(`/analyses/${data.analysisId}`);
+      router.push(`/atlas?analysisId=${encodeURIComponent(data.analysisId)}`);
     } catch {
       setError({ message: "네트워크 오류로 분석을 시작하지 못했습니다." });
     } finally {
