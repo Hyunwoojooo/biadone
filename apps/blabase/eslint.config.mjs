@@ -8,7 +8,7 @@ const compat = new FlatCompat({
 const eslintConfig = [
   ...compat.config(nextVitals),
   {
-    ignores: [".next/**", "node_modules/**"]
+    ignores: [".next/**", ".open-next/**", ".wrangler/**", "node_modules/**"]
   }
 ];
 

@@ -48,7 +48,8 @@ export async function GET(_request: Request, context: RouteContext) {
     conversation: {
       title: record.conversation?.title,
       stats: record.conversation?.stats,
-      source: record.conversation?.source
+      source: record.conversation?.source,
+      warnings: record.conversation?.warnings ?? []
     },
     messages,
     groups: {

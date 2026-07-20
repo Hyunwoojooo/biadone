@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "blabase-app",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "blabase-app"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "blabase.com/*",
+      "zone_name": "blabase.com"
+    },
+    {
+      "pattern": "www.blabase.com/*",
+      "zone_name": "blabase.com"
+    }
+  ]
+}

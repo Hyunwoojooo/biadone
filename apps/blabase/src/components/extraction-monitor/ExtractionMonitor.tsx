@@ -30,8 +30,14 @@ import {
 
 import type {
   ConversationSource,
-  ConversationStats
+  ConversationStats,
+  ImportWarning
 } from "@/core/types/conversation";
+import type {
+  AnalysisMessagesPayload,
+  AnalysisMonitorPayload,
+  AnalysisResultPayload
+} from "@/core/transport/analysisMonitorPayload";
 import type {
   EvidenceMatch,
   HybridExtractionResult,
@@ -42,13 +48,19 @@ import type {
 import type { MockStructureResult } from "@/core/types/structures";
 
 import styles from "./ExtractionMonitor.module.css";
+import {
+  cacheAnalysisMonitorPayload,
+  readAnalysisMonitorPayload
+} from "./analysisSessionCache";
 import { ThreadStructure } from "./ThreadStructure";
 import {
   buildComparisonRows,
   buildMonitorTurns,
+  buildParsingQaSummary,
   buildReviewRows,
   countSemanticTypes,
   SEMANTIC_TYPE_ORDER,
+  turnIdForMessageIndex,
   type ComparisonRow,
   type MonitorMessage,
   type MonitorReviewRow,
@@ -59,30 +71,9 @@ import {
 type MonitorTab = "structure" | "turns" | "review" | "diagnostics";
 type ResultFilter = "All" | MonitorVerificationStatus;
 
-type ResultResponse = {
-  analysisId: string;
-  status: "completed" | "failed";
-  result?: MockStructureResult;
-  sprint5?: HybridExtractionResult | null;
-  error?: { code?: string; message?: string };
-};
-
-type MessagesResponse = {
-  analysisId: string;
-  status: "completed" | "failed";
-  conversation?: {
-    title?: string | null;
-    stats?: ConversationStats;
-    source?: ConversationSource;
-  };
-  messages?: MonitorMessage[];
-  error?: { code?: string; message?: string };
-};
-
-type MonitorData = {
-  result: ResultResponse;
-  messages: MessagesResponse;
-};
+type ResultResponse = AnalysisResultPayload;
+type MessagesResponse = AnalysisMessagesPayload;
+type MonitorData = AnalysisMonitorPayload;
 
 type GoldenSheetSyncResponse = {
   status?: "created" | "duplicate";
@@ -129,7 +120,7 @@ export function ExtractionMonitor({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<MonitorTab>(
-    isMonitorTab(initialTab) ? initialTab : "structure"
+    isMonitorTab(initialTab) ? initialTab : "turns"
   );
   const [selectedTurnId, setSelectedTurnId] = useState(
     initialTurnId && initialTurnId > 0 ? initialTurnId : 1
@@ -156,6 +147,12 @@ export function ExtractionMonitor({
       setError(null);
 
       try {
+        const cached = readAnalysisMonitorPayload(analysisId);
+        if (cached) {
+          if (!cancelled) setData(cached);
+          return;
+        }
+
         const [resultResponse, messagesResponse] = await Promise.all([
           fetch(`/api/analyses/${analysisId}/result`),
           fetch(`/api/analyses/${analysisId}/messages`)
@@ -278,9 +275,7 @@ export function ExtractionMonitor({
     setAuditExporting(true);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/analyses/${analysisId}/gpt-audit`
-      );
+      const response = await fetch(`/api/analyses/${analysisId}/gpt-audit`);
       if (!response.ok) throw new Error();
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -315,13 +310,17 @@ export function ExtractionMonitor({
       });
       const payload = (await response.json()) as {
         analysisId?: string;
+        monitorData?: AnalysisMonitorPayload | null;
         error?: { message?: string };
       };
       if (!response.ok || !payload.analysisId) {
         throw new Error(payload.error?.message ?? "다시 분석하지 못했습니다.");
       }
+      if (payload.monitorData) {
+        cacheAnalysisMonitorPayload(payload.analysisId, payload.monitorData);
+      }
       router.push(
-        `/atlas?analysisId=${encodeURIComponent(payload.analysisId)}`
+        `/analyses/${encodeURIComponent(payload.analysisId)}?tab=turns`
       );
     } catch (rerunError) {
       setError(
@@ -338,10 +337,9 @@ export function ExtractionMonitor({
     setSheetNotice(null);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/analyses/${analysisId}/golden-sheet`,
-        { method: "POST" }
-      );
+      const response = await fetch(`/api/analyses/${analysisId}/golden-sheet`, {
+        method: "POST"
+      });
       const payload = (await response.json()) as GoldenSheetSyncResponse;
       if (
         !response.ok ||
@@ -381,6 +379,28 @@ export function ExtractionMonitor({
     setTab("turns");
   }
 
+  function openEvidenceMessage(messageIndex: number) {
+    const targetTurnId = turnIdForMessageIndex(turns, messageIndex);
+    const targetMessage = messages.find(
+      (message) => message.index === messageIndex
+    );
+    if (targetTurnId) setSelectedTurnId(targetTurnId);
+    if (targetMessage?.metadata.messageCategory === "context_signal") {
+      setSignalsOpen(true);
+    }
+    if (targetMessage?.metadata.messageCategory === "excluded_internal") {
+      setInternalOpen(true);
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document.getElementById(`message-${messageIndex}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center"
+        });
+      });
+    });
+  }
+
   if (loading) {
     return <MonitorLoading />;
   }
@@ -409,6 +429,14 @@ export function ExtractionMonitor({
         sheetSyncing={sheetSyncing}
       />
       <PipelineStrip source={conversation?.source} sprint5={sprint5} />
+      {tab === "turns" ? (
+        <ParsingQaStrip
+          stats={conversation?.stats}
+          warnings={conversation?.warnings ?? []}
+          messages={messages}
+          turnCount={turns.length}
+        />
+      ) : null}
       {error ? <div className={styles.inlineError}>{error}</div> : null}
       {sheetNotice ? (
         <div className={styles.inlineSuccess} role="status">
@@ -481,6 +509,7 @@ export function ExtractionMonitor({
             onFilterChange={setResultFilter}
             onQueryChange={setQuery}
             onRowSelect={(row) => setSelectedRowId(row.id)}
+            onOpenEvidence={openEvidenceMessage}
           />
         </section>
       ) : null}
@@ -537,10 +566,10 @@ function MonitorHeader({
     <header className={styles.header}>
       <div className={styles.headerMain}>
         <Link href="/" className={styles.brand} title="새 링크 분석">
-          <span className={styles.logo}>blabase</span>
+          <span className={styles.logo}>b</span>
           <span>
             <strong>blabase Extraction Monitor</strong>
-            <small>INTERNAL OPERATIONS</small>
+            <small>CHATGPT SHARE ANALYSIS</small>
           </span>
         </Link>
         <span className={styles.headerDivider} />
@@ -668,6 +697,133 @@ function PipelineStrip({
         {sprint5?.llmResult.status ?? "no shadow run"}
       </span>
     </div>
+  );
+}
+
+function ParsingQaStrip({
+  stats,
+  warnings,
+  messages,
+  turnCount
+}: {
+  stats?: ConversationStats;
+  warnings: ImportWarning[];
+  messages: MonitorMessage[];
+  turnCount: number;
+}) {
+  const summary = buildParsingQaSummary({
+    messages,
+    stats,
+    warnings,
+    turnCount
+  });
+  const metrics = [
+    {
+      label: "Canonical",
+      value: summary.counts.total,
+      title: "공유 payload에서 복원·정규화 후 유지된 전체 메시지"
+    },
+    {
+      label: "User",
+      value: summary.counts.user,
+      title: "복원된 사용자 메시지"
+    },
+    {
+      label: "Assistant",
+      value: summary.counts.assistant,
+      title: "복원된 assistant 메시지"
+    },
+    {
+      label: "Clean",
+      value: summary.counts.clean,
+      title: "Rule/LLM 의미 분석에 사용되는 사용자-visible 메시지"
+    },
+    {
+      label: "Context",
+      value: summary.counts.context,
+      title: "검색·도구 사용처럼 답변 맥락을 설명하는 보조 신호"
+    },
+    {
+      label: "Internal",
+      value: summary.counts.internal,
+      title: "의미 분석에서 제외된 내부 메시지"
+    },
+    {
+      label: "Unsupported",
+      value: summary.counts.unsupported,
+      title: "현재 파서가 완전히 표현하지 못한 content가 포함된 메시지"
+    },
+    {
+      label: "Turns",
+      value: summary.counts.turns,
+      title: "사용자 메시지를 기준으로 구성된 대화 턴"
+    }
+  ];
+  const statusLabel =
+    summary.status === "ready"
+      ? "READY"
+      : summary.status === "error"
+        ? `${summary.warningCounts.error} ERROR`
+        : "CHECK";
+  const statusTone =
+    summary.status === "ready"
+      ? "verified"
+      : summary.status === "error"
+        ? "rejected"
+        : "review";
+
+  return (
+    <section
+      className={styles.parsingQa}
+      data-status={summary.status}
+      aria-label="파싱 QA 요약"
+    >
+      <header className={styles.parsingQaHeader}>
+        <div>
+          {summary.status === "ready" ? (
+            <Check size={14} />
+          ) : (
+            <AlertTriangle size={14} />
+          )}
+          <strong>Parsing QA</strong>
+          <span>복원된 메시지 분류와 파서 경고를 먼저 확인하세요.</span>
+        </div>
+        <Badge tone={statusTone}>{statusLabel}</Badge>
+      </header>
+      <div className={styles.parsingQaMetrics}>
+        {metrics.map((metric) => (
+          <article key={metric.label} title={metric.title}>
+            <span>{metric.label}</span>
+            <strong>{formatNumber(metric.value)}</strong>
+          </article>
+        ))}
+      </div>
+      {warnings.length > 0 || summary.countMismatch ? (
+        <details
+          className={styles.parsingQaWarnings}
+          open={summary.status !== "ready"}
+        >
+          <summary>
+            파싱 확인 항목 {warnings.length + Number(summary.countMismatch)}개
+          </summary>
+          {summary.countMismatch ? (
+            <p>
+              <strong>COUNT_MISMATCH</strong>
+              API 통계와 반환된 메시지 분류 개수가 일치하지 않습니다.
+            </p>
+          ) : null}
+          {warnings.map((warning, index) => (
+            <p
+              key={`${warning.code}-${index}`}
+              data-severity={warning.severity}
+            >
+              <strong>{warning.code}</strong>
+              {warning.message}
+            </p>
+          ))}
+        </details>
+      ) : null}
+    </section>
   );
 }
 
@@ -880,7 +1036,7 @@ function ContextSignals({
                   .join(" · ")}
               </p>
               {signals.map((signal) => (
-                <details key={signal.id}>
+                <details id={`message-${signal.index}`} key={signal.id}>
                   <summary>
                     #{signal.index} ·{" "}
                     {signal.metadata.contextSignalType ?? "other"}
@@ -922,7 +1078,7 @@ function ExcludedInternal({
       {open && messages.length > 0 ? (
         <div className={styles.internalList}>
           {messages.map((message) => (
-            <details key={message.id}>
+            <details id={`message-${message.index}`} key={message.id}>
               <summary>
                 #{message.index} ·{" "}
                 {message.metadata.internalContentType ?? "internal"}
@@ -947,7 +1103,8 @@ function ComparisonPane({
   sprint5,
   onFilterChange,
   onQueryChange,
-  onRowSelect
+  onRowSelect,
+  onOpenEvidence
 }: {
   turn: MonitorTurn | null;
   rows: ComparisonRow[];
@@ -960,6 +1117,7 @@ function ComparisonPane({
   onFilterChange: (filter: ResultFilter) => void;
   onQueryChange: (query: string) => void;
   onRowSelect: (row: ComparisonRow) => void;
+  onOpenEvidence: (messageIndex: number) => void;
 }) {
   return (
     <section className={styles.comparisonPane}>
@@ -1030,7 +1188,11 @@ function ComparisonPane({
                 <EmptyState title="현재 필터에 해당하는 추출 항목이 없습니다." />
               )}
             </div>
-            <EvidenceTrace row={selectedRow} messages={messages} />
+            <EvidenceTrace
+              row={selectedRow}
+              messages={messages}
+              onOpenEvidence={onOpenEvidence}
+            />
           </>
         ) : (
           <EmptyState title="Sprint 5 Shadow 결과가 없습니다." />
@@ -1105,10 +1267,12 @@ function SemanticCell({
 
 function EvidenceTrace({
   row,
-  messages
+  messages,
+  onOpenEvidence
 }: {
   row: ComparisonRow | null;
   messages: MonitorMessage[];
+  onOpenEvidence: (messageIndex: number) => void;
 }) {
   if (!row) {
     return (
@@ -1125,10 +1289,7 @@ function EvidenceTrace({
   function goToSource() {
     const index = evidence?.messageIndex ?? firstEvidenceIndex;
     if (!index) return;
-    document.getElementById(`message-${index}`)?.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
+    onOpenEvidence(index);
   }
 
   return (
@@ -1141,10 +1302,28 @@ function EvidenceTrace({
             {row.verificationStatus.toLowerCase()}
           </Badge>
         </div>
-        <button type="button" onClick={goToSource} disabled={!evidence}>
+        <button
+          type="button"
+          onClick={goToSource}
+          disabled={!evidence && !firstEvidenceIndex}
+        >
           원문으로 이동 <ArrowUpRight size={13} />
         </button>
       </header>
+      {row.evidenceMessageIndexes.length > 0 ? (
+        <div className={styles.evidenceIndexLinks}>
+          <span>Evidence messages</span>
+          {row.evidenceMessageIndexes.map((messageIndex) => (
+            <button
+              key={messageIndex}
+              type="button"
+              onClick={() => onOpenEvidence(messageIndex)}
+            >
+              #{messageIndex}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className={styles.evidenceGrid}>
         <div className={styles.quotePanel}>
           {evidence ? (

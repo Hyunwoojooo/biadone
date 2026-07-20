@@ -1,6 +1,27 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body {
   min-height: 100%;
   margin: 0;
   background: #f8f9fa;
+}
+
+html {
+  min-width: 320px;
+}
+
+body {
+  color: #1f2933;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input {
+  font: inherit;
 }

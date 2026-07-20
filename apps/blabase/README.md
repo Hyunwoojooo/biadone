@@ -9,16 +9,61 @@ ChatGPT 공유 링크의 대화를 복원하고 구조화하는 Next.js 애플�
 읽습니다. 이 문서는 Codex CLI와 사람이 반드시 남겨야 하는 실행 버전, 데이터
 출처, Evidence, 평가, 사용자 수정, 개인정보, 릴리스 기록을 정의합니다.
 
+## URL Parsing QA MVP
+
+홈에서 ChatGPT 공유 링크를 제출하면 분석 완료 후
+`/analyses/ana_...?tab=turns`로 이동합니다. Extraction Monitor 상단의
+`Parsing QA`는 복원된 canonical 메시지를 user, assistant, clean conversation,
+context signal, excluded/internal, unsupported content, turn으로 나누고 Import
+Warning을 함께 표시합니다. Turn Inspector에서 원문과 Rule/LLM 추출 결과를
+나란히 비교하고 Evidence message 번호를 눌러 해당 원문으로 이동할 수 있습니다.
+
+분석 결과 확인은 Golden Dataset Sheet 동기화 성공 여부와 분리되어 있습니다.
+Sheet 등록은 Extraction Monitor 헤더의 표 아이콘으로 명시적으로 실행합니다.
+
+### DB 없는 MVP 세션
+
+현재 분석 저장소는 서버 메모리이며 영구 DB를 사용하지 않습니다. Workers의
+요청별 isolate에 의존하지 않도록 분석 POST 응답이 결과와 메시지를 함께 돌려주고,
+같은 브라우저의 메모리와 `sessionStorage`로 결과 화면에 전달합니다.
+
+- URL 제출 직후의 결과 화면은 Workers isolate가 달라져도 열립니다.
+- 큰 대화가 브라우저 저장 한도를 넘으면 현재 탭의 메모리에서만 유지됩니다.
+- 새 브라우저, 다른 기기, 장기 보관, 공유 가능한 분석 URL은 아직 지원하지
+  않습니다. 이 범위가 필요할 때 영구 저장소를 도입합니다.
+
+## Cloudflare Workers 배포
+
+운영 주소 `https://blabase.com`과 `https://www.blabase.com`은
+`@opennextjs/cloudflare`로 빌드한 Worker `blabase-app`이 서비스합니다.
+
+```bash
+npm run preview
+npm run deploy
+```
+
+- `wrangler.jsonc`의 두 Worker Route가 기존 Pages origin보다 먼저 모든 경로를
+  처리합니다.
+- ChatGPT가 Cloudflare Worker의 직접 요청을 차단할 수 있어 운영 Worker에는
+  `CHATGPT_SHARE_FETCHER_URL`, `CHATGPT_SHARE_FETCHER_SECRET` 두 secret이
+  필요합니다. 값은 저장소에 기록하지 않습니다.
+- `sites/blabase.com`의 정적 Pages 배포는 현재 운영 화면이 아니라 Route 제거 시
+  돌아갈 수 있는 롤백 원본입니다.
+- 상세 운영 및 롤백 절차는
+  [`../../ops/cloudflare/blabase.com.md`](../../ops/cloudflare/blabase.com.md)에
+  기록합니다.
+
 ## Conversation Atlas
 
-분석 완료 후 `/atlas?analysisId=ana_...`로 이동해 개념 관계와 대화 흐름을
-탐색합니다. 같은 브라우저에서는 마지막으로 연 Atlas 분석 ID를 기억합니다.
+Extraction Monitor의 Structure Map 또는 `/atlas?analysisId=ana_...`에서 개념
+관계와 대화 흐름을 탐색합니다. 같은 브라우저에서는 마지막으로 연 Atlas 분석
+ID를 기억합니다.
 분석 기록이 없는 직접 방문자는 인터랙티브 데모를 볼 수 있고, 새 분석이 완료되면
 실제 세션 데이터로 자동 전환됩니다.
 
-## Golden Dataset Sheet 자동 등록
+## Golden Dataset Sheet 등록
 
-홈에서 공유 링크를 제출하면 분석 후 현재 `blabase Golden Dataset - Multi-session Labeling` Sheet에 새 세션을 자동 등록합니다. 분석 결과 화면의 표 아이콘으로 다시 시도할 수도 있습니다.
+분석 결과 화면의 표 아이콘을 누르면 현재 `blabase Golden Dataset - Multi-session Labeling` Sheet에 새 세션을 등록합니다.
 
 - `00_세션목록`: 다음 `S-xxx` ID, 제목, 링크, 수집일을 기록합니다.
 - `01_전체메시지`: 전체 메시지를 화자·분류·분석 대상과 함께 기록합니다.

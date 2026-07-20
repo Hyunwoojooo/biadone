@@ -48,6 +48,14 @@ describe("analysis API Sprint 2 flow", () => {
       shadowVerifiedCount: number;
       shadowReviewCount: number;
       shadowRejectedCount: number;
+      monitorData: {
+        result: { analysisId: string; result: unknown };
+        messages: {
+          analysisId: string;
+          conversation: { warnings: unknown[] };
+          messages: { role: string; text: string }[];
+        };
+      };
     };
 
     expect(createResponse.status).toBe(200);
@@ -59,6 +67,16 @@ describe("analysis API Sprint 2 flow", () => {
       shadowReviewCount: 0,
       shadowRejectedCount: 0
     });
+    expect(createPayload.monitorData).toMatchObject({
+      result: {
+        analysisId: createPayload.analysisId
+      },
+      messages: {
+        analysisId: createPayload.analysisId
+      }
+    });
+    expect(createPayload.monitorData.result.result).toBeTruthy();
+    expect(createPayload.monitorData.messages.messages).toHaveLength(2);
 
     const stored = getAnalysisStore().get(createPayload.analysisId);
     expect(stored?.structureResult?.extractor.name).toBe(
@@ -92,6 +110,11 @@ describe("analysis API Sprint 2 flow", () => {
           adapterName: string;
           adapterVersion: string;
         };
+        warnings: Array<{
+          code: string;
+          message: string;
+          severity: "info" | "warning" | "error";
+        }>;
       };
       messages: { role: string; text: string }[];
     };
@@ -102,6 +125,9 @@ describe("analysis API Sprint 2 flow", () => {
       adapterName: "ChatGPTShareAdapter"
     });
     expect(messagesPayload.conversation.source.adapterVersion).toBeTruthy();
+    expect(messagesPayload.conversation.warnings).toEqual(
+      stored?.conversation?.warnings
+    );
     expect(messagesPayload.messages).toHaveLength(2);
     expect(messagesPayload.messages.map((message) => message.role)).toEqual([
       "user",

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildComparisonRows,
   buildMonitorTurns,
+  buildParsingQaSummary,
   buildReviewRows,
+  turnIdForMessageIndex,
   type MonitorMessage
 } from "../../src/components/extraction-monitor/monitorModel";
 import type {
@@ -107,6 +109,83 @@ describe("extraction monitor model", () => {
       source: "LLM Shadow",
       issueCodes: ["DECISION_NOT_EXPLICIT"]
     });
+  });
+
+  it("summarizes canonical message categories for parsing QA", () => {
+    const messages = [
+      message(1, "user", "질문"),
+      message(2, "assistant", "검색", "context_signal"),
+      message(3, "assistant", "내부", "excluded_internal"),
+      message(4, "assistant", "답변")
+    ];
+    messages[2]!.metadata.hasUnsupportedContent = true;
+    const turns = buildMonitorTurns(messages);
+    const summary = buildParsingQaSummary({
+      messages,
+      turnCount: turns.length,
+      stats: {
+        startedAt: null,
+        endedAt: null,
+        durationSeconds: null,
+        totalMessages: 4,
+        userMessages: 1,
+        assistantMessages: 3,
+        unsupportedMessages: 1,
+        cleanConversationMessages: 2,
+        contextSignalMessages: 1,
+        excludedInternalMessages: 1,
+        totalChars: 8
+      },
+      warnings: [
+        {
+          code: "UNSUPPORTED_CONTENT",
+          message: "지원하지 않는 content가 있습니다.",
+          severity: "warning"
+        }
+      ]
+    });
+
+    expect(summary).toMatchObject({
+      status: "attention",
+      counts: {
+        total: 4,
+        user: 1,
+        assistant: 3,
+        clean: 2,
+        context: 1,
+        internal: 1,
+        unsupported: 1,
+        turns: 1
+      },
+      warningCounts: { info: 0, warning: 1, error: 0 },
+      countMismatch: false
+    });
+    expect(turnIdForMessageIndex(turns, 2)).toBe(1);
+  });
+
+  it("flags API statistics that do not reconcile with returned messages", () => {
+    const messages = [message(1, "user", "질문")];
+    const summary = buildParsingQaSummary({
+      messages,
+      turnCount: 1,
+      stats: {
+        startedAt: null,
+        endedAt: null,
+        durationSeconds: null,
+        totalMessages: 2,
+        userMessages: 1,
+        assistantMessages: 1,
+        unsupportedMessages: 0,
+        cleanConversationMessages: 2,
+        contextSignalMessages: 0,
+        excludedInternalMessages: 0,
+        totalChars: 2
+      },
+      warnings: []
+    });
+
+    expect(summary.status).toBe("attention");
+    expect(summary.countMismatch).toBe(true);
   });
 });
 

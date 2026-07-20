@@ -1,4 +1,8 @@
-import type { CanonicalMessage } from "@/core/types/conversation";
+import type {
+  CanonicalMessage,
+  ConversationStats,
+  ImportWarning
+} from "@/core/types/conversation";
 import type {
   EvidenceEvaluatedItem,
   HybridExtractionResult,
@@ -60,6 +64,84 @@ export type MonitorReviewRow = {
   turnId: number | null;
 };
 
+export type ParsingQaSummary = {
+  status: "ready" | "attention" | "error";
+  counts: {
+    total: number;
+    user: number;
+    assistant: number;
+    clean: number;
+    context: number;
+    internal: number;
+    unsupported: number;
+    turns: number;
+  };
+  warningCounts: {
+    info: number;
+    warning: number;
+    error: number;
+  };
+  countMismatch: boolean;
+};
+
+export function buildParsingQaSummary({
+  messages,
+  stats,
+  warnings,
+  turnCount
+}: {
+  messages: MonitorMessage[];
+  stats?: ConversationStats;
+  warnings: ImportWarning[];
+  turnCount: number;
+}): ParsingQaSummary {
+  const counts = {
+    total: messages.length,
+    user: messages.filter((message) => message.role === "user").length,
+    assistant: messages.filter((message) => message.role === "assistant")
+      .length,
+    clean: messages.filter(
+      (message) => message.metadata.messageCategory === "clean_conversation"
+    ).length,
+    context: messages.filter(
+      (message) => message.metadata.messageCategory === "context_signal"
+    ).length,
+    internal: messages.filter(
+      (message) => message.metadata.messageCategory === "excluded_internal"
+    ).length,
+    unsupported: messages.filter(
+      (message) => message.metadata.hasUnsupportedContent
+    ).length,
+    turns: turnCount
+  };
+  const warningCounts = warnings.reduce<ParsingQaSummary["warningCounts"]>(
+    (result, warning) => {
+      result[warning.severity] += 1;
+      return result;
+    },
+    { info: 0, warning: 0, error: 0 }
+  );
+  const countMismatch = Boolean(
+    counts.clean + counts.context + counts.internal !== counts.total ||
+    (stats &&
+      (stats.totalMessages !== counts.total ||
+        stats.userMessages !== counts.user ||
+        stats.assistantMessages !== counts.assistant ||
+        stats.cleanConversationMessages !== counts.clean ||
+        stats.contextSignalMessages !== counts.context ||
+        stats.excludedInternalMessages !== counts.internal ||
+        stats.unsupportedMessages !== counts.unsupported))
+  );
+  const status =
+    warningCounts.error > 0
+      ? "error"
+      : warnings.length > 0 || counts.unsupported > 0 || countMismatch
+        ? "attention"
+        : "ready";
+
+  return { status, counts, warningCounts, countMismatch };
+}
+
 export function buildMonitorTurns(messages: MonitorMessage[]): MonitorTurn[] {
   const ordered = [...messages].sort((left, right) => left.index - right.index);
   const cleanMessages = ordered.filter(
@@ -109,6 +191,19 @@ export function buildMonitorTurns(messages: MonitorMessage[]): MonitorTurn[] {
       endMessageIndex
     };
   });
+}
+
+export function turnIdForMessageIndex(
+  turns: MonitorTurn[],
+  messageIndex: number
+): number | null {
+  return (
+    turns.find(
+      (turn) =>
+        messageIndex >= turn.startMessageIndex &&
+        messageIndex <= turn.endMessageIndex
+    )?.id ?? null
+  );
 }
 
 export function buildComparisonRows(
@@ -381,11 +476,9 @@ function turnIdForEvidence(
   turns: MonitorTurn[],
   evidenceMessageIndexes: number[]
 ): number | null {
-  return (
-    turns.find((turn) =>
-      evidenceMessageIndexes.some((index) =>
-        turn.scopeMessageIndexes.includes(index)
-      )
-    )?.id ?? null
-  );
+  for (const messageIndex of evidenceMessageIndexes) {
+    const turnId = turnIdForMessageIndex(turns, messageIndex);
+    if (turnId) return turnId;
+  }
+  return null;
 }

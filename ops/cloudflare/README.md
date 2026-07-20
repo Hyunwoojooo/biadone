@@ -5,6 +5,7 @@ Cloudflare 관련 운영 문서를 이 디렉터리에서 관리한다.
 ## 문서 구조
 
 - [biadone.com.md](./biadone.com.md): `biadone.com` Cloudflare Pages 프로젝트, 커스텀 도메인, 배포 방식
+- [blabase.com.md](./blabase.com.md): `blabase.com` Next.js Worker, Pages 롤백 원본, 배포 및 롤백 방식
 - [dns.md](./dns.md): DNS 레코드 기준 상태와 변경 이력
 - [runbook.md](./runbook.md): 장애 대응, 롤백, 재배포 절차
 
@@ -16,6 +17,10 @@ Cloudflare 관련 운영 문서를 이 디렉터리에서 관리한다.
 - Cloudflare Pages project: `biadone`
 - Source: `sites/biadone.com/`
 - Deploy command: `cd sites/biadone.com && ./scripts/deploy-cloudflare.sh`
+- Product app: `https://blabase.com`
+- Blabase Worker: `blabase-app`
+- Blabase source: `apps/blabase/`
+- Blabase deploy: `cd apps/blabase && npm run deploy`
 
 ## 운영 원칙
 

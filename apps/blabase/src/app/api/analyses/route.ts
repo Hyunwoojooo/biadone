@@ -8,6 +8,7 @@ import {
 import { getAnalysisStore } from "@/core/storage/analysisStore";
 import { extractMockStructure } from "@/core/extractors/mockStructureExtractor";
 import { runShadowExtraction } from "@/core/extractors/runShadowExtraction";
+import { createAnalysisMonitorPayload } from "@/core/transport/analysisMonitorPayload";
 
 const createAnalysisRequestSchema = z.object({
   shareUrl: z.string().min(1)
@@ -57,7 +58,8 @@ export async function POST(request: Request) {
         record.hybridExtraction?.llmResult.metrics.totalDurationMs,
       shadowVerifiedCount: record.hybridExtraction?.verifiedItems.length,
       shadowReviewCount: record.hybridExtraction?.reviewQueue.length,
-      shadowRejectedCount: record.hybridExtraction?.rejectedItems.length
+      shadowRejectedCount: record.hybridExtraction?.rejectedItems.length,
+      monitorData: createAnalysisMonitorPayload(record)
     });
   } catch (error) {
     const normalizedError = normalizeAnalysisError(error);
