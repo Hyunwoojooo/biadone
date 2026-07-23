@@ -1,6 +1,6 @@
 # blabase 전체 시스템 흐름
 
-> 기준일: 2026-07-20
+> 기준일: 2026-07-23
 > 상태: 현재 코드 기준 AS-IS 문서
 > 범위: ChatGPT 공유 대화 수집, 복원, 정규화, Rule/LLM 추출, Evidence 검증,
 > 결과 조회, Atlas, Golden Dataset 등록 및 오프라인 평가
@@ -10,8 +10,8 @@
 blabase는 ChatGPT 공유 링크에서 대화를 복원한 뒤, 사용자에게 보이는 대화와
 도구/내부 메시지를 분리하고, Rule Extractor와 선택적 LLM Shadow Extractor로
 의미 항목을 추출한다. LLM 결과는 원문 근거와 다시 대조해 검증 상태를 붙이고,
-브라우저의 Extraction Monitor와 Structure Map에서 원문까지 추적할 수 있게
-표시한다.
+브라우저의 Extraction Monitor, LLM Entity Graph, Structure Map에서 원문까지
+추적할 수 있게 표시한다.
 
 현재 Rule 결과와 LLM 결과는 **하나의 최종 결과로 병합되지 않는다.** Rule 결과가
 기존 기준 결과이고, LLM은 Shadow 비교 결과이며, Evidence Verifier도 LLM 후보에만
@@ -39,7 +39,8 @@ flowchart LR
     BC --> UI[Extraction Monitor]
     M --> API[결과·메시지·내보내기 API]
     API --> UI
-    UI --> AT[Structure Map / Atlas]
+    UI --> EG[LLM Entity Graph]
+    UI --> AT[Hybrid Structure / Atlas]
     UI --> GA[GPT Audit Markdown]
     UI --> GS[Golden Dataset Sheet 등록]
 ```
@@ -56,7 +57,7 @@ flowchart LR
    Evidence 검증까지 순차적으로 완료한다.
 5. 성공 응답은 `analysisId`, Shadow 실행 요약, 전체 `monitorData`를 함께 반환한다.
 6. 브라우저는 `monitorData`를 메모리와 `sessionStorage`에 캐시하고
-   `/analyses/{analysisId}?tab=turns`로 이동한다.
+   `/analyses/{analysisId}?tab=entity_graph`로 이동한다.
 
 분석 생성 API는 현재 비동기 작업 큐가 아니다. 클라이언트가 응답을 받을 때에는
 해당 분석이 이미 `completed` 또는 `failed` 상태다.
@@ -261,12 +262,34 @@ Extraction Monitor는 다음 순서로 데이터를 읽는다.
 
 | 탭 | 역할 |
 |---|---|
-| Structure Map | 의미 항목을 개념 노드, 공유 evidence/turn 기반 링크, 대화 흐름으로 표시 |
-| Turns | 원문 Turn과 Rule/LLM 비교, Evidence 원문 이동 |
-| Review Queue | Rule review 항목과 LLM review/rejected 항목 정렬 |
-| Diagnostics | Parsing QA, LLM 세그먼트, coverage, token, Evidence 진단 |
+| LLM Entity Graph | 검증·리뷰 LLM 항목을 중앙 핵심 후보와 Evidence/Turn 연결로 표시                  |
+| Hybrid Structure | Rule+LLM 의미 항목을 개념 노드, 공유 evidence/turn 기반 링크, 대화 흐름으로 표시 |
+| Turn Inspector   | 원문 Turn과 Rule/LLM 비교, Evidence 원문 이동                                    |
+| Review Queue     | Rule review 항목과 LLM review/rejected 항목 정렬                                 |
+| Run Diagnostics  | Parsing QA, LLM 세그먼트, coverage, token, Evidence 진단                         |
 
-Structure Map은 Rule 항목과 reject되지 않은 LLM 항목을 사용한다. 같은 타입과
+LLM Entity Graph는 `verifiedItems`와 `reviewQueue`만 사용하고 rejected 항목은
+통계에만 남긴다. 의미 유형, confidence, evidence 범위, 다른 항목과의 Evidence
+연결도를 결정적으로 점수화해 하나의 중심 후보를 `(50, 50)`에 놓고, 최대 18개
+주변 항목을 원형으로 배치한다. 중심과 주변의 선은 실제 추출 관계가 아닌
+`중심 배치선(휴리스틱)`이며, 주변 항목끼리의 선만 `공통 Evidence index` 또는
+`같은 Turn`을 뜻한다. 노드를 선택하면 confidence, 검증 상태, 실제 Evidence Match
+인용, LLM trigger phrase, review signal과 연결된 Turn을 구분해 확인할 수 있다.
+같은 type/label이라도 Verified와 Review 항목은 별도 노드로 유지한다.
+
+후보가 표시 한도를 넘으면 전체 고유 후보, 표시 수, 생략 수를 함께 보여준다.
+검색과 검증 상태 필터는 화면에 먼저 표시된 19개가 아니라 전체 수용 후보를
+대상으로 다시 그래프를 구성하며, 중앙 핵심 후보는 비교 기준으로 고정한다.
+선이 많으면 캔버스에는 선택 노드의 모든 선을 우선 포함해 최대 32개를 그리고,
+전체 선/표시 선 수를 알린다. 우측 `VIEW LINKS`는 캔버스 선 제한과 무관하게 선택
+노드의 전체 연결을 유지한다.
+
+현재 `SemanticItem`에는 관계의 `sourceId`, `targetId`, `predicate`가 없다.
+따라서 이 화면은 LLM이 직접 추출한 방향성 관계 그래프가 아니라 **의미·증거 연결
+모니터**다. 진짜 Entity Relation Graph는 향후 버전된 출력 스키마와 프롬프트에
+명시적 노드·관계 계약을 추가한 뒤 구현해야 한다.
+
+Hybrid Structure는 Rule 항목과 reject되지 않은 LLM 항목을 사용한다. 같은 타입과
 정규화된 label은 한 노드로 묶고, 공통 evidence message나 Turn이 있는 노드끼리
 연결한다. 현재 최대 14개 노드와 24개 링크를 표시한다.
 
@@ -460,7 +483,7 @@ src/core/
 
 src/components/
 ├─ UrlInputForm.tsx                      # 분석 생성·브라우저 캐시
-├─ extraction-monitor/                   # Turn/비교/검토/진단/Structure Map
+├─ extraction-monitor/                   # LLM Graph/Turn/비교/검토/진단/Structure
 ├─ atlas/                                # Atlas 실제 화면과 데모 데이터
 └─ golden-quality/                       # 축약 품질 보고서 UI
 

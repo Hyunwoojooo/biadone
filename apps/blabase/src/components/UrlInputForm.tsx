@@ -70,7 +70,9 @@ export function UrlInputForm() {
         cacheAnalysisMonitorPayload(data.analysisId, data.monitorData);
       }
 
-      router.push(`/analyses/${encodeURIComponent(data.analysisId)}?tab=turns`);
+      router.push(
+        `/analyses/${encodeURIComponent(data.analysisId)}?tab=entity_graph`
+      );
       navigationStarted = true;
     } catch {
       setError({ message: "네트워크 오류로 분석을 시작하지 못했습니다." });

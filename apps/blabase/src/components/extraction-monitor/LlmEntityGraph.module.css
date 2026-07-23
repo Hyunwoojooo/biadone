@@ -1,0 +1,1050 @@
+.entityGraph,
+.entityGraph * {
+  box-sizing: border-box;
+}
+
+.entityGraph {
+  --bg: #101821;
+  --panel: #1b2632;
+  --panel-raised: #23303e;
+  --line: rgb(222 233 244 / 11%);
+  --line-strong: rgb(222 233 244 / 19%);
+  --text: #edf4fb;
+  --muted: #9aaabb;
+  display: grid;
+  height: calc(100vh - 130px);
+  min-height: 590px;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+.entityGraph button,
+.entityGraph input {
+  font: inherit;
+}
+
+.graphHeader {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 22px;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 18% -20%, rgb(139 92 246 / 14%), transparent 40%),
+    #1a2531;
+  padding: 15px 22px;
+  grid-template-columns: minmax(250px, 1fr) auto minmax(320px, 0.72fr);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+.graphIdentity {
+  min-width: 0;
+}
+
+.graphIdentity > span,
+.panelEyebrow,
+.runStatus,
+.runSummary dt,
+.runSummary dd,
+.statsBar span,
+.statsBar strong,
+.coreTag,
+.graphNode small,
+.nodeStatus,
+.triggerCard > span,
+.evidenceCard > span,
+.detailFooter,
+.issueList span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.graphIdentity > span,
+.panelEyebrow {
+  color: #b5a5ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.graphIdentity h1 {
+  overflow: hidden;
+  margin: 4px 0 0;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  line-height: 21px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphIdentity p {
+  overflow: hidden;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runSummary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  padding: 0 18px;
+}
+
+.runStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #77ddc7;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.runStatus > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+}
+
+.runStatus[data-status="partial"] {
+  color: #f7c76b;
+}
+
+.runStatus[data-status="failed"] {
+  color: #fb8795;
+}
+
+.runStatus[data-status="disabled"] {
+  color: #8291a1;
+}
+
+.runSummary dl {
+  display: flex;
+  min-width: 0;
+  gap: 13px;
+  margin: 0;
+}
+
+.runSummary dl div {
+  min-width: 0;
+}
+
+.runSummary dt {
+  color: #758596;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.runSummary dd {
+  overflow: hidden;
+  max-width: 110px;
+  margin: 4px 0 0;
+  color: #dce6ef;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphControls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.searchBox {
+  position: relative;
+  display: flex;
+  min-width: 180px;
+  flex: 1 1 230px;
+  align-items: center;
+}
+
+.searchBox > svg {
+  position: absolute;
+  left: 10px;
+  color: #7f8fa0;
+  pointer-events: none;
+}
+
+.searchBox input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  outline: none;
+  background: rgb(8 14 21 / 30%);
+  color: var(--text);
+  padding: 0 31px;
+  font-size: 11px;
+}
+
+.searchBox input:focus {
+  border-color: rgb(167 139 250 / 58%);
+  box-shadow: 0 0 0 3px rgb(167 139 250 / 9%);
+}
+
+.searchBox input::placeholder {
+  color: #718092;
+}
+
+.searchBox button {
+  position: absolute;
+  right: 5px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.filters {
+  display: flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgb(8 14 21 / 28%);
+  padding: 3px;
+}
+
+.filters button {
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8191a3;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.filters button:hover {
+  color: white;
+}
+
+.filters .filterActive {
+  background: rgb(167 139 250 / 16%);
+  color: #d8ccff;
+}
+
+.graphNode:focus-visible,
+.filters button:focus-visible,
+.searchBox button:focus-visible,
+.turnLinks button:focus-visible,
+.relatedList button:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 3px;
+}
+
+.graphWorkspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 304px;
+}
+
+.canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 50%, rgb(124 104 216 / 17%), transparent 28%),
+    radial-gradient(circle at 18% 18%, rgb(56 189 248 / 7%), transparent 24%),
+    linear-gradient(rgb(116 139 163 / 7%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(116 139 163 / 7%) 1px, transparent 1px), #111c26;
+  background-size:
+    100% 100%,
+    100% 100%,
+    34px 34px,
+    34px 34px,
+    auto;
+}
+
+.canvas::before {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 34%,
+    rgb(4 9 14 / 21%) 100%
+  );
+  content: "";
+  pointer-events: none;
+}
+
+.graphLines {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.graphNode {
+  --node-color: #a78bfa;
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  width: 82px;
+  height: 82px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid color-mix(in srgb, var(--node-color) 75%, #111827);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, var(--node-color) 30%, #263342),
+    #1d2935 68%
+  );
+  color: var(--text);
+  cursor: pointer;
+  padding: 13px 8px 10px;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.graphNode:hover {
+  z-index: 4;
+  border-color: var(--node-color);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--node-color) 30%, transparent);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.graphNode > i {
+  position: absolute;
+  top: 11px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--node-color);
+  box-shadow: 0 0 9px var(--node-color);
+}
+
+.graphNode strong {
+  display: -webkit-box;
+  overflow: hidden;
+  max-width: 68px;
+  font-size: 10px;
+  line-height: 13px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.graphNode small {
+  position: absolute;
+  right: 7px;
+  bottom: 9px;
+  left: 7px;
+  overflow: hidden;
+  color: #a9b7c6;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.graphNode .nodeStatus {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 50%;
+  background: #1a2531;
+  color: #71dbc4;
+  font-size: 7px;
+  font-weight: 900;
+}
+
+.graphNode .nodeStatus[data-status="review_required"] {
+  color: #f6c465;
+}
+
+.graphNode.nodeActive {
+  z-index: 5;
+  border-color: #f0ebff;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-color) 15%, transparent),
+    0 0 32px color-mix(in srgb, var(--node-color) 42%, transparent);
+}
+
+.graphNode.nodeMuted {
+  opacity: 0.38;
+}
+
+.coreNode {
+  width: 126px;
+  height: 126px;
+  border-width: 3px;
+  padding: 22px 13px 16px;
+  background: radial-gradient(
+    circle at 35% 28%,
+    color-mix(in srgb, var(--node-color) 46%, #29374a),
+    #202c3a 70%
+  );
+  box-shadow:
+    0 0 0 7px color-mix(in srgb, var(--node-color) 8%, transparent),
+    0 0 38px color-mix(in srgb, var(--node-color) 31%, transparent);
+}
+
+.coreNode > i {
+  top: 25px;
+  width: 10px;
+  height: 10px;
+}
+
+.coreNode strong {
+  max-width: 102px;
+  font-size: 14px;
+  line-height: 18px;
+  -webkit-line-clamp: 3;
+}
+
+.coreNode small {
+  right: 14px;
+  bottom: 17px;
+  left: 14px;
+  font-size: 8px;
+}
+
+.coreTag {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  border: 1px solid color-mix(in srgb, var(--node-color) 65%, #18222d);
+  border-radius: 8px;
+  background: #1b2632;
+  color: #ded6ff;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  transform: translateX(-50%);
+}
+
+.statsBar {
+  position: absolute;
+  z-index: 6;
+  bottom: 17px;
+  left: 18px;
+  display: flex;
+  overflow-x: auto;
+  max-width: calc(100% - 36px);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgb(26 37 49 / 90%);
+  backdrop-filter: blur(12px);
+}
+
+.statsBar > div {
+  min-width: 72px;
+  border-right: 1px solid var(--line);
+  padding: 7px 10px;
+}
+
+.statsBar > div:last-child {
+  border-right: 0;
+}
+
+.statsBar span,
+.statsBar strong {
+  display: block;
+}
+
+.statsBar span {
+  color: #8493a4;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.statsBar strong {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.statsBar div[data-tone="verified"] strong {
+  color: #72dbc5;
+}
+
+.statsBar div[data-tone="review"] strong {
+  color: #f4c366;
+}
+
+.statsBar div[data-tone="rejected"] strong {
+  color: #fb8795;
+}
+
+.noticeStack {
+  position: absolute;
+  z-index: 6;
+  right: 17px;
+  bottom: 17px;
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exclusionNote,
+.omissionNote,
+.edgeOmissionNote,
+.filterNote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  background: rgb(28 39 51 / 90%);
+  color: #aab8c6;
+  padding: 7px 9px;
+  font-size: 10px;
+  backdrop-filter: blur(10px);
+}
+
+.exclusionNote {
+  border: 1px solid rgb(248 113 113 / 18%);
+  background: rgb(36 30 36 / 90%);
+  color: #e0a6ad;
+}
+
+.omissionNote {
+  border: 1px solid rgb(251 191 36 / 18%);
+  color: #dec07f;
+}
+
+.edgeOmissionNote {
+  border: 1px solid rgb(148 163 184 / 18%);
+  color: #aebdcb;
+}
+
+.filterNote {
+  border: 1px solid rgb(103 232 249 / 16%);
+  color: #9ecbd2;
+}
+
+.edgeLegend {
+  position: absolute;
+  z-index: 6;
+  top: 14px;
+  left: 15px;
+  display: flex;
+  gap: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(22 32 43 / 78%);
+  padding: 7px 9px;
+  color: #8797a9;
+  font-size: 9px;
+  backdrop-filter: blur(8px);
+}
+
+.edgeLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.edgeLegend i {
+  display: block;
+  width: 15px;
+  height: 2px;
+  background: #8b9bb1;
+}
+
+.edgeLegend i[data-relation="evidence"] {
+  background: #67e8f9;
+}
+
+.edgeLegend i[data-relation="turn"] {
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    #94a3b8 0 3px,
+    transparent 3px 5px
+  );
+}
+
+.detailPanel {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgb(31 43 56 / 99%), rgb(25 36 47 / 99%)),
+    var(--panel);
+  padding: 22px;
+  scrollbar-color: #536274 transparent;
+  scrollbar-width: thin;
+}
+
+.selectedTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.selectedTitle > i {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 50%;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.selectedTitle h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  line-height: 21px;
+}
+
+.selectedTitle span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.qualityRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 15px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.qualityRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #72dbc5;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.qualityRow span[data-status="review_required"] {
+  color: #f4c366;
+}
+
+.qualityRow strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.description {
+  margin: 15px 0 0;
+  color: #bdc9d5;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.coreExplanation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  border: 1px solid rgb(167 139 250 / 18%);
+  border-radius: 11px;
+  background: rgb(139 92 246 / 8%);
+  color: #cfc6ee;
+  padding: 10px;
+}
+
+.coreExplanation svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.coreExplanation p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.detailSection {
+  margin-top: 22px;
+}
+
+.triggerCard {
+  margin-top: 9px;
+  border: 1px solid rgb(167 139 250 / 17%);
+  border-radius: 11px;
+  background: rgb(139 92 246 / 7%);
+  padding: 10px;
+}
+
+.triggerCard > span {
+  color: #b5a5ff;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+
+.triggerCard p {
+  margin: 7px 0 0;
+  color: #c9c2de;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.triggerCard .candidateRefs {
+  display: block;
+  margin-top: 10px;
+  border-top: 1px solid rgb(167 139 250 / 13%);
+  padding-top: 8px;
+  color: #9d90cb;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+}
+
+.evidenceCard {
+  margin-top: 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgb(9 16 23 / 27%);
+  padding: 11px;
+}
+
+.evidenceCard > span {
+  color: #b5a5ff;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.evidenceCard > p {
+  margin: 8px 0 0;
+  color: #d0dae4;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.evidenceCard blockquote {
+  margin: 8px 0 0;
+  border-left: 2px solid rgb(103 232 249 / 38%);
+  color: #9cabb9;
+  padding-left: 8px;
+}
+
+.evidenceCard blockquote > span {
+  color: #76cbd7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.evidenceCard blockquote > p {
+  margin: 5px 0 0;
+  color: #aebbc7;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.evidenceCard .noEvidenceQuote {
+  color: #d3ad70;
+}
+
+.turnLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.turnLinks button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: #cbc1ff;
+  cursor: pointer;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.issueList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.issueList span {
+  border: 1px solid rgb(251 191 36 / 19%);
+  border-radius: 7px;
+  background: rgb(251 191 36 / 7%);
+  color: #e0bd73;
+  padding: 5px 6px;
+  font-size: 8px;
+}
+
+.relatedList {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.relatedList button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: #dae4ed;
+  cursor: pointer;
+  padding: 9px 0;
+  text-align: left;
+}
+
+.relatedList button:hover {
+  color: white;
+}
+
+.relatedList button > span {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 2px 7px;
+  grid-template-columns: 7px minmax(0, 1fr);
+}
+
+.relatedList button i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  grid-row: 1 / span 2;
+}
+
+.relatedList strong,
+.relatedList small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relatedList strong {
+  font-size: 10px;
+}
+
+.relatedList small {
+  color: #8393a4;
+  font-size: 9px;
+}
+
+.detailFooter {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: #68798a;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.emptyGraph {
+  position: absolute;
+  display: grid;
+  inset: 0;
+  place-content: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.emptyGraph svg {
+  margin: 0 auto 10px;
+  color: #a78bfa;
+}
+
+.emptyGraph strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.emptyGraph p {
+  max-width: 320px;
+  margin: 7px 0 0;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.emptyDetail {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  margin: -1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@media (max-width: 1180px) {
+  .graphHeader {
+    gap: 14px;
+    grid-template-columns: minmax(220px, 1fr) minmax(340px, 1fr);
+  }
+
+  .runSummary {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .noticeStack {
+    bottom: 78px;
+  }
+}
+
+@media (max-width: 820px) {
+  .entityGraph {
+    height: auto;
+    min-height: calc(100vh - 130px);
+    overflow: visible;
+  }
+
+  .graphHeader {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .graphIdentity p {
+    white-space: normal;
+  }
+
+  .graphControls {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .searchBox {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .filters {
+    width: 100%;
+  }
+
+  .filters button {
+    flex: 1;
+  }
+
+  .graphWorkspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 620px auto;
+  }
+
+  .graphNode {
+    width: 68px;
+    height: 68px;
+    padding: 12px 6px 9px;
+  }
+
+  .graphNode > i {
+    top: 8px;
+  }
+
+  .graphNode strong {
+    max-width: 58px;
+    font-size: 9px;
+    line-height: 11px;
+  }
+
+  .graphNode small {
+    right: 5px;
+    bottom: 7px;
+    left: 5px;
+    font-size: 7px;
+  }
+
+  .coreNode {
+    width: 104px;
+    height: 104px;
+  }
+
+  .coreNode > i {
+    top: 19px;
+  }
+
+  .coreNode strong {
+    max-width: 84px;
+    font-size: 12px;
+    line-height: 15px;
+  }
+
+  .coreNode small {
+    right: 10px;
+    bottom: 13px;
+    left: 10px;
+  }
+
+  .noticeStack {
+    right: 12px;
+    bottom: 78px;
+    left: 12px;
+  }
+
+  .edgeLegend {
+    flex-wrap: wrap;
+    right: 15px;
+  }
+
+  .detailPanel {
+    overflow: visible;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}

@@ -216,11 +216,13 @@
   height: 36px;
   align-items: flex-end;
   gap: 24px;
+  overflow-x: auto;
   padding: 0 20px;
 }
 
 .tabs button {
   height: 36px;
+  flex: 0 0 auto;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;

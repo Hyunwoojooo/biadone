@@ -52,6 +52,7 @@ import {
   cacheAnalysisMonitorPayload,
   readAnalysisMonitorPayload
 } from "./analysisSessionCache";
+import { LlmEntityGraph } from "./LlmEntityGraph";
 import { ThreadStructure } from "./ThreadStructure";
 import {
   buildComparisonRows,
@@ -68,7 +69,8 @@ import {
   type MonitorVerificationStatus
 } from "./monitorModel";
 
-type MonitorTab = "structure" | "turns" | "review" | "diagnostics";
+type MonitorTab =
+  "entity_graph" | "structure" | "turns" | "review" | "diagnostics";
 type ResultFilter = "All" | MonitorVerificationStatus;
 
 type ResultResponse = AnalysisResultPayload;
@@ -120,7 +122,7 @@ export function ExtractionMonitor({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<MonitorTab>(
-    isMonitorTab(initialTab) ? initialTab : "turns"
+    isMonitorTab(initialTab) ? initialTab : "entity_graph"
   );
   const [selectedTurnId, setSelectedTurnId] = useState(
     initialTurnId && initialTurnId > 0 ? initialTurnId : 1
@@ -320,7 +322,7 @@ export function ExtractionMonitor({
         cacheAnalysisMonitorPayload(payload.analysisId, payload.monitorData);
       }
       router.push(
-        `/analyses/${encodeURIComponent(payload.analysisId)}?tab=turns`
+        `/analyses/${encodeURIComponent(payload.analysisId)}?tab=entity_graph`
       );
     } catch (rerunError) {
       setError(
@@ -447,6 +449,20 @@ export function ExtractionMonitor({
         </div>
       ) : null}
 
+      {tab === "entity_graph" ? (
+        <LlmEntityGraph
+          analysisId={analysisId}
+          title={conversationTitle}
+          turns={turns}
+          sprint5={sprint5}
+          onOpenTurn={(turnId) => {
+            setSelectedTurnId(turnId);
+            setSelectedRowId(null);
+            setTab("turns");
+          }}
+        />
+      ) : null}
+
       {tab === "structure" ? (
         <ThreadStructure
           analysisId={analysisId}
@@ -556,7 +572,8 @@ function MonitorHeader({
   sheetSyncing: boolean;
 }) {
   const tabs: Array<{ id: MonitorTab; label: string }> = [
-    { id: "structure", label: "Structure Map" },
+    { id: "entity_graph", label: "LLM Entity Graph" },
+    { id: "structure", label: "Hybrid Structure" },
     { id: "turns", label: "Turn Inspector" },
     { id: "review", label: "Review Queue" },
     { id: "diagnostics", label: "Run Diagnostics" }
@@ -1838,7 +1855,13 @@ function verificationTone(status: MonitorVerificationStatus) {
 }
 
 function isMonitorTab(value: string | undefined): value is MonitorTab {
-  return ["structure", "turns", "review", "diagnostics"].includes(value ?? "");
+  return [
+    "entity_graph",
+    "structure",
+    "turns",
+    "review",
+    "diagnostics"
+  ].includes(value ?? "");
 }
 
 function llmRunTone(status: HybridExtractionResult["llmResult"]["status"]) {

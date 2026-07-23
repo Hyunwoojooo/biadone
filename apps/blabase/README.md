@@ -12,11 +12,13 @@ ChatGPT 공유 링크의 대화를 복원하고 구조화하는 Next.js 애플�
 ## URL Parsing QA MVP
 
 홈에서 ChatGPT 공유 링크를 제출하면 분석 완료 후
-`/analyses/ana_...?tab=turns`로 이동합니다. Extraction Monitor 상단의
-`Parsing QA`는 복원된 canonical 메시지를 user, assistant, clean conversation,
-context signal, excluded/internal, unsupported content, turn으로 나누고 Import
-Warning을 함께 표시합니다. Turn Inspector에서 원문과 Rule/LLM 추출 결과를
-나란히 비교하고 Evidence message 번호를 눌러 해당 원문으로 이동할 수 있습니다.
+`/analyses/ana_...?tab=entity_graph`로 이동합니다. 첫 화면의 `LLM Entity
+Graph`는 Evidence 검증을 통과했거나 리뷰가 필요한 LLM 의미 항목을 중앙 핵심
+후보와 주변 노드로 표시합니다. Turn Inspector의 `Parsing QA`에서는 복원된
+canonical 메시지를 user, assistant, clean conversation, context signal,
+excluded/internal, unsupported content, turn으로 나누고 Import Warning을 함께
+표시합니다. 원문과 Rule/LLM 추출 결과를 나란히 비교하고 Evidence message 번호를
+눌러 해당 원문으로 이동할 수 있습니다.
 
 분석 결과 확인은 Golden Dataset Sheet 동기화 성공 여부와 분리되어 있습니다.
 Sheet 등록은 Extraction Monitor 헤더의 표 아이콘으로 명시적으로 실행합니다.
@@ -55,9 +57,10 @@ npm run deploy
 
 ## Conversation Atlas
 
-Extraction Monitor의 Structure Map 또는 `/atlas?analysisId=ana_...`에서 개념
-관계와 대화 흐름을 탐색합니다. 같은 브라우저에서는 마지막으로 연 Atlas 분석
-ID를 기억합니다.
+Extraction Monitor의 `LLM Entity Graph`에서는 LLM 정리 결과를, `Hybrid
+Structure` 또는 `/atlas?analysisId=ana_...`에서는 Rule+LLM 개념 관계와 대화
+흐름을 탐색합니다. 같은 브라우저에서는 마지막으로 연 Atlas 분석 ID를
+기억합니다.
 분석 기록이 없는 직접 방문자는 인터랙티브 데모를 볼 수 있고, 새 분석이 완료되면
 실제 세션 데이터로 자동 전환됩니다.
 
