@@ -1,0 +1,1367 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f3f2ee" />
+    <meta
+      name="description"
+      content="Strut 레퍼런스 화면을 blabase 합성 데이터로 재구성한 단일 HTML 목업"
+    />
+    <title>Strut-style workspace · blabase mockup</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #33322f;
+        --ink-soft: #65625d;
+        --ink-faint: #96918a;
+        --paper: #fbfaf7;
+        --canvas: #f4f2ed;
+        --lane: #eceae6;
+        --line: #dedbd5;
+        --line-strong: #d1cdc6;
+        --selected: #e8e5e1;
+        --amber: #ffb12a;
+        --amber-dark: #9c6d19;
+        --green: #16876e;
+        --purple: #9d5ce1;
+        --coral: #e56a47;
+        --shadow-window: 0 14px 44px rgb(54 49 41 / 9%);
+        --shadow-card:
+          0 1px 2px rgb(46 41 34 / 8%), 0 8px 18px rgb(46 41 34 / 7%);
+        --shadow-raised:
+          0 2px 4px rgb(46 41 34 / 9%), 0 16px 30px rgb(46 41 34 / 14%);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-width: 320px;
+        min-height: 100%;
+        margin: 0;
+        background: #e9e7e1;
+      }
+
+      body {
+        min-height: 100vh;
+        padding: 4px;
+        color: var(--ink);
+        font-size: 14px;
+        line-height: 1.45;
+        text-rendering: optimizeLegibility;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      button:focus-visible,
+      input:focus-visible {
+        outline: 3px solid rgb(236 157 25 / 38%);
+        outline-offset: 2px;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        clip-path: inset(50%);
+      }
+
+      .app-window {
+        position: relative;
+        display: grid;
+        width: 100%;
+        min-width: 920px;
+        height: calc(100vh - 8px);
+        min-height: 620px;
+        overflow: hidden;
+        grid-template-columns: clamp(152px, 14.45vw, 208px) minmax(0, 1fr);
+        border: 1px solid #bdb9b2;
+        border-radius: 12px;
+        background: var(--paper);
+        box-shadow: var(--shadow-window);
+      }
+
+      .sidebar {
+        position: relative;
+        z-index: 4;
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: #faf9f6;
+      }
+
+      .sidebar-top {
+        display: flex;
+        height: 68px;
+        flex: 0 0 68px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+      }
+
+      .mini-brand {
+        display: grid;
+        width: 21px;
+        height: 21px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        background: var(--green);
+        color: white;
+        cursor: pointer;
+        font-size: 9px;
+        font-weight: 800;
+      }
+
+      .rail-toggle,
+      .icon-button,
+      .top-action,
+      .assistant-icon,
+      .add-workspace {
+        display: inline-grid;
+        min-width: 34px;
+        min-height: 34px;
+        place-items: center;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .rail-toggle:hover,
+      .icon-button:hover,
+      .top-action:hover,
+      .assistant-icon:hover,
+      .add-workspace:hover {
+        background: #eeece7;
+      }
+
+      .rail-toggle {
+        min-width: 28px;
+        min-height: 28px;
+        color: #77736d;
+        font-size: 16px;
+      }
+
+      .sidebar-nav {
+        display: grid;
+        gap: 2px;
+        padding: 0 11px;
+      }
+
+      .sidebar-heading {
+        margin: 20px 9px 7px;
+        color: #8f8a83;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.025em;
+      }
+
+      .nav-item,
+      .workspace-item {
+        display: flex;
+        min-width: 0;
+        min-height: 32px;
+        align-items: center;
+        gap: 9px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        padding: 0 9px;
+        color: #77736d;
+        cursor: pointer;
+        font-size: 12px;
+        text-align: left;
+      }
+
+      .workspace-item > span:last-child,
+      .nav-item > span:last-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nav-icon {
+        display: grid;
+        width: 13px;
+        flex: 0 0 13px;
+        place-items: center;
+        color: #77736d;
+        font-size: 11px;
+      }
+
+      .nav-item:hover,
+      .workspace-item:hover {
+        background: #f0eeea;
+        color: #4b4945;
+      }
+
+      .workspace-item.is-active {
+        background: var(--selected);
+        color: #3f3d39;
+        font-weight: 650;
+      }
+
+      .add-workspace {
+        display: flex;
+        min-height: 32px;
+        justify-content: flex-start;
+        gap: 9px;
+        padding: 0 9px;
+        color: #98938c;
+        font-size: 12px;
+      }
+
+      .mock-note {
+        margin-top: auto;
+        padding: 16px 20px;
+        color: #a09b94;
+        font-size: 9px;
+      }
+
+      .workspace {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        min-width: 0;
+        grid-template-rows: 68px minmax(0, 1fr);
+        background: #f7f6f3;
+      }
+
+      .workspace-topbar {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+        background: rgb(251 250 247 / 94%);
+        padding: 0 14px 0 26px;
+      }
+
+      .workspace-title {
+        min-width: 130px;
+        margin-right: auto;
+        color: #43413d;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .share-button {
+        border: 0;
+        background: transparent;
+        color: #8e8982;
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .voice-button {
+        display: inline-flex;
+        min-height: 30px;
+        align-items: center;
+        gap: 7px;
+        border: 1px solid #e0ddd7;
+        border-radius: 8px;
+        background: #efede9;
+        padding: 0 10px;
+        color: #8a857e;
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .view-tools {
+        display: flex;
+        align-items: center;
+        gap: 1px;
+      }
+
+      .top-action {
+        min-width: 28px;
+        min-height: 28px;
+        color: #8c877f;
+        font-size: 13px;
+      }
+
+      .top-action.is-active {
+        background: #eeece8;
+        color: #4d4a45;
+      }
+
+      .more-create {
+        display: inline-flex;
+        min-height: 30px;
+        align-items: center;
+        gap: 5px;
+        border: 1px solid #e1ded8;
+        border-radius: 9px;
+        background: #faf9f6;
+        padding: 0 8px;
+        color: #77736c;
+        cursor: pointer;
+        font-size: 15px;
+      }
+
+      .board {
+        position: relative;
+        min-width: 0;
+        overflow: hidden;
+        background: #f7f6f3;
+        padding: 0 12px 70px 28px;
+      }
+
+      .lanes {
+        display: grid;
+        height: 100%;
+        min-width: 804px;
+        grid-template-columns: repeat(3, minmax(236px, 248px));
+        gap: 18px;
+      }
+
+      .lane {
+        min-width: 0;
+        overflow: hidden;
+        border-radius: 13px 13px 0 0;
+        background: var(--lane);
+      }
+
+      .lane-header {
+        display: flex;
+        min-height: 48px;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        color: #55514c;
+        font-size: 11px;
+      }
+
+      .lane-marker {
+        width: 13px;
+        height: 13px;
+        flex: 0 0 13px;
+        border: 2px solid #aaa49c;
+        border-radius: 50%;
+      }
+
+      .lane-marker.purple {
+        border-color: var(--purple);
+      }
+
+      .lane-marker.coral {
+        border-color: var(--coral);
+      }
+
+      .lane-title {
+        font-weight: 650;
+      }
+
+      .lane-count {
+        color: #aaa49c;
+      }
+
+      .lane-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        margin-left: auto;
+      }
+
+      .lane-header-actions button {
+        display: grid;
+        width: 27px;
+        height: 27px;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #88837c;
+        cursor: pointer;
+      }
+
+      .lane-header-actions button:hover {
+        background: #dfdcd7;
+      }
+
+      .lane-stack {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+        padding: 0 7px 14px;
+      }
+
+      .note-card {
+        position: relative;
+        display: block;
+        width: 100%;
+        min-height: 260px;
+        overflow: hidden;
+        border: 1px solid #ddd9d2;
+        border-radius: 11px;
+        background: #fff;
+        padding: 14px 14px 12px;
+        color: #494641;
+        box-shadow: var(--shadow-card);
+        cursor: pointer;
+        text-align: left;
+        transition:
+          border-color 140ms ease,
+          box-shadow 140ms ease,
+          transform 140ms ease;
+      }
+
+      .note-card:hover,
+      .note-card.is-picked {
+        border-color: #cfc9bf;
+        box-shadow: var(--shadow-raised);
+        transform: translateY(-2px);
+      }
+
+      .note-card.compact {
+        min-height: 210px;
+      }
+
+      .note-card h3 {
+        margin: 0;
+        color: #494641;
+        font-size: 14px;
+        font-weight: 590;
+        letter-spacing: -0.015em;
+        line-height: 1.22;
+      }
+
+      .note-card ul {
+        margin: 11px 0 0;
+        padding-left: 13px;
+        color: #66615b;
+        font-size: 9.5px;
+        line-height: 1.45;
+      }
+
+      .note-card p {
+        display: -webkit-box;
+        overflow: hidden;
+        margin: 10px 0 0;
+        color: #6d6861;
+        font-size: 9.5px;
+        line-height: 1.48;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+      }
+
+      .card-footer {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        color: #aaa49c;
+        font-size: 9px;
+      }
+
+      .loading-ring {
+        width: 13px;
+        height: 13px;
+        border: 1.5px dashed #9d9890;
+        border-radius: 50%;
+      }
+
+      .tag {
+        border-radius: 999px;
+        background: #f3f1ed;
+        padding: 3px 7px;
+      }
+
+      .tag.purple {
+        color: #7c3fc3;
+      }
+
+      .floating-card {
+        position: absolute;
+        z-index: 8;
+        top: 75px;
+        left: clamp(330px, 28vw, 404px);
+        width: 232px;
+        min-width: 232px;
+        max-width: 232px;
+        min-height: 260px;
+        box-shadow: var(--shadow-raised);
+        transform: rotate(-0.25deg);
+      }
+
+      .floating-card:hover {
+        transform: rotate(-0.25deg) translateY(-3px);
+      }
+
+      .command-bar {
+        position: absolute;
+        z-index: 10;
+        bottom: 34px;
+        left: 50%;
+        display: flex;
+        min-width: 162px;
+        min-height: 46px;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid #e7a11f;
+        border-radius: 15px;
+        background: var(--amber);
+        padding: 0 11px;
+        color: #423419;
+        box-shadow: 0 8px 20px rgb(168 108 10 / 17%);
+        cursor: pointer;
+        transform: translateX(-50%);
+      }
+
+      .command-bar:hover {
+        background: #ffb839;
+        transform: translateX(-50%) translateY(-1px);
+      }
+
+      .magic-mark {
+        font-size: 17px;
+      }
+
+      .command-label {
+        width: 1px;
+        flex: 1 1 auto;
+      }
+
+      .shortcut {
+        display: inline-grid;
+        min-width: 23px;
+        height: 23px;
+        place-items: center;
+        border: 1px solid rgb(121 79 11 / 24%);
+        border-radius: 6px;
+        background: rgb(255 244 196 / 34%);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .shortcut + .shortcut {
+        margin-left: -6px;
+      }
+
+      .assistant {
+        position: absolute;
+        z-index: 6;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: clamp(382px, 36.2vw, 522px);
+        min-width: 0;
+        overflow: hidden;
+        border-left: 1px solid var(--line-strong);
+        border-radius: 10px 10px 10px 0;
+        background: rgb(249 248 245 / 84%);
+        box-shadow: -8px 0 24px rgb(52 47 40 / 8%);
+        backdrop-filter: blur(14px);
+      }
+
+      .assistant-topbar {
+        position: relative;
+        z-index: 4;
+        display: flex;
+        height: 68px;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 0 14px;
+      }
+
+      .assistant-icon {
+        min-width: 30px;
+        min-height: 30px;
+        color: #77726b;
+        font-size: 15px;
+      }
+
+      .ghost-canvas {
+        position: absolute;
+        z-index: 0;
+        inset: 68px 0 0;
+        overflow: hidden;
+        display: none;
+        opacity: 0.34;
+        filter: blur(7px);
+        pointer-events: none;
+      }
+
+      .ghost-line {
+        width: 72%;
+        height: 11px;
+        margin: 28px auto 0;
+        border-radius: 999px;
+        background: #d8d4cc;
+      }
+
+      .ghost-line.short {
+        width: 46%;
+        margin-top: 13px;
+      }
+
+      .ghost-cards {
+        display: grid;
+        width: 76%;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin: 22px auto;
+      }
+
+      .ghost-card {
+        height: 112px;
+        border: 1px solid #d8d4cc;
+        border-radius: 11px;
+        background: #eeeae4;
+      }
+
+      .ghost-card.tall {
+        height: 168px;
+      }
+
+      .assistant-wash {
+        position: absolute;
+        z-index: 1;
+        inset: 42% 0 0;
+        background: linear-gradient(
+          to bottom,
+          rgb(249 248 245 / 22%),
+          #f9f8f5 28%
+        );
+        pointer-events: none;
+      }
+
+      .assistant-message {
+        position: absolute;
+        z-index: 3;
+        right: clamp(28px, 4vw, 56px);
+        bottom: 104px;
+        left: clamp(30px, 4vw, 58px);
+      }
+
+      .assistant-identity {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      .assistant-dot {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 18px;
+        border-radius: 50%;
+        background: #ffb13a;
+      }
+
+      .assistant-name {
+        color: #45423e;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .assistant-message h2 {
+        margin: 0 0 18px 28px;
+        color: #4a4742;
+        font-size: 15px;
+        font-weight: 500;
+      }
+
+      .assistant-message p {
+        max-width: 390px;
+        margin: 0 0 17px 28px;
+        color: #5f5b55;
+        font-size: 14px;
+        line-height: 1.48;
+      }
+
+      .assistant-form {
+        position: absolute;
+        z-index: 5;
+        right: 27px;
+        bottom: 40px;
+        left: 27px;
+        display: flex;
+        min-height: 50px;
+        align-items: center;
+        border: 1px solid #e1ded8;
+        border-radius: 14px;
+        background: #ebe9e5;
+        padding: 3px 4px 3px 16px;
+      }
+
+      .assistant-form input {
+        min-width: 0;
+        flex: 1 1 auto;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: #5d5953;
+        font-size: 13px;
+      }
+
+      .assistant-form input::placeholder {
+        color: #9c9790;
+      }
+
+      .send-button {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        background: #d7d4ce;
+        color: #77726b;
+        cursor: pointer;
+      }
+
+      .send-button:hover {
+        background: #cecac3;
+        color: #4e4b46;
+      }
+
+      .toast {
+        position: fixed;
+        z-index: 30;
+        bottom: 24px;
+        left: 50%;
+        border-radius: 9px;
+        background: #34322e;
+        padding: 10px 14px;
+        color: white;
+        box-shadow: 0 10px 26px rgb(31 28 23 / 22%);
+        font-size: 12px;
+        pointer-events: none;
+        opacity: 0;
+        transform: translate(-50%, 10px);
+        transition:
+          opacity 160ms ease,
+          transform 160ms ease;
+      }
+
+      .toast.is-visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+
+      @media (max-width: 1120px) {
+        .app-window {
+          grid-template-columns: 132px minmax(0, 1fr);
+        }
+
+        .assistant {
+          width: max(360px, 38vw);
+        }
+
+        .workspace-topbar {
+          padding-left: 18px;
+        }
+
+        .voice-button span:last-child,
+        .share-button {
+          display: none;
+        }
+
+        .assistant-message {
+          right: 30px;
+          left: 30px;
+        }
+
+        .assistant-message p {
+          font-size: 13px;
+        }
+      }
+
+      @media (max-width: 920px) {
+        body {
+          overflow-x: auto;
+        }
+
+        .app-window {
+          grid-template-columns: 74px minmax(0, 1fr);
+        }
+
+        .assistant {
+          width: 340px;
+        }
+
+        .sidebar-top {
+          justify-content: center;
+          padding-inline: 8px;
+        }
+
+        .rail-toggle,
+        .sidebar-heading,
+        .nav-item > span:last-child,
+        .workspace-item > span:last-child,
+        .add-workspace > span:last-child,
+        .mock-note {
+          display: none;
+        }
+
+        .sidebar-nav {
+          justify-items: center;
+          padding-inline: 8px;
+        }
+
+        .nav-item,
+        .workspace-item,
+        .add-workspace {
+          width: 44px;
+          min-height: 44px;
+          justify-content: center;
+          padding: 0;
+        }
+      }
+
+      @media (max-width: 700px) {
+        body {
+          padding: 0;
+        }
+
+        .app-window {
+          width: 100vw;
+          min-width: 0;
+          height: 100vh;
+          min-height: 620px;
+          grid-template-columns: 58px minmax(0, 1fr);
+          border: 0;
+          border-radius: 0;
+        }
+
+        .workspace {
+          min-width: 0;
+        }
+
+        .assistant {
+          position: absolute;
+          z-index: 20;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: min(88vw, 390px);
+          transform: translateX(102%);
+          transition: transform 180ms ease;
+        }
+
+        .app-window.assistant-open .assistant {
+          transform: translateX(0);
+        }
+
+        .lanes {
+          display: flex;
+          min-width: 0;
+          overflow-x: auto;
+          gap: 10px;
+          padding-right: 18px;
+          scroll-snap-type: x mandatory;
+        }
+
+        .lane {
+          width: min(78vw, 280px);
+          min-width: min(78vw, 280px);
+          flex: 0 0 min(78vw, 280px);
+          scroll-snap-align: start;
+        }
+
+        .floating-card {
+          display: none;
+        }
+
+        .workspace-title {
+          min-width: 0;
+        }
+
+        .voice-button,
+        .view-tools {
+          display: none;
+        }
+
+        .more-create {
+          min-width: 44px;
+          min-height: 44px;
+          justify-content: center;
+        }
+
+        .command-bar {
+          min-height: 50px;
+        }
+
+        .rail-toggle,
+        .icon-button,
+        .top-action,
+        .assistant-icon,
+        .lane-header-actions button,
+        .send-button {
+          min-width: 44px;
+          min-height: 44px;
+        }
+
+        .lane-header-actions button,
+        .send-button {
+          width: 44px;
+          height: 44px;
+        }
+
+        .send-button {
+          flex-basis: 44px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-window" id="app-window">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <div class="sidebar-top">
+          <button class="rail-toggle" type="button" aria-label="사이드바 접기">
+            ◫
+          </button>
+          <button class="mini-brand" type="button" aria-label="사용자 메뉴">
+            K
+          </button>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Main navigation">
+          <button class="nav-item" type="button">
+            <span class="nav-icon" aria-hidden="true">◆</span>
+            <span>Home</span>
+          </button>
+          <button class="nav-item" type="button">
+            <span class="nav-icon" aria-hidden="true">◢</span>
+            <span>Conversations</span>
+          </button>
+
+          <p class="sidebar-heading">Workspaces</p>
+
+          <button class="workspace-item" type="button">
+            <span class="nav-icon" aria-hidden="true">▱</span>
+            <span>Welcome to blabase</span>
+          </button>
+          <button class="workspace-item is-active" type="button">
+            <span class="nav-icon" aria-hidden="true">▰</span>
+            <span>SABER paper</span>
+          </button>
+          <button class="workspace-item" type="button">
+            <span class="nav-icon" aria-hidden="true">▱</span>
+            <span>Reviewer risks</span>
+          </button>
+          <button class="workspace-item" type="button">
+            <span class="nav-icon" aria-hidden="true">▱</span>
+            <span>Final abstract</span>
+          </button>
+          <button class="add-workspace" type="button">
+            <span aria-hidden="true">＋</span>
+            <span>Add a workspace</span>
+          </button>
+        </nav>
+
+        <p class="mock-note">Synthetic mock data · no API</p>
+      </aside>
+
+      <section class="workspace" aria-label="SABER paper board">
+        <header class="workspace-topbar">
+          <strong class="workspace-title">SABER paper</strong>
+          <button class="share-button" type="button">Share</button>
+          <button class="voice-button" type="button">
+            <span aria-hidden="true">◢</span>
+            <span>Paper Voice</span>
+          </button>
+          <div class="view-tools" aria-label="Board view controls">
+            <button class="top-action" type="button" aria-label="목록 보기">
+              ≡
+            </button>
+            <button class="top-action" type="button" aria-label="그리드 보기">
+              ⠿
+            </button>
+            <button
+              class="top-action is-active"
+              type="button"
+              aria-label="보드 보기"
+            >
+              ◧
+            </button>
+            <button class="top-action" type="button" aria-label="더 보기">
+              ···
+            </button>
+          </div>
+          <button class="more-create" type="button" aria-label="새 항목 만들기">
+            <span aria-hidden="true">＋</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
+        </header>
+
+        <div class="board">
+          <div class="lanes">
+            <section class="lane" aria-labelledby="lane-decisions">
+              <header class="lane-header">
+                <span class="loading-ring" aria-hidden="true"></span>
+                <span class="lane-title" id="lane-decisions">Decisions</span>
+                <span class="lane-count">5</span>
+                <span class="lane-header-actions">
+                  <button type="button" aria-label="Decision 추가">＋</button>
+                  <button type="button" aria-label="Decision 메뉴">···</button>
+                </span>
+              </header>
+              <div class="lane-stack">
+                <button
+                  class="note-card"
+                  type="button"
+                  data-card-title="Experiments 기준을 먼저 확정하세요"
+                >
+                  <h3>Experiments 기준을 먼저 확정하세요</h3>
+                  <ul>
+                    <li>
+                      UTD-1 replay baseline과 seed 조건을 먼저 고정합니다.
+                    </li>
+                  </ul>
+                  <p>
+                    Bellman weighting 구현과 Evaluation 비교 기준이 이 결정에
+                    의존하고 있습니다. 다른 작업을 시작하기 전에 실험 조건을
+                    하나의 기준으로 정리합니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="loading-ring" aria-hidden="true"></span>
+                    <span class="tag">Experiments</span>
+                  </span>
+                </button>
+
+                <button
+                  class="note-card compact"
+                  type="button"
+                  data-card-title="FetchPickAndPlace seed 조건을 확정하세요"
+                >
+                  <h3>FetchPickAndPlace seed 조건을 확정하세요</h3>
+                  <ul>
+                    <li>Evaluation 비교에 사용할 seed 범위를 결정합니다.</li>
+                  </ul>
+                  <p>
+                    반복 실험의 조건을 통일해 결과 비교가 흔들리지 않도록
+                    만듭니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="loading-ring" aria-hidden="true"></span>
+                    <span class="tag">Evaluation</span>
+                  </span>
+                </button>
+
+                <button
+                  class="note-card compact"
+                  type="button"
+                  data-card-title="Reviewer risk를 먼저 확인하세요"
+                >
+                  <h3>Reviewer risk를 먼저 확인하세요</h3>
+                  <ul>
+                    <li>제출 전에 예상 반론과 대응 근거를 연결합니다.</li>
+                  </ul>
+                  <p>
+                    실험 조건과 주장 사이에서 Reviewer가 질문할 지점을
+                    확인합니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="loading-ring" aria-hidden="true"></span>
+                    <span class="tag">Review</span>
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            <section class="lane" aria-labelledby="lane-evidence">
+              <header class="lane-header">
+                <span class="lane-marker purple" aria-hidden="true"></span>
+                <span class="lane-title" id="lane-evidence">Evidence</span>
+                <span class="lane-count">3</span>
+                <span class="lane-header-actions">
+                  <button type="button" aria-label="Evidence 추가">＋</button>
+                  <button type="button" aria-label="Evidence 메뉴">···</button>
+                </span>
+              </header>
+              <div class="lane-stack">
+                <div class="note-card" aria-hidden="true">
+                  <h3>UTD-1 baseline을 먼저 고정해야 한다</h3>
+                  <ul>
+                    <li>Turn 12 · Experiments</li>
+                  </ul>
+                  <p>
+                    실험 결과를 비교하기 전에 재생 baseline과 구현 기준이
+                    동일해야 한다는 대화 근거입니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="lane-marker purple"></span>
+                    <span class="tag purple">Turn 12</span>
+                  </span>
+                </div>
+
+                <button
+                  class="note-card compact"
+                  type="button"
+                  data-card-title="Bellman weighting 비교 조건을 기록하세요"
+                >
+                  <h3>Bellman weighting 비교 조건을 기록하세요</h3>
+                  <ul>
+                    <li>Turn 18 · Bellman weighting</li>
+                  </ul>
+                  <p>
+                    아직 정해지지 않은 비교 조건을 실행 계획에 명시해야 합니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="lane-marker purple" aria-hidden="true"></span>
+                    <span class="tag purple">Turn 18</span>
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            <section class="lane" aria-labelledby="lane-actions">
+              <header class="lane-header">
+                <span class="lane-marker coral" aria-hidden="true"></span>
+                <span class="lane-title" id="lane-actions">Actions</span>
+                <span class="lane-count">1</span>
+                <span class="lane-header-actions">
+                  <button type="button" aria-label="Action 추가">＋</button>
+                  <button type="button" aria-label="Action 메뉴">···</button>
+                </span>
+              </header>
+              <div class="lane-stack">
+                <button
+                  class="note-card"
+                  type="button"
+                  data-card-title="Experiments 실행 계획"
+                >
+                  <h3>Experiments 실행 계획</h3>
+                  <ul>
+                    <li>
+                      Baseline, seed, 비교 조건을 하나의 순서로 정리합니다.
+                    </li>
+                  </ul>
+                  <p>
+                    Confidence interval 형식과 Submission checklist까지 이어지는
+                    실행 가능한 결과물입니다.
+                  </p>
+                  <span class="card-footer">
+                    <span class="lane-marker coral" aria-hidden="true"></span>
+                    <span class="tag">Ready</span>
+                  </span>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <button
+            class="note-card floating-card"
+            type="button"
+            data-card-title="대화 근거를 실행 계획으로 바꾸세요"
+          >
+            <h3>대화 근거를 실행 계획으로 바꾸세요</h3>
+            <ul>
+              <li>Turn 12, Turn 18, Turn 24를 함께 확인했습니다.</li>
+              <li>의존 관계에 따라 실행 순서를 구성합니다.</li>
+            </ul>
+            <p>
+              Experiments 기준을 고정한 뒤 Bellman weighting 조건과 Evaluation
+              보고 형식을 연결합니다. 최종 결과는 Submission checklist에서 바로
+              사용할 수 있도록 정리합니다.
+            </p>
+            <span class="card-footer">
+              <span class="lane-marker purple" aria-hidden="true"></span>
+              <span class="tag purple">blabase suggestion</span>
+            </span>
+          </button>
+
+          <button
+            class="command-bar"
+            id="command-bar"
+            type="button"
+            aria-label="blabase AI 패널 열기"
+          >
+            <span class="magic-mark" aria-hidden="true">✦</span>
+            <span class="command-label" aria-hidden="true"></span>
+            <span class="shortcut" aria-hidden="true">⌘</span>
+            <span class="shortcut" aria-hidden="true">K</span>
+          </button>
+        </div>
+      </section>
+
+      <aside class="assistant" aria-label="blabase AI assistant">
+        <header class="assistant-topbar">
+          <button
+            class="assistant-icon"
+            type="button"
+            aria-label="Assistant 설정"
+          >
+            ⎇
+          </button>
+          <button
+            class="assistant-icon"
+            id="close-assistant"
+            type="button"
+            aria-label="Assistant 닫기"
+          >
+            ◧
+          </button>
+        </header>
+
+        <div class="ghost-canvas" aria-hidden="true">
+          <div class="ghost-line"></div>
+          <div class="ghost-line short"></div>
+          <div class="ghost-cards">
+            <div class="ghost-card"></div>
+            <div class="ghost-card tall"></div>
+            <div class="ghost-card tall"></div>
+            <div class="ghost-card"></div>
+          </div>
+        </div>
+        <div class="assistant-wash" aria-hidden="true"></div>
+
+        <div class="assistant-message" aria-live="polite">
+          <div class="assistant-identity">
+            <span class="assistant-dot" aria-hidden="true"></span>
+            <strong class="assistant-name">blabase</strong>
+          </div>
+          <h2 id="assistant-heading">Hi there!</h2>
+          <p id="assistant-copy">
+            왼쪽 workspace에서 대화를 정리하고 실행할 일을 만들 수 있어요.
+            보드에서 선택한 항목은 여기에서 바로 검토할 수 있습니다.
+          </p>
+          <p>
+            먼저 처리할 일을 찾고 싶다면 아래 노란 command 버튼을 누르거나
+            <strong>CMD+K</strong>를 사용하세요.
+          </p>
+        </div>
+
+        <form class="assistant-form" id="assistant-form">
+          <label class="sr-only" for="assistant-input"
+            >SABER paper에 관해 질문하기</label
+          >
+          <input
+            id="assistant-input"
+            type="text"
+            placeholder="Ask about SABER paper"
+            autocomplete="off"
+          />
+          <button
+            class="send-button"
+            type="submit"
+            aria-label="Mock 질문 보내기"
+          >
+            ↑
+          </button>
+        </form>
+      </aside>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const appWindow = document.querySelector("#app-window");
+        const commandBar = document.querySelector("#command-bar");
+        const closeAssistant = document.querySelector("#close-assistant");
+        const assistantForm = document.querySelector("#assistant-form");
+        const assistantInput = document.querySelector("#assistant-input");
+        const assistantHeading = document.querySelector("#assistant-heading");
+        const assistantCopy = document.querySelector("#assistant-copy");
+        const toast = document.querySelector("#toast");
+        const cards = Array.from(
+          document.querySelectorAll("[data-card-title]")
+        );
+        let toastTimer = 0;
+
+        function showToast(message) {
+          window.clearTimeout(toastTimer);
+          toast.textContent = message;
+          toast.classList.add("is-visible");
+          toastTimer = window.setTimeout(() => {
+            toast.classList.remove("is-visible");
+          }, 2200);
+        }
+
+        function openAssistant() {
+          appWindow.classList.add("assistant-open");
+          if (window.innerWidth <= 700) {
+            window.setTimeout(() => assistantInput.focus(), 180);
+          }
+        }
+
+        commandBar.addEventListener("click", () => {
+          openAssistant();
+          assistantHeading.textContent = "가장 먼저 할 일을 찾았어요";
+          assistantCopy.textContent =
+            "Experiments 기준을 먼저 확정하면 Bellman weighting과 Evaluation 작업을 순서대로 진행할 수 있어요.";
+        });
+
+        closeAssistant.addEventListener("click", () => {
+          appWindow.classList.remove("assistant-open");
+        });
+
+        cards.forEach((card) => {
+          card.addEventListener("click", () => {
+            cards.forEach((item) => item.classList.remove("is-picked"));
+            card.classList.add("is-picked");
+            assistantHeading.textContent = card.dataset.cardTitle;
+            assistantCopy.textContent =
+              "선택한 항목의 대화 근거와 다음 실행 순서를 이 패널에서 확인할 수 있어요.";
+            openAssistant();
+          });
+        });
+
+        assistantForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const value = assistantInput.value.trim();
+          showToast(
+            value
+              ? "이 HTML 목업에서는 메시지를 전송하지 않아요."
+              : "질문을 입력해 주세요."
+          );
+          if (value) assistantInput.value = "";
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (
+            (event.metaKey || event.ctrlKey) &&
+            event.key.toLowerCase() === "k"
+          ) {
+            event.preventDefault();
+            openAssistant();
+            assistantInput.focus();
+          }
+
+          if (event.key === "Escape") {
+            appWindow.classList.remove("assistant-open");
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

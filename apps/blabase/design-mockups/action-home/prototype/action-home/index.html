@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f1e9" />
+    <meta
+      name="description"
+      content="합성 데이터로 만든 blabase Action Home 디자인 비교 목업"
+    />
+    <title>Action Home · blabase prototype</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="../../styles.css?v=3" />
+    <link rel="stylesheet" href="../../strut-refresh.css?v=2" />
+  </head>
+  <body>
+    <a class="skip-link" href="#prototype-view">목업 화면으로 건너뛰기</a>
+
+    <div class="prototype-shell" id="prototype-shell">
+      <header class="prototype-toolbar">
+        <div class="toolbar-inner">
+          <div class="review-label">
+            <span class="review-dot" aria-hidden="true"></span>
+            <span>
+              <strong>디자인 비교용 프로토타입</strong>
+              <small>합성 데이터 · 실제 기능 아님</small>
+            </span>
+          </div>
+
+          <nav class="variant-switcher" aria-label="디자인 Variant 선택">
+            <button
+              type="button"
+              data-variant="focus"
+              aria-label="Variant A Focus 보기"
+              aria-pressed="true"
+            >
+              <span>A</span> Focus
+            </button>
+            <button
+              type="button"
+              data-variant="board"
+              aria-label="Variant B Action Board 보기"
+              aria-pressed="false"
+            >
+              <span>B</span> Action Board
+            </button>
+            <button
+              type="button"
+              data-variant="concierge"
+              aria-label="Variant C AI Concierge 보기"
+              aria-pressed="false"
+            >
+              <span>C</span> AI Concierge
+            </button>
+          </nav>
+
+          <label class="state-control" for="prototype-state">
+            <span>상태</span>
+            <select id="prototype-state" aria-label="Mock 화면 상태 선택">
+              <option value="recommendation">Recommendation</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="clarification">Clarification</option>
+              <option value="empty">Empty/Error</option>
+            </select>
+          </label>
+        </div>
+      </header>
+
+      <main id="prototype-view" tabindex="-1"></main>
+    </div>
+
+    <div class="modal-layer" id="evidence-layer" hidden>
+      <button
+        class="modal-scrim"
+        type="button"
+        data-action="close-evidence"
+        aria-label="대화 근거 닫기"
+      ></button>
+      <aside
+        class="evidence-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="evidence-title"
+      >
+        <header class="drawer-header">
+          <div>
+            <p>CONVERSATION EVIDENCE</p>
+            <h2 id="evidence-title">대화 근거</h2>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            data-action="close-evidence"
+            aria-label="대화 근거 닫기"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div class="drawer-body" id="evidence-list"></div>
+      </aside>
+    </div>
+
+    <div class="modal-layer reject-layer" id="reject-layer" hidden>
+      <button
+        class="modal-scrim"
+        type="button"
+        data-action="close-reject"
+        aria-label="추천 제외 이유 닫기"
+      ></button>
+      <section
+        class="reject-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reject-title"
+      >
+        <header class="reject-header">
+          <div>
+            <p>추천을 제외할게요</p>
+            <h2 id="reject-title">어떤 점이 맞지 않나요?</h2>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            data-action="close-reject"
+            aria-label="추천 제외 이유 닫기"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div class="reject-options" id="reject-options"></div>
+      </section>
+    </div>
+
+    <div
+      class="toast"
+      id="prototype-toast"
+      role="status"
+      aria-live="polite"
+    ></div>
+
+    <noscript>
+      <div class="noscript-message">
+        이 인터랙티브 목업을 보려면 JavaScript를 켜 주세요.
+      </div>
+    </noscript>
+
+    <script src="../../mock-data.js?v=3"></script>
+    <script src="../../script.js?v=4"></script>
+  </body>
+</html>
