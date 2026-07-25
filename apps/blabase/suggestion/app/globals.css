@@ -1,0 +1,606 @@
+:root {
+  color-scheme: light;
+  --background: #f7f7f3;
+  --surface: #ffffff;
+  --text: #1d1f1b;
+  --muted: #666a62;
+  --line: #dcded7;
+  --accent: #276749;
+  --accent-hover: #1f513b;
+  --soft: #edf4ef;
+  --error: #9c2f2f;
+  --error-soft: #fff4f3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 50% -20%, #ffffff 0, transparent 42rem),
+    var(--background);
+  font-family:
+    Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  line-height: 1.55;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.shell {
+  width: min(100% - 40px, 720px);
+  margin: 0 auto;
+  padding: 88px 0 120px;
+}
+
+.intro {
+  margin-bottom: 52px;
+}
+
+.brand,
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  max-width: 620px;
+  margin-bottom: 18px;
+  font-size: clamp(36px, 7vw, 62px);
+  font-weight: 720;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  word-break: keep-all;
+}
+
+.lead {
+  max-width: 570px;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 18px;
+  word-break: keep-all;
+}
+
+.inputSection,
+.calendarSection,
+.resultSection,
+.errorSection {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 95%, transparent);
+  box-shadow: 0 18px 50px rgb(35 45 37 / 5%);
+}
+
+.inputSection {
+  padding: 30px;
+}
+
+.calendarSection {
+  margin-bottom: 28px;
+  padding: 26px 30px;
+}
+
+.calendarHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.calendarKicker {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+}
+
+.calendarHeader h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.015em;
+}
+
+.calendarStatus {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #eceeea;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.calendarStatus.isConnected {
+  background: var(--soft);
+  color: var(--accent);
+}
+
+.calendarDescription {
+  max-width: 560px;
+  margin: 14px 0 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.calendarNotice {
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.calendarNotice-success {
+  background: var(--soft);
+  color: var(--accent);
+}
+
+.calendarNotice-neutral {
+  background: #f1f2ef;
+  color: var(--muted);
+}
+
+.calendarNotice-error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.calendarActionBlock {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.calendarActionBlock p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calendarPrimaryButton {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 17px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 750;
+  text-decoration: none;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.calendarPrimaryButton:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.calendarPrimaryButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.calendarPrimaryButton:disabled {
+  background: #c7ccc6;
+}
+
+.calendarConnectedBody {
+  display: grid;
+  gap: 16px;
+}
+
+.calendarSyncSummary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.calendarSyncSummary p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.calendarSyncSummary span,
+.calendarMeta,
+.calendarMore {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendarEventList {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--line);
+  list-style: none;
+}
+
+.calendarEventList li {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(0, 1.3fr);
+  gap: 14px;
+  padding: 13px 14px;
+  background: #fff;
+}
+
+.calendarEventList time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendarEventList li > span {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendarEventList li > span a {
+  color: inherit;
+  text-decoration-color: rgb(18 21 19 / 32%);
+  text-underline-offset: 3px;
+}
+
+.calendarEmpty,
+.calendarMore {
+  margin: 0;
+}
+
+.calendarEmpty {
+  padding: 15px;
+  border-radius: 10px;
+  background: #f4f5f2;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calendarSecondaryActions {
+  display: flex;
+  gap: 16px;
+}
+
+.calendarSecondaryActions button {
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.calendarSecondaryActions a {
+  padding: 3px 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.calendarSecondaryActions button:last-child {
+  color: var(--muted);
+}
+
+.calendarPrimaryButton:focus-visible,
+.calendarEventList a:focus-visible,
+.calendarSecondaryActions button:focus-visible,
+.calendarSecondaryActions a:focus-visible,
+.textButton:focus-visible,
+.submitButton:focus-visible {
+  outline: 3px solid rgb(39 103 73 / 22%);
+  outline-offset: 3px;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.sectionHeading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.sectionHeading span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.urlList {
+  display: grid;
+  gap: 18px;
+}
+
+.urlField label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.urlField input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  background: #fff;
+  color: var(--text);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.urlField input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(39 103 73 / 12%);
+}
+
+.urlField input[aria-invalid="true"] {
+  border-color: #d9a2a2;
+}
+
+.urlField input:disabled {
+  background: #f2f2ee;
+  color: var(--muted);
+}
+
+.fieldError {
+  margin: 6px 0 0;
+  color: var(--error);
+  font-size: 12px;
+}
+
+.textButton {
+  margin-top: 18px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.confirmation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.confirmation input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.submitButton {
+  width: 100%;
+  min-height: 54px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: white;
+  font-weight: 750;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.submitButton:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.submitButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.submitButton:disabled {
+  background: #c7ccc6;
+}
+
+.privacyNote {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.resultSection,
+.errorSection {
+  margin-top: 28px;
+  padding: 34px;
+}
+
+.errorSection {
+  border-color: #ecccca;
+  background: var(--error-soft);
+  box-shadow: none;
+}
+
+.errorSection .eyebrow {
+  color: var(--error);
+}
+
+.diagnosticList {
+  margin: 18px 0 0;
+  padding-left: 20px;
+  color: var(--error);
+  font-size: 14px;
+}
+
+.decisionDiagnostics {
+  margin-top: 22px;
+}
+
+.resultSection h2,
+.errorSection h2 {
+  margin-bottom: 14px;
+  font-size: 28px;
+  line-height: 1.28;
+  letter-spacing: -0.025em;
+  word-break: keep-all;
+}
+
+.suggestionTitle {
+  font-size: clamp(30px, 5vw, 42px) !important;
+}
+
+.whyNow {
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.firstStep {
+  margin: 28px 0;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.firstStep span {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.firstStep p {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+details {
+  border-top: 1px solid var(--line);
+}
+
+summary {
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.evidence ul,
+.sourceSummary ul {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.evidence li + li,
+.sourceSummary li + li {
+  margin-top: 9px;
+}
+
+.alternatives {
+  margin-top: 28px;
+}
+
+.alternatives h3 {
+  margin-bottom: 10px;
+  font-size: 15px;
+}
+
+.alternatives ol {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--muted);
+}
+
+.alternatives li + li {
+  margin-top: 6px;
+}
+
+.sourceSummary {
+  margin-top: 24px;
+}
+
+@media (max-width: 600px) {
+  .shell {
+    width: min(100% - 24px, 720px);
+    padding: 48px 0 72px;
+  }
+
+  .intro {
+    margin-bottom: 34px;
+  }
+
+  .lead {
+    font-size: 16px;
+  }
+
+  .inputSection,
+  .calendarSection,
+  .resultSection,
+  .errorSection {
+    padding: 22px;
+    border-radius: 15px;
+  }
+
+  .calendarHeader,
+  .calendarSyncSummary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .calendarEventList li {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "blabase-suggestion-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3102",
+    "build": "next build",
+    "build:cloudflare": "opennextjs-cloudflare build",
+    "preview:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "start": "next start --hostname 127.0.0.1 --port 3102",
+    "check:config": "vite-node tools/check-config.ts",
+    "check:provider": "vite-node tools/check-provider.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ignore-pattern '.next/**' --ignore-pattern '.next-dev/**' --ignore-pattern '.next-build/**'",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "^15.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.1",
+    "@types/node": "^22.15.32",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.5.20",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.112.0"
+  }
+}
