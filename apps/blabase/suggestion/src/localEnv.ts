@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const ALLOWED_SHARED_ENV_KEYS = new Set([
+  "BLABASE_CODEX_BINARY_PATH",
   "BLABASE_LLM_PROVIDER",
   "CHATGPT_SHARE_FETCHER_SECRET",
   "CHATGPT_SHARE_FETCHER_URL",

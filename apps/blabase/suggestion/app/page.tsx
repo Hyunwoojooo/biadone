@@ -6,6 +6,8 @@ import type {
   PrioritySuggestionResult,
   SourceStatus
 } from "../src/types";
+import { CodexConnector } from "./CodexConnector";
+import { ConnectorTimeline } from "./ConnectorTimeline";
 import { GitHubConnector } from "./GitHubConnector";
 import { GoogleCalendarConnector } from "./GoogleCalendarConnector";
 import { NotionConnector } from "./NotionConnector";
@@ -105,15 +107,17 @@ export default function SuggestionPage() {
         <p className="brand">blabase</p>
         <h1>지금 가장 먼저 할 일을 찾아드릴게요.</h1>
         <p className="lead">
-          Google Calendar, Notion, GitHub 데이터를 연결해 미리 확인할 수
-          있습니다. 현재 제안은 같은 사용자의 ChatGPT 대화에서 반복되는
-          일과 미완료 상태를 바탕으로 만듭니다.
+          Google Calendar, Notion, GitHub, Codex 데이터를 연결해 미리
+          확인할 수 있습니다. 현재 제안은 같은 사용자의 ChatGPT 대화에서
+          반복되는 일과 미완료 상태를 바탕으로 만듭니다.
         </p>
       </header>
 
       <GoogleCalendarConnector />
       <NotionConnector />
       <GitHubConnector />
+      <CodexConnector />
+      <ConnectorTimeline />
 
       <form className="inputSection" onSubmit={handleSubmit} noValidate>
         <div className="sectionHeading">

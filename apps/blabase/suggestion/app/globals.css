@@ -91,6 +91,7 @@ h1 {
 
 .inputSection,
 .calendarSection,
+.timelineSection,
 .resultSection,
 .errorSection {
   border: 1px solid var(--line);
@@ -106,6 +107,11 @@ h1 {
 .calendarSection {
   margin-bottom: 28px;
   padding: 26px 30px;
+}
+
+.timelineSection {
+  margin: 8px 0 38px;
+  padding: 30px;
 }
 
 .calendarHeader {
@@ -317,10 +323,363 @@ h1 {
   color: var(--muted);
 }
 
+.codexScopeForm {
+  display: grid;
+  justify-items: start;
+  gap: 16px;
+}
+
+.codexScopeForm > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.codexScopeList {
+  display: grid;
+  width: 100%;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--line);
+}
+
+.codexScopeList legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.codexScopeList label {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 14px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.codexScopeList input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.codexScopeList label > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.codexScopeList strong {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexScopeList small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.codexSummaryConsent {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--soft);
+  cursor: pointer;
+}
+
+.codexSummaryConsent input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.codexSummaryConsent > span {
+  display: grid;
+  gap: 3px;
+}
+
+.codexSummaryConsent strong {
+  font-size: 14px;
+}
+
+.codexSummaryConsent small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timelineHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.timelineHeader h2 {
+  margin: 0;
+  font-size: 23px;
+  letter-spacing: -0.02em;
+}
+
+.timelineRefreshButton {
+  flex: 0 0 auto;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.timelineRefreshButton:disabled {
+  color: var(--muted);
+}
+
+.timelineDescription {
+  max-width: 590px;
+  margin: 16px 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.timelineLoadStatus {
+  margin: 0 0 18px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.timelineLoadStatus.isError {
+  color: var(--error);
+}
+
+.timelineSourceSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 26px;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineSourceSummary li {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.timelineSourceSummary li.isMissing {
+  background: #f5f5f2;
+}
+
+.timelineSourceSummary li.isPartial {
+  border-color: #e2cfae;
+  background: #fbf6ec;
+}
+
+.timelineSourceSummary strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineSourceSummary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timelineLimitNotice,
+.timelineEmpty {
+  margin: 0;
+  padding: 13px 14px;
+  border-radius: 10px;
+  background: #f4f5f2;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.timelineLimitNotice {
+  margin: -12px 0 24px;
+}
+
+.timelineEmpty a {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.timelineGroups {
+  display: grid;
+  gap: 32px;
+}
+
+.timelineDay h3 {
+  margin: 0 0 15px;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.timelineList {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineList::before {
+  position: absolute;
+  top: 8px;
+  bottom: 22px;
+  left: 5px;
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+
+.timelineItem {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.timelineRail {
+  position: relative;
+  min-height: 24px;
+}
+
+.timelineDot {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  left: 1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.timelineDot-notion {
+  background: #343633;
+}
+
+.timelineDot-github {
+  background: #6d4ca2;
+}
+
+.timelineDot-codex {
+  background: #a45b32;
+}
+
+.timelineItem article {
+  min-width: 0;
+  padding: 0 0 23px;
+}
+
+.timelineItemMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timelineSource {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--accent);
+  font-weight: 750;
+}
+
+.timelineSource-notion {
+  background: #eeeeeb;
+  color: #343633;
+}
+
+.timelineSource-github {
+  background: #f0ebf8;
+  color: #60418e;
+}
+
+.timelineSource-codex {
+  background: #f8ede6;
+  color: #8a4724;
+}
+
+.timelineItem h4 {
+  margin: 0 0 3px;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.timelineItem article > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timelineItem article > .timelineDue {
+  margin-top: 6px;
+  color: #85581f;
+  font-weight: 700;
+}
+
+.timelineTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineTags li {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #f1f2ef;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .calendarPrimaryButton:focus-visible,
 .calendarEventList a:focus-visible,
 .calendarSecondaryActions button:focus-visible,
 .calendarSecondaryActions a:focus-visible,
+.codexScopeList input:focus-visible,
+.codexSummaryConsent input:focus-visible,
+.timelineRefreshButton:focus-visible,
+.timelineEmpty a:focus-visible,
 .textButton:focus-visible,
 .submitButton:focus-visible {
   outline: 3px solid rgb(39 103 73 / 22%);
@@ -577,6 +936,7 @@ summary {
 
   .inputSection,
   .calendarSection,
+  .timelineSection,
   .resultSection,
   .errorSection {
     padding: 22px;
@@ -584,7 +944,8 @@ summary {
   }
 
   .calendarHeader,
-  .calendarSyncSummary {
+  .calendarSyncSummary,
+  .timelineHeader {
     align-items: flex-start;
     flex-direction: column;
     gap: 10px;
@@ -593,6 +954,10 @@ summary {
   .calendarEventList li {
     grid-template-columns: 1fr;
     gap: 3px;
+  }
+
+  .timelineSourceSummary {
+    grid-template-columns: 1fr;
   }
 }
 

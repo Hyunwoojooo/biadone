@@ -3,6 +3,33 @@ export type GitHubTaskKind =
   | "review_requested_pull_request"
   | "authored_pull_request";
 
+export type GitHubActivityKind =
+  | "push"
+  | "ref_created"
+  | "ref_deleted"
+  | "issue_opened"
+  | "issue_closed"
+  | "issue_reopened"
+  | "issue_commented"
+  | "pull_request_opened"
+  | "pull_request_closed"
+  | "pull_request_reopened"
+  | "pull_request_merged"
+  | "pull_request_reviewed"
+  | "pull_request_review_commented";
+
+export type GitHubActivitySubjectType =
+  | "repository"
+  | "branch"
+  | "tag"
+  | "issue"
+  | "pull_request";
+
+export type GitHubReviewState =
+  | "approved"
+  | "changes_requested"
+  | "commented";
+
 export type GitHubUserSignal = {
   id: number;
   login: string;
@@ -43,17 +70,36 @@ export type GitHubTaskSignal = {
   updatedAt: string;
 };
 
+export type GitHubUserActivitySignal = {
+  id: string;
+  source: "github";
+  kind: "user_activity";
+  activityKind: GitHubActivityKind;
+  repositoryId: number;
+  repositoryFullName: string;
+  occurredAt: string;
+  subjectType: GitHubActivitySubjectType;
+  subjectNumber: number | null;
+  subjectTitle: string | null;
+  refName: string | null;
+  reviewState: GitHubReviewState | null;
+};
+
 export type GitHubSnapshot = {
-  schemaVersion: "github-snapshot-v1";
+  schemaVersion: "github-snapshot-v2";
   appClientId: string;
   appSlug: string;
   apiVersion: string;
   fetchedAt: string;
   user: GitHubUserSignal;
   truncated: boolean;
+  activityWindowStart: string;
+  activitiesState: "available" | "partial" | "unavailable";
+  activitiesTruncated: boolean;
   installations: GitHubInstallationSignal[];
   repositories: GitHubRepositorySignal[];
   tasks: GitHubTaskSignal[];
+  activities: GitHubUserActivitySignal[];
 };
 
 export type StoredGitHubTokens = {

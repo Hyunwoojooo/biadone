@@ -63,7 +63,44 @@ const taskSchema = z.object({
   updatedAt: z.string().datetime()
 });
 
-const snapshotSchema = z.object({
+const activitySchema = z.object({
+  id: z.string().min(1).max(200),
+  source: z.literal("github"),
+  kind: z.literal("user_activity"),
+  activityKind: z.enum([
+    "push",
+    "ref_created",
+    "ref_deleted",
+    "issue_opened",
+    "issue_closed",
+    "issue_reopened",
+    "issue_commented",
+    "pull_request_opened",
+    "pull_request_closed",
+    "pull_request_reopened",
+    "pull_request_merged",
+    "pull_request_reviewed",
+    "pull_request_review_commented"
+  ]),
+  repositoryId: z.number().int().positive(),
+  repositoryFullName: z.string().min(1),
+  occurredAt: z.string().datetime(),
+  subjectType: z.enum([
+    "repository",
+    "branch",
+    "tag",
+    "issue",
+    "pull_request"
+  ]),
+  subjectNumber: z.number().int().positive().nullable(),
+  subjectTitle: z.string().nullable(),
+  refName: z.string().nullable(),
+  reviewState: z
+    .enum(["approved", "changes_requested", "commented"])
+    .nullable()
+});
+
+const snapshotV1Schema = z.object({
   schemaVersion: z.literal("github-snapshot-v1"),
   appClientId: z.string().min(1),
   appSlug: z.string().min(1),
@@ -78,6 +115,25 @@ const snapshotSchema = z.object({
   repositories: z.array(repositorySchema),
   tasks: z.array(taskSchema)
 });
+
+const snapshotSchema = snapshotV1Schema
+  .omit({ schemaVersion: true })
+  .extend({
+    schemaVersion: z.literal("github-snapshot-v2"),
+    activityWindowStart: z.string().datetime(),
+    activitiesState: z.enum([
+      "available",
+      "partial",
+      "unavailable"
+    ]),
+    activitiesTruncated: z.boolean(),
+    activities: z.array(activitySchema)
+  });
+
+const storedSnapshotSchema = z.union([
+  snapshotSchema,
+  snapshotV1Schema
+]);
 
 export function githubLocalDirectory(cwd = process.cwd()): string {
   return join(cwd, ".local", "connectors", "github");
@@ -118,7 +174,10 @@ export async function readStoredGitHubSnapshot(
       join(githubLocalDirectory(cwd), "snapshot.json"),
       "utf8"
     );
-    return snapshotSchema.parse(JSON.parse(text));
+    const snapshot = storedSnapshotSchema.parse(JSON.parse(text));
+    return snapshot.schemaVersion === "github-snapshot-v2"
+      ? snapshot
+      : migrateV1Snapshot(snapshot);
   } catch {
     return null;
   }
@@ -128,7 +187,11 @@ export async function writeStoredGitHubSnapshot(
   snapshot: GitHubSnapshot,
   cwd = process.cwd()
 ): Promise<void> {
-  await writePrivateJson("snapshot.json", snapshot, cwd);
+  await writePrivateJson(
+    "snapshot.json",
+    snapshotSchema.parse(snapshot),
+    cwd
+  );
 }
 
 export async function deleteStoredGitHubSnapshot(
@@ -172,4 +235,22 @@ async function deleteIfPresent(path: string): Promise<void> {
       throw error;
     }
   }
+}
+
+function migrateV1Snapshot(
+  snapshot: z.infer<typeof snapshotV1Schema>
+): GitHubSnapshot {
+  const fetchedAt = Date.parse(snapshot.fetchedAt);
+  const activityWindowStart = new Date(
+    fetchedAt - 30 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  return {
+    ...snapshot,
+    schemaVersion: "github-snapshot-v2",
+    activityWindowStart,
+    activitiesState: "unavailable",
+    activitiesTruncated: false,
+    activities: []
+  };
 }
