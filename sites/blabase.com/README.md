@@ -23,6 +23,12 @@ cd sites/blabase.com
 ./scripts/deploy-cloudflare.sh
 ```
 
+다른 Cloudflare 계정에서 Pages project 이름이 달라진 경우 환경 변수로 지정합니다.
+
+```bash
+BLABASE_CF_PAGES_PROJECT=blabase-landing ./scripts/deploy-cloudflare.sh
+```
+
 배포 스크립트는 공개 파일만 임시 폴더에 복사한 뒤 Pages에 업로드합니다.
 
 ```text
