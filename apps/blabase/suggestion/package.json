@@ -13,6 +13,7 @@
     "start": "next start --hostname 127.0.0.1 --port 3102",
     "check:config": "vite-node tools/check-config.ts",
     "check:provider": "vite-node tools/check-provider.ts",
+    "cross-source:dev-hash": "vite-node tools/print-cross-source-dev-hash.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern '.next/**' --ignore-pattern '.next-dev/**' --ignore-pattern '.next-build/**'",
     "test": "vitest run"

@@ -1,0 +1,46 @@
+{
+  "version": "synthetic-codex-detector-config-v0.1",
+  "purpose": "evaluation_fixture_only",
+  "meaningfulProgress": {
+    "acceptedMarkers": [
+      "phase_transition",
+      "artifact_state_change",
+      "test_result_change",
+      "build_result_change",
+      "failure_cleared",
+      "explicit_completion"
+    ],
+    "ignoredMarkers": [
+      "heartbeat",
+      "poll",
+      "timestamp_refresh",
+      "repeated_log"
+    ]
+  },
+  "stall": {
+    "requiresStableExecutionId": true,
+    "requiresOrderedSnapshots": true,
+    "requiresLatestUnresolvedState": true,
+    "normalLongRunningPhaseSuppressesCandidate": true
+  },
+  "failure": {
+    "requiresLatestActiveState": true,
+    "recoveredFailureSuppressesCandidate": true
+  },
+  "followThrough": {
+    "requiresConfiguredWorkflowOrExplicitRelation": true
+  },
+  "transientRequest": {
+    "acceptedKinds": [
+      "approval",
+      "user_input"
+    ],
+    "requiresStableRequestId": true,
+    "requiresPendingUnexpiredState": true,
+    "requiresBlockingRelation": true
+  },
+  "scopeDrift": {
+    "requiresExpectedBaseline": true,
+    "requiresPolicyEnabled": true
+  }
+}

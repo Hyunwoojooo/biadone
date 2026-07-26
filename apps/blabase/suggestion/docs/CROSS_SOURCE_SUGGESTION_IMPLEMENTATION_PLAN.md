@@ -1,19 +1,22 @@
 # blabase Cross-Source Suggestion Engine 구현 계획
 
-> Notion, Google Calendar, GitHub, Codex와 기존 대화 신호를 이용해
-> Codex 작업 진행을 가시화하고, 사용자가 지금 개입할 가치가 가장 큰 열린
-> 루프 하나를 근거와 함께 제안하는 Execution Observability +
-> Action/Recommendation Layer 계획
+> 첫 release에서는 GitHub와 Codex를 함께 쓰는 개발자의 실행 상태를
+> 가시화하고, 사용자가 지금 개입할 가치가 가장 큰 열린 루프 하나를 근거와
+> 함께 제안하는 Execution Observability + Action/Recommendation Layer 계획.
+> Notion과 Google Calendar는 초기 release 이후의 context/constraint source다.
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Draft v0.2 |
+| 문서 상태 | Phase 0 dev contract closed, Draft v0.6 |
 | 기준일 | 2026-07-26 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
+| Attention 정의 | `suggestion/docs/CROSS_SOURCE_ATTENTION_DEFINITION.md` |
+| Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
+| Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | 계획 단계, 동작 변경 없음 |
+| 구현 상태 | Phase 0·1 완료, Phase 2A decision vertical slice 완료, 제품 route 미연결 |
 
 ---
 
@@ -32,6 +35,10 @@ Cross-source 엔진은 모든 도구의 항목을 같은 task 목록에 넣고 �
 정상 진행을 포함한 실행 현황을 보여주고, Attention Router는 그중 실제 개입이
 필요한 예외와 열린 루프만 고른다. ranking component는 `Priority Task Scorer`가
 아니다.
+
+초기 제품의 기본 화면은 `Work Cockpit`이다. Cockpit 전체 현황 위에
+Attention Router가 선택한 **“지금 개입할 한 가지”**를 한 칸으로 보여준다.
+추천 가능한 개입이 없거나 평가 범위가 부족해도 Cockpit 자체는 유지한다.
 
 첫 구현의 핵심은 완벽한 가중치가 아니다.
 
@@ -148,19 +155,25 @@ Codex 작업은 각각 어디까지 진행됐는가?
 추천이 틀렸다면 어떻게 바로잡는가?
 ```
 
-### 3.2 초기 타깃 가설
+### 3.2 초기 제품 범위와 타깃 가설
 
-첫 검증 사용자는 다음 조건에 가까운 1인 개발자, 메이커 또는 창업자로
-제한하는 것을 초기 가설로 둔다.
+첫 release의 초기 사용자는 **GitHub와 Codex를 함께 사용하는 AI-native
+1인 개발자, 인디 메이커, 작은 스타트업 개발자**로 제한한다.
 
-- Notion으로 프로젝트나 task를 관리한다.
-- Google Calendar로 개인 일정을 관리한다.
-- GitHub issue, PR, review를 사용한다.
-- Codex로 실제 개발 작업을 진행한다.
-- 한 번에 여러 프로젝트를 오가며 context switching 비용을 겪는다.
+- GitHub issue, PR, review를 실제 work item과 협업 요청의 기준으로 사용한다.
+- Codex를 하나 이상의 개발 작업 실행에 사용한다.
+- 한 번에 여러 repository, project 또는 agent execution을 오가며 현재 상태를
+  다시 파악하는 비용을 겪는다.
+- 모든 개발 활동을 자동화하려는 것이 아니라, 사람의 개입이 필요한 순간을
+  더 빨리 찾고 싶어 한다.
 
-이 타깃은 확정된 사용자 연구 결과가 아니다. 초기 dogfooding과 인터뷰로
-검증해야 한다.
+GitHub 또는 Codex를 사용하지 않는 사용자는 첫 release의 지원 대상이 아니다.
+Notion과 Google Calendar는 초기 핵심 가치가 검증된 뒤 project context,
+mapped task, 시간 constraint를 보강하는 source로 추가한다. 연결돼 있더라도
+초기 GitHub + Codex 판단에서 평가하지 않은 source임을 숨기지 않는다.
+
+이 범위는 제품 구현 결정을 위한 초기 가설이다. dogfooding, 인터뷰와 실제
+사용 패턴으로 검증하되, 일반 생산성 사용자까지 먼저 확장하지 않는다.
 
 ### 3.3 제품 표현 원칙
 
@@ -179,7 +192,8 @@ AI가 당신의 우선순위를 정확히 파악함
 현재 확인된 마감, 실행 이상, 아직 닫히지 않은 후속 작업을 기준으로
 이 항목이 먼저입니다.
 두 후보의 우선순위를 정하려면 한 가지 확인이 필요합니다.
-지금은 사용자가 직접 개입할 항목이 없습니다.
+현재 평가 가능한 범위에서는 사용자가 직접 개입할 항목이 없습니다.
+평가하지 못한 source: Notion, Google Calendar
 ```
 
 ---
@@ -241,10 +255,12 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 
 ### 5.1 포함
 
+- 첫 release의 candidate-capable source는 GitHub로 제한
+- 첫 release의 Codex 역할은 current contract 범위의 execution overview
 - 사용자가 선택한 connector scope만 사용
 - connector snapshot validity와 freshness 검사
 - source별 `WorkSignal` 정규화
-- GitHub review request와 assigned issue 후보
+- GitHub assigned issue 후보와 review request 관찰
 - Codex 실행별 진행 상태와 최근 의미 있는 진전 overview
 - 검증된 Codex 정체, 실패, 완료 후 후속조치 누락 후보
 - 오래 지속되고 아직 유효한 Codex 승인·입력 대기만 조건부 후보
@@ -265,6 +281,8 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 
 ### 5.2 제외
 
+- GitHub 또는 Codex를 사용하지 않는 일반 생산성 사용자 지원
+- 첫 release에서 Notion/Calendar를 필수 source 또는 핵심 추천 source로 사용
 - Notion 일반 페이지 본문과 댓글 전체 수집
 - Calendar 제목을 기본 task 의미로 해석
 - GitHub 코드, issue/PR 본문, 댓글 전체 수집
@@ -287,16 +305,23 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 
 ```text
 GitHub review/assigned issue
-+ Codex execution progress/stall/failure/follow-through state
-+ Google Calendar free-block
++ Codex current-contract execution activity overview
 + 사용자의 이번 주 목표 한 줄
 → Codex execution overview
-→ top / clarification / no-action
+→ top / clarification / scoped no-action / insufficient-evidence
 ```
 
-Notion은 task DB property mapping이 구현된 후 직접 후보 소스로 추가한다.
-Codex 승인·입력 요청은 overview에서 즉시 상태로 보여줄 수 있지만, 짧게
-발생했다가 바로 해결되는 동안에는 ranking 후보로 만들지 않는다.
+Google Calendar는 이후 first-step 시간 적합성을 보강하고, Notion은 task DB
+property mapping이 구현된 후 직접 후보 소스로 추가한다. 둘은 초기
+vertical slice의 completion을 막지 않는다.
+
+현재 Codex v2의 `active`와 `taskSummary`는 progress, stall, failure 또는
+사용자 obligation을 증명하지 않는다. 승인·입력 상태도 overview badge로만
+보여주며 ranking 후보로 만들지 않는다. richer native contract와 충분한
+ordered history가 생긴 뒤 Phase 2B detector에서만 예외 판정을 활성화한다.
+
+`이번 주 최우선 결과`는 onboarding이나 매 화면마다 반복해서 묻지 않는다.
+기본 cadence는 일주일에 한 번이며, 사용자가 직접 변경할 때 즉시 갱신한다.
 
 ---
 
@@ -331,7 +356,7 @@ type AttentionIntervention =
 | `close_loop` | 완료된 실행의 후속조치 | 변경 검토 또는 PR 생성 |
 | `prepare` | 예정된 약속 전 준비 | 연결된 회의 전 검토 |
 | `follow_up` | 외부 대기 상태 확인 | 응답 기한이 지난 명시적 follow-up |
-| `clarify` | 추천 전에 사용자 확인 | 목표가 다른 동순위 후보 |
+| `clarify` | 추천 전에 사용자 확인 | 사용자가 해결할 수 있는 owner/eligibility conflict |
 | `wait` | 지금 사용자 행동 없음 | 외부 응답 대기 |
 | `none` | 열린 사용자 개입 없음 | agent가 진행 중이고 마감 없음 |
 
@@ -353,7 +378,7 @@ type CrossSourceSuggestionStatus =
 |---|---|
 | `suggested` | 근거와 상태가 검증된 top intervention이 있음 |
 | `needs_clarification` | 유효 후보는 있지만 목표 또는 충돌을 해결할 질문이 필요 |
-| `no_action` | source가 정상이며 지금 사용자 개입이 필요하지 않음 |
+| `no_action` | 선언한 candidate-capable 평가 범위가 완전하고 그 범위에 지금 사용자 개입이 필요하지 않음 |
 | `insufficient_evidence` | source 실패, stale, truncation 또는 evidence 부족 |
 
 `no_action`과 `insufficient_evidence`를 합치지 않는다. 사용자가 할 일이 없는
@@ -432,113 +457,135 @@ LLM이 실패하면 결정적 후보와 템플릿 결과가 유지되어야 한�
 
 ## 8. 핵심 도메인 계약
 
-아래 타입은 방향을 고정하기 위한 초안이다. 실제 구현 전 별도 schema 파일과
-Zod contract로 확정한다.
+Phase 1 runtime 계약은
+`suggestion/src/crossSource/schema.ts`,
+`validateSnapshots.ts`, `workSignalIntegrity.ts`를 기준으로 한다.
+평가용 `SyntheticNormalizedSignal`과 별개의 계약이다.
 
 ### 8.1 Snapshot envelope
 
 ```ts
-type ConnectedSource =
-  | "conversation"
-  | "notion"
-  | "google_calendar"
-  | "github"
-  | "codex";
+type RuntimeSource = "github" | "codex";
 
-type SnapshotEnvelope<T> = {
-  source: ConnectedSource;
-  schemaVersion: string;
-  normalizerVersion: string;
+type SourceSnapshotArtifact<T> = {
+  contract: "runtime-source-snapshot-v0.1";
+  source: RuntimeSource;
+  sourceSchemaVersion: string;
+  collectorVersion: string;
   fetchedAt: string;
   scopeIds: string[];
-  status: "fresh" | "stale" | "partial" | "failed";
-  truncated: boolean;
-  snapshotHash: string;
-  data: T;
+  sourceSnapshotSha256: string;
+  payload: T;
 };
 
-type SnapshotWindow<T> = {
-  source: ConnectedSource;
-  observationStartedAt: string;
-  observationEndedAt: string;
-  orderedSnapshots: SnapshotEnvelope<T>[];
+type SourceCollectionFailure = {
+  contract: "runtime-source-collection-failure-v0.1";
+  source: RuntimeSource;
+  status: "missing" | "invalid" | "unsupported";
+  code:
+    | "SNAPSHOT_MISSING"
+    | "SNAPSHOT_PARSE_FAILED"
+    | "SNAPSHOT_SCHEMA_UNSUPPORTED";
+};
+
+type SnapshotAssessment = {
+  contract: "runtime-snapshot-assessment-v0.1";
+  source: RuntimeSource;
+  asOf: string;
+  fetchedAt: string;
+  freshnessPolicyVersion: string;
+  freshness: "fresh" | "stale" | "invalid";
+  completeness: "complete" | "partial";
+  truncated: boolean;
+  candidateSetComplete: boolean;
+  usableForOverview: boolean;
+  usableForCurrentCandidates: boolean;
+  reasonCodes: string[];
 };
 ```
 
-정체, 복구, 완료 후 후속조치, 일시적 요청 해결 여부를 평가하는 Codex run은
-단일 latest snapshot이 아니라 `SnapshotWindow`를 입력으로 기록한다.
+성공 artifact, collection failure, freshness/completeness assessment를
+분리한다. 그래서 `failed + payload` 같은 모순 상태를 만들지 않고, stale과
+partial처럼 동시에 참일 수 있는 축을 하나의 status로 덮어쓰지 않는다.
+collection failure에는 raw provider message나 payload를 넣지 않는다.
+
+freshness TTL과 허용 clock skew는 하드코딩하지 않고 versioned policy와 고정된
+`asOf`를 주입한다. source snapshot hash는 정규화된 connector payload만
+포함하며 normalizer version은 포함하지 않는다.
+
+`RuntimeSnapshotWindow`는 이미 정규화된 batch를 strict chronological order로
+받고 minimum history, version change, truncation에 따른
+`historySufficiency`만 판단한다. 현재 Codex v2 window는 native observation을
+보존할 뿐 정체, 복구, 완료 또는 request lifecycle을 파생하지 않는다.
 
 ### 8.2 Source evidence
 
 Conversation evidence와 connector evidence를 같은 형태로 위장하지 않는다.
 
 ```ts
-type SourceEvidence =
-  | {
-      type: "conversation_span";
-      conversationId: string;
-      messageId: string;
-      messageIndex: number;
-      role: "user" | "assistant";
-      quote: string;
-      startChar: number;
-      endChar: number;
-    }
-  | {
-      type: "connector_field";
-      source: Exclude<ConnectedSource, "conversation">;
-      nativeId: string;
-      nativeField: string;
-      valueHash: string;
-      snapshotHash: string;
-      observedAt: string;
-      sourceUpdatedAt: string | null;
-    };
+type RuntimeSourceEvidence =
+  | GitHubQueryMembershipEvidence
+  | GitHubObjectFieldEvidence
+  | GitHubActivityEvidence
+  | CodexSessionFieldEvidence;
 ```
+
+GitHub assigned/review/authored 의미는 object field가 아니라 API query membership
+근거이므로 `github_query_membership`으로 기록한다. object field evidence는
+허용 field enum과 value SHA-256을 사용한다. Codex도 허용된 session field만
+`codex_session_field`로 기록한다. 임의의 `nativeField: string`이나
+`conversation_span`은 runtime connector schema를 통과하지 못한다.
 
 ### 8.3 Work signal
 
 ```ts
-type WorkSignalKind =
-  | "task_exists"
-  | "task_state"
-  | "ownership"
-  | "deadline"
-  | "review_requested"
-  | "attention_required"
-  | "scheduled_commitment"
-  | "dependency"
-  | "activity"
-  | "execution_state"
-  | "execution_progress"
-  | "execution_exception"
-  | "execution_completion"
-  | "execution_output"
-  | "handoff_state"
-  | "scope_observation"
-  | "transient_attention_lifecycle"
-  | "user_correction";
-
-type WorkSignal = {
-  id: string;
-  source: ConnectedSource;
-  nativeId: string;
-  projectId: string | null;
-  subjectKey: string;
-  kind: WorkSignalKind;
-  value: unknown;
+type RuntimeWorkSignal = {
+  contract: "runtime-work-signal-v0.1";
+  signalId: string;       // snapshot 사이에 유지되는 claim identity
+  observationId: string;  // 특정 snapshot의 observation identity
+  signalHash: string;
+  sourceSnapshotSha256: string;
+  normalizerVersion: string;
+  source: "github" | "codex";
+  subjectId: string;
+  subjectType: "work_item" | "source_activity" | "execution";
+  sourceScopeId: string;
+  projectId: null;        // Phase 3 mapping 전에는 항상 null
+  kind:
+    | "work_item_observation"
+    | "deadline_observation"
+    | "activity_observation"
+    | "execution_observation";
+  facts: GitHubWorkItemFacts
+    | GitHubDeadlineFacts
+    | GitHubActivityFacts
+    | CodexExecutionObservationFacts;
   observedAt: string;
   sourceUpdatedAt: string | null;
   validUntil: string | null;
-  directness: "explicit" | "accepted_context" | "derived";
+  directness: "explicit" | "derived";
   completeness: "complete" | "truncated" | "unknown";
-  evidence: SourceEvidence[];
+  attentionCapability: "candidate_input" | "overview_only";
+  evidence: RuntimeSourceEvidence[];
 };
 ```
 
-`WorkSignal`은 관찰 사실이다. 이 단계에서 중요도나 최종 task state를 만들지
-않는다. Codex 승인·입력 lifecycle signal의 `value`는
-`CodexTransientAttentionLifecycle` schema를 통과해야 한다.
+`facts`는 `unknown`이나 자유 형식 record가 아니라 `kind + source`별 strict
+discriminated schema다. `signalId`는 native subject와 claim 종류로 결정돼
+snapshot이 달라도 유지되고, `observationId`와 `signalHash`는 snapshot과
+관찰값 변경을 반영한다. batch는 source snapshot hash, normalization input
+hash, deterministic signal order, sanitized issue와 batch hash를 기록한다.
+
+GitHub authored PR과 activity는 `overview_only`다. review request는
+`draftState = unknown`, `eligibilityLimit = draft_state_unknown`을 보존한다.
+Codex `active`와 `system_error`는 semantic state `unknown`이며
+approval/input은 `overview_badge_only`다. Phase 1 schema에는
+execution exception, completion, progress 또는 request lifecycle kind 자체가
+없다.
+
+runtime signal을 평가 fixture에 직접 넣지 않는다.
+`mapRuntimeBatchToSyntheticEvaluationSignals`만 두 계약을 import해
+evaluation-only signal과 normalized snapshot SHA-256을 만든다.
 
 ### 8.4 Codex execution overview
 
@@ -755,7 +802,8 @@ type RecommendationDecision = {
 | Native signal | Intervention | 기본 의미 |
 |---|---|---|
 | `assigned_issue` | `do` | 사용자에게 배정된 열린 issue |
-| `review_requested_pull_request` | `review` | 사용자의 리뷰가 요청됨 |
+| `review_requested_pull_request`, draft unknown | provisional `inspect` | PR을 열어 draft 여부와 리뷰 가능 상태 확인 |
+| `review_requested_pull_request`, `isDraft = false` | confirmed `review` | Phase 2B native contract에서 실제 review 후보 |
 | `milestoneDueAt` | deadline claim | native milestone의 명시적 마감 |
 
 조건부 후보:
@@ -777,6 +825,12 @@ latestReviewAt
 
 GitHub 항목이 다음 snapshot에서 보이지 않는다는 이유만으로 완료 처리하지 않는다.
 명시적 closed/merged state, user correction 또는 검증된 상태 event가 필요하다.
+
+현재 connector의 review signal에는 `isDraft`가 없으므로 Phase 1 normalizer는
+review 요청 사실만 `WorkSignal`로 보존한다. draft 상태를 `false`로 추정하거나
+confirmed `review` candidate로 확정하지 않는다. Phase 2A는 safe destination이
+있는 경우 provisional `inspect`로 상태 확인만 제안한다. `isDraft`가 native
+contract에 추가된 뒤 Phase 2B에서 confirmed `review`로 승격한다.
 
 ### 9.2 Codex
 
@@ -805,7 +859,7 @@ eligibility를 통과한 뒤에만 공통 candidate derivation에서 AttentionIt
 
 | Derived signal | Intervention | 후보가 되기 위한 추가 조건 |
 |---|---|---|
-| `execution_stalled` | `inspect` 또는 `resume` | fresh snapshot, 실행 지속 예상, phase별 threshold 초과, 의미 있는 진전 없음, 사용자 개입 가능 |
+| `execution_stalled` | `inspect` 또는 `resume` | fresh snapshot, 실행 지속 예상, phase별 threshold 초과, 의미 있는 진전 없음, 사용자 개입 가능, explicit goal·obligation·downstream block 중 하나와 연결 |
 | `execution_failed` | `inspect` 또는 `resume` | 현재도 미복구, 안전한 open reference, 중요 작업 또는 downstream block과 연결 |
 | `completed_follow_through_pending` | `close_loop` | 완료 evidence와 명시적 project workflow 또는 GitHub 연결에 따른 후속조치가 남음 |
 | `scope_drift_detected` | `review` 또는 `clarify` | 원래 scope와 현재 변경 범위가 모두 검증되고 사용자 판단이 실제로 필요 |
@@ -825,6 +879,8 @@ eligibility를 통과한 뒤에만 공통 candidate derivation에서 AttentionIt
   이전에는 ranking 후보가 아니다.
 - 다음 snapshot에서 해결됐거나 유효기간이 지난 승인·입력 요청은 즉시
   제거한다.
+- stall state가 검증돼도 goal, obligation, downstream block 연결이 없으면
+  overview-only로 유지하고 AttentionItem을 만들지 않는다.
 
 `completed_follow_through_pending`에서 Codex source execution state는
 `completed`지만 파생된 AttentionItem의 state는 열린 후속조치의 상태인
@@ -944,7 +1000,7 @@ related GitHub URL 또는 relation
 
 | Source | 현재 확인 가능한 필드 | 직접 추천 역할 | 다음 version에서 필요한 최소 보강 |
 |---|---|---|---|
-| GitHub | open assigned issue, review request, authored PR, label, milestone due | issue와 review 후보 | draft, review decision, checks, merge state, review 취소/변경 |
+| GitHub | open assigned issue, review request, authored PR, label, milestone due. review request에는 현재 `isDraft` 없음 | assigned issue 후보, review 요청 관찰 | `isDraft`, review decision, checks, merge state, review 취소/변경 |
 | Codex | `codex-snapshot-v2`의 session ID, project scope/label, optional task summary, created/updated time, activity state, approval/input attention | 제한된 activity overview, 직접 추천은 아직 보류 | phase와 raw progress marker/time, failure/blocker lifecycle, completion, privacy-safe progress summary, GitHub linkage, workflow 후속조치, request ID와 requested/resolved/expired time, 안전한 open reference |
 | Calendar | primary calendar, -7일~+14일, event start/end/status/title, `Asia/Seoul` | 시간 constraint | 사용자 timezone, busy/transparency, 포함 calendar scope, free/busy 정책 |
 | Notion | page/data-source title, created/edited time | context only | 선택 task DB와 status/assignee/due/priority/project property mapping |
@@ -959,6 +1015,12 @@ scope drift를 안전하게 판단할 수 없다. Phase 2에서는 기존
 실제 overview와 exception detector를 활성화한다. 그전에는 session activity,
 optional task summary와 일시 attention 상태를 제한적으로 보여주되 추천
 후보로 승격하지 않는다.
+
+optional `taskSummary`의 기본 의미 상태는 `unknown`이다. 사용자가 표시를
+opt-in한 경우 Work Cockpit의 execution label을 돕는 단서로만 쓸 수 있다.
+summary만으로 progress, 사용자 task, completion 또는 obligation을 만들지
+않는다. 프로젝트별 workflow를 사용자가 설정했거나 explicit GitHub relation이
+있을 때만 별도의 follow-through AttentionItem 생성을 검토한다.
 
 현재 `attentionState`에는 안정적인 request ID와 requested/resolved/expired
 시각이 없다. 여러 snapshot에 같은 값이 보인다는 사실만으로 “오래 미해결된
@@ -1140,23 +1202,22 @@ type EligibilityAssessment = {
 ### 13.1 Lane
 
 ```ts
-type AttentionLane =
+type RankableAttentionLane =
   | "must_now"
   | "unblock"
   | "close_loop"
-  | "focus"
-  | "clarify"
-  | "none";
+  | "focus";
 ```
 
-| Lane | 포함 기준 |
+| Rankable lane | 포함 기준 |
 |---|---|
 | `must_now` | 검증된 임박 마감, 곧 시작할 약속에 직접 연결된 준비, 검증된 즉시 consequence |
 | `unblock` | 리뷰 요청, 외부 사람이 기다림, 중요한 outcome을 막는 정체·실패·오래 지속된 승인/입력 |
 | `close_loop` | 실행은 완료됐지만 명시적 workflow의 검토·커밋·PR·리뷰 후속조치가 남음 |
-| `focus` | 사용자 목표와 연결되고 현재 시작 가능한 task |
-| `clarify` | 유효 후보가 있지만 목표 또는 conflict를 해결할 질문 필요 |
-| `none` | 사용자가 지금 개입할 필요 없음 |
+| `focus` | 직접 검증된 user/shared task이며 현재 시작 가능. primary outcome 연결은 같은 lane 안의 우선순위 근거 |
+
+`clarify`와 `none`은 rankable lane이 아니다. 각각
+`needs_clarification`과 `no_action`으로 가는 decision route다.
 
 약한 신호 여러 개가 강한 deadline 또는 blocker 하나를 이기지 못하도록 lane을
 가중치보다 먼저 적용한다.
@@ -1190,18 +1251,21 @@ score =
 - 정체 시간만으로 높은 순위를 주지 않고 goal, consequence, blocking 근거를 요구
 - 승인·입력 대기 시간은 escalation gate에만 사용하고 그 자체를 urgency로 사용하지 않음
 - readiness와 Calendar fit은 중요도보다 first-step에 우선 사용
-- deterministic tie-break는 재현성에만 사용하며 제품상 동점은 clarification 가능
+- deterministic tie-break는 적극 정책의 기본 선택에 사용하되 더 중요하다는
+  근거로 표현하지 않고 caveat와 alternatives를 제공
 
 ### 13.3 Clarification 조건
 
-다음 경우 한 번에 질문 하나만 반환한다.
+다음 경우에만 한 번에 질문 하나를 반환한다.
 
-- 서로 다른 primary goal에 속한 상위 후보가 비슷함
 - state/owner conflict를 사용자가 해결할 수 있음
-- 현재 목표가 없으면 ranking이 크게 바뀜
-- top 후보를 고를 근거가 source에 없음
+- 사용자의 답이 eligibility나 명시적인 실행 결정을 바꿈
+- source refresh가 아니라 사용자만 제공할 수 있는 사실이 필요함
 
-stable ID 순서만으로 사용자에게 top suggestion을 노출하지 않는다.
+같은 lane의 후보가 비슷하거나 primary outcome이 없다는 이유만으로
+clarification을 만들지 않는다. Phase 2A는 stable ID를 마지막 default
+tie-break로 사용하고 `CAVEAT_DEFAULT_TIE_BREAK_USED`와 alternatives를
+반환한다.
 
 ---
 
@@ -1337,9 +1401,10 @@ Codex 작업 현황
 예:
 
 ```text
-현재 연결된 범위에서는 사용자가 직접 개입할 항목이 없습니다.
-Codex 작업 2개는 정상적으로 진행 중이고, GitHub 리뷰 요청과 임박한 마감은
-확인되지 않았습니다.
+현재 평가 가능한 범위에서는 사용자가 직접 개입할 항목이 없습니다.
+GitHub assigned issue와 review request 관찰은 확인되지 않았고, Codex 작업
+2개는 activity overview로 표시되지만 semantic progress는 아직 unknown입니다.
+Notion은 이번 판단에서 평가하지 못했습니다.
 ```
 
 ### 15.4 Insufficient evidence
@@ -1445,6 +1510,11 @@ type CrossSourceSuggestionResponse = {
   sourceStatuses: Array<{
     source: ConnectedSource;
     status: "fresh" | "stale" | "partial" | "failed" | "disconnected";
+    attentionCapability:
+      | "candidate_capable"
+      | "overview_only"
+      | "unsupported";
+    capabilityReasonCodes: string[];
     fetchedAt: string | null;
   }>;
 };
@@ -1454,6 +1524,11 @@ type CrossSourceSuggestionResponse = {
 
 - connector read failure와 recommendation failure 분리
 - 일부 source 실패 시 remaining coverage를 명시
+- source freshness와 attention capability를 분리
+- 검증된 positive candidate는 독립 source failure가 있어도 제한된 범위를
+  밝히고 추천 가능
+- `no_action`은 선언한 candidate-capable scope의 complete negative coverage가
+  필요하며, 평가하지 못한 non-material source를 결과에 표시
 - source가 하나라도 연결됐다는 이유만으로 추천하지 않음
 - connector-only 실행은 ChatGPT 3 URL gate와 분리
 - 기존 v0.3 response contract는 baseline 전까지 유지
@@ -1489,53 +1564,125 @@ suggestion-cross-source-holdout-v0.1
 task 정의와 label agreement가 안정되면 40~60개 수준의 첫 Golden version을
 검토하고 freeze한다.
 
+mutable Dev Candidate는 material change마다 `datasetRevision`을 증가시킨다.
+평가 run은 `datasetVersion + datasetRevision + materialized SHA-256`을 함께
+기록하며, freeze 시에는 새 Golden version과 immutable canonical hash를 만든다.
+
 ```ts
 type CrossSourceEvaluationCase = {
   caseId: string;
+  title: string;
+  summary: string;
+  tags: string[];
   decisionAt: string;
   timezone: string;
   focus: UserFocusContext;
   sourceSnapshotWindows: Array<{
     source: ConnectedSource;
+    status: "fresh" | "stale" | "partial" | "failed" | "disconnected";
+    attentionCapability:
+      | "candidate_capable"
+      | "overview_only"
+      | "unsupported";
+    materialToDecision: boolean;
+    candidateSetComplete: boolean;
     observationStartedAt: string;
     observationEndedAt: string;
+    truncated: boolean;
     orderedSnapshotRefs: Array<{
       snapshotId: string;
-      snapshotHash: string;
+      snapshotSha256: string;
       fetchedAt: string;
+      schemaVersion: string;
+      normalizerVersion: string;
+      fixtureRef: string;
     }>;
   }>;
+  // 평가 전용 shape. Phase 1 runtime WorkSignal과 mapping contract를 둔다.
+  workSignals: SyntheticNormalizedSignal[];
+  relations: WorkRelation[];
   codexDetectorConfig: {
     version: string;
     immutableRef: string;
     sha256: string;
   } | null;
+  annotations: Array<{
+    itemId: string;
+    sourceSubjectIds: string[];
+    disposition: AttentionDisposition;
+    acceptableOverviewStates: CodexExecutionState[];
+    eligibility: "eligible" | "review_required" | "ineligible";
+    interventions: {
+      required: AttentionIntervention[];
+      acceptable: AttentionIntervention[];
+      forbidden: AttentionIntervention[];
+    };
+    acceptableLanes: RankableAttentionLane[];
+    forbiddenAsRankableCandidateAtDecision: boolean;
+    reasonCodes: {
+      overview: string[];
+      candidate: string[];
+      whyNow: string[];
+      gate: string[];
+      review: string[];
+    };
+    firstStep: {
+      required: boolean;
+      destinationRequired: boolean;
+      acceptableInterventions: AttentionIntervention[];
+      evidenceSignalIds: string[];
+    };
+  }>;
   expectedCodexExecutions: Array<{
     executionId: string;
     acceptableStates: CodexExecutionState[];
     mustAppearInOverview: boolean;
-    acceptableInterventions: AttentionIntervention[];
-    forbiddenAsAttentionCandidate: boolean;
+    executionForbiddenAsAttentionCandidate: true;
   }>;
-  acceptableTopItemIds: string[];
-  forbiddenItemIds: string[];
-  expectedStatus: CrossSourceSuggestionStatus;
+  expectedCoverage: {
+    disposition: "complete" | "limited_but_sufficient" | "insufficient";
+    negativeCandidateCoverageComplete: boolean;
+    limitedSources: ConnectedSource[];
+    materialUncertaintySources: ConnectedSource[];
+    uncertaintyBasis: Array<
+      "source_coverage" | "history_gap" | "contract_gap" | "critical_conflict"
+    >;
+    positiveCandidateIndependentOfUnknowns: boolean;
+  };
+  expectedDecision: {
+    status: CrossSourceSuggestionStatus;
+    acceptableTopItemIds: string[];
+    forbiddenItemIds: string[];
+    reasonCodes: string[];
+    clarification: {
+      questionIntent: string;
+      answerChanges: "top_item" | "eligibility";
+    } | null;
+  };
   pairwisePreferences: Array<{
     preferredItemId: string;
     overItemId: string;
     reasonCode: string;
   }>;
-  expectedReasonCodes: string[];
-  reviewerNotes: string;
-  reviewStatus:
-    | "draft"
-    | "reviewed"
-    | "adjudicated"
-    | "frozen";
+  hardFailureRisks: CrossSourceErrorCode[];
+  review: {
+    status: "draft" | "reviewed" | "adjudicated" | "frozen";
+    authorId: string;
+    reviewerIds: string[];
+    adjudicationRef: string | null;
+    notes: string;
+  };
 };
 ```
 
 단일 `topItemId`만 정답으로 두지 않는다.
+
+실행 가능한 schema는
+`suggestion/src/evaluation/crossSourceDatasetSchema.ts`를 기준으로 한다. 첫
+Dev Dataset은 connector adapter나 relation resolver가 아니라
+`normalized_work_signals_and_relations` 이후의 판단 경계를 평가한다. relation은
+이미 해결된 입력으로 주입한다. 실제 connector snapshot 변환과 relation 발견은
+별도 integration fixture로 평가한다.
 
 Gold가 표현해야 하는 것:
 
@@ -1577,6 +1724,7 @@ wrong_ranking
 missed_clarification
 unnecessary_clarification
 missed_no_action
+false_no_action
 unsafe_first_step
 stale_source_used
 privacy_scope_violation
@@ -1816,15 +1964,20 @@ suggestion/
 │   ├── CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md
 │   ├── CROSS_SOURCE_ATTENTION_DEFINITION.md
 │   ├── CROSS_SOURCE_EVALUATION_GUIDE.md
+│   ├── PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md
 │   └── ENGINE_CHANGE_RECORD.md
 ├── src/
 │   ├── crossSource/
 │   │   ├── types.ts
 │   │   ├── schema.ts
+│   │   ├── attentionSchema.ts
 │   │   ├── versions.ts
+│   │   ├── canonicalHash.ts
+│   │   ├── normalization.ts
 │   │   ├── validateSnapshots.ts
-│   │   ├── collectWorkSignals.ts
-│   │   ├── buildCodexExecutionTimeline.ts
+│   │   ├── workSignalIntegrity.ts
+│   │   ├── buildSnapshotWindow.ts
+│   │   ├── runAttentionRouter.ts
 │   │   ├── detectMeaningfulProgress.ts
 │   │   ├── buildCodexExecutionOverview.ts
 │   │   ├── classifyCodexExecutionState.ts
@@ -1847,11 +2000,17 @@ suggestion/
 │   │   ├── github/toWorkSignals.ts
 │   │   └── codex/toWorkSignals.ts
 │   └── evaluation/
-│       ├── crossSourceDataset.schema.ts
+│       ├── crossSourceDatasetSchema.ts
+│       ├── crossSourceIntegrity.ts
+│       ├── loadCrossSourceEvaluationDataset.ts
+│       ├── mapRuntimeWorkSignals.ts
 │       ├── metrics.ts
 │       └── runCrossSourceEvaluation.ts
 ├── tests/
+│   ├── crossSourceDatasetSchema.test.ts
+│   ├── snapshotValidity.test.ts
 │   ├── workSignalNormalization.test.ts
+│   ├── crossSourceSnapshotWindow.test.ts
 │   ├── codexExecutionOverview.test.ts
 │   ├── codexExceptionCandidates.test.ts
 │   ├── codexExecutionTimeline.test.ts
@@ -1867,6 +2026,10 @@ suggestion/
 │   └── crossSourcePrivacy.test.ts
 └── eval/
     └── synthetic/
+        ├── codexDetectorConfig.v0.1.json
+        ├── codexDetectorConfig.ts
+        ├── devCaseBuilder.ts
+        └── crossSourceDevDataset.ts
 ```
 
 기존 `suggestion/src/types.ts`, `scorePriority.ts`, `selectSuggestion.ts`를
@@ -1879,11 +2042,14 @@ suggestion/
 
 ### Phase 0 — Attention 정의와 평가 계약
 
+상태: **Closed — dev contract complete**
+
 산출물:
 
 - `CROSS_SOURCE_ATTENTION_DEFINITION.md`
 - `CROSS_SOURCE_EVALUATION_GUIDE.md`
 - evaluation case Zod schema
+- canonical snapshot, detector config, frozen dataset integrity verifier
 - 합성 dev candidate 20~30개
 - source authority matrix
 - Codex meaningful progress, stall, failure, follow-through, scope drift 정의
@@ -1898,47 +2064,101 @@ suggestion/
 - 정상 Codex 실행과 사용자 개입이 필요한 실행 예외를 구분 가능
 - 실제 private user data가 Git fixture에 없음
 
+현재 위 machine-readable artifact와 30개 synthetic draft case가 존재하고
+Phase 0 dev contract는 종료한다. 남은 human review와 adjudication은 Phase 6,
+Golden freeze와 release decision은 Phase 7의 후속 작업이다. 이를 이유로
+Phase 1 시작을 막지 않는다. Phase 0 종료가 runtime engine 완료나 현재
+connector capability 확대를 뜻하지는 않는다.
+
 ### Phase 1 — Snapshot envelope와 WorkSignal
+
+상태: **Completed — pure runtime normalization contract v0.1**
 
 산출물:
 
-- snapshot validity/freshness gate
-- connector별 deterministic normalizer
-- source evidence discriminated union
-- ordered snapshot window와 Codex execution timeline
+- connector native snapshot을 감싸는 strict runtime envelope
+- 현재 native field만 보존하는 connector별 deterministic normalizer
+- source evidence discriminated union과 typed `WorkSignal`
+- native observation 순서를 보존하는 window와 history sufficiency 판정
 - stable signal ID와 hash
+- runtime `WorkSignal`과 evaluation `SyntheticNormalizedSignal`의 명시적 mapping
 - normalization tests
 
 완료 조건:
 
 - 같은 snapshot과 version에서 같은 WorkSignal 출력
-- 같은 ordered snapshot window와 policy에서 같은 progress/exception 판정
+- 같은 native observation sequence에서 같은 order와 history sufficiency 출력
 - stale/truncated/failed 상태가 숨겨지지 않음
 - connector record가 가짜 conversation evidence로 변환되지 않음
+- 현재 contract에 없는 progress, stall, failure, completion, request lifecycle,
+  `isDraft`를 추론으로 채우지 않음
 - raw content와 credential이 결과에 없음
+
+Phase 1은 progress/exception detector나 최종 eligibility를 구현하는 단계가
+아니다. 현재 Codex v2의 activity와 optional summary는 의미 상태가
+`unknown`이며, ordered snapshot이 있다는 사실만으로 progress나 stall을
+판정하지 않는다. GitHub review 요청도 `isDraft`가 없으면 관찰 signal까지만
+만든다.
+
+현재 `src/crossSource/`, GitHub/Codex `toWorkSignals.ts`, runtime/evaluation
+mapper와 Phase 1 test 19개가 위 계약을 구현한다. 전체 test, typecheck, lint,
+build를 통과했으며 자세한 version과 검증 결과는
+`docs/ENGINE_CHANGE_RECORD.md`의 2026-07-26 기록을 따른다. 제품 API나
+recommendation selection에는 아직 연결하지 않았다.
 
 ### Phase 2 — GitHub + Codex observability vertical slice
 
-산출물:
+상태: **Phase 2A completed — current-contract decision runner v0.1**
 
-- GitHub direct candidate rules
-- Codex execution-state normalizer와 overview
-- 의미 있는 진전, 정체, 실패 판정 규칙
-- Codex exception/follow-through candidate rules
-- 승인·입력 대기의 state/TTL/escalation 처리
-- connector-only engine input
-- basic eligibility
-- execution overview와 suggested/no-action result
+Phase 2는 connector capability에 맞춰 두 단계로 나눈다.
+
+#### Phase 2A — current contract
+
+완료 산출물:
+
+- strict GitHub/Codex decision input과 versioned aggressive policy
+- GitHub assigned issue 직접 `do` 후보
+- draft 여부가 없는 review request의 provisional `inspect` 후보
+- current Codex v2 execution overview
+- `must_now → unblock → close_loop → focus` lane precedence의 현재 지원 부분
+- minimum score와 preference tie abstention이 없는 deterministic selection
+- scoped `no_action`, partial positive suggestion, `insufficient_evidence`
+- top 한 개, 최대 alternative 두 개, coverage/caveat/reason code
+- result stable ID와 input/result SHA-256 integrity
+
+Phase 2A의 적극 추천은 source 사실을 추측하지 않는다. eligible 또는 안전한
+provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-observed
+기본값을 보여주는 정책이다. current review request는 `isDraft = false`를
+주장하지 않고 “PR을 열어 draft 여부와 리뷰 가능 상태 확인”으로 제한한다.
 
 완료 조건:
 
-- LLM 없이 GitHub review 후보와 Codex execution overview 생성
-- 정상 running/idle Codex session을 AttentionItem으로 만들지 않음
-- 정체·실패가 검증되고 중요한 outcome과 연결된 경우에만 후보 생성
+- assigned issue가 목표·점수 없이도 suggestion이 됨
+- 동급 후보도 같은 입력에서 같은 top과 alternatives를 반환
+- current `active`, `system_error`, approval/input badge가 candidate가 되지 않음
+- stale/invalid GitHub와 unsafe destination은 적극 정책에서도 추천하지 않음
+- truncated snapshot의 확인된 positive는 provisional suggestion 가능
+- complete GitHub negative coverage에서만 scoped `no_action`
+- 제품 API와 Work Cockpit route는 아직 변경하지 않음
+
+#### Phase 2B — enriched connector contract
+
+남은 산출물:
+
+- native `isDraft`를 사용한 confirmed GitHub `review`
+- richer Codex observability contract와 실제 history persistence
+- 충분한 ordered history를 사용한 의미 있는 진전, 정체, 실패 판정 규칙
+- Codex exception/follow-through candidate rules
+- 승인·입력 대기의 stable request state/TTL/escalation 처리
+- Codex safe destination과 explicit GitHub/workflow relation
+
+완료 조건:
+
+- GitHub `review` 후보는 native `isDraft = false`를 확인
+- 정상 실행을 AttentionItem으로 만들지 않음
+- 정체·실패가 검증되고 material outcome과 연결된 경우에만 후보 생성
 - configured workflow가 없는 완료 실행에 후속조치를 추정하지 않음
 - 짧게 발생하거나 이미 해결된 승인·입력 요청을 추천하지 않음
-- authored open PR을 자동 user action으로 만들지 않음
-- source-native destination과 evidence 제공
 
 ### Phase 3 — Project mapping, lineage, conflict
 
@@ -1974,7 +2194,7 @@ suggestion/
 - deadline/blocker가 weak recency 신호보다 우선
 - 정상 Codex 실행이 ranking 후보에 들어가지 않음
 - approval/input 경과 시간만으로 `must_now`가 되지 않음
-- stable ID tie-break만으로 product top을 고르지 않음
+- stable ID 기본 선택을 더 중요하다는 근거처럼 표현하지 않고 caveat/alternative 제공
 - no-action과 insufficient-evidence 분리
 - 모든 결과에 reason code 존재
 - 같은 입력과 policy version에서 같은 결정
@@ -2111,11 +2331,11 @@ suggestion/
 51. 오래 지속된 approval도 consequence 근거 없이 `must_now`가 되지 않음
 52. GitHub review가 다른 사람을 기다리게 함
 53. current goal과 일치하는 ready task
-54. goal이 없어 두 project 후보가 동순위
+54. goal이 없어 두 project 후보가 동순위여도 deterministic default와 caveat 반환
 55. 모든 item이 waiting
 56. source가 정상이고 사용자 intervention이 없음
 57. source가 불완전해 판단할 수 없음
-58. stable ID는 다르지만 제품상 동점
+58. stable ID는 다르지만 제품상 동점이며 더 중요하다고 표현하지 않음
 
 ### Calendar와 first-step
 
@@ -2149,6 +2369,38 @@ suggestion/
 83. `sourceExecutionState=completed`이고 열린 `close_loop` AttentionItem이 gate를 통과함
 84. detector config hash만 있고 immutable reference가 없는 run은 replay 불가로 판정됨
 
+### Attention definition 정합성
+
+85. stall state는 검증됐지만 goal, obligation, block 연결이 없어 overview-only
+86. request ID 없는 현재 Codex attention badge는 overview에 남고 candidate에서는 제외
+87. 사용자 답 하나로 해결할 review-required 후보가 `no_action`보다 먼저 clarification
+88. overview-only source만 연결된 상태로 전체 attention `no_action`을 주장하지 않음
+89. overview, candidate, gate, review, decision reason code가 별도 label로 기록됨
+
+### Evaluation contract와 lifecycle
+
+90. mutable Dev Candidate가 frozen dataset hash 또는 immutable reference를 주장하면 거부됨
+91. signal이 존재하지 않거나 다른 source의 snapshot을 evidence로 참조하면 거부됨
+92. normalized snapshot의 content, time 또는 version이 바뀌면 snapshot SHA-256이 바뀜
+93. 정의되지 않은 reason code와 reason bucket 오배치가 거부됨
+94. complete candidate-capable negative coverage 없이 `no_action` label을 만들 수 없음
+95. partial source가 있는 suggestion은 positive candidate의 독립성을 명시해야 함
+96. derived Codex signal은 detector config의 immutable reference와 SHA-256을 요구함
+97. eligible first-step은 complete evidence와 source-native destination을 요구함
+98. frozen case는 작성자와 다른 두 reviewer와 adjudication reference를 요구함
+99. hash 생성 후 signal을 바꾸고 기존 snapshot hash를 유지하면 integrity 검증이 실패함
+100. detector config reference가 실제 materialized artifact로 resolve되지 않으면 run이 실패함
+101. frozen dataset의 canonical content와 dataset SHA-256이 다르면 run이 실패함
+102. non-material source 실패는 source를 표시한 scoped `no_action`으로 표현 가능함
+103. fresh complete source 사이 critical conflict는 `insufficient_evidence`로 표현 가능함
+104. threshold를 넘은 transient request는 서로 다른 ordered snapshot에 있는 같은 request ID의 history를 요구함
+105. mutable Dev Candidate의 material change는 `datasetRevision`을 증가시킴
+106. resolved/expired transient request는 overview와 candidate에서 모두 제거됨
+107. Codex execution/request signal의 source, kind, subject type 불일치가 거부됨
+108. evaluation entrypoint가 schema parse 뒤 integrity 검증을 강제함
+109. request candidate reason은 직접 참조한 request subject와 lifecycle evidence를 요구함
+110. critical conflict annotation은 실제 두 material source의 subject를 참조해야 함
+
 ---
 
 ## 25. 예상 위험과 대응
@@ -2180,22 +2432,26 @@ suggestion/
 
 ## 26. 실제 첫 구현 순서
 
-1. `CROSS_SOURCE_ATTENTION_DEFINITION.md` 작성
-2. `CROSS_SOURCE_EVALUATION_GUIDE.md`와 case schema 작성
-3. 합성 dev candidate 20~30개 작성
-4. `crossSource/types.ts`, `schema.ts`, `versions.ts` 작성
-5. snapshot validity/freshness gate와 ordered snapshot window 작성
-6. GitHub `toWorkSignals.ts` 작성
-7. Codex `toWorkSignals.ts` 작성
-8. Codex execution timeline과 meaningful-progress detector 작성
-9. Codex execution overview 작성
-10. stall/failure/follow-through/scope-drift detector 작성
-11. transient approval/input lifecycle과 escalation gate 작성
-12. connector-only candidate derivation 작성
+1. `[Phase 0 완료]` `CROSS_SOURCE_ATTENTION_DEFINITION.md` 작성
+2. `[Phase 0 완료]` `CROSS_SOURCE_EVALUATION_GUIDE.md`와 case schema 작성
+3. `[Phase 0 완료]` 합성 dev candidate 20~30개 작성
+4. `[Phase 1 완료]` `crossSource/types.ts`, `schema.ts`, `versions.ts` 작성
+5. `[Phase 1 완료]` snapshot validity/freshness gate와 ordered native observation
+   window 작성
+6. `[Phase 1 완료]` GitHub `toWorkSignals.ts` 작성. 현재 없는 `isDraft`는 unknown 유지
+7. `[Phase 1 완료]` Codex `toWorkSignals.ts` 작성. activity와 `taskSummary`의 의미
+   상태는 unknown 유지
+8. `[Phase 2A 완료]` current GitHub direct/provisional candidate와 Codex overview 작성
+9. `[Phase 2A 완료]` aggressive evidence-bound selection, scoped no-action,
+   coverage/caveat/result integrity 작성
+10. `[Phase 2B]` richer connector contract와 history가 준비된 뒤 Codex semantic
+   progress/exception timeline과 meaningful-progress detector 작성
+11. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
+12. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
 13. project mapping, identity resolver, execution-work 관계 작성
 14. claim authority resolver 작성
-15. hard eligibility와 lane classifier 작성
-16. clarification/no-action selection 작성
+15. full cross-source hard eligibility와 lane classifier 작성
+16. user-answer-required clarification route 작성
 17. Calendar free-block과 first-step 작성
 18. Notion task property mapping 작성
 19. feedback event와 evaluation runner 작성
@@ -2205,6 +2461,10 @@ suggestion/
 
 ## 27. 이 계획에서 확정한 사항
 
+- 첫 release의 사용자는 GitHub와 Codex를 함께 쓰는 AI-native 1인 개발자,
+  인디 메이커, 작은 스타트업 개발자다.
+- GitHub 또는 Codex를 사용하지 않는 사용자는 첫 release 범위 밖이다.
+- Work Cockpit을 기본 화면으로 두고 그 위에 “지금 개입할 한 가지”를 표시한다.
 - 새 엔진은 `suggestion/`의 별도 Cross-source Observation + Action Layer로
   만든다.
 - 기존 ChatGPT v0.3 계획과 구현을 즉시 대체하지 않는다.
@@ -2213,14 +2473,29 @@ suggestion/
 - GitHub는 첫 직접 후보 source로 사용한다.
 - Codex는 첫 execution-observability source로 사용하고 검증된 예외만
   AttentionItem으로 승격한다.
+- 현재 Codex v2의 semantic task/progress 상태는 기본 `unknown`이다.
+- `taskSummary`는 opt-in overview label 단서일 뿐 obligation 근거가 아니다.
+- Codex follow-through는 explicit GitHub relation 또는 사용자가 설정한 project
+  workflow가 있을 때만 생성한다.
 - 정상 Codex 실행과 최근 완료는 recommendation과 분리된 overview에 표시한다.
 - 짧은 Codex 승인·입력 요청은 일시 상태이며, 미해결 상태가 versioned
   threshold를 넘을 때만 조건부 후보가 된다.
 - Codex 실행 완료는 연결된 GitHub/Notion work item 완료를 의미하지 않는다.
 - Calendar는 기본적으로 시간 constraint다.
 - Notion은 mapped task database만 직접 후보 source로 사용한다.
-- 사용자의 명시적 primary outcome을 초기 ranking context로 받는다.
+- Calendar와 Notion은 첫 release 이후 context/constraint source로 추가한다.
+- 사용자의 명시적 primary outcome을 일주일에 한 번 또는 사용자가 변경할 때
+  초기 ranking context로 받는다.
+- Phase 2 초기 recommendation mode는 `aggressive_evidence_bound`다. 근거 있는
+  후보가 하나라도 있으면 minimum score나 preference 동점 때문에 보류하지 않는다.
+- 동급 후보는 deterministic default 한 개와 최대 두 alternatives, caveat로
+  보여주며 더 중요하다는 의미를 만들지 않는다.
+- 첫 release의 source action은 read-only이며 제안과 safe destination만 제공한다.
+- 향후 Codex history store는 최소 metadata만 최대 30일 보관하고 raw
+  prompt/response/command/output은 보관하지 않는다.
 - hard gate와 attention lane을 가중치보다 먼저 적용한다.
+- rankable lane은 `must_now`, `unblock`, `close_loop`, `focus`로 제한하고
+  clarification/no-action은 decision 단계에서 처리한다.
 - `suggested`, `needs_clarification`, `no_action`,
   `insufficient_evidence`를 모두 정상 결과로 지원한다.
 - 가중치와 threshold는 versioned hypothesis다.
@@ -2233,26 +2508,19 @@ suggestion/
 
 ## 28. 남은 제품 결정
 
-다음 질문은 Phase 0에서 명시적으로 결정해야 한다.
+다음 질문은 Phase 2A를 막지 않는 Phase 2B+ 제품·정책 결정이다.
 
-1. 첫 사용자군을 1인 개발자/메이커로 제한할 것인가?
-2. 사용자에게 primary outcome을 언제, 얼마나 자주 물을 것인가?
-3. Calendar는 free/busy만 사용할 것인가, title linking을 opt-in으로 제공할 것인가?
-4. Notion task DB property mapping UX를 어디까지 지원할 것인가?
-5. connector-only suggestion을 기존 화면에 합칠 것인가, 별도 실험 화면으로 둘 것인가?
-6. `no_action`을 어떤 문구와 cadence로 보여줄 것인가?
-7. AI가 준비할 수 있는 task를 top suggestion으로 노출할 것인가?
-8. first release에서 source write/action은 전부 제외할 것인가?
-9. Golden freeze 전에 필요한 human reviewer 수와 adjudication 절차는 무엇인가?
-10. Codex에서 작업 유형별 `meaningful progress`를 무엇으로 정의할 것인가?
-11. build, test, coding 등 phase별 stall threshold와 recovery window는 얼마인가?
-12. 어떤 project workflow에서 commit, PR, review를 예상 후속조치로 볼 것인가?
-13. scope drift의 expected baseline을 사용자 요청, 변경 파일 집합, project 설정 중
+1. Calendar는 free/busy만 사용할 것인가, title linking을 opt-in으로 제공할 것인가?
+2. Notion task DB property mapping UX를 어디까지 지원할 것인가?
+3. AI가 준비할 수 있는 task를 top suggestion으로 노출할 것인가?
+4. Golden freeze 전에 필요한 human reviewer 수와 adjudication 절차는 무엇인가?
+5. Codex에서 작업 유형별 `meaningful progress`를 무엇으로 정의할 것인가?
+6. build, test, coding 등 phase별 stall threshold와 recovery window는 얼마인가?
+7. 어떤 project workflow에서 commit, PR, review를 예상 후속조치로 볼 것인가?
+8. scope drift의 expected baseline을 사용자 요청, 변경 파일 집합, project 설정 중
     어디에서 얻을 것인가?
-14. approval/input escalation threshold와 상태 갱신 cadence는 얼마인가?
-15. Codex 현황판에서 어느 수준의 progress summary를 opt-in으로 보여주고
-    얼마나 보존할 것인가?
+9. approval/input escalation threshold와 상태 갱신 cadence는 얼마인가?
+10. Codex 현황판에서 어느 수준의 progress summary를 opt-in으로 보여줄 것인가?
 
-이 질문의 답은 구현을 막는 모든 선결 조건은 아니다. Phase 0의 dev fixture와
-GitHub + Codex observability vertical slice를 진행하면서 검증 가능한 형태로
-좁힌다.
+이 질문은 Phase 0이나 Phase 2A의 미완료 항목이 아니다. richer connector와
+history가 필요한 Phase 2B부터 평가 가능한 형태로 좁힌다.
