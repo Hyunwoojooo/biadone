@@ -7,6 +7,7 @@ import {
 } from "../src/crossSource/buildSnapshotWindow";
 import { finalizeRuntimeWorkSignalBatch } from "../src/crossSource/workSignalIntegrity";
 import { normalizeCodexSnapshotToWorkSignals } from "../src/connectors/codex/toWorkSignals";
+import { emptyCodexContentManifest } from "../src/connectors/codex/conversationContract";
 import type {
   CodexActivityState,
   CodexAttentionState,
@@ -267,13 +268,15 @@ function codexSnapshot({
   includeSession?: boolean;
 }): CodexSnapshot {
   return {
-    schemaVersion: "codex-snapshot-v2",
+    schemaVersion: "codex-snapshot-v3",
     collectorVersion: "codex-app-server-metadata-v1",
     contentMode: "metadata_only",
     codexVersion: "codex-cli 0.145.0",
     fetchedAt,
     lookbackStart: "2026-06-26T00:00:00.000Z",
     truncated,
+    conversationStoreSha256: null,
+    conversationRetentionDays: null,
     scopeIds: [SCOPE_ID],
     sessions: includeSession
       ? [
@@ -288,7 +291,8 @@ function codexSnapshot({
             createdAt: "2026-07-26T08:00:00.000Z",
             updatedAt: fetchedAt,
             activityState,
-            attentionState
+            attentionState,
+            content: emptyCodexContentManifest()
           }
         ]
       : []

@@ -7,6 +7,7 @@ import {
 } from "../../../../../src/connectors/codex/config";
 import { deleteStoredCodexConnection } from "../../../../../src/connectors/codex/localStore";
 import type { CodexConnectionState } from "../../../../../src/connectors/codex/types";
+import { noteRuntimeSourceDisconnected } from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,9 +22,18 @@ export async function POST(request: Request) {
 
   try {
     await deleteStoredCodexConnection();
+    await recordDisconnect();
     return noStoreJson({ status: "disconnected" });
   } catch (error) {
     return noStoreJson(codexErrorState(error, null), 500);
+  }
+}
+
+async function recordDisconnect(): Promise<void> {
+  try {
+    await noteRuntimeSourceDisconnected("codex");
+  } catch {
+    // Local deletion is authoritative even if sync metadata is degraded.
   }
 }
 

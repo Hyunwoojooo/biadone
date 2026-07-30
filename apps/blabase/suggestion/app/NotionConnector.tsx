@@ -1,8 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState
+} from "react";
 
 import type { NotionConnectionState } from "../src/connectors/notion/types";
+import { SourceSyncMeta } from "./sync/SourceSyncMeta";
+import { invalidateSourceConsumers } from "./sync/invalidationBus";
+import { requestSourceSync } from "./sync/sourceSyncClient";
+import {
+  useSyncInvalidation,
+  wakeSourceSyncStatus
+} from "./sync/useSourceSync";
 
 type NotionNotice = {
   tone: "success" | "neutral" | "error";
@@ -15,26 +27,79 @@ export function NotionConnector() {
   const [notice, setNotice] = useState<NotionNotice | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const mutationEpochRef = useRef(0);
+  const interactiveRefreshSequenceRef = useRef<number | null>(null);
 
-  const refreshConnection = useCallback(async () => {
-    setIsRefreshing(true);
+  const refreshConnection = useCallback(async (
+    silent = false,
+    forceRefresh = false
+  ): Promise<boolean> => {
+    if (
+      silent &&
+      interactiveRefreshSequenceRef.current !== null
+    ) {
+      return false;
+    }
+    const requestSequence = ++requestSequenceRef.current;
+    const mutationEpoch = mutationEpochRef.current;
+    if (!silent) {
+      interactiveRefreshSequenceRef.current = requestSequence;
+      setIsRefreshing(true);
+    }
     try {
+      if (forceRefresh) await requestSourceSync(["notion"]);
       const response = await fetch("/api/connectors/notion/status", {
         cache: "no-store"
       });
       if (!response.ok) throw new Error("status request failed");
       const payload = (await response.json()) as NotionConnectionState;
+      if (
+        requestSequence !== requestSequenceRef.current ||
+        mutationEpoch !== mutationEpochRef.current
+      ) {
+        return false;
+      }
       setConnection(payload);
+      return true;
     } catch {
-      setConnection({
-        status: "sync_error",
-        message: "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
-        lastSyncedAt: null
-      });
+      if (
+        requestSequence !== requestSequenceRef.current ||
+        mutationEpoch !== mutationEpochRef.current
+      ) {
+        return false;
+      }
+      if (!silent) {
+        setConnection((current) => ({
+          status: "sync_error",
+          message:
+            "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
+          lastSyncedAt:
+            current?.status === "connected"
+              ? current.lastSyncedAt
+              : current?.status === "sync_error"
+                ? current.lastSyncedAt
+                : null
+        }));
+      }
+      return false;
     } finally {
-      setIsRefreshing(false);
+      if (
+        !silent &&
+        interactiveRefreshSequenceRef.current === requestSequence
+      ) {
+        interactiveRefreshSequenceRef.current = null;
+        setIsRefreshing(false);
+      }
     }
   }, []);
+
+  const refreshAndInvalidate = useCallback(async () => {
+    const updated = await refreshConnection(false, true);
+    if (!updated) return;
+    invalidateSourceConsumers("notion", "manual_refresh");
+    wakeSourceSyncStatus();
+  }, [refreshConnection]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -54,9 +119,18 @@ export function NotionConnector() {
     void refreshConnection();
   }, [refreshConnection]);
 
+  useSyncInvalidation(["notion"], () => {
+    void refreshConnection(true);
+  });
+
   async function disconnect() {
+    mutationEpochRef.current += 1;
+    requestSequenceRef.current += 1;
+    interactiveRefreshSequenceRef.current = null;
     setIsDisconnecting(true);
+    setIsRefreshing(false);
     setNotice(null);
+    let succeeded = false;
     try {
       const response = await fetch("/api/connectors/notion/disconnect", {
         method: "POST"
@@ -67,6 +141,7 @@ export function NotionConnector() {
         tone: "neutral",
         message: "Notion 연결과 로컬 미리보기 데이터를 삭제했습니다."
       });
+      succeeded = true;
     } catch {
       setNotice({
         tone: "error",
@@ -74,6 +149,10 @@ export function NotionConnector() {
       });
     } finally {
       setIsDisconnecting(false);
+    }
+    if (succeeded) {
+      invalidateSourceConsumers("notion", "disconnect");
+      wakeSourceSyncStatus();
     }
   }
 
@@ -95,6 +174,7 @@ export function NotionConnector() {
         사용자가 선택해 공유한 페이지와 데이터 소스의 제목·수정 시각을 읽기
         전용으로 가져옵니다. 본문을 저장하거나 페이지를 수정하지 않습니다.
       </p>
+      <SourceSyncMeta source="notion" />
 
       {notice ? (
         <p
@@ -109,7 +189,7 @@ export function NotionConnector() {
         connection={connection}
         isRefreshing={isRefreshing}
         isDisconnecting={isDisconnecting}
-        onRefresh={() => void refreshConnection()}
+        onRefresh={() => void refreshAndInvalidate()}
         onDisconnect={() => void disconnect()}
       />
     </section>

@@ -11,11 +11,18 @@ import {
   type NotionConfig
 } from "../src/connectors/notion/config";
 import {
+  deleteStoredNotionConnection,
+  notionStoreGeneration,
+  notionSnapshotMatchesTokens,
+  readStoredNotionSnapshot,
   readStoredNotionTokens,
+  replaceStoredNotionConnection,
+  writeStoredNotionSnapshot,
   writeStoredNotionTokens
 } from "../src/connectors/notion/localStore";
 import {
   fetchAndStoreNotionSnapshot,
+  MAX_NOTION_PAGES,
   normalizeNotionResource
 } from "../src/connectors/notion/notionApi";
 import {
@@ -214,6 +221,34 @@ describe("Notion local connector", () => {
     expect(storedText).not.toContain("Owner");
   });
 
+  it("caps pagination even when every page contains only unsupported records", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredNotionTokens(storedTokens(), cwd);
+    let page = 0;
+    const fetchImpl = vi.fn(async () => {
+      page += 1;
+      return searchResponse({
+        has_more: true,
+        next_cursor: `cursor-${page}`,
+        results: [
+          {
+            object: "unsupported",
+            id: `unsupported-${page}`
+          }
+        ]
+      });
+    }) as unknown as typeof fetch;
+
+    const snapshot = await fetchAndStoreNotionSnapshot(testConfig(), {
+      fetchImpl,
+      cwd
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(MAX_NOTION_PAGES);
+    expect(snapshot.resources).toEqual([]);
+    expect(snapshot.truncated).toBe(true);
+  });
+
   it("refreshes and atomically replaces both tokens after a 401", async () => {
     const cwd = await createTempDirectory();
     await writeStoredNotionTokens(storedTokens(), cwd);
@@ -291,6 +326,92 @@ describe("Notion local connector", () => {
     await revokeNotionToken(testConfig(), "access-token", fetchImpl);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it("does not recreate connector state when disconnect wins an in-flight sync", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredNotionTokens(storedTokens(), cwd);
+
+    let releaseResponse!: () => void;
+    let markRequestStarted!: () => void;
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    const fetchImpl = vi.fn(async () => {
+      markRequestStarted();
+      await responseGate;
+      return searchResponse({
+        has_more: false,
+        next_cursor: null,
+        results: []
+      });
+    }) as unknown as typeof fetch;
+
+    const refresh = fetchAndStoreNotionSnapshot(testConfig(), {
+      now: new Date("2026-07-25T00:00:00.000Z"),
+      fetchImpl,
+      cwd
+    });
+    await requestStarted;
+
+    await deleteStoredNotionConnection(cwd);
+    releaseResponse();
+
+    await expect(refresh).rejects.toThrow(
+      "Notion connector state changed during operation."
+    );
+    await expect(readStoredNotionTokens(cwd)).resolves.toBeNull();
+    await expect(readStoredNotionSnapshot(cwd)).resolves.toBeNull();
+  });
+
+  it("clears the old workspace snapshot and rejects its in-flight generation on OAuth replacement", async () => {
+    const cwd = await createTempDirectory();
+    const oldTokens = storedTokens();
+    await writeStoredNotionTokens(oldTokens, cwd);
+    await writeStoredNotionSnapshot(notionSnapshot(), cwd);
+    const previousGeneration = notionStoreGeneration(cwd);
+    const replacementTokens = {
+      ...oldTokens,
+      accessToken: "replacement-access-token",
+      refreshToken: "replacement-refresh-token",
+      workspaceId: "replacement-workspace",
+      workspaceName: "replacement"
+    };
+
+    await replaceStoredNotionConnection(replacementTokens, cwd);
+
+    expect(notionStoreGeneration(cwd)).toBe(previousGeneration + 1);
+    await expect(readStoredNotionTokens(cwd)).resolves.toEqual(
+      replacementTokens
+    );
+    await expect(readStoredNotionSnapshot(cwd)).resolves.toBeNull();
+    await expect(
+      writeStoredNotionSnapshot(
+        {
+          ...notionSnapshot(),
+          fetchedAt: "2026-07-25T02:00:00.000Z"
+        },
+        cwd,
+        previousGeneration
+      )
+    ).rejects.toThrow(
+      "Notion connector state changed during operation."
+    );
+  });
+
+  it("does not accept a snapshot from a different Notion workspace", () => {
+    expect(
+      notionSnapshotMatchesTokens(notionSnapshot(), {
+        ...storedTokens(),
+        workspaceId: "different-workspace"
+      })
+    ).toBe(false);
+    expect(
+      notionSnapshotMatchesTokens(notionSnapshot(), storedTokens())
+    ).toBe(true);
+  });
 });
 
 async function createTempDirectory(): Promise<string> {
@@ -319,6 +440,18 @@ function storedTokens() {
     botId: "bot-id",
     workspaceId: "workspace-id",
     workspaceName: "blabase 테스트"
+  };
+}
+
+function notionSnapshot() {
+  return {
+    schemaVersion: "notion-snapshot-v1" as const,
+    apiVersion: NOTION_API_VERSION,
+    fetchedAt: "2026-07-25T01:00:00.000Z",
+    workspaceId: "workspace-id",
+    workspaceName: "blabase 테스트",
+    truncated: false,
+    resources: []
   };
 }
 

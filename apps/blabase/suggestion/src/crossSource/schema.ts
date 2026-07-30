@@ -175,7 +175,27 @@ export const codexSessionFieldEvidenceSchema = z
       "updated_at",
       "activity_state",
       "attention_state",
-      "content_mode"
+      "content_mode",
+      "content_state",
+      "content_source_updated_at",
+      "content_collected_at",
+      "content_expires_at",
+      "historical_turn_status",
+      "latest_turn_completed_at",
+      "turn_count",
+      "user_prompt_count",
+      "agent_response_count",
+      "command_execution_count",
+      "failed_command_count",
+      "file_change_count",
+      "tool_call_count",
+      "omitted_reasoning_item_count",
+      "omitted_unsupported_item_count",
+      "content_truncated",
+      "content_reason_codes",
+      "latest_user_prompt_excerpt",
+      "latest_agent_response_excerpt",
+      "latest_execution_summary"
     ]),
     valueSha256: sha256Schema,
     ...evidenceBase
@@ -198,7 +218,10 @@ const workSignalBase = {
   normalizerVersion: z.string().min(1).max(120),
   subjectId: z.string().min(1).max(240),
   sourceScopeId: z.string().min(1).max(240),
-  projectId: z.null(),
+  projectId: z
+    .string()
+    .regex(/^project_[a-f0-9]{32}$/)
+    .nullable(),
   observedAt: timestampSchema,
   sourceUpdatedAt: timestampSchema.nullable(),
   validUntil: timestampSchema.nullable(),
@@ -350,8 +373,29 @@ const githubActivityFactsSchema = z
   })
   .strict();
 
+const codexConversationReasonCodeSchema = z.enum([
+  "CONTENT_MODE_DISABLED",
+  "OUTSIDE_RAW_RETENTION_WINDOW",
+  "THREAD_READ_LIMIT",
+  "THREAD_READ_FAILED",
+  "THREAD_RESPONSE_INVALID",
+  "THREAD_CHANGED_DURING_READ",
+  "TURN_LIMIT",
+  "ITEM_LIMIT",
+  "FIELD_BYTE_LIMIT",
+  "THREAD_BYTE_LIMIT",
+  "UNSUPPORTED_ITEM",
+  "REASONING_EXCLUDED_BY_POLICY"
+]);
+
 const codexExecutionObservationFactsSchema = z
   .object({
+    observationMode: z.literal("inventory_only"),
+    liveObservationAvailable: z.literal(false),
+    executionState: z.literal("unknown"),
+    executionStateReason: z.literal(
+      "CODEX_INVENTORY_IS_NOT_LIVE_EXECUTION_STATE"
+    ),
     nativeActivityState: z.enum([
       "active",
       "idle",
@@ -371,6 +415,62 @@ const codexExecutionObservationFactsSchema = z
       .enum(["thread_name", "first_user_request"])
       .nullable(),
     taskSummarySemanticRole: z.literal("display_only_unknown"),
+    contentMode: z.enum([
+      "metadata_only",
+      "activity_summary",
+      "conversation_and_execution"
+    ]),
+    conversationCollectionState: z.enum([
+      "not_collected",
+      "complete",
+      "partial",
+      "stale",
+      "failed",
+      "expired"
+    ]),
+    conversationContentAvailable: z.boolean(),
+    historicalContextCompleteness: z.enum([
+      "not_collected",
+      "complete",
+      "partial",
+      "unavailable"
+    ]),
+    historicalTurnStatus: z.enum([
+      "completed",
+      "failed",
+      "interrupted",
+      "in_progress",
+      "unknown"
+    ]),
+    historicalStatusSemanticRole: z.literal(
+      "persisted_history_only"
+    ),
+    conversationSourceUpdatedAt: timestampSchema.nullable(),
+    contentCollectedAt: timestampSchema.nullable(),
+    contentExpiresAt: timestampSchema.nullable(),
+    latestTurnCompletedAt: timestampSchema.nullable(),
+    turnCount: z.number().int().nonnegative(),
+    userPromptCount: z.number().int().nonnegative(),
+    agentResponseCount: z.number().int().nonnegative(),
+    commandExecutionCount: z.number().int().nonnegative(),
+    failedCommandCount: z.number().int().nonnegative(),
+    fileChangeCount: z.number().int().nonnegative(),
+    toolCallCount: z.number().int().nonnegative(),
+    omittedReasoningItemCount: z.number().int().nonnegative(),
+    omittedUnsupportedItemCount: z.number().int().nonnegative(),
+    contentTruncated: z.boolean(),
+    contentReasonCodes: z.array(codexConversationReasonCodeSchema),
+    latestUserPromptExcerpt: z.string().min(1).max(200).nullable(),
+    latestAgentResponseExcerpt: z
+      .string()
+      .min(1)
+      .max(200)
+      .nullable(),
+    latestExecutionSummary: z.string().min(1).max(200).nullable(),
+    contentSemanticRole: z.literal("historical_context_only"),
+    contentPrivacyBoundary: z.literal(
+      "sanitized_manifest_only"
+    ),
     destinationUrl: z.null()
   })
   .strict()
@@ -396,7 +496,100 @@ const codexExecutionObservationFactsSchema = z
         code: z.ZodIssueCode.custom,
         path: ["semanticState"],
         message:
-          "Current Codex v2 cannot infer running, failure, or completion."
+          "Historical Codex context cannot infer current running, failure, or completion state."
+      });
+    }
+    const contentMetadataPresent = [
+      facts.conversationSourceUpdatedAt,
+      facts.contentCollectedAt,
+      facts.contentExpiresAt
+    ].every((value) => value !== null);
+    if (
+      facts.conversationContentAvailable !==
+      contentMetadataPresent
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationContentAvailable"],
+        message:
+          "Historical content availability and collection timestamps must agree."
+      });
+    }
+    if (
+      facts.failedCommandCount > facts.commandExecutionCount
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["failedCommandCount"],
+        message:
+          "Failed Codex command count cannot exceed command count."
+      });
+    }
+    if (
+      facts.contentMode !== "conversation_and_execution" &&
+      (facts.conversationCollectionState !== "not_collected" ||
+        facts.conversationContentAvailable ||
+        facts.historicalContextCompleteness !==
+          "not_collected" ||
+        facts.historicalTurnStatus !== "unknown" ||
+        facts.turnCount !== 0 ||
+        facts.userPromptCount !== 0 ||
+        facts.agentResponseCount !== 0 ||
+        facts.commandExecutionCount !== 0 ||
+        facts.failedCommandCount !== 0 ||
+        facts.fileChangeCount !== 0 ||
+        facts.toolCallCount !== 0 ||
+        facts.latestUserPromptExcerpt !== null ||
+        facts.latestAgentResponseExcerpt !== null ||
+        facts.latestExecutionSummary !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contentMode"],
+        message:
+          "Historical Codex context must remain absent unless explicitly enabled."
+      });
+    }
+    if (
+      !facts.conversationContentAvailable &&
+      (facts.turnCount > 0 ||
+        facts.userPromptCount > 0 ||
+        facts.agentResponseCount > 0 ||
+        facts.commandExecutionCount > 0 ||
+        facts.failedCommandCount > 0 ||
+        facts.fileChangeCount > 0 ||
+        facts.toolCallCount > 0 ||
+        facts.latestUserPromptExcerpt !== null ||
+        facts.latestAgentResponseExcerpt !== null ||
+        facts.latestExecutionSummary !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationContentAvailable"],
+        message:
+          "Historical counts and sanitized excerpts require collected content."
+      });
+    }
+    const expectedCompleteness =
+      facts.conversationCollectionState === "not_collected"
+        ? "not_collected"
+        : facts.conversationCollectionState === "complete"
+          ? facts.contentTruncated
+            ? "partial"
+            : "complete"
+          : facts.conversationCollectionState === "partial" ||
+              facts.conversationCollectionState === "stale"
+            ? "partial"
+            : "unavailable";
+    if (
+      facts.historicalContextCompleteness !==
+      expectedCompleteness
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["historicalContextCompleteness"],
+        message:
+          "Historical context completeness must match the collection manifest."
       });
     }
   });
@@ -511,7 +704,8 @@ export const runtimeWorkSignalSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["attentionCapability"],
-        message: "Current Codex v2 is overview-only."
+        message:
+          "Codex inventory and historical context are overview-only."
       });
     }
     if (
@@ -682,6 +876,50 @@ export const runtimeWorkSignalSchema = z
           message:
             "Codex display summary requires summary and source evidence."
         });
+      }
+      for (const requiredField of [
+        "content_mode",
+        "content_state",
+        "historical_turn_status",
+        "turn_count",
+        "user_prompt_count",
+        "agent_response_count",
+        "command_execution_count",
+        "failed_command_count",
+        "file_change_count",
+        "tool_call_count",
+        "content_truncated",
+        "content_reason_codes"
+      ] as const) {
+        if (!evidenceFields.has(requiredField)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["evidence"],
+            message: `Codex historical manifest requires ${requiredField} evidence.`
+          });
+        }
+      }
+      for (const [value, requiredField] of [
+        [
+          signal.facts.latestUserPromptExcerpt,
+          "latest_user_prompt_excerpt"
+        ],
+        [
+          signal.facts.latestAgentResponseExcerpt,
+          "latest_agent_response_excerpt"
+        ],
+        [
+          signal.facts.latestExecutionSummary,
+          "latest_execution_summary"
+        ]
+      ] as const) {
+        if (value !== null && !evidenceFields.has(requiredField)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["evidence"],
+            message: `Sanitized Codex context requires ${requiredField} evidence.`
+          });
+        }
       }
     }
   });

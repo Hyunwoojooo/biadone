@@ -2,11 +2,15 @@ import { z } from "zod";
 
 import type { NotionConfig } from "./config";
 import {
+  notionStoreGeneration,
   readStoredNotionTokens,
   writeStoredNotionSnapshot,
   writeStoredNotionTokens
 } from "./localStore";
-import { refreshNotionAccessToken } from "./oauth";
+import {
+  NotionOAuthError,
+  refreshNotionAccessToken
+} from "./oauth";
 import type {
   NotionResourceSignal,
   NotionSnapshot,
@@ -14,6 +18,7 @@ import type {
 } from "./types";
 
 const MAX_NOTION_RESOURCES = 200;
+export const MAX_NOTION_PAGES = 10;
 const NOTION_PAGE_SIZE = 100;
 
 const pageSearchResultSchema = z.object({
@@ -59,6 +64,7 @@ export async function fetchAndStoreNotionSnapshot(
   const now = options.now ?? new Date();
   const fetchImpl = options.fetchImpl ?? fetch;
   const cwd = options.cwd ?? process.cwd();
+  const storeGeneration = notionStoreGeneration(cwd);
   const maxResources = Math.max(
     1,
     Math.min(options.maxResources ?? MAX_NOTION_RESOURCES, 1_000)
@@ -71,10 +77,12 @@ export async function fetchAndStoreNotionSnapshot(
   let tokens = storedTokens;
   let cursor: string | undefined;
   let truncated = false;
+  let pageCount = 0;
   const seenCursors = new Set<string>();
   const resources: NotionResourceSignal[] = [];
 
   while (resources.length < maxResources) {
+    pageCount += 1;
     let response = await fetchSearchPage({
       accessToken: tokens.accessToken,
       apiVersion: config.apiVersion,
@@ -87,7 +95,8 @@ export async function fetchAndStoreNotionSnapshot(
         config,
         tokens,
         fetchImpl,
-        cwd
+        cwd,
+        storeGeneration
       );
       response = await fetchSearchPage({
         accessToken: tokens.accessToken,
@@ -120,6 +129,10 @@ export async function fetchAndStoreNotionSnapshot(
       truncated = true;
       break;
     }
+    if (pageCount >= MAX_NOTION_PAGES) {
+      truncated = true;
+      break;
+    }
     if (!page.next_cursor || seenCursors.has(page.next_cursor)) {
       throw new NotionApiError("SEARCH_RESPONSE_INVALID");
     }
@@ -136,7 +149,7 @@ export async function fetchAndStoreNotionSnapshot(
     truncated,
     resources: resources.sort(compareNotionResources)
   };
-  await writeStoredNotionSnapshot(snapshot, cwd);
+  await writeStoredNotionSnapshot(snapshot, cwd, storeGeneration);
   return snapshot;
 }
 
@@ -241,7 +254,8 @@ async function refreshTokensOrThrow(
   config: NotionConfig,
   tokens: StoredNotionTokens,
   fetchImpl: typeof fetch,
-  cwd: string
+  cwd: string,
+  storeGeneration: number
 ): Promise<StoredNotionTokens> {
   try {
     const refreshed = await refreshNotionAccessToken(
@@ -249,10 +263,17 @@ async function refreshTokensOrThrow(
       tokens,
       fetchImpl
     );
-    await writeStoredNotionTokens(refreshed, cwd);
+    await writeStoredNotionTokens(
+      refreshed,
+      cwd,
+      storeGeneration
+    );
     return refreshed;
-  } catch {
-    throw new NotionApiError("REAUTHORIZATION_REQUIRED");
+  } catch (error) {
+    if (error instanceof NotionOAuthError) {
+      throw new NotionApiError("REAUTHORIZATION_REQUIRED");
+    }
+    throw error;
   }
 }
 

@@ -14,6 +14,10 @@ import type {
   ConnectorTimelineState,
   ConnectorTimelineTimestampKind
 } from "../src/connectors/timeline/types";
+import {
+  useSyncInvalidation,
+  useVisiblePolling
+} from "./sync/useSourceSync";
 
 type ReadyTimeline = Extract<
   ConnectorTimelineState,
@@ -78,15 +82,21 @@ export function ConnectorTimeline() {
     useState<ConnectorTimelineState | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const requestSequenceRef = useRef(0);
+  const interactiveSequenceRef = useRef<number | null>(null);
 
   const refreshTimeline = useCallback(async (silent = false) => {
+    if (silent && interactiveSequenceRef.current !== null) return;
     const requestSequence = ++requestSequenceRef.current;
-    if (!silent) setIsRefreshing(true);
+    if (!silent) {
+      interactiveSequenceRef.current = requestSequence;
+      setIsRefreshing(true);
+    }
 
     try {
       const response = await fetch("/api/connectors/timeline", {
         cache: "no-store"
       });
+      if (!response.ok) throw new Error("timeline request failed");
       const payload = (await response.json()) as ConnectorTimelineState;
       if (requestSequence !== requestSequenceRef.current) return;
 
@@ -102,7 +112,11 @@ export function ConnectorTimeline() {
           "연결 데이터 타임라인을 읽지 못했습니다. 로컬 서버를 확인해주세요."
       });
     } finally {
-      if (!silent && requestSequence === requestSequenceRef.current) {
+      if (
+        !silent &&
+        interactiveSequenceRef.current === requestSequence
+      ) {
+        interactiveSequenceRef.current = null;
         setIsRefreshing(false);
       }
     }
@@ -112,20 +126,15 @@ export function ConnectorTimeline() {
     void refreshTimeline();
   }, [refreshTimeline]);
 
-  useEffect(() => {
-    const refreshIfVisible = () => {
-      if (document.visibilityState === "visible") {
-        void refreshTimeline(true);
-      }
-    };
-    const interval = window.setInterval(refreshIfVisible, 60_000);
-    document.addEventListener("visibilitychange", refreshIfVisible);
+  useSyncInvalidation(["timeline"], () => {
+    void refreshTimeline(true);
+  });
 
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-    };
-  }, [refreshTimeline]);
+  useVisiblePolling(() => refreshTimeline(true), {
+    intervalMs: 60_000,
+    maxBackoffMs: 240_000,
+    runImmediately: false
+  });
 
   const groups = useMemo(
     () => (timeline ? groupTimelineItems(timeline.items) : []),

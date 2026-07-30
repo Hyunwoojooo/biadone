@@ -1,14 +1,11 @@
 import { NextResponse } from "next/server";
 
 import {
-  fetchAndStoreCalendarSnapshot,
-  GoogleCalendarApiError
-} from "../../../../../src/connectors/googleCalendar/calendarApi";
-import {
   isLocalCalendarRequest,
   loadGoogleCalendarConfig
 } from "../../../../../src/connectors/googleCalendar/config";
 import {
+  googleCalendarSnapshotMatchesTokens,
   readStoredSnapshot,
   readStoredTokens
 } from "../../../../../src/connectors/googleCalendar/localStore";
@@ -42,47 +39,32 @@ export async function GET(request: Request) {
     return noStoreJson({ status: "disconnected" });
   }
 
-  try {
-    const now = new Date();
-    const snapshot = await fetchAndStoreCalendarSnapshot(
-      configResult.config,
-      { now }
-    );
-    const upcoming = snapshot.events.filter((event) =>
-      isUpcomingEvent(event, now)
-    );
-
-    return noStoreJson({
-      status: "connected",
-      lastSyncedAt: snapshot.fetchedAt,
-      eventCount: snapshot.events.length,
-      upcomingEventCount: upcoming.length,
-      events: upcoming.slice(0, 3).map((event) => ({
-        id: event.id,
-        title: event.title,
-        startAt: event.startAt,
-        endAt: event.endAt,
-        allDay: event.allDay
-      }))
-    });
-  } catch (error) {
-    if (
-      error instanceof GoogleCalendarApiError &&
-      error.code === "REAUTHORIZATION_REQUIRED"
-    ) {
-      return noStoreJson({
-        status: "reauthorization_required",
-        message: "Google Calendar 연결이 만료되었습니다. 다시 연결해주세요."
-      });
-    }
-
-    const previousSnapshot = await readStoredSnapshot();
+  const snapshot = await readStoredSnapshot();
+  if (!snapshot || !googleCalendarSnapshotMatchesTokens(snapshot, tokens)) {
     return noStoreJson({
       status: "sync_error",
-      message: "최근 일정을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
-      lastSyncedAt: previousSnapshot?.fetchedAt ?? null
+      message:
+        "Google Calendar 저장본이 아직 없습니다. 동기화를 잠시 기다리거나 다시 시도해주세요.",
+      lastSyncedAt: null
     });
   }
+  const now = new Date();
+  const upcoming = snapshot.events.filter((event) =>
+    isUpcomingEvent(event, now)
+  );
+  return noStoreJson({
+    status: "connected",
+    lastSyncedAt: snapshot.fetchedAt,
+    eventCount: snapshot.events.length,
+    upcomingEventCount: upcoming.length,
+    events: upcoming.slice(0, 3).map((event) => ({
+      id: event.id,
+      title: event.title,
+      startAt: event.startAt,
+      endAt: event.endAt,
+      allDay: event.allDay
+    }))
+  });
 }
 
 function isUpcomingEvent(

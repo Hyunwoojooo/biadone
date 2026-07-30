@@ -5,13 +5,10 @@ import {
   loadNotionConfig
 } from "../../../../../src/connectors/notion/config";
 import {
+  notionSnapshotMatchesTokens,
   readStoredNotionSnapshot,
   readStoredNotionTokens
 } from "../../../../../src/connectors/notion/localStore";
-import {
-  fetchAndStoreNotionSnapshot,
-  NotionApiError
-} from "../../../../../src/connectors/notion/notionApi";
 import type { NotionConnectionState } from "../../../../../src/connectors/notion/types";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
 
@@ -37,45 +34,34 @@ export async function GET(request: Request) {
     return noStoreJson({ status: "disconnected" });
   }
 
-  try {
-    const snapshot = await fetchAndStoreNotionSnapshot(configResult.config);
-    const pageCount = snapshot.resources.filter(
-      (resource) => resource.kind === "page"
-    ).length;
-    const dataSourceCount = snapshot.resources.length - pageCount;
-    return noStoreJson({
-      status: "connected",
-      workspaceName: snapshot.workspaceName,
-      lastSyncedAt: snapshot.fetchedAt,
-      resourceCount: snapshot.resources.length,
-      pageCount,
-      dataSourceCount,
-      truncated: snapshot.truncated,
-      resources: snapshot.resources.slice(0, 3).map((resource) => ({
-        id: resource.id,
-        kind: resource.kind,
-        title: resource.title,
-        lastEditedAt: resource.lastEditedAt
-      }))
-    });
-  } catch (error) {
-    if (
-      error instanceof NotionApiError &&
-      error.code === "REAUTHORIZATION_REQUIRED"
-    ) {
-      return noStoreJson({
-        status: "reauthorization_required",
-        message: "Notion 연결이 만료되었습니다. 다시 연결해주세요."
-      });
-    }
-
-    const previousSnapshot = await readStoredNotionSnapshot();
+  const snapshot = await readStoredNotionSnapshot();
+  if (!snapshot || !notionSnapshotMatchesTokens(snapshot, tokens)) {
     return noStoreJson({
       status: "sync_error",
-      message: "Notion 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
-      lastSyncedAt: previousSnapshot?.fetchedAt ?? null
+      message:
+        "현재 Notion 워크스페이스의 저장본이 아직 없습니다. 동기화를 잠시 기다리거나 다시 시도해주세요.",
+      lastSyncedAt: null
     });
   }
+  const pageCount = snapshot.resources.filter(
+    (resource) => resource.kind === "page"
+  ).length;
+  const dataSourceCount = snapshot.resources.length - pageCount;
+  return noStoreJson({
+    status: "connected",
+    workspaceName: snapshot.workspaceName,
+    lastSyncedAt: snapshot.fetchedAt,
+    resourceCount: snapshot.resources.length,
+    pageCount,
+    dataSourceCount,
+    truncated: snapshot.truncated,
+    resources: snapshot.resources.slice(0, 3).map((resource) => ({
+      id: resource.id,
+      kind: resource.kind,
+      title: resource.title,
+      lastEditedAt: resource.lastEditedAt
+    }))
+  });
 }
 
 function noStoreJson(body: NotionConnectionState) {

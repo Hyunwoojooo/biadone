@@ -4,16 +4,20 @@ import {
   isLocalGitHubRequest,
   loadGitHubConfig
 } from "../../../../../src/connectors/github/config";
-import { fetchAndStoreGitHubSnapshot } from "../../../../../src/connectors/github/githubApi";
 import {
-  deleteStoredGitHubSnapshot,
-  readStoredGitHubTokens
+  readStoredGitHubSnapshot,
+  readStoredGitHubTokens,
+  replaceStoredGitHubConnection
 } from "../../../../../src/connectors/github/localStore";
 import {
   githubOAuthStatesMatch,
   GITHUB_STATE_COOKIE
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import {
+  supersedeRuntimeSourceConnection,
+  syncRuntimeSources
+} from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,8 +45,26 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await deleteStoredGitHubSnapshot();
-    await fetchAndStoreGitHubSnapshot(configResult.config);
+    await supersedeRuntimeSourceConnection("github");
+    await replaceStoredGitHubConnection(tokens);
+    const sync = await syncRuntimeSources({
+      sources: ["github"]
+    });
+    const source = sync.sources.find(
+      (candidate) => candidate.source === "github"
+    );
+    const snapshot = await readStoredGitHubSnapshot();
+    if (
+      source?.status !== "idle" ||
+      source.lastErrorCode !== null ||
+      source.lastSuccessAt === null ||
+      !snapshot
+    ) {
+      return redirectWithClearedState(
+        request,
+        "installation_sync_pending"
+      );
+    }
     return redirectWithClearedState(request, "installation_updated");
   } catch {
     return redirectWithClearedState(request, "installation_sync_pending");

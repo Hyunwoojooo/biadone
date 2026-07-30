@@ -36,9 +36,21 @@ export function connectedCodexState(
 ): CodexConnectionState {
   const selectedScopeIds = new Set(config.selectedScopeIds);
   const canShowTaskSummaries =
-    config.contentMode === "activity_summary" &&
+    config.contentMode !== "metadata_only" &&
     config.contentConsentAt !== null &&
-    snapshot.contentMode === "activity_summary";
+    snapshot.contentMode === config.contentMode;
+  const conversationEnabled =
+    config.contentMode === "conversation_and_execution" &&
+    config.conversationConsentContract ===
+      "codex-conversation-content-consent-v1" &&
+    config.conversationConsentAt !== null &&
+    config.conversationRetentionDays === 7 &&
+    snapshot.contentMode === "conversation_and_execution" &&
+    snapshot.conversationRetentionDays === 7 &&
+    snapshot.conversationStoreSha256 !== null;
+  const contentManifests = snapshot.sessions.map(
+    (session) => session.content
+  );
 
   return {
     status: "connected",
@@ -51,6 +63,56 @@ export function connectedCodexState(
     ).length,
     truncated: snapshot.truncated,
     contentMode: config.contentMode,
+    conversationCollection: {
+      enabled: conversationEnabled,
+      retentionDays: conversationEnabled ? 7 : null,
+      consentedAt: conversationEnabled
+        ? config.conversationConsentAt
+        : null,
+      completeSessionCount: contentManifests.filter(
+        (content) => content.state === "complete"
+      ).length,
+      partialSessionCount: contentManifests.filter((content) =>
+        ["partial", "stale", "expired"].includes(content.state)
+      ).length,
+      failedSessionCount: contentManifests.filter(
+        (content) => content.state === "failed"
+      ).length,
+      storedSessionCount: contentManifests.filter(
+        (content) => content.contentSha256 !== null
+      ).length,
+      turnCount: sumContentCount(
+        contentManifests,
+        "turnCount"
+      ),
+      userPromptCount: sumContentCount(
+        contentManifests,
+        "userPromptCount"
+      ),
+      agentResponseCount: sumContentCount(
+        contentManifests,
+        "agentResponseCount"
+      ),
+      commandExecutionCount: sumContentCount(
+        contentManifests,
+        "commandExecutionCount"
+      ),
+      failedCommandCount: sumContentCount(
+        contentManifests,
+        "failedCommandCount"
+      ),
+      fileChangeCount: sumContentCount(
+        contentManifests,
+        "fileChangeCount"
+      ),
+      toolCallCount: sumContentCount(
+        contentManifests,
+        "toolCallCount"
+      ),
+      truncated:
+        snapshot.truncated ||
+        contentManifests.some((content) => content.truncated)
+    },
     sessions: snapshot.sessions.slice(0, 3).map((session) => ({
       id: session.id,
       projectLabel: session.projectLabel,
@@ -61,26 +123,80 @@ export function connectedCodexState(
         ? session.taskSummarySource
         : null,
       createdAt: session.createdAt,
-      updatedAt: session.updatedAt
+      updatedAt: session.updatedAt,
+      contentState: session.content.state,
+      historicalTurnStatus:
+        session.content.historicalTurnStatus,
+      userPromptCount: session.content.userPromptCount,
+      agentResponseCount: session.content.agentResponseCount,
+      commandExecutionCount:
+        session.content.commandExecutionCount,
+      failedCommandCount: session.content.failedCommandCount,
+      fileChangeCount: session.content.fileChangeCount,
+      toolCallCount: session.content.toolCallCount,
+      latestUserPromptExcerpt:
+        session.content.latestUserPromptExcerpt,
+      latestAgentResponseExcerpt:
+        session.content.latestAgentResponseExcerpt,
+      latestExecutionSummary:
+        session.content.latestExecutionSummary
     }))
   };
 }
 
 export function codexSnapshotMatchesConfig(
   snapshot: CodexSnapshot,
-  config: StoredCodexConfig
+  config: StoredCodexConfig,
+  now = new Date()
 ): boolean {
   const selectedIds = [...new Set(config.selectedScopeIds)].sort();
+  const conversationContentNotExpired = snapshot.sessions.every(
+    (session) =>
+      session.content.contentSha256 === null ||
+      (session.content.expiresAt !== null &&
+        Date.parse(session.content.expiresAt) > now.getTime())
+  );
+  const conversationSnapshotNotExpired =
+    Number.isFinite(Date.parse(snapshot.fetchedAt)) &&
+    Date.parse(snapshot.fetchedAt) +
+      7 * 24 * 60 * 60 * 1_000 >
+      now.getTime();
   const contentModeMatches =
     snapshot.contentMode === config.contentMode &&
     (config.contentMode === "metadata_only" ||
-      config.contentConsentAt !== null);
+      (config.contentConsentAt !== null &&
+        (config.contentMode === "activity_summary" ||
+          (config.conversationConsentAt !== null &&
+            config.conversationConsentContract ===
+              "codex-conversation-content-consent-v1" &&
+            config.conversationRetentionDays === 7 &&
+            snapshot.conversationRetentionDays === 7 &&
+            snapshot.conversationStoreSha256 !== null &&
+            conversationSnapshotNotExpired &&
+            conversationContentNotExpired))));
   return (
     contentModeMatches &&
     selectedIds.length === snapshot.scopeIds.length &&
     selectedIds.every(
       (scopeId, index) => scopeId === snapshot.scopeIds[index]
     )
+  );
+}
+
+function sumContentCount(
+  manifests: CodexSnapshot["sessions"][number]["content"][],
+  field:
+    | "turnCount"
+    | "userPromptCount"
+    | "agentResponseCount"
+    | "commandExecutionCount"
+    | "failedCommandCount"
+    | "fileChangeCount"
+    | "toolCallCount"
+): number {
+  return manifests.reduce(
+    (total, manifest) => total + manifest[field],
+    0
   );
 }
 

@@ -13,7 +13,7 @@
 | 기존 엔진 | `suggestion-engine-v0.3`은 별도 경로로 유지 |
 | 상위 계획 | `CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md` |
 | 규범 기록 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1 완료, Phase 2A decision runner 완료, 제품 runtime route 변경 없음 |
+| 구현 상태 | Phase 0·1·2A와 local Phase 2A.1 Data Pipeline Stabilization 완료 |
 
 ---
 
@@ -426,9 +426,10 @@ type AttentionCapability =
 - 그 scope의 candidate set이 complete하며
 - 결과를 바꿀 material source failure가 없어야 한다.
 
-Calendar-only 또는 현재 `codex-snapshot-v2`의 activity-only 연결만으로 전체
-attention에 대한 `no_action`을 주장하지 않는다. 현재 Codex v2는 execution
-exception에 대해 `overview_only` capability다. 제한된 source만 평가했다면
+Calendar-only 또는 현재 `codex-snapshot-v3`의 inventory/historical-context
+연결만으로 전체 attention에 대한 `no_action`을 주장하지 않는다. Codex v3가
+과거 prompt, answer와 실행 결과의 수집 상태를 제공하더라도 live execution
+exception에 대해서는 `overview_only` capability다. 제한된 source만 평가했다면
 사용자 문구와 coverage에 정확한 범위를 표시한다.
 
 ---
@@ -788,7 +789,7 @@ type CodexExecutionState =
 Codex adapter는 WorkSignal을 만들고, 공통 resolver와 gate 이전에 직접
 AttentionItem을 만들지 않는다.
 
-#### 11.2.1 현재 `codex-snapshot-v2`의 허용 범위
+#### 11.2.1 현재 `codex-snapshot-v3`의 허용 범위
 
 현재 확인 가능한 주요 필드:
 
@@ -798,6 +799,10 @@ AttentionItem을 만들지 않는다.
 - created/updated time
 - `active`, `idle`, `not_loaded`, `system_error`, `unknown`
 - `waiting_on_approval`, `waiting_on_user_input`
+- explicit `conversation_and_execution` 동의가 있는 경우 과거 turn의
+  prompt/answer/command/file/tool category count와 수집 completeness
+- 과거 마지막 turn의 persisted status와 최대 200자의 재정제된 최근
+  prompt/answer/execution clue
 
 초기 `taskSummary`의 semantic task/progress 상태는 기본적으로 `unknown`이다.
 사용자가 표시를 opt-in한 경우 Work Cockpit의 안전한 execution label을 돕는
@@ -817,9 +822,11 @@ follow-through AttentionItem 생성을 검토한다.
 | `unknown` | 불확실 상태 | `OVERVIEW_CODEX_STATE_UNKNOWN` |
 | approval/input attention | 일시 상태 badge, 추천 escalation 비활성화 | `OVERVIEW_CODEX_REQUEST_STATUS_ONLY` |
 
-현재 connector에는 stable request ID, progress marker, failure lifecycle,
-completion과 handoff 정보가 부족하다. 따라서 현재 값만으로 stall, active
-failure, completed-unclosed 또는 오래 지속된 request를 추천하지 않는다.
+과거 마지막 turn의 `completed`, `failed`, `interrupted`, `in_progress`는
+`thread/read` 시점에 저장된 history일 뿐 현재 process 상태가 아니다. 현재
+connector에는 stable current request ID, live progress marker, failure
+lifecycle, completion과 handoff 정보가 부족하다. 따라서 현재 값만으로 stall,
+active failure, completed-unclosed 또는 오래 지속된 request를 추천하지 않는다.
 
 #### 11.2.2 정상 진행
 
@@ -983,7 +990,7 @@ review
 
 request age는 candidate gate에만 사용한다. age 자체를 urgency로 사용하지 않는다.
 
-현재 `codex-snapshot-v2`에는 lifecycle 필드가 없으므로 escalation은
+현재 `codex-snapshot-v3`에도 live request lifecycle 필드가 없으므로 escalation은
 비활성화한다.
 
 허용 intervention:
@@ -1474,10 +1481,24 @@ ranking 차이는 선택 결과가 `acceptableTopItemIds` 안에 있으면 오�
 - connector는 read-only가 기본이다.
 - 추천과 외부 쓰기 권한을 분리한다.
 - Codex raw prompt, response, command, output 전체를 기본 저장하지 않는다.
-- Phase 2 초기 retention 기본값은 opt-in task summary를 포함한 최소 metadata
-  최대 30일이며 raw prompt/response/command/output retention은 `none`이다.
-- 현재 Phase 2A pure runner는 새 persistence를 만들지 않으며, 30일 정책은
-  history store 구현 시 적용할 계약이다.
+  `metadata_only`가 기본이며 기존 task-summary consent를 raw consent로
+  자동 승격하지 않는다.
+- 사용자가 `codex-conversation-content-consent-v1`에 명시적으로 동의하고
+  `conversation_and_execution`을 선택한 프로젝트만 source cap 안의 과거
+  prompt/answer/plan/command output·exit/file diff/tool result를 connector
+  전용 `.local` private artifact에 최대 7일 저장한다. 내부 reasoning은
+  수집하지 않는다.
+- opt-out, scope 변경과 disconnect는 raw consent를 먼저 비활성화하고 raw
+  artifact를 삭제한다. expiry read도 만료 artifact를 삭제한다.
+- Phase 2 metadata retention은 최대 30일이다. raw content는 snapshot,
+  WorkSignal/Attention input·result, immutable replay, monitor, sync audit,
+  제품 API, Git과 평가 dataset에 넣지 않는다. 제품 화면에는 별도 재정제를
+  거친 최대 200자 clue와 count/completeness만 허용한다.
+- Phase 2A pure runner는 persistence를 만들지 않는다. local product
+  orchestrator의 metadata-only monitor store는 30일 정책을 적용하며 title,
+  URL, task summary와 raw content는 저장하지 않는다.
+- 이 monitor store는 richer Codex 의미 판정을 위한 ordered execution
+  history가 아니다.
 - progress summary는 로컬에서 최소화하고 evidence signal로 역추적 가능해야 한다.
 - private path 대신 safe open reference 또는 hash를 사용한다.
 - Calendar는 free/busy를 기본으로 한다.
@@ -1542,11 +1563,23 @@ adjudication은 Phase 6, Golden freeze와 release decision은 Phase 7에서
 
 Phase 1은 connector native snapshot을 strict runtime artifact와 typed
 WorkSignal로 변환하고 native observation 순서와 history sufficiency를
-보존하는 pure contract로 완료했다. 현재 Codex v2의 activity, `taskSummary`,
+보존하는 pure contract로 완료했다. 현재 Codex v3의 activity, `taskSummary`,
 request badge로 progress, stall, failure 또는 lifecycle을 추론하지 않는다.
 
 Phase 2A는 current GitHub WorkSignal에서 assigned issue와 provisional review
-inspection 후보를 만들고, current Codex v2를 Work Cockpit overview로 유지하며,
+inspection 후보를 만들고, current Codex v3를 Work Cockpit overview로 유지하며,
 적극적 best-observed selection과 scoped no-action/insufficient-evidence를
-결정하는 pure runner로 완료했다. richer contract와 충분한 history를 이용한
-Codex exception detector, confirmed review와 follow-through는 Phase 2B 범위다.
+결정하는 pure runner로 완료했다. local-only API, Work Cockpit, 30일
+metadata-only run history와 Attention Lab도 연결했다. richer contract와
+충분한 ordered history를 이용한 Codex exception detector, confirmed review와
+follow-through는 Phase 2B 범위다.
+
+Phase 2A.1은 네 source의 수집을 서버 `SourceSyncCoordinator`로 통합하고,
+latest/history 분리 저장, retry·disconnect 복구, snapshot revision 기반 UI
+갱신, explicit project identity, global/project weekly outcome과
+Calendar/Notion context-only input을 local product에 연결해 완료했다. 외부
+Codex 세션은 계속 inventory-only `unknown`이며 live managed execution
+관찰은 blabase가 App Server lifecycle을 소유하는 후속 범위다.
+`conversation_and_execution`은 이 경계를 바꾸지 않고 과거 기록을
+historical-context-only로 추가한다. 이 확장의 runtime WorkSignal/Attention
+schema와 Codex normalizer/overview rule은 v0.3이다.

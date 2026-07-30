@@ -1,6 +1,13 @@
 import { NextRequest } from "next/server";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi
+} from "vitest";
 
 vi.mock("../src/connectors/github/localStore", async (importOriginal) => {
   const actual =
@@ -9,9 +16,10 @@ vi.mock("../src/connectors/github/localStore", async (importOriginal) => {
     >();
   return {
     ...actual,
-    deleteStoredGitHubSnapshot: vi.fn(async () => undefined),
-    deleteStoredGitHubTokens: vi.fn(async () => undefined),
-    readStoredGitHubTokens: vi.fn(async () => null)
+    deleteStoredGitHubConnection: vi.fn(async () => undefined),
+    readStoredGitHubSnapshot: vi.fn(async () => null),
+    readStoredGitHubTokens: vi.fn(async () => null),
+    replaceStoredGitHubConnection: vi.fn(async () => undefined)
   };
 });
 
@@ -20,10 +28,17 @@ vi.mock("../src/connectors/github/oauth", async (importOriginal) => {
     await importOriginal<typeof import("../src/connectors/github/oauth")>();
   return {
     ...actual,
+    exchangeGitHubAuthorizationCode: vi.fn(),
     refreshGitHubAccessToken: vi.fn(),
     revokeGitHubAuthorization: vi.fn(async () => undefined)
   };
 });
+
+vi.mock("../src/sync/runtime", () => ({
+  noteRuntimeSourceDisconnected: vi.fn(async () => undefined),
+  supersedeRuntimeSourceConnection: vi.fn(async () => undefined),
+  syncRuntimeSources: vi.fn()
+}));
 
 import { GET as callback } from "../app/api/connectors/github/callback/route";
 import { GET as connect } from "../app/api/connectors/github/connect/route";
@@ -31,16 +46,32 @@ import { POST as disconnect } from "../app/api/connectors/github/disconnect/rout
 import { GET as installed } from "../app/api/connectors/github/installed/route";
 import { GET as status } from "../app/api/connectors/github/status/route";
 import {
-  deleteStoredGitHubSnapshot,
-  deleteStoredGitHubTokens,
-  readStoredGitHubTokens
+  deleteStoredGitHubConnection,
+  readStoredGitHubSnapshot,
+  readStoredGitHubTokens,
+  replaceStoredGitHubConnection
 } from "../src/connectors/github/localStore";
 import {
+  exchangeGitHubAuthorizationCode,
   GITHUB_STATE_COOKIE,
   refreshGitHubAccessToken,
   revokeGitHubAuthorization
 } from "../src/connectors/github/oauth";
-import type { StoredGitHubTokens } from "../src/connectors/github/types";
+import type {
+  GitHubSnapshot,
+  StoredGitHubTokens
+} from "../src/connectors/github/types";
+import {
+  noteRuntimeSourceDisconnected,
+  supersedeRuntimeSourceConnection,
+  syncRuntimeSources
+} from "../src/sync/runtime";
+
+beforeEach(() => {
+  vi.mocked(syncRuntimeSources).mockResolvedValue(
+    syncResponse("github")
+  );
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -100,6 +131,102 @@ describe("GitHub connector routes", () => {
     )).toBe("cancelled");
   });
 
+  it("routes the post-OAuth snapshot collection through the coordinator", async () => {
+    setDevelopmentConfig();
+    const tokens = storedTokens();
+    vi.mocked(exchangeGitHubAuthorizationCode).mockResolvedValue(tokens);
+    vi.mocked(readStoredGitHubSnapshot).mockResolvedValue(
+      githubSnapshot({ installations: [{ id: 1 }] })
+    );
+
+    const response = await callback(
+      githubCallbackRequest({
+        cookieState: "expected-state",
+        queryState: "expected-state",
+        code: "oauth-code"
+      })
+    );
+
+    expect(replaceStoredGitHubConnection).toHaveBeenCalledWith(tokens);
+    expect(syncRuntimeSources).toHaveBeenCalledWith({
+      sources: ["github"]
+    });
+    expect(supersedeRuntimeSourceConnection).toHaveBeenCalledWith(
+      "github"
+    );
+    expect(
+      vi.mocked(supersedeRuntimeSourceConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(replaceStoredGitHubConnection).mock
+        .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(replaceStoredGitHubConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(syncRuntimeSources).mock.invocationCallOrder[0]!
+    );
+    expect(new URL(requiredHeader(response, "location")).searchParams.get(
+      "github"
+    )).toBe("connected");
+  });
+
+  it("reports sync pending when the coordinator records a GitHub failure", async () => {
+    setDevelopmentConfig();
+    vi.mocked(exchangeGitHubAuthorizationCode).mockResolvedValue(
+      storedTokens()
+    );
+    vi.mocked(syncRuntimeSources).mockResolvedValue(
+      syncResponse("github", {
+        status: "backoff",
+        lastSuccessAt: null,
+        lastFailureAt: "2026-07-25T10:00:01.000Z",
+        nextRetryAt: "2026-07-25T10:00:06.000Z",
+        retryCount: 1,
+        lastErrorCode: "GITHUB_API_UNAVAILABLE",
+        snapshotRevision: null
+      })
+    );
+
+    const response = await callback(
+      githubCallbackRequest({
+        cookieState: "expected-state",
+        queryState: "expected-state",
+        code: "oauth-code"
+      })
+    );
+
+    expect(readStoredGitHubSnapshot).not.toHaveBeenCalled();
+    expect(new URL(requiredHeader(response, "location")).searchParams.get(
+      "github"
+    )).toBe("connected_sync_pending");
+  });
+
+  it("keeps old GitHub credentials untouched when lineage reset persistence fails", async () => {
+    setDevelopmentConfig();
+    vi.mocked(exchangeGitHubAuthorizationCode).mockResolvedValue(
+      storedTokens()
+    );
+    vi.mocked(supersedeRuntimeSourceConnection).mockRejectedValue(
+      new Error("STORE_WRITE_FAILED")
+    );
+
+    const response = await callback(
+      githubCallbackRequest({
+        cookieState: "expected-state",
+        queryState: "expected-state",
+        code: "oauth-code"
+      })
+    );
+
+    expect(replaceStoredGitHubConnection).not.toHaveBeenCalled();
+    expect(syncRuntimeSources).not.toHaveBeenCalled();
+    expect(new URL(requiredHeader(response, "location")).searchParams.get(
+      "github"
+    )).toBe("failed");
+  });
+
   it("rejects an installation return whose state does not match", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const response = await installed(
@@ -116,6 +243,45 @@ describe("GitHub connector routes", () => {
     expect(new URL(requiredHeader(response, "location")).searchParams.get(
       "github"
     )).toBe("failed");
+  });
+
+  it("routes an installation refresh through the coordinator", async () => {
+    setDevelopmentConfig();
+    vi.mocked(readStoredGitHubTokens).mockResolvedValue(storedTokens());
+    vi.mocked(readStoredGitHubSnapshot).mockResolvedValue(
+      githubSnapshot({ installations: [{ id: 1 }] })
+    );
+
+    const response = await installed(
+      new NextRequest(
+        "http://localhost:3102/api/connectors/github/installed?state=expected",
+        {
+          headers: {
+            cookie: `${GITHUB_STATE_COOKIE}=expected`
+          }
+        }
+      )
+    );
+
+    expect(replaceStoredGitHubConnection).toHaveBeenCalledWith(
+      storedTokens()
+    );
+    expect(syncRuntimeSources).toHaveBeenCalledWith({
+      sources: ["github"]
+    });
+    expect(supersedeRuntimeSourceConnection).toHaveBeenCalledWith(
+      "github"
+    );
+    expect(
+      vi.mocked(supersedeRuntimeSourceConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(replaceStoredGitHubConnection).mock
+        .invocationCallOrder[0]!
+    );
+    expect(new URL(requiredHeader(response, "location")).searchParams.get(
+      "github"
+    )).toBe("installation_updated");
   });
 
   it("returns unavailable immediately when the GitHub App config is invalid", async () => {
@@ -163,8 +329,61 @@ describe("GitHub connector routes", () => {
       expect.objectContaining({ clientId: "Iv1.client" }),
       "new-access-token"
     );
-    expect(deleteStoredGitHubTokens).toHaveBeenCalledOnce();
-    expect(deleteStoredGitHubSnapshot).toHaveBeenCalledOnce();
+    expect(deleteStoredGitHubConnection).toHaveBeenCalledOnce();
+    await expect(response.json()).resolves.toEqual({
+      status: "disconnected",
+      remoteRevocationFailed: false
+    });
+  });
+
+  it("commits local deletion before waiting for remote revocation", async () => {
+    setDevelopmentConfig();
+    const tokens = storedTokens({
+      expiresAt: "2099-07-26T00:00:00.000Z"
+    });
+    vi.mocked(readStoredGitHubTokens).mockResolvedValue(tokens);
+    let releaseRevocation!: () => void;
+    const revocationGate = new Promise<void>((resolve) => {
+      releaseRevocation = resolve;
+    });
+    vi.mocked(revokeGitHubAuthorization).mockReturnValue(
+      revocationGate
+    );
+
+    const responsePromise = disconnect(
+      new Request(
+        "http://localhost:3102/api/connectors/github/disconnect",
+        {
+          method: "POST",
+          headers: { origin: "http://localhost:3102" }
+        }
+      )
+    );
+
+    await vi.waitFor(() => {
+      expect(deleteStoredGitHubConnection).toHaveBeenCalledOnce();
+      expect(noteRuntimeSourceDisconnected).toHaveBeenCalledWith(
+        "github"
+      );
+      expect(revokeGitHubAuthorization).toHaveBeenCalledOnce();
+    });
+    expect(
+      vi.mocked(deleteStoredGitHubConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(noteRuntimeSourceDisconnected).mock
+        .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(noteRuntimeSourceDisconnected).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(revokeGitHubAuthorization).mock
+        .invocationCallOrder[0]!
+    );
+    releaseRevocation();
+
+    const response = await responsePromise;
     await expect(response.json()).resolves.toEqual({
       status: "disconnected",
       remoteRevocationFailed: false
@@ -204,6 +423,27 @@ function callbackRequest({
   });
 }
 
+function githubCallbackRequest({
+  cookieState,
+  queryState,
+  code
+}: {
+  cookieState: string;
+  queryState: string;
+  code: string;
+}): NextRequest {
+  const url = new URL(
+    "http://localhost:3102/api/connectors/github/callback"
+  );
+  url.searchParams.set("state", queryState);
+  url.searchParams.set("code", code);
+  return new NextRequest(url, {
+    headers: {
+      cookie: `${GITHUB_STATE_COOKIE}=${cookieState}`
+    }
+  });
+}
+
 function storedTokens(
   overrides: Partial<StoredGitHubTokens> = {}
 ): StoredGitHubTokens {
@@ -217,6 +457,72 @@ function storedTokens(
     tokenType: "bearer",
     scope: "",
     ...overrides
+  };
+}
+
+function githubSnapshot(
+  overrides: {
+    installations?: Array<{ id: number }>;
+  } = {}
+): GitHubSnapshot {
+  return {
+    schemaVersion: "github-snapshot-v2",
+    appClientId: "Iv1.client",
+    appSlug: "blabase",
+    apiVersion: "2022-11-28",
+    fetchedAt: "2026-07-25T10:00:00.000Z",
+    activityWindowStart: "2026-07-18T10:00:00.000Z",
+    activitiesState: "available",
+    activitiesTruncated: false,
+    user: { id: 1, login: "nika" },
+    truncated: false,
+    installations: (overrides.installations ?? []).map(({ id }) => ({
+      id,
+      accountLogin: "nika",
+      accountType: "User" as const,
+      repositorySelection: "selected" as const,
+      suspended: false
+    })),
+    repositories: [],
+    tasks: [],
+    activities: []
+  };
+}
+
+function syncResponse(
+  source: "github",
+  overrides: Partial<{
+    status: "idle" | "syncing" | "backoff" | "disconnected" | "error";
+    lastAttemptAt: string | null;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    nextRetryAt: string | null;
+    retryCount: number;
+    lastErrorCode: string | null;
+    snapshotRevision: string | null;
+    snapshotHash: string | null;
+  }> = {}
+) {
+  return {
+    status: "ready" as const,
+    revision: "pipeline:test",
+    generatedAt: "2026-07-25T10:00:01.000Z",
+    adapterMode: "coordinator" as const,
+    sources: [
+      {
+        source,
+        status: "idle" as const,
+        lastAttemptAt: "2026-07-25T10:00:00.000Z",
+        lastSuccessAt: "2026-07-25T10:00:01.000Z",
+        lastFailureAt: null,
+        nextRetryAt: null,
+        retryCount: 0,
+        lastErrorCode: null,
+        snapshotRevision: "github:2026-07-25T10:00:00.000Z",
+        snapshotHash: "a".repeat(64),
+        ...overrides
+      }
+    ]
   };
 }
 

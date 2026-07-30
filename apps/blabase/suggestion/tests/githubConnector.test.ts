@@ -21,9 +21,13 @@ import {
   MAX_GITHUB_ACTIVITIES
 } from "../src/connectors/github/githubApi";
 import {
+  deleteStoredGitHubConnection,
+  githubStoreGeneration,
   githubLocalDirectory,
   readStoredGitHubSnapshot,
   readStoredGitHubTokens,
+  replaceStoredGitHubConnection,
+  writeStoredGitHubSnapshot,
   writeStoredGitHubTokens
 } from "../src/connectors/github/localStore";
 import {
@@ -34,6 +38,7 @@ import {
   githubOAuthStatesMatch,
   revokeGitHubAuthorization
 } from "../src/connectors/github/oauth";
+import type { GitHubSnapshot } from "../src/connectors/github/types";
 
 const temporaryDirectories: string[] = [];
 
@@ -1020,6 +1025,82 @@ describe("GitHub local connector", () => {
     });
   });
 
+  it("prevents an in-flight generation from restoring a disconnected store", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredGitHubTokens(storedTokens(), cwd);
+    const generation = githubStoreGeneration(cwd);
+
+    await deleteStoredGitHubConnection(cwd);
+
+    await expect(
+      writeStoredGitHubTokens(storedTokens(), cwd, generation)
+    ).rejects.toThrow(
+      "GitHub connector state changed during operation."
+    );
+    await expect(
+      writeStoredGitHubSnapshot(
+        minimalGitHubSnapshot("2026-07-25T01:00:00.000Z"),
+        cwd,
+        generation
+      )
+    ).rejects.toThrow(
+      "GitHub connector state changed during operation."
+    );
+    await expect(readStoredGitHubTokens(cwd)).resolves.toBeNull();
+    await expect(readStoredGitHubSnapshot(cwd)).resolves.toBeNull();
+  });
+
+  it("invalidates the prior account generation before replacing OAuth credentials", async () => {
+    const cwd = await createTempDirectory();
+    const oldTokens = storedTokens();
+    await writeStoredGitHubTokens(oldTokens, cwd);
+    await writeStoredGitHubSnapshot(
+      minimalGitHubSnapshot("2026-07-25T01:00:00.000Z"),
+      cwd
+    );
+    const previousGeneration = githubStoreGeneration(cwd);
+    const replacementTokens = {
+      ...oldTokens,
+      accessToken: "replacement-access-token",
+      refreshToken: "replacement-refresh-token"
+    };
+
+    await replaceStoredGitHubConnection(replacementTokens, cwd);
+
+    expect(githubStoreGeneration(cwd)).toBe(previousGeneration + 1);
+    await expect(readStoredGitHubTokens(cwd)).resolves.toEqual(
+      replacementTokens
+    );
+    await expect(readStoredGitHubSnapshot(cwd)).resolves.toBeNull();
+    await expect(
+      writeStoredGitHubSnapshot(
+        minimalGitHubSnapshot("2026-07-25T02:00:00.000Z"),
+        cwd,
+        previousGeneration
+      )
+    ).rejects.toThrow(
+      "GitHub connector state changed during operation."
+    );
+  });
+
+  it("does not let an older completed sync replace a newer snapshot", async () => {
+    const cwd = await createTempDirectory();
+    const newer = minimalGitHubSnapshot(
+      "2026-07-25T02:00:00.000Z"
+    );
+    const older = minimalGitHubSnapshot(
+      "2026-07-25T01:00:00.000Z"
+    );
+
+    await writeStoredGitHubSnapshot(newer, cwd);
+    await expect(
+      writeStoredGitHubSnapshot(older, cwd)
+    ).resolves.toEqual(newer);
+    await expect(readStoredGitHubSnapshot(cwd)).resolves.toEqual(
+      newer
+    );
+  });
+
   it("revokes the GitHub App authorization grant with app credentials", async () => {
     const fetchImpl = vi.fn(
       async (input: URL | RequestInfo, init?: RequestInit) => {
@@ -1214,6 +1295,25 @@ function activityEvent(
       id: 88,
       login: "SECRET_ORGANIZATION"
     }
+  };
+}
+
+function minimalGitHubSnapshot(fetchedAt: string): GitHubSnapshot {
+  return {
+    schemaVersion: "github-snapshot-v2",
+    appClientId: "Iv1.client",
+    appSlug: "blabase",
+    apiVersion: GITHUB_API_VERSION,
+    fetchedAt,
+    user: { id: 7, login: "nika" },
+    truncated: false,
+    activityWindowStart: "2026-06-25T00:00:00.000Z",
+    activitiesState: "available",
+    activitiesTruncated: false,
+    installations: [],
+    repositories: [],
+    tasks: [],
+    activities: []
   };
 }
 

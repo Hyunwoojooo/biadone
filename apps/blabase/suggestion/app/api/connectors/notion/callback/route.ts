@@ -5,15 +5,18 @@ import {
   loadNotionConfig
 } from "../../../../../src/connectors/notion/config";
 import {
-  writeStoredNotionTokens
+  replaceStoredNotionConnection
 } from "../../../../../src/connectors/notion/localStore";
-import { fetchAndStoreNotionSnapshot } from "../../../../../src/connectors/notion/notionApi";
 import {
   exchangeNotionAuthorizationCode,
   notionOAuthStatesMatch,
   NOTION_STATE_COOKIE
 } from "../../../../../src/connectors/notion/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import {
+  supersedeRuntimeSourceConnection,
+  syncRuntimeSources
+} from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,11 +52,21 @@ export async function GET(request: NextRequest) {
       configResult.config,
       code
     );
-    await writeStoredNotionTokens(tokens);
+    await supersedeRuntimeSourceConnection("notion");
+    await replaceStoredNotionConnection(tokens);
 
     let syncFailed = false;
     try {
-      await fetchAndStoreNotionSnapshot(configResult.config);
+      const sync = await syncRuntimeSources({
+        sources: ["notion"]
+      });
+      const source = sync.sources.find(
+        (candidate) => candidate.source === "notion"
+      );
+      syncFailed =
+        source?.status !== "idle" ||
+        source.lastErrorCode !== null ||
+        source.lastSuccessAt === null;
     } catch {
       syncFailed = true;
     }

@@ -224,6 +224,11 @@ export type CodexNativeObservation = {
   sourceSnapshotSha256: string;
   observedAt: string;
   sourceUpdatedAt: string;
+  observationMode: "inventory_only";
+  liveObservationAvailable: false;
+  executionState: "unknown";
+  executionStateReason:
+    "CODEX_INVENTORY_IS_NOT_LIVE_EXECUTION_STATE";
   nativeActivityState:
     | "active"
     | "idle"
@@ -289,6 +294,12 @@ export function buildCodexNativeObservationTimeline(
         sourceSnapshotSha256: signal.sourceSnapshotSha256,
         observedAt: signal.observedAt,
         sourceUpdatedAt: signal.sourceUpdatedAt ?? signal.observedAt,
+        observationMode: signal.facts.observationMode,
+        liveObservationAvailable:
+          signal.facts.liveObservationAvailable,
+        executionState: signal.facts.executionState,
+        executionStateReason:
+          signal.facts.executionStateReason,
         nativeActivityState: signal.facts.nativeActivityState,
         semanticState: signal.facts.semanticState,
         nativeAttentionState: signal.facts.nativeAttentionState,
@@ -333,7 +344,7 @@ export function buildCodexNativeObservationTimeline(
   return {
     ...withoutHash,
     timelineSha256: runtimeSha256({
-      domain: "blabase-codex-native-observation-timeline-v0.1",
+      domain: "blabase-codex-native-observation-timeline-v0.2",
       timeline: withoutHash
     })
   };

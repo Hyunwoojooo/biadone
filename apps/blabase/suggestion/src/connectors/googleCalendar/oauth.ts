@@ -100,6 +100,7 @@ export async function refreshAccessToken(
 
   const payload = await readTokenPayload(response);
   return {
+    connectionScopeId: tokens.connectionScopeId,
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token ?? tokens.refreshToken,
     expiresAt: expiresAt(payload.expires_in),

@@ -1,11 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState
+} from "react";
 
 import type {
   GitHubConnectionState,
   GitHubTaskKind
 } from "../src/connectors/github/types";
+import { SourceSyncMeta } from "./sync/SourceSyncMeta";
+import { invalidateSourceConsumers } from "./sync/invalidationBus";
+import { requestSourceSync } from "./sync/sourceSyncClient";
+import {
+  useSyncInvalidation,
+  wakeSourceSyncStatus
+} from "./sync/useSourceSync";
 
 type GitHubNotice = {
   tone: "success" | "neutral" | "error";
@@ -23,27 +35,82 @@ export function GitHubConnector() {
   const [notice, setNotice] = useState<GitHubNotice | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const mutationEpochRef = useRef(0);
+  const interactiveRefreshSequenceRef = useRef<number | null>(null);
 
-  const refreshConnection = useCallback(async (forceRefresh = false) => {
-    setIsRefreshing(true);
-    try {
-      const endpoint = forceRefresh
-        ? "/api/connectors/github/status?refresh=1"
-        : "/api/connectors/github/status";
-      const response = await fetch(endpoint, { cache: "no-store" });
-      if (!response.ok) throw new Error("status request failed");
-      const payload = (await response.json()) as GitHubConnectionState;
-      setConnection(payload);
-    } catch {
-      setConnection({
-        status: "sync_error",
-        message: "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
-        lastSyncedAt: null
-      });
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, []);
+  const refreshConnection = useCallback(
+    async (
+      forceRefresh = false,
+      silent = false
+    ): Promise<boolean> => {
+      if (
+        silent &&
+        interactiveRefreshSequenceRef.current !== null
+      ) {
+        return false;
+      }
+      const requestSequence = ++requestSequenceRef.current;
+      const mutationEpoch = mutationEpochRef.current;
+      if (!silent) {
+        interactiveRefreshSequenceRef.current = requestSequence;
+        setIsRefreshing(true);
+      }
+      try {
+        if (forceRefresh) await requestSourceSync(["github"]);
+        const response = await fetch("/api/connectors/github/status", {
+          cache: "no-store"
+        });
+        if (!response.ok) throw new Error("status request failed");
+        const payload = (await response.json()) as GitHubConnectionState;
+        if (
+          requestSequence !== requestSequenceRef.current ||
+          mutationEpoch !== mutationEpochRef.current
+        ) {
+          return false;
+        }
+        setConnection(payload);
+        return true;
+      } catch {
+        if (
+          requestSequence !== requestSequenceRef.current ||
+          mutationEpoch !== mutationEpochRef.current
+        ) {
+          return false;
+        }
+        if (!silent) {
+          setConnection((current) => ({
+            status: "sync_error",
+            message:
+              "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
+            lastSyncedAt:
+              current?.status === "connected"
+                ? current.lastSyncedAt
+                : current?.status === "sync_error"
+                  ? current.lastSyncedAt
+                  : null
+          }));
+        }
+        return false;
+      } finally {
+        if (
+          !silent &&
+          interactiveRefreshSequenceRef.current === requestSequence
+        ) {
+          interactiveRefreshSequenceRef.current = null;
+          setIsRefreshing(false);
+        }
+      }
+    },
+    []
+  );
+
+  const refreshAndInvalidate = useCallback(async () => {
+    const updated = await refreshConnection(true);
+    if (!updated) return;
+    invalidateSourceConsumers("github", "manual_refresh");
+    wakeSourceSyncStatus();
+  }, [refreshConnection]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -63,9 +130,18 @@ export function GitHubConnector() {
     void refreshConnection();
   }, [refreshConnection]);
 
+  useSyncInvalidation(["github"], () => {
+    void refreshConnection(false, true);
+  });
+
   async function disconnect() {
+    mutationEpochRef.current += 1;
+    requestSequenceRef.current += 1;
+    interactiveRefreshSequenceRef.current = null;
     setIsDisconnecting(true);
+    setIsRefreshing(false);
     setNotice(null);
+    let succeeded = false;
     try {
       const response = await fetch("/api/connectors/github/disconnect", {
         method: "POST"
@@ -79,6 +155,7 @@ export function GitHubConnector() {
           ? "로컬 데이터는 삭제했지만 GitHub 사용자 승인을 폐기하지 못했습니다. GitHub 설정의 Applications에서 직접 취소해주세요."
           : "GitHub 사용자 승인을 해제하고 로컬 미리보기 데이터를 삭제했습니다."
       });
+      succeeded = true;
     } catch {
       setNotice({
         tone: "error",
@@ -86,6 +163,10 @@ export function GitHubConnector() {
       });
     } finally {
       setIsDisconnecting(false);
+    }
+    if (succeeded) {
+      invalidateSourceConsumers("github", "disconnect");
+      wakeSourceSyncStatus();
     }
   }
 
@@ -107,6 +188,7 @@ export function GitHubConnector() {
         사용자가 선택한 저장소의 이슈·PR 제목과 상태를 읽기 전용으로
         확인합니다. 코드·본문·댓글은 저장하지 않습니다.
       </p>
+      <SourceSyncMeta source="github" />
 
       {notice ? (
         <p
@@ -121,7 +203,7 @@ export function GitHubConnector() {
         connection={connection}
         isRefreshing={isRefreshing}
         isDisconnecting={isDisconnecting}
-        onRefresh={() => void refreshConnection(true)}
+        onRefresh={() => void refreshAndInvalidate()}
         onDisconnect={() => void disconnect()}
       />
     </section>

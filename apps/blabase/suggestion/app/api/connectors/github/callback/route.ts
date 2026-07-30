@@ -5,16 +5,19 @@ import {
   loadGitHubConfig
 } from "../../../../../src/connectors/github/config";
 import {
-  deleteStoredGitHubSnapshot,
-  writeStoredGitHubTokens
+  readStoredGitHubSnapshot,
+  replaceStoredGitHubConnection
 } from "../../../../../src/connectors/github/localStore";
-import { fetchAndStoreGitHubSnapshot } from "../../../../../src/connectors/github/githubApi";
 import {
   exchangeGitHubAuthorizationCode,
   githubOAuthStatesMatch,
   GITHUB_STATE_COOKIE
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import {
+  supersedeRuntimeSourceConnection,
+  syncRuntimeSources
+} from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,15 +57,29 @@ export async function GET(request: NextRequest) {
       configResult.config,
       code
     );
-    await deleteStoredGitHubSnapshot();
-    await writeStoredGitHubTokens(tokens);
+    // Purge the previous coordinator lineage before replacement
+    // credentials become visible. If the durable reset fails, the old
+    // connection remains intact and no cross-account generation is exposed.
+    await supersedeRuntimeSourceConnection("github");
+    await replaceStoredGitHubConnection(tokens);
 
     let snapshotInstallationCount: number | null = null;
     try {
-      const snapshot = await fetchAndStoreGitHubSnapshot(
-        configResult.config
+      const sync = await syncRuntimeSources({
+        sources: ["github"]
+      });
+      const source = sync.sources.find(
+        (candidate) => candidate.source === "github"
       );
-      snapshotInstallationCount = snapshot.installations.length;
+      if (
+        source?.status === "idle" &&
+        source.lastErrorCode === null &&
+        source.lastSuccessAt !== null
+      ) {
+        const snapshot = await readStoredGitHubSnapshot();
+        snapshotInstallationCount =
+          snapshot?.installations.length ?? null;
+      }
     } catch {
       snapshotInstallationCount = null;
     }

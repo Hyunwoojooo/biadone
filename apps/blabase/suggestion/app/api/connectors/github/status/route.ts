@@ -8,10 +8,6 @@ import {
   readStoredGitHubSnapshot,
   readStoredGitHubTokens
 } from "../../../../../src/connectors/github/localStore";
-import {
-  fetchAndStoreGitHubSnapshot,
-  GitHubApiError
-} from "../../../../../src/connectors/github/githubApi";
 import type {
   GitHubConnectionState,
   GitHubSnapshot,
@@ -66,36 +62,16 @@ export async function GET(request: Request) {
     storedSnapshot.appSlug === configResult.config.appSlug
       ? storedSnapshot
       : null;
-  if (previousSnapshot && !refreshRequested(request)) {
+  if (previousSnapshot) {
     return noStoreJson(connectedState(previousSnapshot));
   }
 
-  try {
-    const snapshot = await fetchAndStoreGitHubSnapshot(configResult.config);
-    return noStoreJson(connectedState(snapshot));
-  } catch (error) {
-    if (
-      error instanceof GitHubApiError &&
-      error.code === "REAUTHORIZATION_REQUIRED"
-    ) {
-      return noStoreJson({
-        status: "reauthorization_required",
-        message: "GitHub 연결이 만료되었습니다. 다시 연결해주세요."
-      });
-    }
-
-    return noStoreJson({
-      status: "sync_error",
-      message:
-        "GitHub 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
-      lastSyncedAt: previousSnapshot?.fetchedAt ?? null
-    });
-  }
-}
-
-function refreshRequested(request: Request): boolean {
-  const refresh = new URL(request.url).searchParams.get("refresh");
-  return refresh === "1" || refresh === "true";
+  return noStoreJson({
+    status: "sync_error",
+    message:
+      "GitHub 저장본이 아직 없습니다. 동기화를 잠시 기다리거나 다시 시도해주세요.",
+    lastSyncedAt: null
+  });
 }
 
 function connectedState(snapshot: GitHubSnapshot): GitHubConnectionState {

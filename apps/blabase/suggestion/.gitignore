@@ -1,4 +1,7 @@
 .next/
 .open-next/
 .wrangler/
+.local/
+playwright-report/
+test-results/
 *.tsbuildinfo

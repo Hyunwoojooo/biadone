@@ -11,6 +11,12 @@ import {
   type Phase2Coverage
 } from "./attentionSchema";
 import {
+  unavailableCalendarAttentionSource,
+  unavailableNotionAttentionSource,
+  type CalendarAttentionSource,
+  type NotionAttentionSource
+} from "../attention/supportingSourceAdapters";
+import {
   compareRuntimeStrings,
   runtimeSha256,
   runtimeStableId
@@ -56,6 +62,8 @@ export function phase2AttentionInput(input: {
   asOf: string;
   github: Phase2AttentionInput["sources"]["github"];
   codex: Phase2AttentionInput["sources"]["codex"];
+  googleCalendar?: CalendarAttentionSource;
+  notion?: NotionAttentionSource;
   focus?: Phase2AttentionInput["focus"];
 }): Phase2AttentionInput {
   return phase2AttentionInputSchema.parse({
@@ -65,7 +73,13 @@ export function phase2AttentionInput(input: {
     policy: DEFAULT_PHASE2_ATTENTION_POLICY,
     sources: {
       github: input.github,
-      codex: input.codex
+      codex: input.codex,
+      googleCalendar:
+        input.googleCalendar ??
+        unavailableCalendarAttentionSource("SNAPSHOT_MISSING"),
+      notion:
+        input.notion ??
+        unavailableNotionAttentionSource("SNAPSHOT_MISSING")
     }
   });
 }
@@ -96,7 +110,7 @@ export function runPhase2AttentionRouter(
   assertSourceBatchIntegrity(parsed);
 
   const inputSha256 = runtimeSha256({
-    domain: "blabase-github-codex-attention-input-v0.1",
+    domain: "blabase-cross-source-attention-input-v0.3",
     input: parsed
   });
   const github = deriveGitHubCandidates(parsed);
@@ -108,6 +122,7 @@ export function runPhase2AttentionRouter(
     rankedCandidates
   );
   const codexExecutions = deriveCodexOverview(parsed);
+  const supportingContext = deriveSupportingContext(parsed);
   const coverage = deriveCoverage(
     parsed,
     github,
@@ -142,7 +157,8 @@ export function runPhase2AttentionRouter(
     coverage,
     candidateAssessments: github.assessments,
     workCockpit: {
-      codexExecutions
+      codexExecutions,
+      supportingContext
     },
     decision
   };
@@ -156,7 +172,7 @@ export function computePhase2AttentionResultSha256(
   result: Omit<Phase2AttentionResult, "resultSha256">
 ): string {
   return runtimeSha256({
-    domain: "blabase-github-codex-attention-result-v0.1",
+    domain: "blabase-cross-source-attention-result-v0.3",
     result
   });
 }
@@ -189,7 +205,10 @@ export function verifyPhase2AttentionResultIntegrity(
 function assertSourceBatchIntegrity(
   input: Phase2AttentionInput
 ): void {
-  for (const source of Object.values(input.sources)) {
+  for (const source of [
+    input.sources.github,
+    input.sources.codex
+  ]) {
     if (
       source.status === "available" &&
       !verifyRuntimeWorkSignalBatchIntegrity(source.batch).ok
@@ -436,6 +455,7 @@ function buildGitHubCandidate(
     candidateId,
     source: "github" as const,
     subjectId: signal.subjectId,
+    projectId: signal.projectId,
     sourceSignalIds: [
       signal.signalId,
       ...(deadline ? [deadline.signalId] : [])
@@ -512,6 +532,12 @@ function deriveCodexOverview(
       executionId: signal.subjectId,
       signalId: signal.signalId,
       observationId: signal.observationId,
+      observationMode: signal.facts.observationMode,
+      liveObservationAvailable:
+        signal.facts.liveObservationAvailable,
+      executionState: signal.facts.executionState,
+      executionStateReason:
+        signal.facts.executionStateReason,
       nativeActivityState: signal.facts.nativeActivityState,
       semanticState: signal.facts.semanticState,
       nativeAttentionState: signal.facts.nativeAttentionState,
@@ -521,6 +547,47 @@ function deriveCodexOverview(
       taskSummary: signal.facts.taskSummary,
       taskSummarySemanticRole:
         signal.facts.taskSummarySemanticRole,
+      contentMode: signal.facts.contentMode,
+      conversationCollectionState:
+        signal.facts.conversationCollectionState,
+      conversationContentAvailable:
+        signal.facts.conversationContentAvailable,
+      historicalContextCompleteness:
+        signal.facts.historicalContextCompleteness,
+      historicalTurnStatus:
+        signal.facts.historicalTurnStatus,
+      historicalStatusSemanticRole:
+        signal.facts.historicalStatusSemanticRole,
+      conversationSourceUpdatedAt:
+        signal.facts.conversationSourceUpdatedAt,
+      contentCollectedAt: signal.facts.contentCollectedAt,
+      contentExpiresAt: signal.facts.contentExpiresAt,
+      latestTurnCompletedAt:
+        signal.facts.latestTurnCompletedAt,
+      turnCount: signal.facts.turnCount,
+      userPromptCount: signal.facts.userPromptCount,
+      agentResponseCount: signal.facts.agentResponseCount,
+      commandExecutionCount:
+        signal.facts.commandExecutionCount,
+      failedCommandCount: signal.facts.failedCommandCount,
+      fileChangeCount: signal.facts.fileChangeCount,
+      toolCallCount: signal.facts.toolCallCount,
+      omittedReasoningItemCount:
+        signal.facts.omittedReasoningItemCount,
+      omittedUnsupportedItemCount:
+        signal.facts.omittedUnsupportedItemCount,
+      contentTruncated: signal.facts.contentTruncated,
+      contentReasonCodes: signal.facts.contentReasonCodes,
+      latestUserPromptExcerpt:
+        signal.facts.latestUserPromptExcerpt,
+      latestAgentResponseExcerpt:
+        signal.facts.latestAgentResponseExcerpt,
+      latestExecutionSummary:
+        signal.facts.latestExecutionSummary,
+      contentSemanticRole:
+        signal.facts.contentSemanticRole,
+      contentPrivacyBoundary:
+        signal.facts.contentPrivacyBoundary,
       observedAt: signal.observedAt,
       sourceUpdatedAt:
         signal.sourceUpdatedAt ?? signal.observedAt,
@@ -548,6 +615,8 @@ function deriveCoverage(
 ): Phase2Coverage {
   const githubSource = input.sources.github;
   const codexSource = input.sources.codex;
+  const calendarSource = input.sources.googleCalendar;
+  const notionSource = input.sources.notion;
   const githubReason =
     githubSource.status === "unavailable"
       ? ("SOURCE_GITHUB_UNAVAILABLE" as const)
@@ -564,6 +633,18 @@ function deriveCoverage(
         : codexSource.batch.assessment.freshness === "fresh"
         ? ("SOURCE_CODEX_OVERVIEW_ONLY" as const)
         : ("SOURCE_CODEX_STALE_OVERVIEW" as const);
+  const calendarReason =
+    calendarSource.status === "unavailable"
+      ? ("SOURCE_GOOGLE_CALENDAR_UNAVAILABLE" as const)
+      : calendarSource.freshness === "fresh"
+        ? ("SOURCE_GOOGLE_CALENDAR_SCHEDULE_CONTEXT" as const)
+        : ("SOURCE_GOOGLE_CALENDAR_STALE_CONTEXT" as const);
+  const notionReason =
+    notionSource.status === "unavailable"
+      ? ("SOURCE_NOTION_UNAVAILABLE" as const)
+      : notionSource.freshness === "fresh"
+        ? ("SOURCE_NOTION_CONTEXT_ONLY" as const)
+        : ("SOURCE_NOTION_STALE_CONTEXT" as const);
   const disposition =
     github.candidateCoverage === "complete"
       ? github.hasProvisionalContractGap
@@ -582,17 +663,78 @@ function deriveCoverage(
         ? []
         : ["github"],
     overviewOnlySources:
-      codexSource.status === "available" &&
-      codexSource.batch.assessment.usableForOverview
-        ? ["codex"]
-        : [],
-    unevaluatedSources: ["google_calendar", "notion"],
+      [
+        ...(codexSource.status === "available" &&
+        codexSource.batch.assessment.usableForOverview
+          ? (["codex"] as const)
+          : []),
+        ...(calendarSource.status === "available"
+          ? (["google_calendar"] as const)
+          : []),
+        ...(notionSource.status === "available"
+          ? (["notion"] as const)
+          : [])
+      ],
+    unevaluatedSources: [
+      ...(calendarSource.status === "unavailable"
+        ? (["google_calendar"] as const)
+        : []),
+      ...(notionSource.status === "unavailable"
+        ? (["notion"] as const)
+        : [])
+    ],
     reasonCodes: [
       githubReason,
       codexReason,
-      "SOURCE_GOOGLE_CALENDAR_UNEVALUATED",
-      "SOURCE_NOTION_UNEVALUATED"
+      calendarReason,
+      notionReason
     ]
+  };
+}
+
+function deriveSupportingContext(
+  input: Phase2AttentionInput
+): Phase2AttentionResult["workCockpit"]["supportingContext"] {
+  const calendar = input.sources.googleCalendar;
+  const notion = input.sources.notion;
+  return {
+    googleCalendar:
+      calendar.status === "available"
+        ? {
+            status: "available",
+            freshness: calendar.freshness,
+            projectId: calendar.projectId,
+            truncated: calendar.truncated,
+            upcomingConstraintCount: calendar.constraints.length,
+            nextConstraintStartAt:
+              calendar.constraints[0]?.startAt ?? null
+          }
+        : {
+            status: "unavailable",
+            freshness: null,
+            projectId: null,
+            truncated: null,
+            upcomingConstraintCount: 0,
+            nextConstraintStartAt: null
+          },
+    notion:
+      notion.status === "available"
+        ? {
+            status: "available",
+            freshness: notion.freshness,
+            resourceCount: notion.resources.length,
+            mappedResourceCount: notion.resources.filter(
+              (resource) => resource.projectId !== null
+            ).length,
+            truncated: notion.truncated
+          }
+        : {
+            status: "unavailable",
+            freshness: null,
+            resourceCount: 0,
+            mappedResourceCount: 0,
+            truncated: null
+          }
   };
 }
 
@@ -651,8 +793,12 @@ function deriveDecision(
 ): Phase2AttentionResult["decision"] {
   const commonCaveats: Phase2CaveatCode[] = [
     "CAVEAT_CODEX_EXCEPTION_CONTRACT_UNAVAILABLE",
-    "CAVEAT_GOOGLE_CALENDAR_UNEVALUATED",
-    "CAVEAT_NOTION_UNEVALUATED"
+    input.sources.googleCalendar.status === "available"
+      ? "CAVEAT_GOOGLE_CALENDAR_CONTEXT_ONLY"
+      : "CAVEAT_GOOGLE_CALENDAR_UNEVALUATED",
+    input.sources.notion.status === "available"
+      ? "CAVEAT_NOTION_CONTEXT_ONLY"
+      : "CAVEAT_NOTION_UNEVALUATED"
   ];
   if (
     focusContext.present &&
@@ -690,7 +836,10 @@ function deriveDecision(
       caveatCodes,
       scopeStatement:
         coverage.disposition === "scoped_complete"
-          ? "현재 평가 가능한 GitHub 작업 범위에서 한 가지를 제안합니다. Codex는 실행 현황만 평가했고 Notion과 Google Calendar는 이번 판단에서 평가하지 않았습니다."
+          ? supportingScopeStatement(
+              input,
+              "현재 평가 가능한 GitHub 작업 범위에서 한 가지를 제안합니다."
+            )
           : "현재 확인된 GitHub 작업 중 한 가지를 임시 제안합니다. 일부 후보 또는 source capability는 아직 평가하지 못했습니다."
     };
   }
@@ -704,7 +853,10 @@ function deriveDecision(
       reasonCodes: ["DECISION_SCOPED_NO_ACTION"],
       caveatCodes: uniqueSorted(commonCaveats),
       scopeStatement:
-        "현재 평가 가능한 GitHub 작업 범위에서는 사용자가 직접 개입할 항목이 없습니다. Codex는 실행 현황만 평가했고 Notion과 Google Calendar는 이번 판단에서 평가하지 않았습니다."
+        supportingScopeStatement(
+          input,
+          "현재 평가 가능한 GitHub 작업 범위에서는 사용자가 직접 개입할 항목이 없습니다."
+        )
     };
   }
 
@@ -720,6 +872,24 @@ function deriveDecision(
     scopeStatement:
       "현재 GitHub 후보 범위가 오래됐거나 불완전하여 개입할 한 가지를 안전하게 판단할 수 없습니다."
   };
+}
+
+function supportingScopeStatement(
+  input: Phase2AttentionInput,
+  prefix: string
+): string {
+  const supporting: string[] = [];
+  if (input.sources.googleCalendar.status === "available") {
+    supporting.push("Google Calendar 일정은 시간 맥락으로");
+  }
+  if (input.sources.notion.status === "available") {
+    supporting.push("Notion 항목은 프로젝트 맥락으로");
+  }
+  const supportingText =
+    supporting.length === 0
+      ? "Notion과 Google Calendar는 이번 판단에서 평가하지 않았습니다."
+      : `${supporting.join(", ")} 반영했지만 직접 행동 후보로 만들지는 않았습니다.`;
+  return `${prefix} Codex는 현재 실행 상태가 아닌 저장된 이력의 정제된 맥락만 표시했고 ${supportingText}`;
 }
 
 function compareRankedCandidates(

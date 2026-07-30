@@ -28,9 +28,10 @@ export function computeNormalizationInputSha256(input: {
   normalizerVersion: string;
   asOf: string;
   freshnessPolicy: FreshnessPolicy;
+  contextRegistrySha256?: string | null;
 }): string {
   return runtimeSha256({
-    domain: "blabase-runtime-normalization-input-v0.1",
+    domain: "blabase-runtime-normalization-input-v0.3",
     workSignalContract: RUNTIME_WORK_SIGNAL_CONTRACT,
     ...input
   });

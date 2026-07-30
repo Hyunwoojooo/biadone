@@ -37,6 +37,8 @@ import {
 export type GitHubNormalizationOptions = {
   asOf: string;
   freshnessPolicy: FreshnessPolicy;
+  contextRegistrySha256?: string | null;
+  resolveProjectId?: (sourceScopeId: string) => string | null;
 };
 
 export function normalizeGitHubSnapshotToWorkSignals(
@@ -92,7 +94,8 @@ export function normalizeGitHubSnapshotToWorkSignals(
         artifact.sourceSnapshotSha256,
         artifact.fetchedAt,
         assessment.truncated,
-        issues
+        issues,
+        options.resolveProjectId
       );
       signals.push(...normalized);
     }
@@ -119,7 +122,8 @@ export function normalizeGitHubSnapshotToWorkSignals(
           activity,
           artifact.sourceSnapshotSha256,
           artifact.fetchedAt,
-          assessment.truncated
+          assessment.truncated,
+          options.resolveProjectId
         )
       );
     }
@@ -145,7 +149,9 @@ export function normalizeGitHubSnapshotToWorkSignals(
         sourceSchemaVersion: artifact.sourceSchemaVersion,
         normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
         asOf: assessment.asOf,
-        freshnessPolicy: options.freshnessPolicy
+        freshnessPolicy: options.freshnessPolicy,
+        contextRegistrySha256:
+          options.contextRegistrySha256 ?? null
       }),
       assessment,
       skippedRecordCount,
@@ -160,10 +166,14 @@ function normalizeTask(
   snapshotSha256: string,
   observedAt: string,
   truncated: boolean,
-  issues: NormalizationIssue[]
+  issues: NormalizationIssue[],
+  resolveProjectId:
+    | ((sourceScopeId: string) => string | null)
+    | undefined
 ): RuntimeWorkSignal[] {
   const subjectId = githubSubjectId(task.id);
   const sourceScopeId = `repository:${task.repositoryId}`;
+  const projectId = resolveProjectId?.(sourceScopeId) ?? null;
   const relationship = relationshipFor(task.kind);
   const destinationUrl = safeGitHubDestination(task);
   if (destinationUrl === null) {
@@ -184,7 +194,7 @@ function normalizeTask(
     subjectId,
     subjectType: "work_item",
     sourceScopeId,
-    projectId: null,
+    projectId,
     kind: "work_item_observation",
     facts: {
       objectType:
@@ -252,7 +262,7 @@ function normalizeTask(
     subjectId,
     subjectType: "work_item",
     sourceScopeId,
-    projectId: null,
+    projectId,
     kind: "deadline_observation",
     facts: {
       deadlineAt: task.milestoneDueAt,
@@ -306,7 +316,10 @@ function normalizeActivity(
   activity: GitHubUserActivitySignal,
   snapshotSha256: string,
   observedAt: string,
-  truncated: boolean
+  truncated: boolean,
+  resolveProjectId:
+    | ((sourceScopeId: string) => string | null)
+    | undefined
 ): RuntimeWorkSignal {
   const subjectId = githubActivitySubjectId(activity.id);
   const facts = {
@@ -322,6 +335,7 @@ function normalizeActivity(
     reviewState: activity.reviewState,
     semanticRole: "activity_only" as const
   };
+  const sourceScopeId = `repository:${activity.repositoryId}`;
   return finalizeRuntimeWorkSignal({
     contract: RUNTIME_WORK_SIGNAL_CONTRACT,
     sourceSnapshotSha256: snapshotSha256,
@@ -329,8 +343,8 @@ function normalizeActivity(
     source: "github",
     subjectId,
     subjectType: "source_activity",
-    sourceScopeId: `repository:${activity.repositoryId}`,
-    projectId: null,
+    sourceScopeId,
+    projectId: resolveProjectId?.(sourceScopeId) ?? null,
     kind: "activity_observation",
     facts,
     observedAt,

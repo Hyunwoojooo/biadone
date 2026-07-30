@@ -3,12 +3,14 @@
 > 첫 release에서는 GitHub와 Codex를 함께 쓰는 개발자의 실행 상태를
 > 가시화하고, 사용자가 지금 개입할 가치가 가장 큰 열린 루프 하나를 근거와
 > 함께 제안하는 Execution Observability + Action/Recommendation Layer 계획.
-> Notion과 Google Calendar는 초기 release 이후의 context/constraint source다.
+> GitHub는 현재 직접 후보 source이고, Codex는 inventory와 opt-in historical
+> conversation/execution context를 제공하는 overview-only source다. Notion과
+> Google Calendar는 각각 project/schedule context source다.
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.6 |
-| 기준일 | 2026-07-26 |
+| 문서 상태 | Phase 0 dev contract closed, Draft v0.8 |
+| 기준일 | 2026-07-29 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
@@ -16,7 +18,7 @@
 | Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
 | Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1 완료, Phase 2A decision vertical slice 완료, 제품 route 미연결 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization과 Codex historical capture v0.1 완료 |
 
 ---
 
@@ -168,9 +170,11 @@ Codex 작업은 각각 어디까지 진행됐는가?
   더 빨리 찾고 싶어 한다.
 
 GitHub 또는 Codex를 사용하지 않는 사용자는 첫 release의 지원 대상이 아니다.
-Notion과 Google Calendar는 초기 핵심 가치가 검증된 뒤 project context,
-mapped task, 시간 constraint를 보강하는 source로 추가한다. 연결돼 있더라도
-초기 GitHub + Codex 판단에서 평가하지 않은 source임을 숨기지 않는다.
+Phase 2A.1부터 Notion과 Google Calendar snapshot을 각각 project context와
+schedule context로 Attention input에 연결한다. 다만 mapped Notion task와
+Calendar 기반 first-step fit은 아직 직접 후보가 아니며, GitHub candidate
+coverage를 대신하지 않는다. unavailable source와 context-only capability를
+결과에서 숨기지 않는다.
 
 이 범위는 제품 구현 결정을 위한 초기 가설이다. dogfooding, 인터뷰와 실제
 사용 패턴으로 검증하되, 일반 생산성 사용자까지 먼저 확장하지 않는다.
@@ -206,16 +210,23 @@ AI가 당신의 우선순위를 정확히 파악함
 ### 4.1 지금 고정할 계약
 
 - 원본 source와 evidence lineage 보존
+- source refresh를 서버 coordinator 하나로 통과시키고 source별 시도, 성공,
+  실패, backoff와 snapshot revision을 보존
+- current snapshot과 ordered sanitized sync history 분리
 - source별 허용 scope와 freshness 표시
 - 완료, 취소, 대체 항목 제외
 - 사용자의 실제 개입이 필요한지 검증
 - 정상 진행 중인 Codex 실행은 추천하지 않고 overview에만 표시
+- Codex thread inventory와 blabase가 소유한 managed App Server event stream을
+  구분하고 inventory에는 live execution state를 부여하지 않음
 - Codex 승인·입력 요청의 발생, 해결, 만료 수명주기 검증
 - 해결되거나 만료된 일시적 attention 신호 즉시 제외
 - Codex 실행 완료와 GitHub/Notion task 완료를 분리
 - 근거 없는 마감, 영향, 긴급성 생성 금지
 - source claim 충돌을 덮어쓰지 않고 보존
 - 낮은 확신의 cross-source fuzzy merge 금지
+- project mapping은 opaque native reference와 explicit user confirmation만으로
+  확정
 - `needs_clarification`, `no_action`, `insufficient_evidence` 지원
 - 추천과 외부 쓰기 또는 자동 실행 권한 분리
 - 원본 값과 사용자 correction 분리
@@ -256,7 +267,12 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 ### 5.1 포함
 
 - 첫 release의 candidate-capable source는 GitHub로 제한
-- 첫 release의 Codex 역할은 current contract 범위의 execution overview
+- 첫 release의 Codex 역할은 current inventory-only contract 범위의 execution
+  overview
+- 네 source를 관리하는 server-side `SourceSyncCoordinator`
+- source별 latest attempt/success/failure, retry/backoff와 ordered sanitized
+  attempt history
+- snapshot revision 기반 Work Cockpit/Attention Lab 자동 invalidation
 - 사용자가 선택한 connector scope만 사용
 - connector snapshot validity와 freshness 검사
 - source별 `WorkSignal` 정규화
@@ -264,8 +280,8 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 - Codex 실행별 진행 상태와 최근 의미 있는 진전 overview
 - 검증된 Codex 정체, 실패, 완료 후 후속조치 누락 후보
 - 오래 지속되고 아직 유효한 Codex 승인·입력 대기만 조건부 후보
-- Google Calendar 기반 free-block과 실행 적합성
-- 명시적으로 매핑된 Notion task database 후보
+- Google Calendar schedule context. free-block과 실행 적합성은 후속 단계
+- Notion project context. 명시적으로 매핑된 task database 후보는 후속 단계
 - 선택적인 기존 ChatGPT conversation candidate
 - 사용자 입력 `이번 주 최우선 결과` 한 줄
 - source-native ID, explicit link, user mapping 기반 lineage
@@ -305,15 +321,18 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 
 ```text
 GitHub review/assigned issue
-+ Codex current-contract execution activity overview
++ Codex inventory-only execution overview
++ Google Calendar schedule context
++ Notion project context
 + 사용자의 이번 주 목표 한 줄
 → Codex execution overview
 → top / clarification / scoped no-action / insufficient-evidence
 ```
 
-Google Calendar는 이후 first-step 시간 적합성을 보강하고, Notion은 task DB
-property mapping이 구현된 후 직접 후보 소스로 추가한다. 둘은 초기
-vertical slice의 completion을 막지 않는다.
+Google Calendar와 Notion은 Phase 2A.1부터 실제 Attention input, coverage와
+Work Cockpit supporting context에 들어간다. Calendar event와 일반 Notion
+resource 자체는 후보가 아니다. Calendar first-step 적합성과 Notion task DB
+property mapping이 구현된 뒤에만 직접 결정 의미를 확대한다.
 
 현재 Codex v2의 `active`와 `taskSummary`는 progress, stall, failure 또는
 사용자 obligation을 증명하지 않는다. 승인·입력 상태도 overview badge로만
@@ -322,6 +341,9 @@ ordered history가 생긴 뒤 Phase 2B detector에서만 예외 판정을 활성
 
 `이번 주 최우선 결과`는 onboarding이나 매 화면마다 반복해서 묻지 않는다.
 기본 cadence는 일주일에 한 번이며, 사용자가 직접 변경할 때 즉시 갱신한다.
+project registry가 아직 없는 첫 사용자도 global outcome을 Attention focus로
+받는다. 하나의 project가 resolve되면 project outcome을 우선하고, override가
+없으면 global outcome으로 fallback한다.
 
 ---
 
@@ -389,6 +411,12 @@ type CrossSourceSuggestionStatus =
 ## 7. 전체 파이프라인
 
 ```text
+Server SourceSyncCoordinator
+       ↓
+Latest Connector Snapshots + Ordered Sanitized Attempt History
+       ↓ snapshot revision
+UI Invalidation / Stored Snapshot Reload
+       ↓
 Current + Prior Source Snapshots + Optional Conversation Candidates
                          ↓
            Snapshot Validity / Freshness Gate
@@ -396,6 +424,10 @@ Current + Prior Source Snapshots + Optional Conversation Candidates
                Source-specific Normalizers
                          ↓
                     WorkSignal[]
+                         +
+      Explicit Project Mapping / Weekly Outcome
+                         +
+       Calendar Schedule / Notion Project Context
                          ↓
       Codex Timeline / Meaningful Progress / Request Lifecycle
                          ├──────────────→ Codex Execution Overview
@@ -424,7 +456,13 @@ Current + Prior Source Snapshots + Optional Conversation Candidates
 점수를 얻지는 않는다. 같은 실행에서 검증된 예외가 있을 때만 별도의
 AttentionItem을 파생한다.
 
-Codex의 정체와 진전은 단일 snapshot으로 판단하지 않는다. 동일 execution의
+현재 `thread/list` collector는 inventory-only이므로
+`liveObservationAvailable=false`, execution state `unknown`으로 보존한다.
+inventory history는 목록 관찰의 순서만 제공하며 progress/stall detector에
+사용하지 않는다.
+
+향후 managed Codex의 정체와 진전은 단일 snapshot으로 판단하지 않는다. 동일
+execution의
 순서가 보존된 현재·이전 snapshot window에서 `lastActivityAt`과
 `lastMeaningfulProgressAt`을 분리해 계산한다. heartbeat, 동일 로그 반복,
 단순 polling은 activity일 수 있지만 정체 시간을 초기화하는 meaningful
@@ -463,6 +501,78 @@ Phase 1 runtime 계약은
 평가용 `SyntheticNormalizedSignal`과 별개의 계약이다.
 
 ### 8.1 Snapshot envelope
+
+Phase 2A.1 operational sync는 GitHub, Codex, Notion, Google Calendar 전체에
+공통 계약을 적용한다.
+
+```ts
+type SourceSyncState = {
+  source: "github" | "codex" | "notion" | "google_calendar";
+  status:
+    | "disabled"
+    | "never_synced"
+    | "syncing"
+    | "ready"
+    | "retry_wait";
+  retryCount: number;
+  nextDueAt: string | null;
+  lastAttempt: SourceSyncAttempt | null;
+  lastSuccess: SourceSyncAttempt | null;
+  lastFailure: SourceSyncAttempt | null;
+  latestSnapshot: {
+    revision: string;
+    hash: string;
+    itemCount: number;
+    syncedAt: string;
+  } | null;
+};
+```
+
+`SourceSyncCoordinator`는 source별 single-flight, due schedule와 exponential
+backoff를 관리한다. latest state와 ordered attempt history는 각각
+`.local/sync/latest.json`, `.local/sync/history.json`에 분리 저장한다. history는
+snapshot payload나 provider detail 없이 timing, revision/hash/count,
+retry count와 sanitized error code만 가진다.
+두 projection을 갱신하기 전 exact target과 attempt를
+`.local/sync/settlements.json`의 `source-sync-settlement-v1`으로 먼저
+기록한다. history→latest 중간 실패는 같은 process에서 즉시 확인·복구하고,
+연속 실패나 crash는 다음 read/mutation 또는 재시작 때 저장된 target을 그대로
+재생한다.
+다른 source commit이 이 journal을 먼저 복구하면 recovered disk latest를
+authoritative base로 사용하고 새 source state만 병합한 뒤 그 store를
+coordinator memory에도 반환한다. journal recovery가 없는 정상 commit은
+caller latest 전체를 유지하므로 adapter-registration normalization은
+그대로 persistence된다. journal target 적용 전에는 transition 보호 대상이
+아닌 source의 retained history와 latest `lastAttempt`가 모순되지 않는지
+교차검증한다.
+같은 authoritative handoff는 `beginTransition`, `updateTransition`,
+`completeTransition`에도 적용한다. 다른 source reset/disconnect가 journal을
+복구하면 recovered latest에 transition source target만 병합하고 그 결과를
+coordinator memory에 되돌린다.
+coordinator는 sync와 reset/disconnect intent 준비 전에도 journal recovery를
+선택적으로 수행한다. 따라서 같은 source disconnect의 `previous`,
+`retryCount`, `lastSuccess`와 attempt가 recovered state에서 만들어진다.
+adapter가 없는 source는 transition/pending 확인 뒤 즉시 skip한다. 실제 등록된
+adapter는 unrelated transition이 있어도 settlement queue를 무조건 통과한 뒤
+current/due/previous snapshot을 읽고 실행한다.
+
+connector connect/callback, Codex refresh/content mode,
+`POST /api/attention`과 `evaluateCurrentAttention({refreshSources:true})`의
+명시적 snapshot collection도 coordinator를 통과한다.
+`CONNECTOR_DISCONNECTED`, `REAUTHORIZATION_REQUIRED`와 명시적인
+refresh-token 부재·만료는 persisted `disabled`와 `nextDueAt=null`로 남아
+scheduled retry를 멈추고, reconnect 뒤 manual sync가 성공하면 `ready`로
+복구한다.
+
+`GET /api/sync/status`와 `GET /api/attention`은 side-effect-free read다.
+visible UI는 same-origin `POST /api/sync/start`로 local background scheduler를
+명시적으로 시작한다. start 응답은 외부 source collection을 기다리지 않고
+due timer를 arm한 직후 반환한다. GitHub/Notion/Calendar provider HTTP 요청은
+요청당 15초 상한을 가지며, manual sync mutation도 완료 뒤 scheduler 유지를
+보장한다.
+
+Cross-source semantic normalization의 current envelope는 GitHub와 Codex
+`WorkSignalBatch`에 적용한다.
 
 ```ts
 type RuntimeSource = "github" | "codex";
@@ -540,7 +650,7 @@ GitHub assigned/review/authored 의미는 object field가 아니라 API query me
 
 ```ts
 type RuntimeWorkSignal = {
-  contract: "runtime-work-signal-v0.1";
+  contract: "runtime-work-signal-v0.2";
   signalId: string;       // snapshot 사이에 유지되는 claim identity
   observationId: string;  // 특정 snapshot의 observation identity
   signalHash: string;
@@ -550,7 +660,7 @@ type RuntimeWorkSignal = {
   subjectId: string;
   subjectType: "work_item" | "source_activity" | "execution";
   sourceScopeId: string;
-  projectId: null;        // Phase 3 mapping 전에는 항상 null
+  projectId: string | null; // explicit active mapping이 있을 때만 값 존재
   kind:
     | "work_item_observation"
     | "deadline_observation"
@@ -576,9 +686,14 @@ snapshot이 달라도 유지되고, `observationId`와 `signalHash`는 snapshot�
 관찰값 변경을 반영한다. batch는 source snapshot hash, normalization input
 hash, deterministic signal order, sanitized issue와 batch hash를 기록한다.
 
+v0.2에서는 GitHub repository와 Codex scope를 explicit work-context registry로
+조회해 `projectId`를 주입한다. mapping이 없거나 proposal 상태인 경우에는
+`null`을 유지하며 source label/path 유사성으로 project를 추론하지 않는다.
+
 GitHub authored PR과 activity는 `overview_only`다. review request는
 `draftState = unknown`, `eligibilityLimit = draft_state_unknown`을 보존한다.
-Codex `active`와 `system_error`는 semantic state `unknown`이며
+Codex inventory의 `active`, `not_loaded`, `system_error`는 live execution
+state `unknown`이며
 approval/input은 `overview_badge_only`다. Phase 1 schema에는
 execution exception, completion, progress 또는 request lifecycle kind 자체가
 없다.
@@ -590,6 +705,43 @@ evaluation-only signal과 normalized snapshot SHA-256을 만든다.
 ### 8.4 Codex execution overview
 
 Codex의 진행 가시성은 추천 결과와 분리된 1급 출력으로 둔다.
+
+현재 Phase 2A.1 output은 inventory-only다.
+
+```ts
+type CurrentCodexOverviewItem = {
+  observationMode: "inventory_only";
+  liveObservationAvailable: false;
+  executionState: "unknown";
+  waitingState: null;
+  sourceEvent: "thread_inventory";
+  executionStateReason:
+    "CODEX_INVENTORY_IS_NOT_LIVE_EXECUTION_STATE";
+  nativeActivityState:
+    | "active"
+    | "idle"
+    | "not_loaded"
+    | "system_error"
+    | "unknown";
+  forbiddenAsAttentionCandidate: true;
+};
+```
+
+`not_loaded`는 stopped, failed 또는 completed가 아니라 “이 inventory
+connection으로 live 실행을 관찰할 수 없음”이다. current snapshot마다
+metadata-only observation을 strict sequence order로 최대 30일 저장하지만,
+polling inventory history는 progress/stall/completion evidence가 아니다.
+`codex-execution-observation-v2`는 위 inventory tuple을 exact하게 검증한다.
+따라서 snapshot의 overview-only approval/input badge를 observation
+`waitingState`로 저장하거나 managed 전용 reason/event를 섞을 수 없다.
+semantically valid한 persisted v1 observation/history는 read 시 v2로
+정규화하고 다음 정상 append에서 v2로 교체하지만, malformed v1은 fail
+closed한다.
+
+`running`, `completed`, `failed`, `interrupted`는 blabase가 long-lived App
+Server connection을 소유하고 `thread/status/changed`, turn/item event를 직접
+받는 `managed_event_stream`에서만 허용한다. 아래는 그 managed runtime과
+Phase 2B detector가 완성된 뒤의 목표형이다.
 
 ```ts
 type CodexExecutionState =
@@ -763,6 +915,18 @@ type UserFocusContext = {
 도구는 존재와 상태를 알려주지만 사용자의 실제 중요 목표를 완전히 알 수 없다.
 초기에는 한 줄의 명시적 `primaryOutcome`을 받는다.
 
+Phase 2A.1 store는 global outcome(`projectId=null`)과 project-scoped outcome을
+모두 7일 cadence로 보존한다. Attention run에 들어온 네 source scope를 explicit
+registry로 resolve했을 때 active project가 하나면 해당 project outcome을
+우선하고, 없으면 global outcome으로 fallback한다. 여러 project가 충돌하거나
+registry가 없으면 project relation을 만들지 않는다.
+
+현재 Work Cockpit의 `/api/context/weekly-outcome` UI는 global 한 줄을
+capture/update한다. project-scoped 편집 UX는 후속 작업이지만 store,
+resolution과 Attention input 계약은 이를 지원한다.
+registry store가 아직 없는 첫 사용자 경로도 active global outcome을
+Attention에 전달한다.
+
 ### 8.8 Recommendation decision
 
 ```ts
@@ -843,6 +1007,13 @@ branch가 다음 두 출력을 만든다.
 adapter나 exception detector가 `AttentionItem`을 직접 만들면 안 된다.
 exception signal도 project mapping, relation resolution, claim authority,
 eligibility를 통과한 뒤에만 공통 candidate derivation에서 AttentionItem이 된다.
+
+현재 collector의 `thread/list`는 session inventory다. 모든 current observation은
+`observationMode=inventory_only`, `executionState=unknown`이고
+`forbiddenAsAttentionCandidate=true`다. `active`, `not_loaded`,
+`system_error`와 approval/input badge를 아래의 정상 또는 예외 실행 상태로
+변환하지 않는다. live state는 blabase가 소유한 long-lived App Server에서
+ordered thread/turn/item notification을 받은 managed execution에만 허용한다.
 
 정상 실행 상태:
 
@@ -928,13 +1099,23 @@ ordered snapshot window에서 파생한다. connector가 의미 있는 진전 �
 미리 확정하지 않는다.
 
 Codex content는 raw prompt, response, command, output을 저장하지 않는
-`metadata_only`를 기본으로 유지한다. 진행 요약이 필요하면 connector가
-로컬에서 최소 정보로 파생하고, opt-in·retention·evidence 계약을 별도로
-적용한다.
+`metadata_only`를 기본으로 유지한다. `conversation_and_execution`은 별도
+current consent contract에 사용자가 명시적으로 동의한 선택 project에만
+활성화한다. 이 mode는 `thread/read(includeTurns=true)`의 source cap 안에서
+과거 prompt, answer, plan, command output/exit, file diff와 tool result를
+connector 전용 private artifact에 최대 7일 저장한다. reasoning은 제외한다.
+WorkSignal과 Attention에는 전체 원문이 아니라 completeness/count/status와
+재정제된 최대 200자 clue만 전달한다.
 
 ### 9.3 Google Calendar
 
 Calendar event는 기본적으로 task 후보가 아니다.
+
+Phase 2A.1 `supporting-source-adapter-v0.3`는 current snapshot을
+`schedule_context_only` Attention input으로 변환한다. 취소되지 않은 향후
+event의 시작/종료, all-day, tentative와 explicit Calendar connection-scope
+project mapping을 Work Cockpit supporting context에 전달한다. 결정적 순서의 최대
+250개 constraint만 전달하고 초과 여부를 `truncated`로 보존한다.
 
 Calendar가 제공하는 것은 다음이다.
 
@@ -960,6 +1141,11 @@ privacy 기본값은 free/busy다. 제목 기반 연결은 opt-in 정책으로 �
 
 현재 snapshot의 page/data-source 제목과 수정 시각은 직접 task evidence가
 아니다.
+
+Phase 2A.1 `supporting-source-adapter-v0.3`는 current snapshot을
+`project_context_only` Attention input으로 변환한다. resource ID의 explicit
+project mapping, kind, 최근 수정 시각과 truncation을 coverage/Work Cockpit에
+전달하지만 candidate를 생성하지 않는다.
 
 Notion을 직접 후보 소스로 사용하려면 사용자가 task database 하나 이상을
 선택하고 property를 명시적으로 매핑해야 한다.
@@ -1001,20 +1187,21 @@ related GitHub URL 또는 relation
 | Source | 현재 확인 가능한 필드 | 직접 추천 역할 | 다음 version에서 필요한 최소 보강 |
 |---|---|---|---|
 | GitHub | open assigned issue, review request, authored PR, label, milestone due. review request에는 현재 `isDraft` 없음 | assigned issue 후보, review 요청 관찰 | `isDraft`, review decision, checks, merge state, review 취소/변경 |
-| Codex | `codex-snapshot-v2`의 session ID, project scope/label, optional task summary, created/updated time, activity state, approval/input attention | 제한된 activity overview, 직접 추천은 아직 보류 | phase와 raw progress marker/time, failure/blocker lifecycle, completion, privacy-safe progress summary, GitHub linkage, workflow 후속조치, request ID와 requested/resolved/expired time, 안전한 open reference |
-| Calendar | primary calendar, -7일~+14일, event start/end/status/title, `Asia/Seoul` | 시간 constraint | 사용자 timezone, busy/transparency, 포함 calendar scope, free/busy 정책 |
-| Notion | page/data-source title, created/edited time | context only | 선택 task DB와 status/assignee/due/priority/project property mapping |
+| Codex | `codex-snapshot-v3` session inventory, ordered metadata history, explicit opt-in 시 과거 prompt/answer/execution private store와 bounded manifest. 모든 current live state는 unknown | historical-context overview, 직접 추천은 아직 보류 | blabase-owned managed App Server, phase와 progress marker/time, failure/blocker lifecycle, completion, GitHub linkage, workflow 후속조치, request ID와 requested/resolved/expired time, 안전한 open reference |
+| Calendar | OAuth 연결 세대별 random scope의 primary calendar, -7일~+14일, event start/end/status/title, `Asia/Seoul` | `schedule_context_only` | 사용자 timezone, busy/transparency, 포함 calendar scope, free/busy 정책 |
+| Notion | page/data-source title, created/edited time | `project_context_only` | 선택 task DB와 status/assignee/due/priority/project property mapping |
 
 새 normalizer는 현재 connector가 제공하지 않는 필드를 추론으로 채우지 않는다.
 필드가 추가되기 전에는 해당 source의 역할을 위 표의 현재 범위로 제한한다.
 
-따라서 현재 Codex snapshot만으로는 정체, 실패 복구, 완료 후 미정리,
+따라서 현재 Codex inventory snapshot/history만으로는 정체, 실패 복구, 완료 후 미정리,
 scope drift를 안전하게 판단할 수 없다. Phase 2에서는 기존
-`codex-snapshot-v2`를 덮어쓰지 않고 새 version의 observability contract와
-합성 timeline fixture를 먼저 구현한다. connector가 최소 필드를 제공한 뒤
-실제 overview와 exception detector를 활성화한다. 그전에는 session activity,
-optional task summary와 일시 attention 상태를 제한적으로 보여주되 추천
-후보로 승격하지 않는다.
+`codex-snapshot-v3`에서 inventory/historical-context observation과
+`managed_event_stream` schema를 분리했다. connector가 최소 managed 필드를
+제공한 뒤 live overview와 exception detector를 활성화한다. 그전에는 session
+inventory, optional task summary, bounded historical clue와 일시 attention
+badge를 제한적으로 보여주되 추천 후보로 승격하지 않는다. persisted turn의
+완료·실패는 현재 process의 완료·실패로 해석하지 않는다.
 
 optional `taskSummary`의 기본 의미 상태는 `unknown`이다. 사용자가 표시를
 opt-in한 경우 Work Cockpit의 execution label을 돕는 단서로만 쓸 수 있다.
@@ -1058,18 +1245,44 @@ Cross-source task identity를 안정적으로 연결하려면 source scope를 pr
 매핑해야 한다.
 
 ```ts
-type ProjectSourceMapping = {
-  projectId: string;
-  notionDataSourceIds: string[];
-  githubRepositoryIds: number[];
-  codexScopeIds: string[];
-  calendarLinkPolicy: "none" | "explicit_only" | "title_opt_in";
-  createdBy: "user";
-  updatedAt: string;
+type SourceScopeRef =
+  | {
+      source: "github";
+      resourceType: "repository";
+      opaqueId: string;
+    }
+  | {
+      source: "codex";
+      resourceType: "scope";
+      opaqueId: string;
+    }
+  | {
+      source: "notion";
+      resourceType: "resource";
+      opaqueId: string;
+    }
+  | {
+      source: "google_calendar";
+      resourceType: "scope";
+      opaqueId: "primary";
+    };
+
+type ProjectMappingDecision = {
+  action: "confirm" | "remove";
+  scope: SourceScopeRef;
+  projectId: string | null;
+  decisionSource: "explicit_user";
+  decidedAt: string;
+  supersedesDecisionId: string | null;
 };
 ```
 
-첫 버전에서는 자동 추론보다 사용자 매핑을 우선한다.
+Phase 2A.1의 `work-context-registry-v1`은 project identity, ordered mapping
+decision과 아직 적용되지 않은 proposal을 분리한다. proposal은 normalizer의
+`projectId`를 바꾸지 않는다. `/api/context/projects`의
+`explicitUserConfirmation=true` confirm/remove만 active mapping이 된다.
+원본 email, repository name, local path 또는 title 유사성을 mapping key로
+사용하지 않는다.
 
 ### 10.3 Item identity resolution 순서
 
@@ -1475,6 +1688,27 @@ failure category를 확인한 뒤 policy version을 변경한다.
 
 기존 `POST /api/suggestions`를 즉시 깨지 않는다.
 
+현재 Phase 2A.1 local product route:
+
+| Route | 역할 |
+|---|---|
+| `GET /api/sync/status` | side-effect-free source별 latest attempt/success/failure/backoff와 pipeline revision read |
+| `POST /api/sync/start` | same-origin local background scheduler 시작 |
+| `POST /api/sync` | same-origin source별 manual sync |
+| `GET /api/attention` | side-effect-free stored snapshot preview, run history 미기록 |
+| `POST /api/attention` | 네 source sync 후 Attention 평가와 run history 기록 |
+| `GET/POST /api/context/weekly-outcome` | active global weekly outcome read/capture |
+| `GET/POST /api/context/projects` | project registry read, project 생성과 explicit mapping confirm/remove |
+
+sync status는 source별 snapshot revision/hash를 반환한다. visible UI가 둘 중
+하나의 변화를 확인하면 connector, timeline, Work Cockpit과 Attention Lab을 invalidation해
+저장본을 다시 읽는다. client polling failure는 backoff 후 재시도하고,
+disconnect/connect/context mutation도 같은 invalidation 경계를 사용한다.
+
+connector connect/callback, Codex refresh/content mode와 direct live Attention
+refresh도 같은 coordinator attempt/history 경계를 통과한다. Work Cockpit의
+global weekly outcome은 registry가 아직 없어도 Attention focus에 전달된다.
+
 Cross-source 평가 전에는 별도 route 또는 명시적 mode를 사용한다.
 
 권장:
@@ -1823,19 +2057,60 @@ firstStepPolicyVersion
 feedbackSchemaVersion
 ```
 
+Phase 2A.1에서 증가하거나 추가한 current version:
+
+```text
+runtime WorkSignal                  runtime-work-signal-v0.3
+runtime WorkSignal batch            runtime-work-signal-batch-v0.3
+Attention input/result              cross-source-attention-input-v0.3
+                                     cross-source-attention-result-v0.3
+Attention policy                    aggressive-evidence-bound-attention-policy-v0.2
+GitHub candidate rule               github-project-aware-candidate-rule-v0.2
+Codex overview rule                 codex-historical-context-overview-rule-v0.3
+live orchestrator                   attention-live-orchestrator-v0.2
+Attention monitor run              attention-monitor-run-v0.3
+                                     (v0.1/v0.2 read compatibility)
+ephemeral Attention preview        attention-monitor-preview-v1
+failed Attention execution         attention-monitor-failure-v0.2
+                                     (v0.1 read compatibility)
+private Attention replay input     attention-replay-input-v1
+source sync state/history           source-sync-state-v1
+                                     source-sync-history-store-v1
+source sync transition             source-sync-transition-v1
+                                     source-sync-transition-store-v1
+source sync settlement             source-sync-settlement-v1
+                                     source-sync-settlement-store-v1
+work context                        work-context-registry-v1
+                                     weekly-outcome-store-v1
+supporting source adapter           supporting-source-adapter-v0.3
+Codex observation/history           codex-execution-observation-v2
+                                     codex-observation-history-v2
+                                     (exact v1 read compatibility)
+```
+
 ### 20.2 Run record
 
 ```ts
 type CrossSourceSuggestionRunRecord = {
   runId: string;
+  analysisId: string;
+  sessionId: string;
   decisionId: string;
   status: "running" | "completed" | "partial" | "failed";
   asOf: string;
   startedAt: string;
   completedAt: string | null;
-  codeCommitSha: string;
+  codeCommitSha: string | null;
+  codeState:
+    | "clean_commit"
+    | "declared_commit"
+    | "dirty_worktree"
+    | "unavailable";
+  codeFingerprintSha256: string | null;
   inputHash: string;
   outputHash: string | null;
+  replayArtifactContract: "attention-replay-input-v1";
+  replayArtifactSha256: string;
   datasetVersion: string | null;
   datasetSha256: string | null;
   crossSourceEngineVersion: string;
@@ -1892,7 +2167,25 @@ type CrossSourceSuggestionRunRecord = {
 };
 ```
 
-원문, token, credentials, 전체 private path는 run record에 넣지 않는다.
+원문, token, credentials, 전체 private path는 metadata run record에 넣지
+않는다.
+
+Phase 2A.1 local monitor run은 GitHub/Codex batch provenance에 더해
+Calendar/Notion의 snapshot SHA-256, fetched time, supporting adapter version,
+item/mapping/truncation과 work-context registry, resolved context,
+weekly-outcome store의 hash·상태를 기록한다. title, URL, outcome 원문이나
+provider payload는 monitor history에 복사하지 않는다. current
+`attention-monitor-run-v0.3`은 `analysisId`, `sessionId`, replay artifact
+SHA-256과 code provenance를 필수로 기록하고 v0.1/v0.2는 read compatibility만
+유지한다.
+
+GET 자동 평가는 비영속 `attention-monitor-preview-v1`로 응답한다. 명시적
+POST resolver가 source sync 또는 Attention resolution에서 실패하면
+`attention-monitor-failure-v0.2`에 미리 발급한 `runId`, `analysisId`,
+`sessionId`, 실패 단계, sanitized error code, retry count, latency와 적용한
+engine/schema/policy/rule version 및 성공 run과 동일한 code provenance를
+기록한다. v0.1 failure는 code provenance를 `legacy_unknown`으로만 호환해
+읽는다. raw exception detail과 provider payload는 기록하지 않는다.
 
 ### 20.3 Snapshot 보존과 replay
 
@@ -1909,6 +2202,43 @@ Private replay snapshot
 → snapshot hash와 version으로 불변 보존
 → retention 정책에 따라 승인된 private store에 저장
 ```
+
+`.local/sync/latest.json`과 `.local/sync/history.json`은 operational audit다.
+revision/hash/count와 sanitized attempt metadata만 저장하므로 connector
+snapshot payload를 재생하는 immutable evaluation input이 아니다.
+`.local/sync/settlements.json`도 두 operational projection의 crash consistency를
+위해 exact sanitized target을 잠시 보존하는 journal이며, evaluation replay
+artifact나 새로운 Gold 근거가 아니다.
+`.local/connectors/codex/observation-history.json`도 current inventory의 ordered
+metadata일 뿐 managed execution event replay artifact가 아니다.
+
+Phase 2A.1에서 metadata run과 replay 저장이 모두 성공한 formal explicit
+evaluation은 실제 사용한 정확한 normalized Attention input을
+`.local/attention/replay-inputs/run_<id>.json`에
+`attention-replay-input-v1` immutable artifact로 저장한다. artifact의
+`runId`, `analysisId`, `sessionId`, input hash와 artifact hash는 metadata run과
+일치해야 하며 run과 같은 30일 retention으로 삭제된다. 이 private input에는
+source title, safe URL, weekly outcome 등 평가에 실제 사용된 값이 포함될 수
+있으므로 directory 0700, file 0600을 사용하고 Git과 제품 API 응답에서
+제외한다.
+
+history를 읽을 때 current v0.3 run이 `available`이라고 주장한 artifact의
+실재 여부, schema, run/analysis/session/input/captured-at linkage와 artifact
+SHA-256을 다시 검증하고 하나라도 맞지 않으면 fail closed한다. 실제 historical
+v0.1/v0.2 record의 execution/replay/code field는 read 시 null,
+`not_recorded`, `legacy_unknown`으로 보수적으로 정규화되어 신뢰 provenance를
+주장할 수 없다. private store rewrite는 원본 legacy record를 그대로 보존해
+기존 SHA를 silently overwrite하지 않는다.
+
+replay cleanup은 monitor validation과 분리한다. valid store일 때만 retained run
+set 기반 orphan cleanup을 수행하고, corrupt store에서는 strict canonical/temp
+중 cutoff보다 오래된 파일만 제거한다. current artifact, unsafe name, directory는
+보존한다.
+
+code provenance는 clean worktree commit SHA, 운영자가 명시한 commit SHA,
+dirty worktree fingerprint, unavailable을 구분한다. dirty fingerprint는 당시
+code state의 식별자이지 source patch materialization이 아니므로 exact release
+replay는 clean committed code SHA를 요구한다.
 
 release 비교에 사용한 run은 latest snapshot 파일만 참조하면 안 된다. 동일 입력을
 다시 실행할 수 있는 immutable private snapshot 또는 승인된 canonical fixture가
@@ -1940,7 +2270,15 @@ semantic output을 바꾸는 구현은 다음을 수행한다.
 - Notion 본문 수집 없이 mapped properties 우선
 - Calendar는 free/busy 기본, title linking은 opt-in
 - GitHub code/body/comment 전체 수집 금지
-- Codex raw prompt, response, command, output은 저장하지 않고 metadata-only 기본
+- Codex raw prompt, response, command, output은 저장하지 않는
+  `metadata_only`가 기본이며 summary consent를 raw consent로 승격하지 않음
+- exact `codex-conversation-content-consent-v1`에 동의한
+  `conversation_and_execution`만 선택 project의 bounded historical raw를
+  connector 전용 `.local` artifact에 최대 7일 저장. reasoning은 제외
+- opt-out, scope 변경, expiry와 disconnect에서 raw artifact 삭제
+- snapshot/WorkSignal/Attention/replay/monitor/sync/API/Git에는 full raw를
+  넣지 않고, 화면과 Attention에는 재정제된 최대 200자 clue와
+  count/completeness만 허용
 - 진행 요약은 가능한 경우 connector 내부에서 최소 정보로 만들고 evidence
   reference, opt-in, retention 정책을 적용
 - private local path 대신 안전한 open reference 또는 hash 사용
@@ -1948,6 +2286,17 @@ semantic output을 바꾸는 구현은 다음을 수행한다.
 - 외부 LLM에는 선택된 item의 최소 검증 필드만 전달
 - raw snapshot과 private evaluation artifact는 `.local/` 또는 승인된 private store
 - token과 credential은 기존 connector private storage 규칙 유지
+- `.local/sync`와 `.local/context`는 directory 0700, file 0600, atomic
+  replacement를 사용
+- sync attempt history에는 raw provider error 대신 sanitized error code만 기록
+- project mapping은 opaque source ID만 저장하고 mapping proposal을 사용자
+  확인 없이 적용하지 않음
+- weekly outcome은 private store에 사용자가 입력한 최소 한 줄만 저장
+- `attention-replay-input-v1`은 exact normalized evaluation input을
+  `.local/attention/replay-inputs`에 immutable private file로 최대 30일
+  보존하고 Git과 제품 API 응답에서 제외
+- Codex inventory observation history는 metadata-only, 최대 30일이며 raw
+  prompt/response/command/output retention은 없음
 - source별 즉시 disconnect/delete 지원
 - production multi-user 저장소는 현재 cwd 단일 계정 local store와 분리 설계
 - notification에는 private title 또는 repository/page 식별자 노출 금지
@@ -1998,7 +2347,21 @@ suggestion/
 │   │   ├── googleCalendar/toWorkSignals.ts
 │   │   ├── notion/toWorkSignals.ts
 │   │   ├── github/toWorkSignals.ts
-│   │   └── codex/toWorkSignals.ts
+│   │   └── codex/
+│   │       ├── toWorkSignals.ts
+│   │       └── observationContract.ts
+│   ├── sync/
+│   │   ├── schema.ts
+│   │   ├── coordinator.ts
+│   │   ├── repository.ts
+│   │   └── runtime.ts
+│   ├── context/
+│   │   ├── contracts.ts
+│   │   ├── localStore.ts
+│   │   └── resolve.ts
+│   ├── attention/
+│   │   ├── liveAttention.ts
+│   │   └── supportingSourceAdapters.ts
 │   └── evaluation/
 │       ├── crossSourceDatasetSchema.ts
 │       ├── crossSourceIntegrity.ts
@@ -2023,7 +2386,17 @@ suggestion/
 │   ├── calendarFit.test.ts
 │   ├── crossSourceSelection.test.ts
 │   ├── crossSourcePipeline.test.ts
-│   └── crossSourcePrivacy.test.ts
+│   ├── crossSourcePrivacy.test.ts
+│   ├── sourceSyncCoordinator.test.ts
+│   ├── syncRoutes.test.ts
+│   ├── connectorCallbackSyncRoutes.test.ts
+│   ├── dataPipelineE2E.test.ts
+│   ├── uiSyncController.test.ts
+│   ├── workContext.test.ts
+│   ├── contextRoutes.test.ts
+│   ├── liveAttention.test.ts
+│   ├── codexObservationContract.test.ts
+│   └── supportingSourceAdapters.test.ts
 └── eval/
     └── synthetic/
         ├── codexDetectorConfig.v0.1.json
@@ -2104,13 +2477,15 @@ Phase 1은 progress/exception detector나 최종 eligibility를 구현하는 단
 mapper와 Phase 1 test 19개가 위 계약을 구현한다. 전체 test, typecheck, lint,
 build를 통과했으며 자세한 version과 검증 결과는
 `docs/ENGINE_CHANGE_RECORD.md`의 2026-07-26 기록을 따른다. 제품 API나
-recommendation selection에는 아직 연결하지 않았다.
+recommendation selection 연결은 아래 Phase 2A local orchestrator가 별도로
+담당한다.
 
 ### Phase 2 — GitHub + Codex observability vertical slice
 
-상태: **Phase 2A completed — current-contract decision runner v0.1**
+상태: **Phase 2A and Phase 2A.1 local vertical slice completed**
 
-Phase 2는 connector capability에 맞춰 두 단계로 나눈다.
+Phase 2는 current decision, data-pipeline stabilization과 enriched connector
+capability의 세 단계로 나눈다.
 
 #### Phase 2A — current contract
 
@@ -2119,12 +2494,15 @@ Phase 2는 connector capability에 맞춰 두 단계로 나눈다.
 - strict GitHub/Codex decision input과 versioned aggressive policy
 - GitHub assigned issue 직접 `do` 후보
 - draft 여부가 없는 review request의 provisional `inspect` 후보
-- current Codex v2 execution overview
+- current Codex v3 inventory + opt-in historical-context overview
 - `must_now → unblock → close_loop → focus` lane precedence의 현재 지원 부분
 - minimum score와 preference tie abstention이 없는 deterministic selection
 - scoped `no_action`, partial positive suggestion, `insufficient_evidence`
 - top 한 개, 최대 alternative 두 개, coverage/caveat/reason code
 - result stable ID와 input/result SHA-256 integrity
+- local-only Attention API와 기본 화면 Work Cockpit
+- source health, Codex overview와 candidate feedback
+- metadata-only 30일 run history와 Attention Lab
 
 Phase 2A의 적극 추천은 source 사실을 추측하지 않는다. eligible 또는 안전한
 provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-observed
@@ -2139,14 +2517,127 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - stale/invalid GitHub와 unsafe destination은 적극 정책에서도 추천하지 않음
 - truncated snapshot의 확인된 positive는 provisional suggestion 가능
 - complete GitHub negative coverage에서만 scoped `no_action`
-- 제품 API와 Work Cockpit route는 아직 변경하지 않음
+- GET preview는 history를 변경하지 않고 same-origin POST만 refresh와 run 기록
+- Work Cockpit과 Attention Lab에서 결과, 평가 범위, 후보 gate와 version 확인
+- private history에는 title, URL, task summary와 raw content가 없음
+
+#### Phase 2A.1 — Data Pipeline Stabilization
+
+상태: **Completed — local server-coordinated pipeline v0.3**
+
+완료 산출물:
+
+- GitHub, Codex, Notion, Google Calendar 공통 `SourceSyncCoordinator`
+- source별 due schedule, single-flight와 exponential failure backoff
+- source별 latest attempt/success/failure, retry/next due와 snapshot revision/hash
+- connector current snapshot과 분리된 ordered sanitized attempt history
+- history와 latest 사이 crash를 exact target으로 복구하는 private
+  `.local/sync/settlements.json` journal과 same-process read-back confirmation
+- source별 reset/disconnect를 직렬화하고 재시작 가능한 durable transition
+  intent를 보존하는 `.local/sync/transitions.json`
+- `/api/sync`, `/api/sync/start`, `/api/sync/status` local same-origin contract
+- side-effect-free Attention/status GET과 explicit POST scheduler start
+- 외부 collection을 기다리지 않는 scheduler start와 provider HTTP 요청
+  15초 상한
+- connector connect/callback/refresh를 포함한 explicit collection의 coordinator
+  단일 경계
+- snapshot revision/hash polling과 connector/Work Cockpit/Attention Lab/timeline
+  invalidation
+- polling failure recovery, visibility lifecycle와 disconnect propagation
+- polling in-flight stop/start recovery와 first-status revision invalidation
+- 네 connector generation guard, source별 transition mutex와
+  reconnect/disconnect race protection
+- 네 connector atomic temp의 strict-name startup grace/active-write cleanup과
+  explicit disconnect 시 recognized inactive credential/content temp 즉시 삭제
+- GitHub/Notion/Calendar local-first disconnect와 2초 bounded remote revoke
+- OAuth replacement 시 해당 source의 이전 connection lineage purge와
+  다른 source history 보존. purge/disconnect completion 실패 시
+  `source-sync-transition-v1` intent·target state·동일 disconnect attempt와
+  retry schedule을 영속 보존하고 재시작 뒤 adapter보다 먼저 idempotent replay
+- Calendar 재연결마다 새 random `connectionScopeId`를 발급하고 기존 project
+  mapping을 자동 재사용하지 않는 account-scope 격리
+- Codex scope/content contract 변경 시 coordinator lineage reset과 scope 변경
+  snapshot/inventory history 제거
+- coordinator in-flight supersession과 즉시 persisted disconnect 상태
+- disconnected source의 persisted disable/no scheduled retry와 manual recovery
+- Codex `inventory_only`/live state unknown 계약과 30일 ordered metadata history
+- inventory의 null waiting/exact reason/event/timestamp와 managed event별
+  state/waiting/reason 조합을 교차 검증하는 v2 contract, valid v1 read
+  normalization과 malformed persisted history fail-closed
+- blabase-owned App Server event에만 허용되는 `managed_event_stream` parser 계약
+- 네 source의 opaque scope를 연결하는 explicit project identity registry
+- sanitized source scope discovery와 명시적 연결·해제 Work Cockpit UI
+- global/project weekly outcome store와 registry 없는 첫 사용자를 포함한
+  Attention context resolution
+- global weekly outcome 한 줄을 생성·수정하고 저장 즉시 Attention을
+  invalidation하는 Weekly focus UI
+- Calendar `schedule_context_only`, Notion `project_context_only`
+  `supporting-source-adapter-v0.3`, Calendar collection/constraint 250개
+  cap·truncation과 pagination loop guard
+- 동일 의미 상태를 중복 기록하지 않는 Codex 30일 time-based observation
+  history
+- Calendar/Notion snapshot과 registry/resolution/outcome monitor provenance
+- `attention-monitor-run-v0.3`의 `analysisId`/`sessionId`, clean/declared commit과
+  dirty code fingerprint provenance
+- 실제 normalized Attention input을 최대 30일 불변 보존하는 private
+  `attention-replay-input-v1` artifact와 API 비노출
+- explicit POST resolver 실패의 sanitized
+  `attention-monitor-failure-v0.2` metadata, code provenance와 Attention Lab
+  failure count (`v0.1`은 conservative read compatibility)
+- current replay claim의 artifact 실재·schema·lineage·hash read-time 검증,
+  raw legacy record 보존형 provenance claim 거부, corrupt-store 독립
+  canonical/temp retention 정리
+- four-source Attention input/result/policy, GitHub/Codex rule와 live orchestrator
+  v0.2
+- synthetic private fixture에서 실제 Chromium/Next.js route/React UI를
+  연결하는 Playwright browser E2E
+
+완료 조건:
+
+- remote refresh가 connector UI별 timer가 아니라 server coordinator 경계를 통과
+- 실패 후 latest successful snapshot을 보존하고 backoff 뒤 재시도 가능
+- latest state와 ordered history가 private atomic store에 분리됨
+- normal commit이 history 적용 뒤 멈춰도 동일 attempt/latest/history target을
+  same-process 또는 재시작에서 복구하고 disabled 상태로 영구 정지하지 않음
+- reset/disconnect write가 중간 실패해도 durable intent가 다른 source commit을
+  지나 재시작 후 복구되고, 같은 source의 연속 transition이 호출 순서대로
+  직렬화됨
+- snapshot revision 변경이 열린 Work Cockpit과 Attention Lab에 자동 전파됨
+- Codex inventory가 running/completed/failed를 주장하지 않음
+- explicit user confirmation 없는 project proposal이 normalizer에 적용되지 않음
+- weekly outcome과 네 source adapter가 실제 Attention input에 들어감
+- Calendar/Notion context가 direct candidate 또는 no-action 근거로 오용되지 않음
+- metadata run과 private replay artifact의 run/analysis/session/input/hash가
+  일치하고 30일 retention 및 private file permission이 적용됨
+- 명시적 POST resolver 실패도 실행 ID, failed status, 단계, sanitized
+  error/retry/version metadata로 기록되고 raw error는 저장되지 않음
+- persisted current run의 replay artifact가 없거나 변조되면 history가
+  `available` replay를 반환하지 않고 fail closed함
+- 실제 browser에서 polling failure recovery, first revision invalidation과
+  Codex disconnect→snapshot revision 제거→Work Cockpit/Attention Lab 전파가
+  검증됨
+- filesystem-backed pipeline integration, callback/API routing, controller와 네
+  connector race targeted regression, 전체 test/typecheck/lint/build 검증.
+  최종 검증은 Vitest `37` files/`328` tests, Playwright Chromium E2E
+  `2` tests, suggestion typecheck/lint/production build 통과
+
+운영 제한:
+
+- current coordinator timer는 local long-lived Next.js process 안에서 동작한다.
+  production/serverless에는 durable scheduler 또는 external trigger가 필요하다.
+- UI revision 전파는 15초 visible polling 기반 eventual refresh다.
+- current Codex collector는 managed App Server connection을 소유하지 않으므로
+  semantic execution detector는 계속 비활성화한다.
+- 실제 browser E2E는 local single-process runtime을 검증한다. production
+  multi-process scheduler/lease와 process 간 single-flight는 후속 운영 E2E
+  범위다.
 
 #### Phase 2B — enriched connector contract
 
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
-- richer Codex observability contract와 실제 history persistence
+- blabase-owned long-lived Codex App Server manager와 managed event persistence
 - 충분한 ordered history를 사용한 의미 있는 진전, 정체, 실패 판정 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
@@ -2162,9 +2653,11 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 
 ### Phase 3 — Project mapping, lineage, conflict
 
+상태: **Foundation partially delivered in Phase 2A.1**
+
 산출물:
 
-- explicit project mapping
+- `[완료]` 네 source scope의 explicit project mapping registry
 - native/explicit-link identity resolver
 - `executes`, `produces`, `related_to` 관계 처리
 - field-level authority resolver
@@ -2201,8 +2694,11 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 
 ### Phase 5 — Calendar fit과 Notion task mapping
 
+상태: **Context-only adapters delivered; candidate/fit work remains**
+
 산출물:
 
+- `[완료]` Calendar schedule context와 Notion project context adapter
 - free-block calculator
 - first-step sizing
 - Notion task DB selection/property mapping
@@ -2400,6 +2896,98 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 108. evaluation entrypoint가 schema parse 뒤 integrity 검증을 강제함
 109. request candidate reason은 직접 참조한 request subject와 lifecycle evidence를 요구함
 110. critical conflict annotation은 실제 두 material source의 subject를 참조해야 함
+111. 같은 source의 동시 manual/scheduled sync는 single-flight result를 공유함
+112. sync failure는 last successful snapshot을 보존하고 bounded exponential
+     backoff 뒤 recovery 가능
+113. latest sync state와 newest-first attempt history가 분리되고 sanitized error
+     code만 저장됨
+114. 첫 status 또는 이후 snapshot revision이 바뀌면 Work Cockpit, Attention
+     Lab, connector와 timeline이 저장본을 다시 읽음
+115. UI status polling 실패 후 backoff/retry하고 hidden→visible과 in-flight
+     stop→start에서 즉시 재개
+116. 네 connector 모두 disconnect 중이던 in-flight sync가
+     credential/snapshot을 되살리지 않음
+117. Codex `thread/list` inventory의 `active`와 `not_loaded`가 live execution
+     state를 만들지 않음
+118. managed App Server turn completion/failure만 managed execution state를 만듦
+119. 명시적 확인이 없는 project mapping proposal이 `projectId`에 적용되지 않음
+120. registry가 아직 없는 global outcome을 포함해 global/project weekly
+     outcome이 7일 cadence와 fallback 규칙으로 resolve됨
+121. Calendar schedule context와 Notion project context가 Attention input에
+     포함되지만 direct candidate가 되지 않고 Calendar 250개 초과는
+     truncated로 보존됨
+122. source sync→snapshot revision→context resolve→Attention→UI invalidation의
+     deterministic end-to-end propagation
+123. connector connect/callback/refresh와 direct Attention refresh가
+     coordinator attempt/history를 통과함
+124. disconnected source는 scheduled retry 없이 persisted disabled가 되고
+     reconnect manual sync로 ready에 복귀함
+125. GET Attention/status는 side-effect-free이고 same-origin POST sync start가
+     명시적 scheduler 시작 경계를 제공함
+126. Attention monitor run이 Calendar/Notion snapshot과 context/outcome hash를
+     raw title 없이 보존함
+127. 실제 browser에서 첫 sync status 요청이 일시 실패해도 backoff 뒤
+     polling이 복구되고 저장된 revision이 Work Cockpit과 Attention Lab에
+     전파됨
+128. 실제 Codex disconnect route가 local connection과 coordinator snapshot
+     revision을 제거하고 두 UI에 disconnected 상태를 전파함
+129. current `attention-monitor-run-v0.3`에 `analysisId`, `sessionId` 또는
+     일치하는 `attention-replay-input-v1` hash가 없으면 저장이 거부됨
+130. private replay input은 제품 API 응답과 Git에 노출되지 않고 run과 같은
+     30일 retention 및 0700/0600 permission을 적용함
+131. clean/declared code provenance는 commit SHA를, dirty worktree는
+     `codeCommitSha=null`과 deterministic code fingerprint를 요구함
+132. source lineage reset finalization이 실패한 뒤 다른 source가 commit하고
+     process가 재시작돼도 durable transition intent가 이전 lineage를 adapter
+     실행 전에 제거함
+133. disconnect finalization 실패 후 재시작 recovery는 같은 attempt ID를
+     한 번만 history에 기록하고 source를 `disabled`로 유지함
+134. 같은 source의 reset→disconnect와 disconnect→reset은 직렬화되고 마지막
+     요청의 target state/history가 일관되게 남음
+135. 명시적 Attention POST의 source sync 또는 resolver 실패는
+     `attention-monitor-failure-v0.2`와 성공 run과 같은 code provenance로
+     기록되며 원본 exception은 저장·응답하지 않음. v0.1은
+     `legacy_unknown`으로만 호환해 읽음
+136. current run이 주장한 replay artifact의 실재, schema, execution linkage
+     또는 SHA-256이 맞지 않으면 monitor history read가 fail closed함
+137. historical v0.1/v0.2 run은 raw private record를 rewrite 간 보존하지만
+     read/API에서 replay/execution/code provenance를 주장할 수 없음. corrupt
+     monitor에서도 strict old canonical/temp는 정리되고 current/unsafe 파일은
+     보존됨
+138. connector startup/read는 strict-name crashed temp만 grace 뒤 제거하고
+     explicit disconnect는 recognized inactive credential/content temp를
+     즉시 삭제하되 canonical/unrelated file, directory와 symlink를 보존함
+139. normal sync가 history를 쓴 뒤 latest 전에 실패하면
+     `source-sync-settlement-v1`의 exact target을 재생해 동일 attempt로
+     latest/history를 일치시키며 history에서 상태를 새로 추정하지 않음
+140. disabled→manual success의 one-shot projection failure는 같은 process에서
+     성공 확정되고, 연속 failure 뒤 process restart도 adapter 재실행 없이
+     `ready` settlement를 복구함
+141. transition store clear rename 뒤 chmod acknowledgement가 실패해도 exact
+     bytes와 0600 mode read-back이 성공하면 coordinator pending intent를
+     정리하고 같은 process에서 다음 sync를 수행할 수 있음
+142. source A의 durable settlement가 남은 상태에서 source B가 same-process
+     commit하면 recovered disk latest에 B만 병합하고 authoritative store를
+     coordinator에 반환해 A/B latest와 history를 모두 보존하며 A adapter를
+     다시 실행하지 않음
+143. pending settlement가 없는 정상 commit은 caller latest 전체를 사용해
+     adapter-registration normalization을 이전과 동일하게 persistence함
+144. source A durable settlement 뒤 source B disconnect/reset이
+     same-process에서 실행돼도 transition begin/complete의 authoritative
+     handoff가 A ready state와 history를 보존하고 B target만 적용함
+145. same-source success settlement 뒤 disconnect는 intent 준비 전에 recovery를
+     끝내고 recovered last-success/retry lineage와 단일 disconnect attempt를
+     보존하며 adapter를 다시 실행하지 않음
+146. `inventory_only` schema는 approval/input waiting state, managed reason/event,
+     null source timestamp를 포함한 모든 cross-mode 조합을 거부함
+147. `managed_event_stream` schema는 thread status, turn, item event별 exact
+     execution state/waiting/reason tuple만 허용함
+148. semantically valid한 persisted v1 Codex observation history는 v2로
+     정규화해 읽고, malformed v1/v2 inventory history는 fail closed함
+149. pending settlement recovery와 unrelated source transition barrier가
+     겹치면 등록 adapter는 barrier 전에 실행되지 않고, queue 해제 뒤 recovered
+     previous snapshot을 받아 실행함. adapter 미등록 source는 barrier를
+     기다리지 않고 skip함
 
 ---
 
@@ -2415,6 +3003,17 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 | Notion 최근 수정을 task로 오인 | mapped task DB만 직접 후보 |
 | Calendar event를 task로 오인 | 시간 constraint로만 사용 |
 | Codex 정상 실행이나 idle을 task로 오인 | execution overview와 AttentionItem을 분리하고 검증된 예외만 후보화 |
+| Codex inventory를 live execution으로 오인 | `inventory_only`, live state unknown을 강제하고 managed event와 schema 분리 |
+| connector별 polling과 refresh가 서로 덮어씀 | server `SourceSyncCoordinator`, source single-flight와 latest/history audit |
+| history write 뒤 latest write 전에 process가 멈춤 | exact `source-sync-settlement-v1` journal을 먼저 저장하고 same-process/read/startup에서 idempotent replay |
+| 다른 source commit/transition의 stale caller가 방금 복구된 source를 덮어씀 | recovery가 실제 발생한 mutation만 disk latest를 authoritative base로 사용하고 대상 source 하나를 병합한 store를 coordinator에도 반환 |
+| transition clear rename 뒤 chmod 실패를 전체 write 실패로 오인 | exact bytes와 0600 mode read-back으로 rename commit point를 확정 |
+| 실패 후 sync가 영구 중단 | source별 exponential backoff, retry state와 UI health 표시 |
+| disconnected source가 history를 계속 채움 | persisted disabled/no scheduled retry, reconnect manual recovery |
+| disconnect 뒤 늦은 write가 연결을 되살림 | 네 connector generation guard와 serialized mutation |
+| snapshot이 바뀌어도 화면이 오래된 상태 | pipeline/source revision polling과 공통 invalidation bus |
+| read GET이 remote mutation을 시작 | side-effect-free GET과 explicit same-origin `POST /api/sync/start` 분리 |
+| serverless process 종료로 scheduler 중단 | production 전에 durable scheduler/lease 또는 external trigger 도입 |
 | activity heartbeat를 진전으로 오인 | last activity와 last meaningful progress를 분리 |
 | 정상 장기 실행을 정체로 오인 | phase별 threshold와 expected-next-event 사용 |
 | 해결된 승인·입력 요청을 뒤늦게 추천 | request lifecycle, resolvedAt, validUntil, escalation gate 검증 |
@@ -2444,18 +3043,38 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 8. `[Phase 2A 완료]` current GitHub direct/provisional candidate와 Codex overview 작성
 9. `[Phase 2A 완료]` aggressive evidence-bound selection, scoped no-action,
    coverage/caveat/result integrity 작성
-10. `[Phase 2B]` richer connector contract와 history가 준비된 뒤 Codex semantic
-   progress/exception timeline과 meaningful-progress detector 작성
-11. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
-12. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
-13. project mapping, identity resolver, execution-work 관계 작성
-14. claim authority resolver 작성
-15. full cross-source hard eligibility와 lane classifier 작성
-16. user-answer-required clarification route 작성
-17. Calendar free-block과 first-step 작성
-18. Notion task property mapping 작성
-19. feedback event와 evaluation runner 작성
-20. frozen baseline 후에만 ranking policy 보정
+10. `[Phase 2A 완료]` local-only Attention API, Work Cockpit, metadata-only
+    30일 monitor store와 Attention Lab 작성
+11. `[Phase 2A.1 완료]` server `SourceSyncCoordinator`, source별
+    attempt/success/failure/backoff 작성
+12. `[Phase 2A.1 완료]` latest snapshot metadata와 ordered sanitized attempt
+    history store, `/api/sync`, `/api/sync/start`, `/api/sync/status` 작성
+13. `[Phase 2A.1 완료]` snapshot revision polling과 Work Cockpit/Attention Lab/
+    connector/timeline invalidation 작성
+14. `[Phase 2A.1 완료]` Codex inventory-only observation/history와 managed event
+    semantic boundary 작성
+15. `[Phase 2A.1 완료]` explicit project registry, global/project weekly outcome와
+    Calendar/Notion context adapter를 Attention input 및 Work Cockpit UI에 연결
+16. `[Phase 2A.1 완료]` monitor run v0.3 code/analysis/session provenance,
+    failed-run metadata, private replay artifact read-time integrity/retention과
+    실제 Playwright browser pipeline E2E 작성
+17. `[Phase 2A.1 완료]` Codex `conversation_and_execution` explicit consent,
+    `thread/read(includeTurns=true)` historical collector, 7일 private raw store,
+    v3 manifest/WorkSignal/Attention context와 opt-out/disconnect purge 작성
+18. `[Phase 2B]` blabase-owned long-lived App Server manager와 managed event
+    persistence 작성
+19. `[Phase 2B]` Codex semantic progress/exception timeline과
+    meaningful-progress detector 작성
+20. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
+21. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
+22. native/explicit-link identity resolver와 execution-work 관계 작성
+23. claim authority resolver 작성
+24. full cross-source hard eligibility와 lane classifier 작성
+25. user-answer-required clarification route 작성
+26. Calendar free-block과 first-step 작성
+27. Notion task property mapping 작성
+28. formal feedback evaluation runner 작성
+29. frozen baseline 후에만 ranking policy 보정
 
 ---
 
@@ -2473,26 +3092,64 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - GitHub는 첫 직접 후보 source로 사용한다.
 - Codex는 첫 execution-observability source로 사용하고 검증된 예외만
   AttentionItem으로 승격한다.
-- 현재 Codex v2의 semantic task/progress 상태는 기본 `unknown`이다.
+- 현재 Codex v3의 live semantic task/progress 상태는 기본 `unknown`이다.
+- opt-in historical turn status는 persisted context일 뿐 live 상태나 직접
+  추천 후보가 아니다.
 - `taskSummary`는 opt-in overview label 단서일 뿐 obligation 근거가 아니다.
 - Codex follow-through는 explicit GitHub relation 또는 사용자가 설정한 project
   workflow가 있을 때만 생성한다.
+- Codex `thread/list`는 inventory-only이고 live execution state는 항상
+  `unknown`이다.
+- `running`, `completed`, `failed`는 blabase가 소유한 managed App Server의
+  ordered event에서만 생성한다.
 - 정상 Codex 실행과 최근 완료는 recommendation과 분리된 overview에 표시한다.
 - 짧은 Codex 승인·입력 요청은 일시 상태이며, 미해결 상태가 versioned
   threshold를 넘을 때만 조건부 후보가 된다.
 - Codex 실행 완료는 연결된 GitHub/Notion work item 완료를 의미하지 않는다.
 - Calendar는 기본적으로 시간 constraint다.
 - Notion은 mapped task database만 직접 후보 source로 사용한다.
-- Calendar와 Notion은 첫 release 이후 context/constraint source로 추가한다.
+- Calendar와 Notion은 Phase 2A.1 Attention input에 각각
+  `schedule_context_only`, `project_context_only`로 연결하며
+  `supporting-source-adapter-v0.3`를 사용한다.
+- source scope의 project identity는 opaque native reference와 explicit user
+  confirmation으로만 확정한다.
 - 사용자의 명시적 primary outcome을 일주일에 한 번 또는 사용자가 변경할 때
   초기 ranking context로 받는다.
+- weekly outcome store는 global/project scope를 지원하며 한 project가
+  명확할 때 project outcome을 우선하고 global로 fallback한다. registry가
+  없어도 global outcome은 active focus로 사용한다. 제품의 Weekly focus
+  UI에서 global 한 줄 outcome을 생성·수정하고 저장 즉시 Attention을
+  invalidation한다.
 - Phase 2 초기 recommendation mode는 `aggressive_evidence_bound`다. 근거 있는
   후보가 하나라도 있으면 minimum score나 preference 동점 때문에 보류하지 않는다.
 - 동급 후보는 deterministic default 한 개와 최대 두 alternatives, caveat로
   보여주며 더 중요하다는 의미를 만들지 않는다.
 - 첫 release의 source action은 read-only이며 제안과 safe destination만 제공한다.
-- 향후 Codex history store는 최소 metadata만 최대 30일 보관하고 raw
-  prompt/response/command/output은 보관하지 않는다.
+- 현재 Attention monitor metadata store는
+  `attention-monitor-run-v0.3`의 run/source/candidate gate/명시적 feedback,
+  `analysisId`, `sessionId`, code provenance와 replay artifact hash를 최대
+  30일 보관한다. raw prompt/response/command/output, title, URL, task
+  summary는 metadata history에 보관하지 않는다. Calendar/Notion snapshot과
+  context/outcome hash·version·상태는 provenance로 보존한다.
+- 실제 평가에 사용한 exact normalized input은 별도의 private immutable
+  `attention-replay-input-v1` artifact로 최대 30일 보관하고 제품 API와 Git에
+  노출하지 않는다. v0.1/v0.2 monitor run은 read compatibility만 유지한다.
+- server `SourceSyncCoordinator`가 네 source refresh, due schedule,
+  single-flight와 failure backoff를 관리하며 connector connect/callback을
+  포함한 explicit collection은 이 경계를 통과한다.
+- read GET은 scheduler를 시작하지 않고 same-origin `POST /api/sync/start`가
+  명시적 background start 경계를 제공한다.
+- disconnected source는 scheduled retry가 없는 persisted disabled로 보존하고
+  reconnect manual sync로 복구한다.
+- source별 latest sync state와 ordered sanitized attempt history를 분리한다.
+- 실제 Chromium browser E2E는 polling failure recovery, first stored revision
+  invalidation, Codex disconnect와 Work Cockpit/Attention Lab 전파를 검증한다.
+- Codex inventory observation history는 metadata-only로 최대 30일 보관하고
+  Attention monitor history와 동일하게 취급하지 않는다. 별도 conversation
+  store의 최대 7일 retention과 섞지 않는다.
+- managed Codex event contract/parser/ordered history schema는 존재하지만 실제
+  managed observation은 blabase-owned App Server execution lifecycle이 필요한
+  Phase 2B runtime이며 inventory polling history로 대체하지 않는다.
 - hard gate와 attention lane을 가중치보다 먼저 적용한다.
 - rankable lane은 `must_now`, `unblock`, `close_loop`, `focus`로 제한하고
   clarification/no-action은 decision 단계에서 처리한다.
@@ -2521,6 +3178,13 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
     어디에서 얻을 것인가?
 9. approval/input escalation threshold와 상태 갱신 cadence는 얼마인가?
 10. Codex 현황판에서 어느 수준의 progress summary를 opt-in으로 보여줄 것인가?
+11. production에서 coordinator를 유지할 durable scheduler/lease 또는 external
+    trigger를 어떤 runtime에 둘 것인가?
+12. blabase가 Codex App Server connection/thread lifecycle을 어디까지 직접
+    소유할 것인가?
+13. 현재 Work Cockpit의 project mapping과 global Weekly focus UI를 확장해
+    project-scoped weekly outcome을 어느 project 선택 UX로 편집할 것인가?
 
-이 질문은 Phase 0이나 Phase 2A의 미완료 항목이 아니다. richer connector와
-history가 필요한 Phase 2B부터 평가 가능한 형태로 좁힌다.
+이 질문은 Phase 0, Phase 2A 또는 local Phase 2A.1의 미완료 항목이 아니다.
+production scheduling과 richer managed connector가 필요한 Phase 2B부터 평가
+가능한 형태로 좁힌다.

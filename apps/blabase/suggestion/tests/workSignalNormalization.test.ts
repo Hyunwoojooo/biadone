@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeCodexSnapshotToWorkSignals } from "../src/connectors/codex/toWorkSignals";
+import { emptyCodexContentManifest } from "../src/connectors/codex/conversationContract";
 import type { CodexSnapshot } from "../src/connectors/codex/types";
 import { normalizeGitHubSnapshotToWorkSignals } from "../src/connectors/github/toWorkSignals";
 import type { GitHubSnapshot } from "../src/connectors/github/types";
@@ -658,13 +659,15 @@ function codexSnapshot(
   overrides: Partial<CodexSnapshot> = {}
 ): CodexSnapshot {
   return {
-    schemaVersion: "codex-snapshot-v2",
+    schemaVersion: "codex-snapshot-v3",
     collectorVersion: "codex-app-server-metadata-v1",
     contentMode: "metadata_only",
     codexVersion: "codex-cli 0.150.0",
     fetchedAt: "2026-07-26T12:00:00.000Z",
     lookbackStart: "2026-06-26T12:00:00.000Z",
     truncated: false,
+    conversationStoreSha256: null,
+    conversationRetentionDays: null,
     scopeIds: ["111111111111111111111111"],
     sessions: [
       codexSession({
@@ -704,6 +707,7 @@ function codexSession(
     updatedAt: "2026-07-26T11:59:00.000Z",
     activityState: "active",
     attentionState: null,
+    content: emptyCodexContentManifest(),
     ...overrides
   };
 }

@@ -1,8 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState
+} from "react";
 
 import type { CalendarConnectionState } from "../src/connectors/googleCalendar/types";
+import { SourceSyncMeta } from "./sync/SourceSyncMeta";
+import { invalidateSourceConsumers } from "./sync/invalidationBus";
+import { requestSourceSync } from "./sync/sourceSyncClient";
+import {
+  useSyncInvalidation,
+  wakeSourceSyncStatus
+} from "./sync/useSourceSync";
 
 type CalendarNotice = {
   tone: "success" | "neutral" | "error";
@@ -15,27 +27,82 @@ export function GoogleCalendarConnector() {
   const [notice, setNotice] = useState<CalendarNotice | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const requestSequenceRef = useRef(0);
+  const mutationEpochRef = useRef(0);
+  const interactiveRefreshSequenceRef = useRef<number | null>(null);
 
-  const refreshConnection = useCallback(async () => {
-    setIsRefreshing(true);
+  const refreshConnection = useCallback(async (
+    silent = false,
+    forceRefresh = false
+  ): Promise<boolean> => {
+    if (
+      silent &&
+      interactiveRefreshSequenceRef.current !== null
+    ) {
+      return false;
+    }
+    const requestSequence = ++requestSequenceRef.current;
+    const mutationEpoch = mutationEpochRef.current;
+    if (!silent) {
+      interactiveRefreshSequenceRef.current = requestSequence;
+      setIsRefreshing(true);
+    }
     try {
+      if (forceRefresh) {
+        await requestSourceSync(["google_calendar"]);
+      }
       const response = await fetch(
         "/api/connectors/google-calendar/status",
         { cache: "no-store" }
       );
       if (!response.ok) throw new Error("status request failed");
       const payload = (await response.json()) as CalendarConnectionState;
+      if (
+        requestSequence !== requestSequenceRef.current ||
+        mutationEpoch !== mutationEpochRef.current
+      ) {
+        return false;
+      }
       setConnection(payload);
+      return true;
     } catch {
-      setConnection({
-        status: "sync_error",
-        message: "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
-        lastSyncedAt: null
-      });
+      if (
+        requestSequence !== requestSequenceRef.current ||
+        mutationEpoch !== mutationEpochRef.current
+      ) {
+        return false;
+      }
+      if (!silent) {
+        setConnection((current) => ({
+          status: "sync_error",
+          message:
+            "연결 상태를 확인하지 못했습니다. 로컬 서버를 확인해주세요.",
+          lastSyncedAt:
+            current?.status === "connected"
+              ? current.lastSyncedAt
+              : current?.status === "sync_error"
+                ? current.lastSyncedAt
+                : null
+        }));
+      }
+      return false;
     } finally {
-      setIsRefreshing(false);
+      if (
+        !silent &&
+        interactiveRefreshSequenceRef.current === requestSequence
+      ) {
+        interactiveRefreshSequenceRef.current = null;
+        setIsRefreshing(false);
+      }
     }
   }, []);
+
+  const refreshAndInvalidate = useCallback(async () => {
+    const updated = await refreshConnection(false, true);
+    if (!updated) return;
+    invalidateSourceConsumers("google_calendar", "manual_refresh");
+    wakeSourceSyncStatus();
+  }, [refreshConnection]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,9 +122,18 @@ export function GoogleCalendarConnector() {
     void refreshConnection();
   }, [refreshConnection]);
 
+  useSyncInvalidation(["google_calendar"], () => {
+    void refreshConnection(true);
+  });
+
   async function disconnect() {
+    mutationEpochRef.current += 1;
+    requestSequenceRef.current += 1;
+    interactiveRefreshSequenceRef.current = null;
     setIsDisconnecting(true);
+    setIsRefreshing(false);
     setNotice(null);
+    let succeeded = false;
     try {
       const response = await fetch(
         "/api/connectors/google-calendar/disconnect",
@@ -69,6 +145,7 @@ export function GoogleCalendarConnector() {
         tone: "neutral",
         message: "Google Calendar 연결과 로컬 일정 데이터를 삭제했습니다."
       });
+      succeeded = true;
     } catch {
       setNotice({
         tone: "error",
@@ -76,6 +153,10 @@ export function GoogleCalendarConnector() {
       });
     } finally {
       setIsDisconnecting(false);
+    }
+    if (succeeded) {
+      invalidateSourceConsumers("google_calendar", "disconnect");
+      wakeSourceSyncStatus();
     }
   }
 
@@ -97,6 +178,7 @@ export function GoogleCalendarConnector() {
         최근 일정과 다가오는 일정을 읽기 전용으로 가져옵니다. 일정을
         만들거나 수정하지 않습니다.
       </p>
+      <SourceSyncMeta source="google_calendar" />
 
       {notice ? (
         <p
@@ -111,7 +193,7 @@ export function GoogleCalendarConnector() {
         connection={connection}
         isRefreshing={isRefreshing}
         isDisconnecting={isDisconnecting}
-        onRefresh={() => void refreshConnection()}
+        onRefresh={() => void refreshAndInvalidate()}
         onDisconnect={() => void disconnect()}
       />
     </section>

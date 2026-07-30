@@ -21,6 +21,125 @@ import {
 } from "./versions";
 
 const timestampSchema = z.string().datetime();
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+const codexConversationReasonCodeSchema = z.enum([
+  "CONTENT_MODE_DISABLED",
+  "OUTSIDE_RAW_RETENTION_WINDOW",
+  "THREAD_READ_LIMIT",
+  "THREAD_READ_FAILED",
+  "THREAD_RESPONSE_INVALID",
+  "THREAD_CHANGED_DURING_READ",
+  "TURN_LIMIT",
+  "ITEM_LIMIT",
+  "FIELD_BYTE_LIMIT",
+  "THREAD_BYTE_LIMIT",
+  "UNSUPPORTED_ITEM",
+  "REASONING_EXCLUDED_BY_POLICY"
+]);
+
+const codexSessionContentManifestSchema = z
+  .object({
+    state: z.enum([
+      "not_collected",
+      "complete",
+      "partial",
+      "stale",
+      "failed",
+      "expired"
+    ]),
+    contentSha256: sha256Schema.nullable(),
+    contentSourceUpdatedAt: timestampSchema.nullable(),
+    collectedAt: timestampSchema.nullable(),
+    expiresAt: timestampSchema.nullable(),
+    historicalTurnStatus: z.enum([
+      "completed",
+      "failed",
+      "interrupted",
+      "in_progress",
+      "unknown"
+    ]),
+    latestTurnCompletedAt: timestampSchema.nullable(),
+    turnCount: z.number().int().nonnegative(),
+    userPromptCount: z.number().int().nonnegative(),
+    agentResponseCount: z.number().int().nonnegative(),
+    commandExecutionCount: z.number().int().nonnegative(),
+    failedCommandCount: z.number().int().nonnegative(),
+    fileChangeCount: z.number().int().nonnegative(),
+    toolCallCount: z.number().int().nonnegative(),
+    omittedReasoningItemCount: z.number().int().nonnegative(),
+    omittedUnsupportedItemCount: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+    reasonCodes: z.array(codexConversationReasonCodeSchema),
+    latestUserPromptExcerpt: z.string().max(300).nullable(),
+    latestAgentResponseExcerpt: z.string().max(300).nullable(),
+    latestExecutionSummary: z.string().max(300).nullable()
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    const hasContent = manifest.contentSha256 !== null;
+    const hasAllContentMetadata = [
+      manifest.contentSourceUpdatedAt,
+      manifest.collectedAt,
+      manifest.expiresAt
+    ].every((value) => value !== null);
+    if (hasContent !== hasAllContentMetadata) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contentSha256"],
+        message:
+          "Codex content hash and collection timestamps must be present together."
+      });
+    }
+    if (
+      !hasContent &&
+      (manifest.turnCount > 0 ||
+        manifest.userPromptCount > 0 ||
+        manifest.agentResponseCount > 0 ||
+        manifest.commandExecutionCount > 0 ||
+        manifest.failedCommandCount > 0 ||
+        manifest.fileChangeCount > 0 ||
+        manifest.toolCallCount > 0 ||
+        manifest.omittedReasoningItemCount > 0 ||
+        manifest.omittedUnsupportedItemCount > 0 ||
+        manifest.truncated ||
+        manifest.historicalTurnStatus !== "unknown" ||
+        manifest.latestTurnCompletedAt !== null ||
+        manifest.latestUserPromptExcerpt !== null ||
+        manifest.latestAgentResponseExcerpt !== null ||
+        manifest.latestExecutionSummary !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contentSha256"],
+        message:
+          "Codex content counts and excerpts require a persisted content artifact."
+      });
+    }
+    const stateRequiresContent =
+      manifest.state === "complete" ||
+      manifest.state === "partial" ||
+      manifest.state === "stale";
+    if (stateRequiresContent !== hasContent) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["state"],
+        message:
+          "Codex collection state must match persisted content availability."
+      });
+    }
+    if (
+      manifest.failedCommandCount >
+      manifest.commandExecutionCount
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["failedCommandCount"],
+        message:
+          "Failed Codex command count cannot exceed command count."
+      });
+    }
+  });
 
 const githubInstallationSchema = z
   .object({
@@ -156,22 +275,30 @@ const codexSessionSchema = z
     ]),
     attentionState: z
       .enum(["waiting_on_approval", "waiting_on_user_input"])
-      .nullable()
+      .nullable(),
+    content: codexSessionContentManifestSchema
   })
   .strict();
 
 export const codexRuntimeSnapshotSchema = z
   .object({
-    schemaVersion: z.literal("codex-snapshot-v2"),
+    schemaVersion: z.literal("codex-snapshot-v3"),
     collectorVersion: z.enum([
       "codex-app-server-metadata-v1",
-      "codex-app-server-activity-summary-v1"
+      "codex-app-server-activity-summary-v1",
+      "codex-app-server-conversation-and-execution-v1"
     ]),
-    contentMode: z.enum(["metadata_only", "activity_summary"]),
+    contentMode: z.enum([
+      "metadata_only",
+      "activity_summary",
+      "conversation_and_execution"
+    ]),
     codexVersion: z.string().min(1).max(120),
     fetchedAt: timestampSchema,
     lookbackStart: timestampSchema,
     truncated: z.boolean(),
+    conversationStoreSha256: sha256Schema.nullable(),
+    conversationRetentionDays: z.literal(7).nullable(),
     scopeIds: z
       .array(z.string().regex(/^[a-f0-9]{24}$/))
       .min(1),
@@ -179,6 +306,35 @@ export const codexRuntimeSnapshotSchema = z
   })
   .strict()
   .superRefine((snapshot, context) => {
+    const expectedCollectorVersion =
+      snapshot.contentMode === "conversation_and_execution"
+        ? "codex-app-server-conversation-and-execution-v1"
+        : snapshot.contentMode === "activity_summary"
+          ? "codex-app-server-activity-summary-v1"
+          : "codex-app-server-metadata-v1";
+    if (snapshot.collectorVersion !== expectedCollectorVersion) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collectorVersion"],
+        message:
+          "Codex collector version must match the selected content mode."
+      });
+    }
+    const conversationEnabled =
+      snapshot.contentMode === "conversation_and_execution";
+    if (
+      conversationEnabled !==
+        (snapshot.conversationStoreSha256 !== null) ||
+      conversationEnabled !==
+        (snapshot.conversationRetentionDays === 7)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationStoreSha256"],
+        message:
+          "Codex conversation store metadata must be present only in conversation-and-execution mode."
+      });
+    }
     snapshot.sessions.forEach((session, index) => {
       if (
         (session.taskSummary === null) !==
@@ -190,6 +346,21 @@ export const codexRuntimeSnapshotSchema = z
           code: z.ZodIssueCode.custom,
           path: ["sessions", index, "taskSummary"],
           message: "Task summary does not match Codex content mode."
+        });
+      }
+      if (
+        !conversationEnabled &&
+        (session.content.state !== "not_collected" ||
+          session.content.contentSha256 !== null ||
+          session.content.reasonCodes.length !== 1 ||
+          session.content.reasonCodes[0] !==
+            "CONTENT_MODE_DISABLED")
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["sessions", index, "content"],
+          message:
+            "Codex content manifests must remain disabled outside conversation-and-execution mode."
         });
       }
       if (!snapshot.scopeIds.includes(session.scopeId)) {
@@ -367,9 +538,23 @@ function completenessFor(
   candidateSetComplete: boolean;
 } {
   if (artifact.source === "codex") {
+    const contentIncomplete =
+      artifact.payload.contentMode ===
+        "conversation_and_execution" &&
+      artifact.payload.sessions.some(
+        (session) =>
+          session.content.state !== "complete" ||
+          session.content.truncated
+      );
+    const truncated =
+      artifact.payload.truncated ||
+      artifact.payload.sessions.some(
+        (session) => session.content.truncated
+      );
     return {
-      completeness: artifact.payload.truncated ? "partial" : "complete",
-      truncated: artifact.payload.truncated,
+      completeness:
+        truncated || contentIncomplete ? "partial" : "complete",
+      truncated,
       candidateSetComplete: false
     };
   }
@@ -412,7 +597,7 @@ function rejectedSnapshot(
   const expectedVersion =
     source === "github"
       ? "github-snapshot-v2"
-      : "codex-snapshot-v2";
+      : "codex-snapshot-v3";
   const unsupported =
     schemaVersion !== null && schemaVersion !== expectedVersion;
 
@@ -452,7 +637,17 @@ function normalizeCodexPayload(
   return {
     ...snapshot,
     scopeIds: [...new Set(snapshot.scopeIds)].sort(),
-    sessions: sortCanonical(snapshot.sessions)
+    sessions: sortCanonical(
+      snapshot.sessions.map((session) => ({
+        ...session,
+        content: {
+          ...session.content,
+          reasonCodes: [
+            ...new Set(session.content.reasonCodes)
+          ].sort(compareRuntimeStrings)
+        }
+      }))
+    )
   };
 }
 

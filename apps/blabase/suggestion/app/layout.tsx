@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 
+import { AppHeader } from "./AppHeader";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "blabase suggestion",
-  description: "여러 대화를 읽고 지금 가장 먼저 할 일을 제안합니다."
+  title: "blabase Work Cockpit",
+  description:
+    "연결된 GitHub 작업과 Codex 실행 현황에서 지금 개입할 한 가지를 제안합니다."
 };
 
 export const dynamic = "force-dynamic";
@@ -16,7 +18,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>
+        <AppHeader />
+        {children}
+      </body>
     </html>
   );
 }

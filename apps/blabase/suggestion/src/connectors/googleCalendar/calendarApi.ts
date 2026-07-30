@@ -2,11 +2,16 @@ import { z } from "zod";
 
 import type { GoogleCalendarConfig } from "./config";
 import {
+  googleCalendarConnectionScopeId,
+  googleCalendarStoreGeneration,
   readStoredTokens,
   writeStoredSnapshot,
   writeStoredTokens
 } from "./localStore";
-import { refreshAccessToken } from "./oauth";
+import {
+  GoogleCalendarOAuthError,
+  refreshAccessToken
+} from "./oauth";
 import type {
   GoogleCalendarSnapshot,
   GoogleCalendarWorkSignal,
@@ -35,6 +40,9 @@ const eventsResponseSchema = z.object({
   nextPageToken: z.string().optional()
 });
 
+export const MAX_GOOGLE_CALENDAR_EVENTS = 250;
+export const MAX_GOOGLE_CALENDAR_PAGES = 10;
+
 export async function fetchAndStoreCalendarSnapshot(
   config: GoogleCalendarConfig,
   options: {
@@ -46,6 +54,7 @@ export async function fetchAndStoreCalendarSnapshot(
   const now = options.now ?? new Date();
   const fetchImpl = options.fetchImpl ?? fetch;
   const cwd = options.cwd ?? process.cwd();
+  const storeGeneration = googleCalendarStoreGeneration(cwd);
   const storedTokens = await readStoredTokens(cwd);
   if (!storedTokens) {
     throw new GoogleCalendarApiError("NOT_CONNECTED");
@@ -53,8 +62,13 @@ export async function fetchAndStoreCalendarSnapshot(
 
   let tokens = storedTokens;
   if (shouldRefresh(tokens, now)) {
-    tokens = await refreshAccessToken(config, tokens, fetchImpl);
-    await writeStoredTokens(tokens, cwd);
+    tokens = await refreshTokensOrThrow(
+      config,
+      tokens,
+      fetchImpl,
+      cwd,
+      storeGeneration
+    );
   }
 
   const timeMin = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -68,18 +82,19 @@ export async function fetchAndStoreCalendarSnapshot(
   });
 
   if (response.status === 401) {
-    try {
-      tokens = await refreshAccessToken(config, tokens, fetchImpl);
-      await writeStoredTokens(tokens, cwd);
-      response = await fetchEventsPage({
-        accessToken: tokens.accessToken,
-        timeMin,
-        timeMax,
-        fetchImpl
-      });
-    } catch {
-      throw new GoogleCalendarApiError("REAUTHORIZATION_REQUIRED");
-    }
+    tokens = await refreshTokensOrThrow(
+      config,
+      tokens,
+      fetchImpl,
+      cwd,
+      storeGeneration
+    );
+    response = await fetchEventsPage({
+      accessToken: tokens.accessToken,
+      timeMin,
+      timeMax,
+      fetchImpl
+    });
   }
 
   if (!response.ok) {
@@ -87,32 +102,51 @@ export async function fetchAndStoreCalendarSnapshot(
   }
 
   const events: GoogleCalendarWorkSignal[] = [];
+  const seenPageTokens = new Set<string>();
+  let pageCount = 1;
+  let truncated = false;
   let page = await parseEventsPage(response);
-  events.push(...page.items.map(normalizeGoogleEvent));
+  truncated = appendCalendarEvents(events, page.items);
 
-  while (page.nextPageToken) {
+  while (
+    page.nextPageToken &&
+    events.length < MAX_GOOGLE_CALENDAR_EVENTS
+  ) {
+    const pageToken = page.nextPageToken;
+    if (
+      seenPageTokens.has(pageToken) ||
+      pageCount >= MAX_GOOGLE_CALENDAR_PAGES
+    ) {
+      throw new GoogleCalendarApiError("EVENT_RESPONSE_INVALID");
+    }
+    seenPageTokens.add(pageToken);
     const nextResponse = await fetchEventsPage({
       accessToken: tokens.accessToken,
       timeMin,
       timeMax,
-      pageToken: page.nextPageToken,
+      pageToken,
       fetchImpl
     });
     if (!nextResponse.ok) {
       throw new GoogleCalendarApiError("EVENTS_REQUEST_FAILED");
     }
+    pageCount += 1;
     page = await parseEventsPage(nextResponse);
-    events.push(...page.items.map(normalizeGoogleEvent));
+    truncated =
+      appendCalendarEvents(events, page.items) || truncated;
   }
+  truncated = truncated || Boolean(page.nextPageToken);
 
   const snapshot: GoogleCalendarSnapshot = {
     schemaVersion: "google-calendar-snapshot-v1",
+    connectionScopeId: googleCalendarConnectionScopeId(tokens),
     fetchedAt: now.toISOString(),
     timeMin: timeMin.toISOString(),
     timeMax: timeMax.toISOString(),
+    truncated,
     events: events.sort(compareCalendarEvents)
   };
-  await writeStoredSnapshot(snapshot, cwd);
+  await writeStoredSnapshot(snapshot, cwd, storeGeneration);
   return snapshot;
 }
 
@@ -161,6 +195,29 @@ export class GoogleCalendarApiError extends Error {
   ) {
     super(code);
     this.name = "GoogleCalendarApiError";
+  }
+}
+
+async function refreshTokensOrThrow(
+  config: GoogleCalendarConfig,
+  tokens: StoredGoogleCalendarTokens,
+  fetchImpl: typeof fetch,
+  cwd: string,
+  storeGeneration: number
+): Promise<StoredGoogleCalendarTokens> {
+  try {
+    const refreshed = await refreshAccessToken(
+      config,
+      tokens,
+      fetchImpl
+    );
+    await writeStoredTokens(refreshed, cwd, storeGeneration);
+    return refreshed;
+  } catch (error) {
+    if (error instanceof GoogleCalendarOAuthError) {
+      throw new GoogleCalendarApiError("REAUTHORIZATION_REQUIRED");
+    }
+    throw error;
   }
 }
 
@@ -213,6 +270,17 @@ function shouldRefresh(
   now: Date
 ): boolean {
   return new Date(tokens.expiresAt).getTime() <= now.getTime() + 60_000;
+}
+
+function appendCalendarEvents(
+  target: GoogleCalendarWorkSignal[],
+  items: Array<z.infer<typeof googleEventSchema>>
+): boolean {
+  for (const item of items) {
+    if (target.length >= MAX_GOOGLE_CALENDAR_EVENTS) return true;
+    target.push(normalizeGoogleEvent(item));
+  }
+  return false;
 }
 
 function calendarStartTimestamp(value: string): number {

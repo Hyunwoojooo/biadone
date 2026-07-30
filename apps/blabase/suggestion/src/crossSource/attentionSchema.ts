@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  calendarAttentionSourceSchema,
+  notionAttentionSourceSchema
+} from "../attention/supportingSourceAdapters";
 import { runtimeWorkSignalBatchSchema } from "./schema";
 import {
   PHASE2_ATTENTION_INPUT_CONTRACT,
@@ -127,13 +131,16 @@ export const phase2AttentionInputSchema = z
     sources: z
       .object({
         github: phase2SourceInputSchema,
-        codex: phase2SourceInputSchema
+        codex: phase2SourceInputSchema,
+        googleCalendar: calendarAttentionSourceSchema,
+        notion: notionAttentionSourceSchema
       })
       .strict()
   })
   .strict()
   .superRefine((input, context) => {
-    for (const [slot, source] of Object.entries(input.sources)) {
+    for (const slot of ["github", "codex"] as const) {
+      const source = input.sources[slot];
       if (
         source.status === "available" &&
         (source.batch.source !== slot ||
@@ -167,6 +174,8 @@ export const phase2CaveatCodeSchema = z.enum([
   "CAVEAT_CANDIDATE_SET_INCOMPLETE",
   "CAVEAT_DEFAULT_TIE_BREAK_USED",
   "CAVEAT_CODEX_EXCEPTION_CONTRACT_UNAVAILABLE",
+  "CAVEAT_NOTION_CONTEXT_ONLY",
+  "CAVEAT_GOOGLE_CALENDAR_CONTEXT_ONLY",
   "CAVEAT_NOTION_UNEVALUATED",
   "CAVEAT_GOOGLE_CALENDAR_UNEVALUATED",
   "CAVEAT_PRIMARY_OUTCOME_RELATION_UNRESOLVED"
@@ -194,6 +203,12 @@ export const phase2CoverageReasonSchema = z.enum([
   "SOURCE_CODEX_STALE_OVERVIEW",
   "SOURCE_CODEX_STALE_OR_INVALID",
   "SOURCE_CODEX_UNAVAILABLE",
+  "SOURCE_NOTION_CONTEXT_ONLY",
+  "SOURCE_NOTION_STALE_CONTEXT",
+  "SOURCE_NOTION_UNAVAILABLE",
+  "SOURCE_GOOGLE_CALENDAR_SCHEDULE_CONTEXT",
+  "SOURCE_GOOGLE_CALENDAR_STALE_CONTEXT",
+  "SOURCE_GOOGLE_CALENDAR_UNAVAILABLE",
   "SOURCE_NOTION_UNEVALUATED",
   "SOURCE_GOOGLE_CALENDAR_UNEVALUATED"
 ]);
@@ -203,6 +218,10 @@ export const phase2CandidateSchema = z
     candidateId: stableIdSchema,
     source: z.literal("github"),
     subjectId: z.string().min(1).max(240),
+    projectId: z
+      .string()
+      .regex(/^project_[a-f0-9]{32}$/)
+      .nullable(),
     sourceSignalIds: z.array(stableIdSchema).min(1).max(4),
     taskKind: z.enum([
       "assigned_issue",
@@ -284,11 +303,32 @@ export const phase2CandidateAssessmentSchema = z
   })
   .strict();
 
+const phase2CodexConversationReasonCodeSchema = z.enum([
+  "CONTENT_MODE_DISABLED",
+  "OUTSIDE_RAW_RETENTION_WINDOW",
+  "THREAD_READ_LIMIT",
+  "THREAD_READ_FAILED",
+  "THREAD_RESPONSE_INVALID",
+  "THREAD_CHANGED_DURING_READ",
+  "TURN_LIMIT",
+  "ITEM_LIMIT",
+  "FIELD_BYTE_LIMIT",
+  "THREAD_BYTE_LIMIT",
+  "UNSUPPORTED_ITEM",
+  "REASONING_EXCLUDED_BY_POLICY"
+]);
+
 export const phase2CodexOverviewItemSchema = z
   .object({
     executionId: z.string().min(1).max(240),
     signalId: stableIdSchema,
     observationId: stableIdSchema,
+    observationMode: z.literal("inventory_only"),
+    liveObservationAvailable: z.literal(false),
+    executionState: z.literal("unknown"),
+    executionStateReason: z.literal(
+      "CODEX_INVENTORY_IS_NOT_LIVE_EXECUTION_STATE"
+    ),
     nativeActivityState: z.enum([
       "active",
       "idle",
@@ -304,6 +344,64 @@ export const phase2CodexOverviewItemSchema = z
     projectLabel: z.string().min(1).max(120),
     taskSummary: z.string().min(1).max(200).nullable(),
     taskSummarySemanticRole: z.literal("display_only_unknown"),
+    contentMode: z.enum([
+      "metadata_only",
+      "activity_summary",
+      "conversation_and_execution"
+    ]),
+    conversationCollectionState: z.enum([
+      "not_collected",
+      "complete",
+      "partial",
+      "stale",
+      "failed",
+      "expired"
+    ]),
+    conversationContentAvailable: z.boolean(),
+    historicalContextCompleteness: z.enum([
+      "not_collected",
+      "complete",
+      "partial",
+      "unavailable"
+    ]),
+    historicalTurnStatus: z.enum([
+      "completed",
+      "failed",
+      "interrupted",
+      "in_progress",
+      "unknown"
+    ]),
+    historicalStatusSemanticRole: z.literal(
+      "persisted_history_only"
+    ),
+    conversationSourceUpdatedAt: timestampSchema.nullable(),
+    contentCollectedAt: timestampSchema.nullable(),
+    contentExpiresAt: timestampSchema.nullable(),
+    latestTurnCompletedAt: timestampSchema.nullable(),
+    turnCount: z.number().int().nonnegative(),
+    userPromptCount: z.number().int().nonnegative(),
+    agentResponseCount: z.number().int().nonnegative(),
+    commandExecutionCount: z.number().int().nonnegative(),
+    failedCommandCount: z.number().int().nonnegative(),
+    fileChangeCount: z.number().int().nonnegative(),
+    toolCallCount: z.number().int().nonnegative(),
+    omittedReasoningItemCount: z.number().int().nonnegative(),
+    omittedUnsupportedItemCount: z.number().int().nonnegative(),
+    contentTruncated: z.boolean(),
+    contentReasonCodes: z.array(
+      phase2CodexConversationReasonCodeSchema
+    ),
+    latestUserPromptExcerpt: z.string().min(1).max(200).nullable(),
+    latestAgentResponseExcerpt: z
+      .string()
+      .min(1)
+      .max(200)
+      .nullable(),
+    latestExecutionSummary: z.string().min(1).max(200).nullable(),
+    contentSemanticRole: z.literal("historical_context_only"),
+    contentPrivacyBoundary: z.literal(
+      "sanitized_manifest_only"
+    ),
     observedAt: timestampSchema,
     sourceUpdatedAt: timestampSchema,
     freshness: z.enum(["fresh", "stale"]),
@@ -316,7 +414,94 @@ export const phase2CodexOverviewItemSchema = z
     ]),
     forbiddenAsAttentionCandidate: z.literal(true)
   })
-  .strict();
+  .strict()
+  .superRefine((item, context) => {
+    const collectionMetadataPresent = [
+      item.conversationSourceUpdatedAt,
+      item.contentCollectedAt,
+      item.contentExpiresAt
+    ].every((value) => value !== null);
+    if (
+      item.conversationContentAvailable !==
+      collectionMetadataPresent
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationContentAvailable"],
+        message:
+          "Codex overview availability and collection timestamps must agree."
+      });
+    }
+    if (
+      item.failedCommandCount > item.commandExecutionCount
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["failedCommandCount"],
+        message:
+          "Failed Codex command count cannot exceed command count."
+      });
+    }
+    if (
+      !item.conversationContentAvailable &&
+      (item.turnCount > 0 ||
+        item.userPromptCount > 0 ||
+        item.agentResponseCount > 0 ||
+        item.commandExecutionCount > 0 ||
+        item.failedCommandCount > 0 ||
+        item.fileChangeCount > 0 ||
+        item.toolCallCount > 0 ||
+        item.latestUserPromptExcerpt !== null ||
+        item.latestAgentResponseExcerpt !== null ||
+        item.latestExecutionSummary !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversationContentAvailable"],
+        message:
+          "Codex overview counts and excerpts require collected content."
+      });
+    }
+    const expectedCompleteness =
+      item.conversationCollectionState === "not_collected"
+        ? "not_collected"
+        : item.conversationCollectionState === "complete"
+          ? item.contentTruncated
+            ? "partial"
+            : "complete"
+          : item.conversationCollectionState === "partial" ||
+              item.conversationCollectionState === "stale"
+            ? "partial"
+            : "unavailable";
+    if (
+      item.historicalContextCompleteness !==
+      expectedCompleteness
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["historicalContextCompleteness"],
+        message:
+          "Codex overview completeness must match its collection state."
+      });
+    }
+    if (
+      item.contentMode !== "conversation_and_execution" &&
+      (item.conversationCollectionState !== "not_collected" ||
+        item.historicalContextCompleteness !==
+          "not_collected" ||
+        item.conversationContentAvailable ||
+        item.latestUserPromptExcerpt !== null ||
+        item.latestAgentResponseExcerpt !== null ||
+        item.latestExecutionSummary !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contentMode"],
+        message:
+          "Codex historical overview context requires explicit conversation-and-execution mode."
+      });
+    }
+  });
 
 export const phase2CoverageSchema = z
   .object({
@@ -332,12 +517,13 @@ export const phase2CoverageSchema = z
     ]),
     negativeCandidateCoverageComplete: z.boolean(),
     evaluatedCandidateSources: z.array(z.literal("github")).max(1),
-    overviewOnlySources: z.array(z.literal("codex")).max(1),
-    unevaluatedSources: z.tuple([
-      z.literal("google_calendar"),
-      z.literal("notion")
-    ]),
-    reasonCodes: z.array(phase2CoverageReasonSchema).min(3).max(5)
+    overviewOnlySources: z
+      .array(z.enum(["codex", "google_calendar", "notion"]))
+      .max(3),
+    unevaluatedSources: z
+      .array(z.enum(["google_calendar", "notion"]))
+      .max(2),
+    reasonCodes: z.array(phase2CoverageReasonSchema).min(4).max(6)
   })
   .strict();
 
@@ -440,7 +626,40 @@ export const phase2AttentionResultSchema = z
       .object({
         codexExecutions: z
           .array(phase2CodexOverviewItemSchema)
-          .max(300)
+          .max(300),
+        supportingContext: z
+          .object({
+            googleCalendar: z
+              .object({
+                status: z.enum(["available", "unavailable"]),
+                freshness: z.enum(["fresh", "stale"]).nullable(),
+                projectId: z
+                  .string()
+                  .regex(/^project_[a-f0-9]{32}$/)
+                  .nullable(),
+                truncated: z.boolean().nullable(),
+                upcomingConstraintCount: z
+                  .number()
+                  .int()
+                  .nonnegative(),
+                nextConstraintStartAt: z
+                  .string()
+                  .min(1)
+                  .max(80)
+                  .nullable()
+              })
+              .strict(),
+            notion: z
+              .object({
+                status: z.enum(["available", "unavailable"]),
+                freshness: z.enum(["fresh", "stale"]).nullable(),
+                resourceCount: z.number().int().nonnegative(),
+                mappedResourceCount: z.number().int().nonnegative(),
+                truncated: z.boolean().nullable()
+              })
+              .strict()
+          })
+          .strict()
       })
       .strict(),
     decision: phase2DecisionSchema

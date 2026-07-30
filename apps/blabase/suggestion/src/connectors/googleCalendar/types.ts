@@ -19,13 +19,28 @@ export type GoogleCalendarWorkSignal = {
 
 export type GoogleCalendarSnapshot = {
   schemaVersion: "google-calendar-snapshot-v1";
+  /**
+   * Random, non-secret identity assigned to one local OAuth connection.
+   * Missing only on snapshots created before per-connection identities.
+   */
+  connectionScopeId?: string;
   fetchedAt: string;
   timeMin: string;
   timeMax: string;
+  /**
+   * Optional for snapshots written before collection-level pagination
+   * bounds were introduced.
+   */
+  truncated?: boolean;
   events: GoogleCalendarWorkSignal[];
 };
 
 export type StoredGoogleCalendarTokens = {
+  /**
+   * Random, non-secret identity assigned on OAuth replacement. It is safe to
+   * expose as an opaque project-mapping key, unlike either OAuth token.
+   */
+  connectionScopeId?: string;
   accessToken: string;
   refreshToken: string;
   expiresAt: string;

@@ -50,7 +50,7 @@ export function computeRuntimeWorkSignalSha256(
   signal: Omit<RuntimeWorkSignal, "signalHash">
 ): string {
   return runtimeSha256({
-    domain: "blabase-runtime-work-signal-v0.1",
+    domain: "blabase-runtime-work-signal-v0.3",
     signal
   });
 }
@@ -122,7 +122,7 @@ export function computeRuntimeWorkSignalBatchSha256(
   batch: Omit<RuntimeWorkSignalBatch, "batchSha256">
 ): string {
   return runtimeSha256({
-    domain: "blabase-runtime-work-signal-batch-v0.1",
+    domain: "blabase-runtime-work-signal-batch-v0.3",
     batch
   });
 }

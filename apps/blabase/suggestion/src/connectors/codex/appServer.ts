@@ -14,8 +14,23 @@ import {
   resolveCodexBinary
 } from "./config";
 import {
+  CODEX_CONVERSATION_COLLECTOR_VERSION,
+  CODEX_CONVERSATION_CONSENT_CONTRACT,
+  CODEX_CONVERSATION_RETENTION_DAYS,
+  CODEX_CONVERSATION_THREAD_READ_LIMIT,
+  codexConversationStoreSchema,
+  conversationStoreSha256,
+  emptyCodexContentManifest,
+  failedCodexContentManifest,
+  manifestFromConversationSession,
+  normalizeCodexThreadRead,
+  type CodexConversationSession,
+  type CodexConversationStore
+} from "./conversationContract";
+import {
   codexStoreGeneration,
   createCodexInstallationSecret,
+  readStoredCodexConversationStore,
   readStoredCodexConfig,
   transitionStoredCodexConfig,
   writeStoredCodexConfig,
@@ -25,13 +40,14 @@ import type {
   CodexActivityState,
   CodexAttentionState,
   CodexContentMode,
+  CodexSessionContentManifest,
   CodexSessionSignal,
   CodexSnapshot,
   StoredCodexConfig,
   StoredCodexScope
 } from "./types";
 
-const MAX_STDOUT_BYTES = 2 * 1024 * 1024;
+const MAX_STDOUT_BYTES = 64 * 1024 * 1024;
 const RPC_CLIENT_NAME = "blabase_suggestion";
 const RPC_CLIENT_TITLE = "blabase Suggestion";
 const RPC_CLIENT_VERSION = "0.1.0";
@@ -85,11 +101,32 @@ export type CodexThreadListParams = {
 };
 
 export type CodexThreadQuery = (
-  params: CodexThreadListParams
+  params: CodexThreadListParams,
+  options?: CodexThreadHistoryQueryOptions
 ) => Promise<{
   codexVersion: string;
   result: unknown;
+  threadReads?: CodexThreadReadResult[];
+  historyReadLimitReached?: boolean;
 }>;
+
+export type CodexThreadHistoryQueryOptions = {
+  includeTurns: true;
+  maxThreadReads: number;
+  shouldReadThread?: (thread: unknown) => boolean;
+};
+
+export type CodexThreadReadResult =
+  | {
+      threadId: string;
+      status: "available";
+      result: unknown;
+    }
+  | {
+      threadId: string;
+      status: "failed";
+      errorCode: "THREAD_READ_FAILED";
+    };
 
 export type CodexConnectorErrorCode =
   | "CODEX_NOT_INSTALLED"
@@ -128,24 +165,70 @@ export function discoverAndStoreCodexScopes(
   if (existing) return existing;
   const storeGeneration = codexStoreGeneration(cwd);
 
-  const flight = discoverAndStoreCodexScopesOnce(
+  const flight = prepareCodexScopeDiscoveryOnce(
     {
       ...options,
       cwd
     },
     storeGeneration
-  ).finally(() => {
-    discoveryFlights.delete(cwd);
-  });
+  )
+    .then(async (prepared) => {
+      await persistPreparedCodexScopeDiscovery(prepared);
+      return prepared.config;
+    })
+    .finally(() => {
+      discoveryFlights.delete(cwd);
+    });
   discoveryFlights.set(cwd, flight);
   return flight;
+}
+
+export type PreparedCodexScopeDiscovery = {
+  cwd: string;
+  storeGeneration: number;
+  previousConfig: StoredCodexConfig | null;
+  config: StoredCodexConfig;
+};
+
+export function prepareCodexScopeDiscovery(
+  options: ConnectorOptions = {}
+): Promise<PreparedCodexScopeDiscovery> {
+  const cwd = options.cwd ?? process.cwd();
+  return prepareCodexScopeDiscoveryOnce(
+    { ...options, cwd },
+    codexStoreGeneration(cwd)
+  );
+}
+
+export async function persistPreparedCodexScopeDiscovery(
+  prepared: PreparedCodexScopeDiscovery
+): Promise<void> {
+  if (prepared.previousConfig) {
+    await transitionStoredCodexConfig(
+      prepared.previousConfig,
+      prepared.config,
+      prepared.cwd,
+      prepared.storeGeneration
+    );
+    return;
+  }
+  await writeStoredCodexConfig(
+    prepared.config,
+    prepared.cwd,
+    prepared.storeGeneration
+  );
 }
 
 export async function selectStoredCodexScopes(
   scopeIds: string[],
   cwd = process.cwd(),
   contentMode?: CodexContentMode,
-  now = new Date()
+  now = new Date(),
+  conversationConsent?: {
+    accepted: true;
+    contract: typeof CODEX_CONVERSATION_CONSENT_CONTRACT;
+    retentionDays: typeof CODEX_CONVERSATION_RETENTION_DAYS;
+  }
 ): Promise<StoredCodexConfig> {
   const storeGeneration = codexStoreGeneration(cwd);
   const config = await readStoredCodexConfig(cwd);
@@ -168,16 +251,54 @@ export async function selectStoredCodexScopes(
     );
   }
 
-  const updated = {
+  const nextContentMode = contentMode ?? config.contentMode;
+  const reusingConversationConsent =
+    config.contentMode === "conversation_and_execution" &&
+    config.conversationConsentContract ===
+      CODEX_CONVERSATION_CONSENT_CONTRACT &&
+    config.conversationConsentAt !== null &&
+    config.conversationRetentionDays ===
+      CODEX_CONVERSATION_RETENTION_DAYS;
+  if (
+    nextContentMode === "conversation_and_execution" &&
+    !reusingConversationConsent &&
+    (!conversationConsent?.accepted ||
+      conversationConsent.contract !==
+        CODEX_CONVERSATION_CONSENT_CONTRACT ||
+      conversationConsent.retentionDays !==
+        CODEX_CONVERSATION_RETENTION_DAYS)
+  ) {
+    throw new CodexConnectorError(
+      "APP_SERVER_PROTOCOL_ERROR",
+      "Codex 대화와 실행 기록 수집에 명시적인 동의가 필요합니다."
+    );
+  }
+
+  const updated: StoredCodexConfig = {
     ...config,
+    schemaVersion: "codex-connector-config-v3",
     selectedScopeIds: uniqueIds,
-    contentMode: contentMode ?? config.contentMode,
+    contentMode: nextContentMode,
     contentConsentAt:
-      (contentMode ?? config.contentMode) === "activity_summary"
-        ? config.contentMode === "activity_summary" &&
+      nextContentMode !== "metadata_only"
+        ? config.contentMode !== "metadata_only" &&
           config.contentConsentAt
           ? config.contentConsentAt
           : now.toISOString()
+        : null,
+    conversationConsentAt:
+      nextContentMode === "conversation_and_execution"
+        ? reusingConversationConsent
+          ? config.conversationConsentAt
+          : now.toISOString()
+        : null,
+    conversationConsentContract:
+      nextContentMode === "conversation_and_execution"
+        ? CODEX_CONVERSATION_CONSENT_CONTRACT
+        : null,
+    conversationRetentionDays:
+      nextContentMode === "conversation_and_execution"
+        ? CODEX_CONVERSATION_RETENTION_DAYS
         : null
   };
   await transitionStoredCodexConfig(
@@ -218,8 +339,14 @@ export function fetchAndStoreCodexSnapshot(
 }
 
 export async function queryCodexThreadsViaAppServer(
-  params: CodexThreadListParams
-): Promise<{ codexVersion: string; result: unknown }> {
+  params: CodexThreadListParams,
+  options?: CodexThreadHistoryQueryOptions
+): Promise<{
+  codexVersion: string;
+  result: unknown;
+  threadReads?: CodexThreadReadResult[];
+  historyReadLimitReached?: boolean;
+}> {
   const resolution = await resolveCodexBinary();
   if (!resolution.ok) {
     throw new CodexConnectorError(
@@ -264,9 +391,19 @@ export async function queryCodexThreadsViaAppServer(
     );
     client.notify("initialized", {});
     const result = await client.request("thread/list", params);
+    const history = options
+      ? await readSelectedThreadHistories(client, result, options)
+      : null;
     return {
       codexVersion: normalizeCodexVersion(initializeResult.userAgent),
-      result
+      result,
+      ...(history
+        ? {
+            threadReads: history.threadReads,
+            historyReadLimitReached:
+              history.historyReadLimitReached
+          }
+        : {})
     };
   } catch (error) {
     if (error instanceof CodexConnectorError) throw error;
@@ -279,10 +416,58 @@ export async function queryCodexThreadsViaAppServer(
   }
 }
 
-async function discoverAndStoreCodexScopesOnce(
+async function readSelectedThreadHistories(
+  client: CodexJsonRpcClient,
+  threadListResult: unknown,
+  options: CodexThreadHistoryQueryOptions
+): Promise<{
+  threadReads: CodexThreadReadResult[];
+  historyReadLimitReached: boolean;
+}> {
+  const list = threadListSchema.parse(threadListResult);
+  const eligibleIds = list.data.flatMap((threadInput) => {
+    const parsed = rawThreadSchema.safeParse(threadInput);
+    if (
+      !parsed.success ||
+      (options.shouldReadThread &&
+        !options.shouldReadThread(threadInput))
+    ) {
+      return [];
+    }
+    return [parsed.data.id];
+  });
+  const selectedIds = eligibleIds.slice(0, options.maxThreadReads);
+  const threadReads: CodexThreadReadResult[] = [];
+  for (const threadId of selectedIds) {
+    try {
+      const result = await client.request("thread/read", {
+        threadId,
+        includeTurns: true
+      });
+      threadReads.push({
+        threadId,
+        status: "available",
+        result
+      });
+    } catch {
+      threadReads.push({
+        threadId,
+        status: "failed",
+        errorCode: "THREAD_READ_FAILED"
+      });
+    }
+  }
+  return {
+    threadReads,
+    historyReadLimitReached:
+      eligibleIds.length > selectedIds.length
+  };
+}
+
+async function prepareCodexScopeDiscoveryOnce(
   options: Required<Pick<ConnectorOptions, "cwd">> & ConnectorOptions,
   storeGeneration: number
-): Promise<StoredCodexConfig> {
+): Promise<PreparedCodexScopeDiscovery> {
   const now = options.now ?? new Date();
   const queryThreads =
     options.queryThreads ?? queryCodexThreadsViaAppServer;
@@ -333,16 +518,26 @@ async function discoverAndStoreCodexScopesOnce(
       scopeIds.has(scopeId)
     ) ?? [];
   const config: StoredCodexConfig = {
-    schemaVersion: "codex-connector-config-v2",
+    schemaVersion: "codex-connector-config-v3",
     installationSecret,
     selectedScopeIds,
     scopes,
     contentMode: existingConfig?.contentMode ?? "metadata_only",
     contentConsentAt: existingConfig?.contentConsentAt ?? null,
+    conversationConsentContract:
+      existingConfig?.conversationConsentContract ?? null,
+    conversationConsentAt:
+      existingConfig?.conversationConsentAt ?? null,
+    conversationRetentionDays:
+      existingConfig?.conversationRetentionDays ?? null,
     discoveredAt: now.toISOString()
   };
-  await writeStoredCodexConfig(config, options.cwd, storeGeneration);
-  return config;
+  return {
+    cwd: options.cwd,
+    storeGeneration,
+    previousConfig: existingConfig,
+    config
+  };
 }
 
 async function fetchAndStoreCodexSnapshotOnce(
@@ -364,16 +559,98 @@ async function fetchAndStoreCodexSnapshotOnce(
     );
   }
 
-  const response = await queryThreads({
-    ...baseThreadListParams(),
-    cwd: selectedScopes.map((scope) => scope.queryPath)
-  });
+  const conversationEnabled =
+    config.contentMode === "conversation_and_execution" &&
+    config.conversationConsentContract ===
+      CODEX_CONVERSATION_CONSENT_CONTRACT &&
+    config.conversationConsentAt !== null &&
+    config.conversationRetentionDays ===
+      CODEX_CONVERSATION_RETENTION_DAYS;
+  const previousConversationStore = conversationEnabled
+    ? await readStoredCodexConversationStore(options.cwd)
+    : null;
+  const reusableConversationStore =
+    previousConversationStore &&
+    Date.parse(previousConversationStore.expiresAt) >
+      now.getTime() &&
+    sameStringSet(
+      previousConversationStore.scopeIds,
+      selectedScopes.map((scope) => scope.id)
+    )
+      ? previousConversationStore
+      : null;
+  const previousConversationBySession = new Map(
+    (reusableConversationStore?.sessions ?? []).map((session) => [
+      session.sessionId,
+      session
+    ])
+  );
+  const rawRetentionStart = new Date(
+    now.getTime() -
+      CODEX_CONVERSATION_RETENTION_DAYS *
+        24 *
+        60 *
+        60 *
+        1_000
+  ).toISOString();
+  const response = conversationEnabled
+    ? await queryThreads(
+        {
+          ...baseThreadListParams(),
+          cwd: selectedScopes.map((scope) => scope.queryPath)
+        },
+        {
+          includeTurns: true,
+          maxThreadReads: CODEX_CONVERSATION_THREAD_READ_LIMIT,
+          shouldReadThread(threadInput) {
+            const parsed = rawThreadSchema.safeParse(threadInput);
+            if (!parsed.success) return false;
+            const updatedAt = threadUpdatedAt(parsed.data);
+            if (!updatedAt || updatedAt < rawRetentionStart) {
+              return false;
+            }
+            const sessionId = stableId(
+              config.installationSecret,
+              `thread:${parsed.data.id}`
+            );
+            const previous =
+              previousConversationBySession.get(sessionId);
+            return (
+              !previous ||
+              previous.contentSourceUpdatedAt !== updatedAt ||
+              Date.parse(previous.expiresAt) <= now.getTime()
+            );
+          }
+        }
+      )
+    : await queryThreads({
+        ...baseThreadListParams(),
+        cwd: selectedScopes.map((scope) => scope.queryPath)
+      });
   const parsed = threadListSchema.parse(response.result);
   const lookbackStart = lookbackStartFor(now);
   const scopeByPath = new Map(
     selectedScopes.map((scope) => [scope.queryPath, scope])
   );
   const sessions = new Map<string, CodexSessionSignal>();
+  const conversationSessions = new Map<
+    string,
+    CodexConversationSession
+  >();
+  const threadReadByNativeId = new Map(
+    (response.threadReads ?? []).map((threadRead) => [
+      threadRead.threadId,
+      threadRead
+    ])
+  );
+  const conversationExpiresAt = new Date(
+    now.getTime() +
+      CODEX_CONVERSATION_RETENTION_DAYS *
+        24 *
+        60 *
+        60 *
+        1_000
+  ).toISOString();
 
   for (const raw of parsed.data) {
     const thread = rawThreadSchema.safeParse(raw);
@@ -395,6 +672,73 @@ async function fetchAndStoreCodexSnapshotOnce(
       config.installationSecret,
       `thread:${thread.data.id}`
     );
+    const previousConversation =
+      previousConversationBySession.get(id);
+    let content = emptyCodexContentManifest();
+    if (conversationEnabled) {
+      if (updatedAt < rawRetentionStart) {
+        content = emptyCodexContentManifest(
+          "OUTSIDE_RAW_RETENTION_WINDOW"
+        );
+      } else {
+        const threadRead = threadReadByNativeId.get(thread.data.id);
+        let conversation: CodexConversationSession | undefined;
+        if (
+          !threadRead &&
+          previousConversation?.contentSourceUpdatedAt === updatedAt &&
+          Date.parse(previousConversation.expiresAt) > now.getTime()
+        ) {
+          conversation = previousConversation;
+        } else if (threadRead?.status === "available") {
+          try {
+            conversation = normalizeCodexThreadRead({
+              result: threadRead.result,
+              expectedNativeThreadId: thread.data.id,
+              sessionId: id,
+              scopeId: scope.id,
+              sourceUpdatedAt: updatedAt,
+              fetchedAt: now.toISOString(),
+              expiresAt: conversationExpiresAt,
+              opaqueId: (kind, nativeId) =>
+                stableId(
+                  config.installationSecret,
+                  `${kind}:${nativeId}`
+                )
+            });
+          } catch (error) {
+            content = failedCodexContentManifest({
+              reasonCode:
+                error instanceof Error &&
+                error.message.includes(
+                  "changed while history was read"
+                )
+                  ? "THREAD_CHANGED_DURING_READ"
+                  : "THREAD_RESPONSE_INVALID",
+              previous: previousConversation
+            });
+          }
+        } else {
+          content = failedCodexContentManifest({
+            reasonCode:
+              threadRead?.status === "failed"
+                ? "THREAD_READ_FAILED"
+                : response.historyReadLimitReached
+                  ? "THREAD_READ_LIMIT"
+                  : "THREAD_READ_FAILED",
+            previous: previousConversation
+          });
+        }
+        if (conversation) {
+          conversationSessions.set(id, conversation);
+          content = sanitizeContentManifest(
+            manifestFromConversationSession(conversation)
+          );
+        } else if (previousConversation && content.state === "stale") {
+          conversationSessions.set(id, previousConversation);
+          content = sanitizeContentManifest(content);
+        }
+      }
+    }
     sessions.set(id, {
       id,
       source: "codex",
@@ -406,18 +750,56 @@ async function fetchAndStoreCodexSnapshotOnce(
       createdAt,
       updatedAt,
       activityState: state.activityState,
-      attentionState: state.attentionState
+      attentionState: state.attentionState,
+      content
     });
   }
 
+  const conversationStore: CodexConversationStore | undefined =
+    conversationEnabled
+      ? codexConversationStoreSchema.parse({
+          contract: "codex-conversation-and-execution-store-v1",
+          collectorVersion: CODEX_CONVERSATION_COLLECTOR_VERSION,
+          consentContract: CODEX_CONVERSATION_CONSENT_CONTRACT,
+          collectedAt: now.toISOString(),
+          expiresAt: conversationExpiresAt,
+          retentionDays: CODEX_CONVERSATION_RETENTION_DAYS,
+          scopeIds: selectedScopes
+            .map((scope) => scope.id)
+            .sort(),
+          truncated:
+            Boolean(parsed.nextCursor) ||
+            Boolean(response.historyReadLimitReached) ||
+            [...sessions.values()].some(
+              (session) =>
+                session.content.state === "partial" ||
+                session.content.state === "stale" ||
+                session.content.state === "failed"
+            ),
+          sessions: [...conversationSessions.values()].sort(
+            (left, right) =>
+              left.sessionId.localeCompare(right.sessionId)
+          )
+        })
+      : undefined;
   const snapshot: CodexSnapshot = {
-    schemaVersion: "codex-snapshot-v2",
-    collectorVersion: "codex-app-server-activity-summary-v1",
+    schemaVersion: "codex-snapshot-v3",
+    collectorVersion: conversationEnabled
+      ? "codex-app-server-conversation-and-execution-v1"
+      : config.contentMode === "activity_summary"
+        ? "codex-app-server-activity-summary-v1"
+        : "codex-app-server-metadata-v1",
     contentMode: config.contentMode,
     codexVersion: response.codexVersion,
     fetchedAt: now.toISOString(),
     lookbackStart,
     truncated: Boolean(parsed.nextCursor),
+    conversationStoreSha256: conversationStore
+      ? conversationStoreSha256(conversationStore)
+      : null,
+    conversationRetentionDays: conversationStore
+      ? CODEX_CONVERSATION_RETENTION_DAYS
+      : null,
     scopeIds: selectedScopes.map((scope) => scope.id).sort(),
     sessions: [...sessions.values()].sort(
       (left, right) =>
@@ -430,7 +812,8 @@ async function fetchAndStoreCodexSnapshotOnce(
     snapshot,
     config,
     options.cwd,
-    storeGeneration
+    storeGeneration,
+    conversationStore
   );
   return snapshot;
 }
@@ -531,7 +914,7 @@ function codexTaskSummary(
   value: string | null;
   source: "thread_name" | "first_user_request" | null;
 } {
-  if (contentMode !== "activity_summary") {
+  if (contentMode === "metadata_only") {
     return { value: null, source: null };
   }
 
@@ -543,6 +926,23 @@ function codexTaskSummary(
   return preview
     ? { value: preview, source: "first_user_request" }
     : { value: null, source: null };
+}
+
+function sanitizeContentManifest(
+  manifest: CodexSessionContentManifest
+): CodexSessionContentManifest {
+  return {
+    ...manifest,
+    latestUserPromptExcerpt: sanitizeTaskSummary(
+      manifest.latestUserPromptExcerpt
+    ),
+    latestAgentResponseExcerpt: sanitizeTaskSummary(
+      manifest.latestAgentResponseExcerpt
+    ),
+    latestExecutionSummary: sanitizeTaskSummary(
+      manifest.latestExecutionSummary
+    )
+  };
 }
 
 function sanitizeTaskSummary(
@@ -589,6 +989,20 @@ function disambiguateScopeLabels(
       label: `${scope.label.slice(0, 120 - suffix.length)}${suffix}`
     };
   });
+}
+
+function sameStringSet(
+  left: readonly string[],
+  right: readonly string[]
+): boolean {
+  const leftSorted = [...new Set(left)].sort();
+  const rightSorted = [...new Set(right)].sort();
+  return (
+    leftSorted.length === rightSorted.length &&
+    leftSorted.every(
+      (value, index) => value === rightSorted[index]
+    )
+  );
 }
 
 function normalizeCodexVersion(userAgent: string): string {

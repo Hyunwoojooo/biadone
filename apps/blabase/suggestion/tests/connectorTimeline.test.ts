@@ -13,6 +13,7 @@ import {
   writeStoredCodexConfig,
   writeStoredCodexSnapshot
 } from "../src/connectors/codex/localStore";
+import { emptyCodexContentManifest } from "../src/connectors/codex/conversationContract";
 import type {
   CodexSnapshot,
   StoredCodexConfig
@@ -287,7 +288,8 @@ describe("connector timeline", () => {
             createdAt: sharedTimestamp,
             updatedAt: sharedTimestamp,
             activityState: "idle",
-            attentionState: null
+            attentionState: null,
+            content: emptyCodexContentManifest()
           }
         ]
       })
@@ -353,7 +355,7 @@ describe("connector timeline", () => {
     );
     const scopeId = "c".repeat(24);
     const summaryConfig: StoredCodexConfig = {
-      schemaVersion: "codex-connector-config-v2",
+      schemaVersion: "codex-connector-config-v3",
       installationSecret: "f".repeat(64),
       selectedScopeIds: [scopeId],
       scopes: [
@@ -367,16 +369,21 @@ describe("connector timeline", () => {
       ],
       contentMode: "activity_summary",
       contentConsentAt: "2026-07-25T08:00:00.000Z",
+      conversationConsentContract: null,
+      conversationConsentAt: null,
+      conversationRetentionDays: null,
       discoveredAt: "2026-07-25T08:00:00.000Z"
     };
     const staleSummary: CodexSnapshot = {
-      schemaVersion: "codex-snapshot-v2",
+      schemaVersion: "codex-snapshot-v3",
       collectorVersion: "codex-app-server-activity-summary-v1",
       contentMode: "activity_summary",
       codexVersion: "codex-cli 0.145.0",
       fetchedAt: "2026-07-25T10:00:00.000Z",
       lookbackStart: "2026-06-25T10:00:00.000Z",
       truncated: false,
+      conversationStoreSha256: null,
+      conversationRetentionDays: null,
       scopeIds: [scopeId],
       sessions: [
         {
@@ -390,7 +397,8 @@ describe("connector timeline", () => {
           createdAt: "2026-07-25T08:00:00.000Z",
           updatedAt: "2026-07-25T09:00:00.000Z",
           activityState: "idle",
-          attentionState: null
+          attentionState: null,
+          content: emptyCodexContentManifest()
         }
       ]
     };
@@ -734,13 +742,15 @@ function codexSnapshot(
   overrides: Partial<CodexSnapshot> = {}
 ): CodexSnapshot {
   return {
-    schemaVersion: "codex-snapshot-v2",
+    schemaVersion: "codex-snapshot-v3",
     collectorVersion: "codex-app-server-activity-summary-v1",
     contentMode: "activity_summary",
     codexVersion: "codex-cli 0.145.0",
     fetchedAt: "2026-07-25T08:00:00.000Z",
     lookbackStart: "2026-06-25T08:00:00.000Z",
     truncated: false,
+    conversationStoreSha256: null,
+    conversationRetentionDays: null,
     scopeIds: ["SECRET_SCOPE_IDENTIFIER"],
     sessions: [
       {
@@ -754,7 +764,8 @@ function codexSnapshot(
         createdAt: "2026-07-24T00:00:00.000Z",
         updatedAt: "2026-07-25T13:00:00.000Z",
         activityState: "active",
-        attentionState: "waiting_on_user_input"
+        attentionState: "waiting_on_user_input",
+        content: emptyCodexContentManifest()
       }
     ],
     ...overrides

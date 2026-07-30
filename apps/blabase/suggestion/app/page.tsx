@@ -11,6 +11,8 @@ import { ConnectorTimeline } from "./ConnectorTimeline";
 import { GitHubConnector } from "./GitHubConnector";
 import { GoogleCalendarConnector } from "./GoogleCalendarConnector";
 import { NotionConnector } from "./NotionConnector";
+import { WeeklyOutcome } from "./WeeklyOutcome";
+import { WorkCockpit } from "./WorkCockpit";
 
 const MIN_URLS = 3;
 const MAX_URLS = 10;
@@ -102,22 +104,42 @@ export default function SuggestionPage() {
   }
 
   return (
-    <main className="shell">
+    <main className="shell" id="main-content">
       <header className="intro">
-        <p className="brand">blabase</p>
-        <h1>지금 가장 먼저 할 일을 찾아드릴게요.</h1>
+        <p className="eyebrow">Execution observability</p>
+        <h1>오늘의 Work Cockpit</h1>
         <p className="lead">
-          Google Calendar, Notion, GitHub, Codex 데이터를 연결해 미리
-          확인할 수 있습니다. 현재 제안은 같은 사용자의 ChatGPT 대화에서
-          반복되는 일과 미완료 상태를 바탕으로 만듭니다.
+          GitHub의 열린 작업과 Codex 실행 현황을 함께 보고, 지금 사용자가
+          직접 개입할 한 가지를 근거와 함께 확인합니다.
         </p>
       </header>
+
+      <WeeklyOutcome />
+      <WorkCockpit />
+
+      <div className="pageSectionIntro">
+        <p className="eyebrow">Connections</p>
+        <h2>연결 및 데이터 확인</h2>
+        <p>
+          각 source의 연결 범위와 최신 수집 상태를 관리합니다. 추천은
+          read-only로 동작합니다.
+        </p>
+      </div>
 
       <GoogleCalendarConnector />
       <NotionConnector />
       <GitHubConnector />
       <CodexConnector />
       <ConnectorTimeline />
+
+      <div className="pageSectionIntro pageSectionIntro-legacy">
+        <p className="eyebrow">Legacy prototype</p>
+        <h2>기존 ChatGPT 대화 분석</h2>
+        <p>
+          기존 conversation-only 제안 경로는 비교와 회귀 확인을 위해
+          그대로 유지합니다.
+        </p>
+      </div>
 
       <form className="inputSection" onSubmit={handleSubmit} noValidate>
         <div className="sectionHeading">

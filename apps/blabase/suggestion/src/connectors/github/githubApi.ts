@@ -2,11 +2,15 @@ import { z } from "zod";
 
 import type { GitHubConfig } from "./config";
 import {
+  githubStoreGeneration,
   readStoredGitHubTokens,
   writeStoredGitHubSnapshot,
   writeStoredGitHubTokens
 } from "./localStore";
-import { refreshGitHubAccessToken } from "./oauth";
+import {
+  GitHubOAuthError,
+  refreshGitHubAccessToken
+} from "./oauth";
 import type {
   GitHubActivityKind,
   GitHubActivitySubjectType,
@@ -186,6 +190,7 @@ export async function fetchAndStoreGitHubSnapshot(
   const now = options.now ?? new Date();
   const fetchImpl = options.fetchImpl ?? fetch;
   const cwd = options.cwd ?? process.cwd();
+  const storeGeneration = githubStoreGeneration(cwd);
   const maxRepositories = boundedLimit(
     options.maxRepositories,
     MAX_GITHUB_REPOSITORIES
@@ -208,7 +213,8 @@ export async function fetchAndStoreGitHubSnapshot(
     storedTokens,
     now,
     fetchImpl,
-    cwd
+    cwd,
+    storeGeneration
   });
 
   const userResponse = await request(apiUrl(config, "/user"));
@@ -323,8 +329,11 @@ export async function fetchAndStoreGitHubSnapshot(
     activities: activityResult.activities
   };
 
-  await writeStoredGitHubSnapshot(snapshot, cwd);
-  return snapshot;
+  return writeStoredGitHubSnapshot(
+    snapshot,
+    cwd,
+    storeGeneration
+  );
 }
 
 export function compareGitHubTasks(
@@ -994,13 +1003,15 @@ function createAuthenticatedRequest({
   storedTokens,
   now,
   fetchImpl,
-  cwd
+  cwd,
+  storeGeneration
 }: {
   config: GitHubConfig;
   storedTokens: StoredGitHubTokens;
   now: Date;
   fetchImpl: typeof fetch;
   cwd: string;
+  storeGeneration: number;
 }): AuthenticatedRequest {
   let tokens = storedTokens;
   let refreshCompleted = false;
@@ -1021,10 +1032,14 @@ function createAuthenticatedRequest({
           tokens,
           fetchImpl,
           now,
-          cwd
+          cwd,
+          storeGeneration
         );
-      } catch {
-        throw new GitHubApiError("REAUTHORIZATION_REQUIRED");
+      } catch (error) {
+        if (error instanceof GitHubOAuthError) {
+          throw new GitHubApiError("REAUTHORIZATION_REQUIRED");
+        }
+        throw error;
       } finally {
         refreshPromise = null;
       }
@@ -1069,9 +1084,11 @@ function refreshStoredGitHubTokens(
   previousTokens: StoredGitHubTokens,
   fetchImpl: typeof fetch,
   now: Date,
-  cwd: string
+  cwd: string,
+  storeGeneration: number
 ): Promise<StoredGitHubTokens> {
-  const existingRefresh = storedTokenRefreshes.get(cwd);
+  const refreshKey = `${cwd}:${storeGeneration}`;
+  const existingRefresh = storedTokenRefreshes.get(refreshKey);
   if (existingRefresh) return existingRefresh;
 
   const refreshTask = (async () => {
@@ -1093,17 +1110,23 @@ function refreshStoredGitHubTokens(
       fetchImpl,
       now
     );
-    await writeStoredGitHubTokens(refreshedTokens, cwd);
+    await writeStoredGitHubTokens(
+      refreshedTokens,
+      cwd,
+      storeGeneration
+    );
     return refreshedTokens;
   })();
 
   let guardedRefresh: Promise<StoredGitHubTokens>;
   guardedRefresh = refreshTask.finally(() => {
-    if (storedTokenRefreshes.get(cwd) === guardedRefresh) {
-      storedTokenRefreshes.delete(cwd);
+    if (
+      storedTokenRefreshes.get(refreshKey) === guardedRefresh
+    ) {
+      storedTokenRefreshes.delete(refreshKey);
     }
   });
-  storedTokenRefreshes.set(cwd, guardedRefresh);
+  storedTokenRefreshes.set(refreshKey, guardedRefresh);
   return guardedRefresh;
 }
 

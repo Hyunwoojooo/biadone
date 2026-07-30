@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { fetchAndStoreCalendarSnapshot } from "../../../../../src/connectors/googleCalendar/calendarApi";
 import {
   isLocalCalendarRequest,
   loadGoogleCalendarConfig
 } from "../../../../../src/connectors/googleCalendar/config";
 import {
-  readStoredTokens,
-  writeStoredTokens
+  replaceStoredGoogleCalendarConnection
 } from "../../../../../src/connectors/googleCalendar/localStore";
 import {
   exchangeAuthorizationCode,
@@ -15,6 +13,10 @@ import {
   oauthStatesMatch
 } from "../../../../../src/connectors/googleCalendar/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import {
+  supersedeRuntimeSourceConnection,
+  syncRuntimeSources
+} from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,17 +50,25 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const previousTokens = await readStoredTokens();
     const tokens = await exchangeAuthorizationCode(
       configResult.config,
-      code,
-      previousTokens
+      code
     );
-    await writeStoredTokens(tokens);
+    await supersedeRuntimeSourceConnection("google_calendar");
+    await replaceStoredGoogleCalendarConnection(tokens);
 
     let syncFailed = false;
     try {
-      await fetchAndStoreCalendarSnapshot(configResult.config);
+      const sync = await syncRuntimeSources({
+        sources: ["google_calendar"]
+      });
+      const source = sync.sources.find(
+        (candidate) => candidate.source === "google_calendar"
+      );
+      syncFailed =
+        source?.status !== "idle" ||
+        source.lastErrorCode !== null ||
+        source.lastSuccessAt === null;
     } catch {
       syncFailed = true;
     }

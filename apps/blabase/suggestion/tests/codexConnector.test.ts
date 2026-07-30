@@ -22,6 +22,7 @@ import {
   codexLocalDirectory,
   deleteStoredCodexConnection,
   readStoredCodexConfig,
+  readStoredCodexObservationHistory,
   readStoredCodexSnapshot
 } from "../src/connectors/codex/localStore";
 
@@ -185,8 +186,8 @@ describe("Codex local connector", () => {
       cwd: [privatePath]
     });
     expect(snapshot).toMatchObject({
-      schemaVersion: "codex-snapshot-v2",
-      collectorVersion: "codex-app-server-activity-summary-v1",
+      schemaVersion: "codex-snapshot-v3",
+      collectorVersion: "codex-app-server-metadata-v1",
       contentMode: "metadata_only",
       codexVersion: "codex-cli 0.145.0",
       scopeIds: [discovery.scopes[0].id],
@@ -234,7 +235,205 @@ describe("Codex local connector", () => {
         .mode & 0o777
     ).toBe(0o600);
     await expect(readStoredCodexSnapshot(cwd)).resolves.toEqual(snapshot);
+    const observationHistory =
+      await readStoredCodexObservationHistory(cwd);
+    expect(observationHistory).toMatchObject({
+      contract: "codex-observation-history-v2",
+      observations: [
+        {
+          contract: "codex-execution-observation-v2",
+          observationMode: "inventory_only",
+          liveObservationAvailable: false,
+          executionState: "unknown"
+        },
+        {
+          contract: "codex-execution-observation-v2",
+          observationMode: "inventory_only",
+          liveObservationAvailable: false,
+          executionState: "unknown"
+        }
+      ]
+    });
+    expect(JSON.stringify(observationHistory)).not.toContain(
+      "raw-thread-private-id"
+    );
+
+    await fetchAndStoreCodexSnapshot(selected, {
+      cwd,
+      now: new Date("2026-07-25T12:00:30.000Z"),
+      queryThreads
+    });
+    expect(
+      (await readStoredCodexObservationHistory(cwd))?.observations
+    ).toHaveLength(2);
   });
+
+  it("reads an exact legacy v1 observation history as v2 without rewriting the private file", async () => {
+    const cwd = await createTempDirectory();
+    const directory = codexLocalDirectory(cwd);
+    const legacyHistory = {
+      contract: "codex-observation-history-v1",
+      updatedAt: "2026-07-25T12:00:00.000Z",
+      observations: [
+        storedInventoryObservation({
+          contract: "codex-execution-observation-v1"
+        })
+      ]
+    };
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(directory, "observation-history.json"),
+      `${JSON.stringify(legacyHistory, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 }
+    );
+
+    await expect(
+      readStoredCodexObservationHistory(cwd)
+    ).resolves.toMatchObject({
+      contract: "codex-observation-history-v2",
+      observations: [
+        {
+          contract: "codex-execution-observation-v2",
+          observationMode: "inventory_only",
+          executionState: "unknown",
+          waitingState: null
+        }
+      ]
+    });
+    expect(
+      await readFile(
+        join(directory, "observation-history.json"),
+        "utf8"
+      )
+    ).toBe(`${JSON.stringify(legacyHistory, null, 2)}\n`);
+  });
+
+  it("atomically upgrades an exact legacy v1 history on the next successful snapshot append", async () => {
+    const cwd = await createTempDirectory();
+    const scopePath = "/Users/example/legacy-observation";
+    const discovery = await discoverAndStoreCodexScopes({
+      cwd,
+      now: new Date("2026-07-25T11:30:00.000Z"),
+      queryThreads: async () => ({
+        codexVersion: "codex-cli 0.145.0",
+        result: {
+          data: [
+            thread({
+              id: "legacy-discovery",
+              cwd: scopePath,
+              updatedAt: "2026-07-25T11:00:00.000Z"
+            })
+          ],
+          nextCursor: null
+        }
+      })
+    });
+    const selected = await selectStoredCodexScopes(
+      [discovery.scopes[0].id],
+      cwd
+    );
+    const historyPath = join(
+      codexLocalDirectory(cwd),
+      "observation-history.json"
+    );
+    await writeFile(
+      historyPath,
+      `${JSON.stringify(
+        {
+          contract: "codex-observation-history-v1",
+          updatedAt: "2026-07-25T11:30:00.000Z",
+          observations: [
+            storedInventoryObservation({
+              contract: "codex-execution-observation-v1",
+              observedAt: "2026-07-25T11:30:00.000Z",
+              sourceUpdatedAt: "2026-07-25T11:00:00.000Z"
+            })
+          ]
+        },
+        null,
+        2
+      )}\n`,
+      { encoding: "utf8", mode: 0o600 }
+    );
+
+    await fetchAndStoreCodexSnapshot(selected, {
+      cwd,
+      now: new Date("2026-07-25T12:00:00.000Z"),
+      queryThreads: async () => ({
+        codexVersion: "codex-cli 0.145.0",
+        result: {
+          data: [
+            thread({
+              id: "next-snapshot",
+              cwd: scopePath,
+              updatedAt: "2026-07-25T11:59:00.000Z"
+            })
+          ],
+          nextCursor: null
+        }
+      })
+    });
+
+    const persisted: unknown = JSON.parse(
+      await readFile(historyPath, "utf8")
+    );
+    expect(persisted).toMatchObject({
+      contract: "codex-observation-history-v2",
+      observations: [
+        { contract: "codex-execution-observation-v2" },
+        { contract: "codex-execution-observation-v2" }
+      ]
+    });
+  });
+
+  it.each([
+    [
+      "current v2 waiting state",
+      "codex-observation-history-v2",
+      "codex-execution-observation-v2",
+      { waitingState: "waiting_on_approval" }
+    ],
+    [
+      "legacy v1 managed reason",
+      "codex-observation-history-v1",
+      "codex-execution-observation-v1",
+      { reasonCode: "CODEX_MANAGED_THREAD_ACTIVE" }
+    ]
+  ])(
+    "fails closed for persisted inventory history with %s",
+    async (
+      _label,
+      historyContract,
+      observationContract,
+      override
+    ) => {
+      const cwd = await createTempDirectory();
+      const directory = codexLocalDirectory(cwd);
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await writeFile(
+        join(directory, "observation-history.json"),
+        `${JSON.stringify(
+          {
+            contract: historyContract,
+            updatedAt: "2026-07-25T12:00:00.000Z",
+            observations: [
+              storedInventoryObservation({
+                contract: observationContract,
+                ...override
+              })
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        { encoding: "utf8", mode: 0o600 }
+      );
+
+      await expect(
+        readStoredCodexObservationHistory(cwd)
+      ).resolves.toBeNull();
+    }
+  );
 
   it("stores a redacted task clue only after explicit local opt-in and purges it on opt-out", async () => {
     const cwd = await createTempDirectory();
@@ -264,7 +463,7 @@ describe("Codex local connector", () => {
       now
     );
     expect(selected).toMatchObject({
-      schemaVersion: "codex-connector-config-v2",
+      schemaVersion: "codex-connector-config-v3",
       contentMode: "activity_summary",
       contentConsentAt: now.toISOString()
     });
@@ -304,7 +503,7 @@ describe("Codex local connector", () => {
     });
 
     expect(snapshot).toMatchObject({
-      schemaVersion: "codex-snapshot-v2",
+      schemaVersion: "codex-snapshot-v3",
       collectorVersion: "codex-app-server-activity-summary-v1",
       contentMode: "activity_summary",
       sessions: [
@@ -345,14 +544,74 @@ describe("Codex local connector", () => {
       contentConsentAt: null
     });
     const purged = await readStoredCodexSnapshot(cwd);
-    expect(purged?.contentMode).toBe("metadata_only");
-    expect(
-      purged?.sessions.every(
-        (session) =>
-          session.taskSummary === null &&
-          session.taskSummarySource === null
-      )
-    ).toBe(true);
+    expect(purged).toBeNull();
+  });
+
+  it("clears snapshot and observation lineage when selected project scopes change", async () => {
+    const cwd = await createTempDirectory();
+    const now = new Date("2026-07-25T12:00:00.000Z");
+    const discovery = await discoverAndStoreCodexScopes({
+      cwd,
+      now,
+      queryThreads: async () => ({
+        codexVersion: "codex-cli 0.145.0",
+        result: {
+          data: [
+            thread({
+              id: "scope-a-thread",
+              cwd: "/Users/example/scope-a",
+              updatedAt: "2026-07-25T11:00:00.000Z"
+            }),
+            thread({
+              id: "scope-b-thread",
+              cwd: "/Users/example/scope-b",
+              updatedAt: "2026-07-25T10:00:00.000Z"
+            })
+          ],
+          nextCursor: null
+        }
+      })
+    });
+    const scopeA = discovery.scopes.find(
+      (scope) => scope.queryPath === "/Users/example/scope-a"
+    );
+    const scopeB = discovery.scopes.find(
+      (scope) => scope.queryPath === "/Users/example/scope-b"
+    );
+    if (!scopeA || !scopeB) throw new Error("expected both scopes");
+
+    const selectedA = await selectStoredCodexScopes(
+      [scopeA.id],
+      cwd
+    );
+    await fetchAndStoreCodexSnapshot(selectedA, {
+      cwd,
+      now,
+      queryThreads: async () => ({
+        codexVersion: "codex-cli 0.145.0",
+        result: {
+          data: [
+            thread({
+              id: "scope-a-observation",
+              cwd: scopeA.queryPath,
+              updatedAt: "2026-07-25T11:30:00.000Z"
+            })
+          ],
+          nextCursor: null
+        }
+      })
+    });
+    await expect(readStoredCodexSnapshot(cwd)).resolves.not.toBeNull();
+    await expect(
+      readStoredCodexObservationHistory(cwd)
+    ).resolves.not.toBeNull();
+
+    await selectStoredCodexScopes([scopeB.id], cwd);
+
+    await expect(readStoredCodexSnapshot(cwd)).resolves.toBeNull();
+    await expect(
+      readStoredCodexObservationHistory(cwd)
+    ).resolves.toBeNull();
   });
 
   it("deletes an unreadable snapshot before recording task-summary opt-out", async () => {
@@ -461,18 +720,26 @@ describe("Codex local connector", () => {
     );
 
     await expect(readStoredCodexConfig(cwd)).resolves.toMatchObject({
-      schemaVersion: "codex-connector-config-v2",
+      schemaVersion: "codex-connector-config-v3",
       contentMode: "metadata_only",
-      contentConsentAt: null
+      contentConsentAt: null,
+      conversationConsentAt: null,
+      conversationRetentionDays: null
     });
     await expect(readStoredCodexSnapshot(cwd)).resolves.toMatchObject({
-      schemaVersion: "codex-snapshot-v2",
+      schemaVersion: "codex-snapshot-v3",
       collectorVersion: "codex-app-server-metadata-v1",
       contentMode: "metadata_only",
+      conversationStoreSha256: null,
+      conversationRetentionDays: null,
       sessions: [
         {
           taskSummary: null,
-          taskSummarySource: null
+          taskSummarySource: null,
+          content: {
+            state: "not_collected",
+            reasonCodes: ["CONTENT_MODE_DISABLED"]
+          }
         }
       ]
     });
@@ -809,6 +1076,27 @@ async function createTempDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "blabase-codex-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function storedInventoryObservation(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    contract: "codex-execution-observation-v2",
+    schemaVersion: "codex-app-server-v2-generated-2026-07-27",
+    executionId: "0123456789abcdef01234567",
+    observedAt: "2026-07-25T12:00:00.000Z",
+    sequence: 0,
+    observationMode: "inventory_only",
+    liveObservationAvailable: false,
+    executionState: "unknown",
+    inventoryActivityState: "active",
+    waitingState: null,
+    sourceEvent: "thread_inventory",
+    sourceUpdatedAt: "2026-07-25T11:59:00.000Z",
+    reasonCode: "CODEX_INVENTORY_IS_NOT_LIVE_EXECUTION_STATE",
+    ...overrides
+  };
 }
 
 function thread({

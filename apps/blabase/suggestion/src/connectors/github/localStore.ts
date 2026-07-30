@@ -11,7 +11,16 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import {
+  cleanupStaleConnectorTempFiles,
+  withActiveConnectorTempFile
+} from "../localTempCleanup";
 import type { GitHubSnapshot, StoredGitHubTokens } from "./types";
+
+const GITHUB_STORE_BASENAMES = [
+  "tokens.json",
+  "snapshot.json"
+] as const;
 
 const tokensSchema = z.object({
   appClientId: z.string().min(1),
@@ -135,6 +144,9 @@ const storedSnapshotSchema = z.union([
   snapshotV1Schema
 ]);
 
+const mutationTails = new Map<string, Promise<void>>();
+const storeGenerations = new Map<string, number>();
+
 export function githubLocalDirectory(cwd = process.cwd()): string {
   return join(cwd, ".local", "connectors", "github");
 }
@@ -142,6 +154,7 @@ export function githubLocalDirectory(cwd = process.cwd()): string {
 export async function readStoredGitHubTokens(
   cwd = process.cwd()
 ): Promise<StoredGitHubTokens | null> {
+  await cleanupStaleGitHubTempFiles(cwd, true);
   try {
     const text = await readFile(
       join(githubLocalDirectory(cwd), "tokens.json"),
@@ -155,20 +168,60 @@ export async function readStoredGitHubTokens(
 
 export async function writeStoredGitHubTokens(
   tokens: StoredGitHubTokens,
+  cwd = process.cwd(),
+  expectedGeneration = githubStoreGeneration(cwd)
+): Promise<void> {
+  await withGitHubStoreMutation(cwd, async () => {
+    assertCurrentGeneration(cwd, expectedGeneration);
+    await writePrivateJson("tokens.json", tokensSchema.parse(tokens), cwd);
+  });
+}
+
+/**
+ * Starts a new logical GitHub connection generation.
+ *
+ * The generation changes before this mutation waits for older store writes.
+ * Therefore, an in-flight sync that captured the previous generation can no
+ * longer publish refreshed credentials or a snapshot after this transition.
+ * The old snapshot is removed before the replacement credentials become
+ * visible, so status readers never intentionally reuse it for the new OAuth
+ * grant.
+ */
+export async function replaceStoredGitHubConnection(
+  tokens: StoredGitHubTokens,
   cwd = process.cwd()
 ): Promise<void> {
-  await writePrivateJson("tokens.json", tokens, cwd);
+  const parsed = tokensSchema.parse(tokens);
+  const replacementGeneration = githubStoreGeneration(cwd) + 1;
+  storeGenerations.set(cwd, replacementGeneration);
+
+  await withGitHubStoreMutation(cwd, async () => {
+    assertCurrentGeneration(cwd, replacementGeneration);
+    await deleteIfPresent(
+      join(githubLocalDirectory(cwd), "snapshot.json")
+    );
+    await deleteIfPresent(
+      join(githubLocalDirectory(cwd), "tokens.json")
+    );
+    assertCurrentGeneration(cwd, replacementGeneration);
+    await writePrivateJson("tokens.json", parsed, cwd);
+  });
 }
 
 export async function deleteStoredGitHubTokens(
   cwd = process.cwd()
 ): Promise<void> {
-  await deleteIfPresent(join(githubLocalDirectory(cwd), "tokens.json"));
+  await withGitHubStoreMutation(cwd, async () => {
+    await deleteIfPresent(
+      join(githubLocalDirectory(cwd), "tokens.json")
+    );
+  });
 }
 
 export async function readStoredGitHubSnapshot(
   cwd = process.cwd()
 ): Promise<GitHubSnapshot | null> {
+  await cleanupStaleGitHubTempFiles(cwd, true);
   try {
     const text = await readFile(
       join(githubLocalDirectory(cwd), "snapshot.json"),
@@ -185,19 +238,51 @@ export async function readStoredGitHubSnapshot(
 
 export async function writeStoredGitHubSnapshot(
   snapshot: GitHubSnapshot,
-  cwd = process.cwd()
-): Promise<void> {
-  await writePrivateJson(
-    "snapshot.json",
-    snapshotSchema.parse(snapshot),
-    cwd
-  );
+  cwd = process.cwd(),
+  expectedGeneration = githubStoreGeneration(cwd)
+): Promise<GitHubSnapshot> {
+  return withGitHubStoreMutation(cwd, async () => {
+    assertCurrentGeneration(cwd, expectedGeneration);
+    const parsed = snapshotSchema.parse(snapshot);
+    const current = await readStoredGitHubSnapshot(cwd);
+    if (
+      current &&
+      Date.parse(current.fetchedAt) >= Date.parse(parsed.fetchedAt)
+    ) {
+      return current;
+    }
+    await writePrivateJson("snapshot.json", parsed, cwd);
+    return parsed;
+  });
 }
 
 export async function deleteStoredGitHubSnapshot(
   cwd = process.cwd()
 ): Promise<void> {
-  await deleteIfPresent(join(githubLocalDirectory(cwd), "snapshot.json"));
+  await withGitHubStoreMutation(cwd, async () => {
+    await deleteIfPresent(
+      join(githubLocalDirectory(cwd), "snapshot.json")
+    );
+  });
+}
+
+export async function deleteStoredGitHubConnection(
+  cwd = process.cwd()
+): Promise<void> {
+  storeGenerations.set(cwd, githubStoreGeneration(cwd) + 1);
+  await withGitHubStoreMutation(cwd, async () => {
+    await Promise.all([
+      deleteIfPresent(join(githubLocalDirectory(cwd), "tokens.json")),
+      deleteIfPresent(join(githubLocalDirectory(cwd), "snapshot.json"))
+    ]);
+    await cleanupStaleGitHubTempFiles(cwd, false);
+  });
+}
+
+export function githubStoreGeneration(
+  cwd = process.cwd()
+): number {
+  return storeGenerations.get(cwd) ?? 0;
 }
 
 async function writePrivateJson(
@@ -213,13 +298,15 @@ async function writePrivateJson(
   const temporary = `${target}.${process.pid}.${randomBytes(8).toString(
     "hex"
   )}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600
+  await withActiveConnectorTempFile(temporary, async () => {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600
+    });
+    await chmod(temporary, 0o600);
+    await rename(temporary, target);
+    await chmod(target, 0o600);
   });
-  await chmod(temporary, 0o600);
-  await rename(temporary, target);
-  await chmod(target, 0o600);
 }
 
 async function deleteIfPresent(path: string): Promise<void> {
@@ -235,6 +322,22 @@ async function deleteIfPresent(path: string): Promise<void> {
       throw error;
     }
   }
+}
+
+async function cleanupStaleGitHubTempFiles(
+  cwd: string,
+  bestEffort: boolean
+): Promise<void> {
+  const cleanup = cleanupStaleConnectorTempFiles({
+    directory: githubLocalDirectory(cwd),
+    canonicalBasenames: GITHUB_STORE_BASENAMES,
+    removeFresh: !bestEffort
+  });
+  if (bestEffort) {
+    await cleanup.catch(() => undefined);
+    return;
+  }
+  await cleanup;
 }
 
 function migrateV1Snapshot(
@@ -253,4 +356,36 @@ function migrateV1Snapshot(
     activitiesTruncated: false,
     activities: []
   };
+}
+
+function assertCurrentGeneration(
+  cwd: string,
+  expectedGeneration: number
+): void {
+  if (githubStoreGeneration(cwd) !== expectedGeneration) {
+    throw new Error("GitHub connector state changed during operation.");
+  }
+}
+
+async function withGitHubStoreMutation<T>(
+  cwd: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = mutationTails.get(cwd) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => current);
+  mutationTails.set(cwd, tail);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (mutationTails.get(cwd) === tail) {
+      mutationTails.delete(cwd);
+    }
+  }
 }

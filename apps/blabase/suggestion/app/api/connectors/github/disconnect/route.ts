@@ -5,8 +5,7 @@ import {
   loadGitHubConfig
 } from "../../../../../src/connectors/github/config";
 import {
-  deleteStoredGitHubSnapshot,
-  deleteStoredGitHubTokens,
+  deleteStoredGitHubConnection,
   readStoredGitHubTokens
 } from "../../../../../src/connectors/github/localStore";
 import {
@@ -14,9 +13,12 @@ import {
   revokeGitHubAuthorization
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import { noteRuntimeSourceDisconnected } from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const REMOTE_REVOCATION_TIMEOUT_MS = 2_000;
 
 export async function POST(request: Request) {
   if (!isLocalGitHubRequest(request)) {
@@ -29,33 +31,66 @@ export async function POST(request: Request) {
   loadSharedLocalEnv();
   const configResult = loadGitHubConfig();
   const tokens = await readStoredGitHubTokens();
+  await deleteStoredGitHubConnection();
+  try {
+    await noteRuntimeSourceDisconnected("github");
+  } catch {
+    // Local deletion is authoritative even if sync metadata is degraded.
+  }
+
   let remoteRevocationFailed = false;
   if (tokens && !configResult.ok) {
     remoteRevocationFailed = true;
   } else if (configResult.ok && tokens) {
     try {
-      const accessToken = shouldRefreshBeforeRevocation(tokens.expiresAt)
-        ? (
-            await refreshGitHubAccessToken(
-              configResult.config,
-              tokens
-            )
-          ).accessToken
-        : tokens.accessToken;
-      await revokeGitHubAuthorization(
-        configResult.config,
-        accessToken
+      await withTimeout(
+        (async () => {
+          const accessToken = shouldRefreshBeforeRevocation(
+            tokens.expiresAt
+          )
+            ? (
+                await refreshGitHubAccessToken(
+                  configResult.config,
+                  tokens
+                )
+              ).accessToken
+            : tokens.accessToken;
+          await revokeGitHubAuthorization(
+            configResult.config,
+            accessToken
+          );
+        })(),
+        REMOTE_REVOCATION_TIMEOUT_MS
       );
     } catch {
       remoteRevocationFailed = true;
     }
   }
 
-  await Promise.all([deleteStoredGitHubTokens(), deleteStoredGitHubSnapshot()]);
   return NextResponse.json(
     { status: "disconnected", remoteRevocationFailed },
     { headers: { "Cache-Control": "no-store" } }
   );
+}
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("REMOTE_REVOCATION_TIMEOUT")),
+          timeoutMs
+        );
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function shouldRefreshBeforeRevocation(expiresAt: string): boolean {
