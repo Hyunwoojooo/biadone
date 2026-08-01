@@ -1100,3 +1100,138 @@
   - historical content와 explicit project workflow를 사용하는 후속 작업
     detector는 별도 schema/rule/evaluation으로 설계
   - human-reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-07-30 Phase 2B.0 explicit Work Resumption v0.1
+
+- Date: 2026-07-30
+- Owner: Codex with human direction
+- Goal:
+  - Work Cockpit의 현재 제안을 사용자가 명시적으로 연결한 기존 Codex
+    세션으로 안전하게 이어서 작업
+  - 버튼 click 또는 버튼에 focus된 상태의 Enter 한 번으로 Companion이
+    추적하는 Terminal을 focus하거나 새 macOS Terminal에서 기존 세션을 resume
+  - 추천 엔진과 외부 source의 read-only 경계를 유지하면서 local
+    safe destination만 제공
+- Affected pipeline stages:
+  - post-decision Work Cockpit destination UI
+  - explicit task identity↔opaque Codex execution binding
+  - local-only Work Resumption API, private binding/command/heartbeat store
+  - Codex App Server execution target의 just-in-time resolution
+  - macOS Local Companion command claim, execution lease와 Terminal adapter
+  - Codex disconnect cleanup
+  - Attention input, candidate eligibility, filtering, ordering, ranking,
+    certainty와 result resolution은 변경하지 않음
+- Behavior before:
+  - Work Cockpit은 한 가지 제안과 관찰 상태만 보여주고 기존 Codex 작업으로
+    이동하거나 재개하는 action이 없음
+  - 사용자가 적절한 Codex 세션과 프로젝트 경로를 직접 다시 찾아야 함
+- Behavior after:
+  - 현재 top suggestion과 Codex 과거 세션을 사용자가 직접 선택해 연결
+  - fresh Companion ownership과 active binding이 있을 때만
+    `focus_or_resume` command를 30초 TTL로 생성
+  - native thread ID와 cwd는 실행 순간 선택된 scope에서만 다시 resolve하고
+    고정된 `codex resume <thread-id>` 흐름만 Terminal adapter에 전달
+  - Companion이 연 busy Terminal과 random marker가 일치하면 해당 창을
+    focus하고, 아니면 새 Terminal에서 resume
+  - title/URL/path 유사성 자동 연결, prompt 자동 전송, 승인 자동 처리,
+    실패 자동 재시도, arbitrary shell과 GitHub/Notion/Calendar mutation은
+    수행하지 않음
+  - command 상태 전이, unbind와 disconnect를 cross-process filesystem lease로
+    직렬화하고 Codex connector deletion까지 같은 lease 안에서 수행하며 launch
+    전 binding/Codex connection generation을 재검증
+  - bind의 execution/scope도 같은 state lease 안에서 현재 Codex snapshot과
+    connection을 다시 확인해 disconnect와 엇갈린 stale binding을 만들지 않음
+  - 두 번째 fresh Companion은 command loop 전에 거부하고 자신의 heartbeat만
+    compare-and-clear
+  - launch 결과 기록 전 process crash는 자동 재실행하지 않고
+    `LAUNCH_OUTCOME_UNKNOWN`으로 terminal 처리
+- Versions before:
+  - Work Resumption binding/store/API/Companion contract: 없음
+  - Cross-source Attention semantic versions: v0.3 계열 유지
+- Versions after:
+  - binding store: `work-resumption-binding-store-v1`
+  - schema: `work-resumption-schema-v1`
+  - command: `work-resumption-command-v1`
+  - heartbeat: `work-resumption-heartbeat-v1`
+  - local protocol: `work-resumption-local-protocol-v1`
+  - command retention: `work-resumption-command-retention-v1`
+  - Cross-source Attention input/result/policy/rule versions: 변경 없음
+- Code commit:
+  - current worktree는 미커밋
+  - exact release commit SHA는 commit 후 기록해야 함
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-cross-source-dev-v0.1`
+  - revision: `2`
+  - class: mutable synthetic Dev Candidate
+  - case count: `30`
+  - materialized canonical SHA-256:
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  - dataset content/label/hash는 수정하지 않음
+- Candidate run ID: 없음. Attention semantic output을 변경하지 않음
+- Comparison run ID: 없음
+- Commands executed:
+  - `npx vitest run tests/workResumptionStore.test.ts tests/workResumptionRoutes.test.ts tests/workResumptionScopeResolution.test.ts tests/workResumptionClient.test.ts tests/workResumptionCompanion.test.ts tests/codexResumeTarget.test.ts tests/codexRoutes.test.ts`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e`
+  - `npm run cross-source:dev-hash`
+  - `npm run companion:work-resumption -- --help`
+- Metrics changed:
+  - focused Work Resumption/Codex route Vitest `7` files, `69` tests 통과
+  - 전체 Vitest `46` files, `394` tests 통과
+  - Playwright Chromium `3` tests 통과
+  - 신규 E2E에서 자동 binding 없음, explicit session 선택, keyboard Enter,
+    prompt/shell payload 부재와 `RESUMED_IN_TERMINAL` 결과 문구 검증
+  - typecheck, full lint, production build와 `git diff --check` 통과
+  - Cross-source Dev Candidate SHA-256가 기존 revision 2와 동일함을 확인
+  - Attention Acceptable@1, preference agreement와 candidate precision/recall은
+    semantic selection이 바뀌지 않아 다시 측정하지 않음
+- Regressions or accepted exceptions:
+  - 첫 release는 macOS 기본 Terminal만 지원
+  - 사용자가 별도 terminal에서 Companion을 실행해 두어야 하며 자동 시작,
+    background packaging과 update는 아직 없음
+  - Companion이 직접 연 Terminal만 process-memory marker로 focus할 수 있음.
+    다른 Codex client가 연 창이나 동일 session의 cross-client ownership은
+    식별·조정하지 않음
+  - Terminal Automation 권한 거부는 typed launch failure로 표시하지만 실제
+    사용자 Terminal을 여는 smoke test는 현재 작업 세션 보호를 위해 자동화하지
+    않음
+  - active binding은 현재 top suggestion에서만 직접 관리할 수 있다. 더 이상
+    top이 아닌 binding을 한 화면에서 관리하는 UI는 후속 작업
+- Privacy or retention impact:
+  - `.local/work-resumption/`은 directory `0700`, file `0600`, atomic
+    replacement와 private filesystem lock을 사용
+  - persisted/public binding에는 표시 제목을 저장하지 않고 public API에서는
+    private scope ID도 제거
+  - native thread ID, 전체 cwd, prompt/answer, shell command, Terminal output,
+    credential과 installation secret을 registry, queue, API, log, fixture와
+    Git에 저장하지 않음
+  - private command에는 bounded metadata와 hashed connection generation만
+    저장하며 terminal result는 7일 뒤 제거
+  - binding의 stable 최소 identity는 explicit unbind 또는 Codex disconnect까지
+    보존하고 disconnect는 pending/claimed state보다 먼저 Work Resumption
+    상태를 폐기
+  - production binding/command signal을 Golden/Regression dataset으로 자동
+    승격하지 않음
+- Release decision:
+  - Phase 2B.0 local beta vertical slice 완료
+  - Attention semantic baseline은 의도적으로 재실행하지 않음. engine
+    input/output/filtering/ordering/interpretation과 frozen dataset이 바뀌지
+    않았기 때문
+  - local single-user, macOS Terminal 범위에서만 활성화
+- Rollback method:
+  - Work Cockpit의 Work Resumption panel과 client, `/api/work-resumption`,
+    `src/resumption`, Codex resume target resolver와 Companion tool/script를
+    제거
+  - Codex disconnect의 Work Resumption cleanup hook을 제거하면 이전 read-only
+    Work Cockpit으로 복귀하며 Attention semantic version은 되돌릴 필요 없음
+- Follow-up work:
+  - signed installer/background Companion과 상태 진단 UI
+  - 더 이상 top이 아닌 active binding을 조회·해제하는 관리 화면
+  - iTerm, VS Code terminal, Windows/Linux adapter와 실제 macOS Automation
+    manual smoke checklist
+  - remote/cloud 확장 전 device pairing, local authentication과 signed command
+  - managed Codex App Server events, progress/stall/failure detector와 configured
+    workflow follow-through

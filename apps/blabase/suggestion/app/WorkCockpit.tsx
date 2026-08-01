@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
@@ -30,6 +31,18 @@ import {
   useVisiblePolling,
   wakeSourceSyncStatus
 } from "./sync/useSourceSync";
+import {
+  bindWorkSession,
+  fetchWorkResumption,
+  openWorkSession,
+  unbindWorkSession,
+  WorkResumptionRequestError,
+  type WorkResumptionApiResponse,
+  type WorkResumptionCommand,
+  type WorkResumptionReadyResponse,
+  type WorkResumptionTaskIdentity,
+  type WorkResumptionTaskRef
+} from "./workResumptionClient";
 
 const feedbackOptions: Array<{
   value: AttentionFeedbackType;
@@ -168,7 +181,7 @@ export function WorkCockpit() {
         <div>
           <div className="attentionKickerRow">
             <p className="eyebrow">Work Cockpit</p>
-            <span>Beta · read-only</span>
+            <span>Beta · 추천은 read-only</span>
           </div>
           <h2 id="attention-title">지금 개입할 한 가지</h2>
           <p>
@@ -257,6 +270,14 @@ function CockpitResult({
         scopeStatement={result.decision.scopeStatement}
         certainty={result.decision.certainty}
       />
+
+      {result.decision.status === "suggested" &&
+      result.decision.topSuggestion ? (
+        <WorkResumption
+          suggestion={result.decision.topSuggestion}
+          codexItems={result.workCockpit.codexExecutions}
+        />
+      ) : null}
 
       <SourceHealthGrid
         sources={run.sources}
@@ -452,6 +473,568 @@ function AttentionDecision({
       <p className="attentionScope">{scopeStatement}</p>
     </article>
   );
+}
+
+function WorkResumption({
+  suggestion,
+  codexItems
+}: {
+  suggestion: Phase2Candidate;
+  codexItems: Phase2CodexOverviewItem[];
+}) {
+  const taskRef: WorkResumptionTaskRef = {
+    kind: "attention_subject",
+    source: suggestion.source,
+    subjectId: suggestion.subjectId,
+    displayTitle: suggestion.title
+  };
+  const taskKey = `${taskRef.kind}:${taskRef.source}:${taskRef.subjectId}`;
+  const sessionOptions = useMemo(
+    () => uniqueCodexSessions(codexItems),
+    [codexItems]
+  );
+  const sessionOptionKey = sessionOptions
+    .map((item) => item.executionId)
+    .join(":");
+  const [snapshot, setSnapshot] =
+    useState<WorkResumptionReadyResponse | null>(null);
+  const [selectedExecutionId, setSelectedExecutionId] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMutating, setIsMutating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [command, setCommand] =
+    useState<WorkResumptionCommand | null>(null);
+  const [pollingCommandId, setPollingCommandId] =
+    useState<string | null>(null);
+  const requestSequence = useRef(0);
+
+  useVisiblePolling(
+    async () => {
+      const response = await fetchWorkResumption();
+      if (response.status === "ready") setSnapshot(response);
+    },
+    {
+      intervalMs: 5_000,
+      maxBackoffMs: 30_000,
+      enabled: !isMutating && pollingCommandId === null,
+      runImmediately: false
+    }
+  );
+
+  useEffect(() => {
+    const sequence = ++requestSequence.current;
+    setIsLoading(true);
+    setSnapshot(null);
+    setSelectedExecutionId("");
+    setMessage(null);
+    setCommand(null);
+    setPollingCommandId(null);
+    void fetchWorkResumption()
+      .then((response) => {
+        if (sequence !== requestSequence.current) return;
+        if (response.status === "ready") {
+          setSnapshot(response);
+          return;
+        }
+        setMessage(
+          response.message ??
+            "이 기기에서는 작업 이어가기를 사용할 수 없습니다."
+        );
+      })
+      .catch((error) => {
+        if (sequence !== requestSequence.current) return;
+        setMessage(
+          workResumptionErrorMessage(
+            error,
+            "Codex 작업 연결 정보를 불러오지 못했습니다."
+          )
+        );
+      })
+      .finally(() => {
+        if (sequence === requestSequence.current) {
+          setIsLoading(false);
+        }
+      });
+  }, [taskKey]);
+
+  useEffect(() => {
+    if (
+      selectedExecutionId &&
+      !sessionOptions.some(
+        (item) => item.executionId === selectedExecutionId
+      )
+    ) {
+      setSelectedExecutionId("");
+    }
+  }, [selectedExecutionId, sessionOptionKey, sessionOptions]);
+
+  useEffect(() => {
+    if (!pollingCommandId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function pollCommand() {
+      try {
+        const response = await fetchWorkResumption(
+          pollingCommandId as string
+        );
+        if (cancelled) return;
+        if (response.status !== "ready" || !response.command) {
+          setCommand(null);
+          setMessage(
+            response.status === "error"
+              ? response.message ??
+                  "작업 열기 상태를 확인하지 못했습니다."
+              : "작업 열기 상태를 확인하지 못했습니다."
+          );
+          setPollingCommandId(null);
+          return;
+        }
+        setSnapshot(response);
+        setCommand(response.command);
+        if (isTerminalCommandStatus(response.command.status)) {
+          setPollingCommandId(null);
+          return;
+        }
+        timer = setTimeout(() => void pollCommand(), 800);
+      } catch (error) {
+        if (cancelled) return;
+        setCommand(null);
+        setMessage(
+          workResumptionErrorMessage(
+            error,
+            "Local Companion의 응답을 확인하지 못했습니다."
+          )
+        );
+        setPollingCommandId(null);
+      }
+    }
+
+    void pollCommand();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [pollingCommandId]);
+
+  const activeBinding = snapshot?.bindings.find((binding) =>
+    sameTaskRef(binding.taskRef, taskRef)
+  );
+  const linkedSession = activeBinding
+    ? sessionOptions.find(
+        (item) => item.executionId === activeBinding.executionId
+      )
+    : null;
+  const companionOnline = snapshot?.companion.state === "online";
+
+  async function bindSelectedSession() {
+    if (!selectedExecutionId || isMutating) return;
+    const sequence = ++requestSequence.current;
+    setIsMutating(true);
+    setMessage(null);
+    setCommand(null);
+    try {
+      const response = await bindWorkSession({
+        taskRef,
+        executionId: selectedExecutionId
+      });
+      if (sequence !== requestSequence.current) return;
+      if (acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
+        setSelectedExecutionId("");
+        setMessage(
+          "선택한 Codex 세션을 이 작업에 연결했습니다. 제목이 비슷한 다른 세션은 자동 연결하지 않습니다."
+        );
+      }
+    } catch (error) {
+      if (sequence === requestSequence.current) {
+        setMessage(
+          workResumptionErrorMessage(
+            error,
+            "Codex 세션을 작업에 연결하지 못했습니다."
+          )
+        );
+      }
+    } finally {
+      if (sequence === requestSequence.current) setIsMutating(false);
+    }
+  }
+
+  async function unbindCurrentSession() {
+    if (!activeBinding || isMutating) return;
+    const sequence = ++requestSequence.current;
+    setIsMutating(true);
+    setMessage(null);
+    setCommand(null);
+    setPollingCommandId(null);
+    try {
+      const response = await unbindWorkSession({ taskRef });
+      if (sequence !== requestSequence.current) return;
+      if (acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
+        setMessage("Codex 세션 연결을 해제했습니다.");
+      }
+    } catch (error) {
+      if (sequence === requestSequence.current) {
+        setMessage(
+          workResumptionErrorMessage(
+            error,
+            "Codex 세션 연결을 해제하지 못했습니다."
+          )
+        );
+      }
+    } finally {
+      if (sequence === requestSequence.current) setIsMutating(false);
+    }
+  }
+
+  async function openBoundSession() {
+    if (
+      !activeBinding ||
+      !companionOnline ||
+      isMutating ||
+      pollingCommandId
+    ) {
+      return;
+    }
+    const sequence = ++requestSequence.current;
+    setIsMutating(true);
+    setMessage(null);
+    setCommand(null);
+    try {
+      const response = await openWorkSession({ taskRef });
+      if (sequence !== requestSequence.current) return;
+      if (!acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
+        return;
+      }
+      const commandId = response.acceptedCommand?.commandId;
+      if (!commandId) {
+        setMessage("작업 열기 요청 ID를 받지 못했습니다.");
+        return;
+      }
+      setCommand(response.acceptedCommand ?? null);
+      setPollingCommandId(commandId);
+    } catch (error) {
+      if (sequence === requestSequence.current) {
+        setMessage(
+          workResumptionErrorMessage(
+            error,
+            "Codex 작업 열기를 요청하지 못했습니다."
+          )
+        );
+      }
+    } finally {
+      if (sequence === requestSequence.current) setIsMutating(false);
+    }
+  }
+
+  return (
+    <section
+      className="workResumption"
+      aria-labelledby="work-resumption-title"
+      aria-busy={isLoading || isMutating}
+    >
+      <div className="workResumptionHeader">
+        <div>
+          <p className="eyebrow">Return to work</p>
+          <h3 id="work-resumption-title">이 작업의 Codex 세션</h3>
+        </div>
+        <CompanionBadge snapshot={snapshot} />
+      </div>
+
+      {isLoading ? (
+        <p className="workResumptionEmpty" role="status">
+          연결된 Codex 작업 공간을 확인하고 있습니다.
+        </p>
+      ) : !snapshot ? (
+        <p className="workResumptionEmpty">
+          작업 이어가기 상태를 확인할 수 없습니다. 이 기능은 준비된 로컬
+          Blabase 환경에서만 연결하거나 실행할 수 있습니다.
+        </p>
+      ) : activeBinding ? (
+        <div className="workResumptionBound">
+          <div className="workResumptionSession">
+            <span>사용자가 연결한 세션</span>
+            <strong>
+              {linkedSession
+                ? codexSessionLabel(linkedSession)
+                : "저장된 Codex 세션"}
+            </strong>
+            <small>
+              {linkedSession
+                ? `${linkedSession.projectLabel} · ${formatTimestamp(
+                    linkedSession.sourceUpdatedAt
+                  )}`
+                : `세션 ${shortOpaqueId(activeBinding.executionId)}`}
+            </small>
+          </div>
+          <div className="workResumptionActions">
+            <button
+              className="workResumptionPrimary"
+              type="button"
+              disabled={
+                !companionOnline ||
+                isMutating ||
+                pollingCommandId !== null
+              }
+              onClick={() => void openBoundSession()}
+              aria-describedby="work-resumption-boundary"
+            >
+              {pollingCommandId
+                ? "Codex 세션 여는 중"
+                : "Codex에서 작업 이어가기"}
+            </button>
+            <button
+              className="workResumptionSecondary"
+              type="button"
+              disabled={isMutating || pollingCommandId !== null}
+              onClick={() => void unbindCurrentSession()}
+            >
+              연결 해제
+            </button>
+          </div>
+          {!companionOnline ? (
+            <p className="workResumptionOffline">
+              Local Companion이 오프라인입니다. 이 기기의{" "}
+              <code>suggestion/</code> 폴더에서{" "}
+              <code>npm run companion:work-resumption</code>을 실행해주세요.
+              연결 정보는 그대로 유지되며 상태는 자동으로 다시
+              확인합니다.
+            </p>
+          ) : (
+            <p className="workResumptionShortcut">
+              버튼에 초점을 둔 뒤 Enter를 눌러도 실행됩니다.
+            </p>
+          )}
+        </div>
+      ) : sessionOptions.length === 0 ? (
+        <p className="workResumptionEmpty">
+          연결할 Codex 과거 세션이 없습니다. Codex 연결에서 세션을 먼저
+          수집한 뒤 직접 연결해주세요.
+        </p>
+      ) : (
+        <div className="workResumptionBinder">
+          <p>
+            이 제안과 실제로 이어지는 세션을 직접 선택하세요. 제목이나
+            URL이 비슷하다는 이유로 자동 연결하지 않습니다.
+          </p>
+          <div>
+            <label htmlFor={`work-session-${suggestion.candidateId}`}>
+              연결할 Codex 세션
+            </label>
+            <select
+              id={`work-session-${suggestion.candidateId}`}
+              value={selectedExecutionId}
+              disabled={isMutating}
+              onChange={(event) =>
+                setSelectedExecutionId(event.target.value)
+              }
+            >
+              <option value="">세션을 직접 선택하세요</option>
+              {sessionOptions.map((item) => (
+                <option key={item.executionId} value={item.executionId}>
+                  {codexSessionLabel(item)} · {item.projectLabel} ·{" "}
+                  {formatTimestamp(item.sourceUpdatedAt)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!selectedExecutionId || isMutating}
+              onClick={() => void bindSelectedSession()}
+            >
+              {isMutating ? "연결 중" : "이 세션을 작업에 연결"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p id="work-resumption-boundary" className="workResumptionBoundary">
+        세션을 열거나 포커스만 이동합니다. 프롬프트 전송, 승인, 재시도는
+        자동으로 실행하지 않습니다. Companion이 이전에 연 Terminal만
+        포커스할 수 있으므로 다른 Codex 클라이언트에서 실행 중인 같은
+        세션을 동시에 열지 마세요.
+      </p>
+      {command ? <WorkResumptionCommandState command={command} /> : null}
+      {message ? (
+        <p className="workResumptionMessage" role="status">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function CompanionBadge({
+  snapshot
+}: {
+  snapshot: WorkResumptionReadyResponse | null;
+}) {
+  if (!snapshot) {
+    return <span className="workResumptionBadge">확인 불가</span>;
+  }
+  return (
+    <span
+      className={`workResumptionBadge ${
+        snapshot.companion.state === "online" ? "isOnline" : ""
+      }`}
+      title={
+        snapshot.companion.lastSeenAt
+          ? `마지막 신호 ${formatTimestamp(
+              snapshot.companion.lastSeenAt
+            )}`
+          : undefined
+      }
+    >
+      Companion{" "}
+      {snapshot.companion.state === "online" ? "실행 중" : "꺼짐"}
+    </span>
+  );
+}
+
+function WorkResumptionCommandState({
+  command
+}: {
+  command: WorkResumptionCommand;
+}) {
+  const state =
+    command.status === "completed"
+      ? {
+          className: "isSuccess",
+          text: commandSuccessMessage(command.resultCode)
+        }
+      : command.status === "failed"
+        ? {
+            className: "isError",
+            text: commandFailureMessage(command.resultCode)
+          }
+        : command.status === "expired"
+          ? {
+              className: "isError",
+              text:
+                "작업 열기 요청이 만료되었습니다. Companion 상태를 확인한 뒤 다시 시도해주세요."
+            }
+          : {
+              className: "",
+              text:
+                command.status === "claimed"
+                  ? "Local Companion이 요청을 받아 Codex 세션을 여는 중입니다."
+                  : "Local Companion에 Codex 작업 열기를 요청했습니다."
+            };
+  return (
+    <p
+      className={`workResumptionCommand ${state.className}`}
+      role="status"
+      aria-live="polite"
+    >
+      {state.text}
+    </p>
+  );
+}
+
+function commandFailureMessage(resultCode?: string | null): string {
+  switch (resultCode) {
+    case "EXECUTION_NOT_FOUND":
+      return "이 기기에서 연결된 Codex 세션을 찾지 못했습니다.";
+    case "EXECUTION_STALE":
+      return "연결된 Codex 세션이 오래되어 다시 확인해야 합니다.";
+    case "CODEX_UNAVAILABLE":
+      return "Codex 또는 Local Companion의 응답을 확인하지 못했습니다.";
+    case "LAUNCH_FAILED":
+      return "Terminal에서 Codex 세션을 열지 못했습니다.";
+    case "LAUNCH_OUTCOME_UNKNOWN":
+      return "Terminal 실행 결과를 확인하지 못했습니다. Terminal을 확인한 뒤 필요할 때만 다시 시도해주세요.";
+    case "UNSUPPORTED_PLATFORM":
+      return "현재 운영체제에서는 Codex 작업 이어가기를 지원하지 않습니다.";
+    default:
+      return "Local Companion이 Codex 세션을 열지 못했습니다.";
+  }
+}
+
+function commandSuccessMessage(resultCode?: string | null): string {
+  switch (resultCode) {
+    case "FOCUSED_EXISTING":
+      return "Companion이 추적 중인 Codex Terminal을 앞으로 가져왔습니다.";
+    case "RESUMED_IN_TERMINAL":
+      return "Terminal에서 Codex 세션을 이어서 열었습니다.";
+    default:
+      return "Terminal에서 Codex 세션을 열었습니다.";
+  }
+}
+
+function workResumptionErrorMessage(
+  error: unknown,
+  fallback: string
+): string {
+  return error instanceof WorkResumptionRequestError
+    ? error.message
+    : fallback;
+}
+
+function acceptWorkResumptionResponse(
+  response: WorkResumptionApiResponse,
+  setSnapshot: (
+    snapshot: WorkResumptionReadyResponse | null
+  ) => void,
+  setMessage: (message: string | null) => void
+): response is WorkResumptionReadyResponse {
+  if (response.status === "ready") {
+    setSnapshot(response);
+    return true;
+  }
+  setSnapshot(null);
+  setMessage(
+    response.message ??
+      "이 기기에서는 Codex 작업 이어가기를 사용할 수 없습니다."
+  );
+  return false;
+}
+
+function isTerminalCommandStatus(
+  status: WorkResumptionCommand["status"]
+): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "expired"
+  );
+}
+
+function sameTaskRef(
+  left: WorkResumptionTaskIdentity | WorkResumptionTaskRef,
+  right: WorkResumptionTaskIdentity | WorkResumptionTaskRef
+): boolean {
+  return (
+    left.kind === right.kind &&
+    left.source === right.source &&
+    left.subjectId === right.subjectId
+  );
+}
+
+function uniqueCodexSessions(
+  items: Phase2CodexOverviewItem[]
+): Phase2CodexOverviewItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.executionId)) return false;
+    seen.add(item.executionId);
+    return true;
+  });
+}
+
+function codexSessionLabel(item: Phase2CodexOverviewItem): string {
+  return (
+    item.taskSummary ??
+    item.latestUserPromptExcerpt ??
+    `Codex 세션 ${shortOpaqueId(item.executionId)}`
+  );
+}
+
+function shortOpaqueId(value: string): string {
+  const opaqueValue = value.startsWith("codex:execution:")
+    ? value.slice("codex:execution:".length)
+    : value;
+  return opaqueValue.length > 8
+    ? `${opaqueValue.slice(0, 8)}…`
+    : opaqueValue;
 }
 
 function SourceHealthGrid({

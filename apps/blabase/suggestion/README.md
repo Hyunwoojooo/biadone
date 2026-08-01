@@ -205,6 +205,42 @@ snapshot은 `.local/connectors/codex/`에 제한된 파일 권한으로 보관�
 `Codex 새로고침`으로 즉시 갱신할 수도 있습니다. 이는 실시간 스트리밍이
 아닙니다. `연결 해제`를 누르면 해당 로컬 설정과 snapshot을 삭제합니다.
 
+### Work Cockpit에서 Codex 작업 이어가기
+
+Work Cockpit의 현재 제안을 기존 Codex 작업과 사용자가 직접 연결한 뒤,
+`Codex에서 작업 이어가기`를 누르면 해당 세션을 macOS Terminal에서 다시 열 수
+있습니다. 웹 화면과 별도로 다음 Companion을 계속 실행해 둡니다.
+
+```bash
+cd suggestion
+npm run companion:work-resumption
+```
+
+화면에 `Companion 실행 중`이 표시된 뒤에만 재개 요청을 만들 수 있습니다. 처음
+실행할 때 macOS가 Terminal 제어 권한을 요청하면 허용해야 합니다. 재개 버튼을
+누르면 Companion이 전에 연 같은 작업의 Terminal이 아직 실행 중인 경우 그 창을
+앞으로 가져오고, 그렇지 않으면 새 Terminal에서 고정된
+`codex resume <thread-id>` 흐름만 실행합니다.
+
+이 기능은 다음 안전 경계를 갖습니다.
+
+- 추천과 Codex 작업은 제목 유사도로 자동 연결하지 않으며 사용자가 직접
+  선택해야 합니다.
+- 추천 문구나 새 prompt를 Codex에 자동 입력하지 않습니다.
+- 승인 처리, 실패 재시도, 임의 shell 명령과 GitHub·Notion·Calendar 변경을
+  수행하지 않습니다.
+- 현재는 macOS 기본 Terminal만 지원합니다. 다른 Codex client가 이미 연 창은
+  자동으로 찾아 focus하거나 동시 실행을 조정할 수 없습니다.
+- Codex 연결을 해제하면 Work Resumption binding과 실행 대기 command도 함께
+  제거합니다.
+- binding에는 표시 제목과 Codex 프로젝트 경로를 저장하지 않으며, 완료된
+  command의 최소 상태 기록은 7일 뒤 제거합니다.
+
+`npm run companion:work-resumption -- --once`는 대기 중인 command를 한 번만
+검사하며 Companion을 온라인 상태로 유지하지 않습니다. 개발용
+`--dry-run codex:execution:<opaque-id>`는 세션과 실행 파일을 검증할 뿐 Terminal을
+열거나 product command를 소비하지 않습니다.
+
 ## 연결 데이터 타임라인
 
 네 연결 카드 아래의 `연결 데이터 타임라인`은 각 도구에서 마지막으로 저장한

@@ -4,8 +4,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 상태 | Phase 2A.1 stabilization + explicit opt-in Codex historical content capture v0.1 |
-| 기준일 | 2026-07-29 |
+| 상태 | Phase 2A.1 stabilization + Codex historical capture v0.1 + Phase 2B.0 local Work Resumption |
+| 기준일 | 2026-07-30 |
 | 입력 계약 | `cross-source-attention-input-v0.3` |
 | 결과 계약 | `cross-source-attention-result-v0.3` |
 | 정책 | `aggressive-evidence-bound-attention-policy-v0.2` |
@@ -22,7 +22,9 @@
 | Codex content collector | `codex-app-server-thread-read-v1`, `codex-conversation-content-limits-v1` |
 | Codex private content | `codex-conversation-and-execution-store-v1`, 7일 local retention |
 | Codex content consent | `codex-conversation-content-consent-v1`, 별도 explicit opt-in |
-| 제품 route | local-only `/api/attention`, `/api/sync`, `/api/sync/start`, `/api/sync/status`, `/api/context/*`, Work Cockpit, Attention Lab |
+| Work Resumption | `work-resumption-binding-store-v1`, `work-resumption-schema-v1` |
+| Local Companion protocol | `work-resumption-local-protocol-v1`, `work-resumption-command-v1`, `work-resumption-heartbeat-v1` |
+| 제품 route | local-only `/api/attention`, `/api/sync`, `/api/sync/start`, `/api/sync/status`, `/api/context/*`, `/api/work-resumption`, Work Cockpit, Attention Lab |
 
 ---
 
@@ -717,13 +719,30 @@ Phase 2A.1에서 다음 기반은 구현됐다.
 - explicit Codex scope↔project mapping과 project workflow를 붙일 수 있는 context
   registry
 
+Phase 2B.0의 첫 safe-destination vertical slice는 semantic detector와 분리한다.
+
+- 사용자가 현재 attention subject와 opaque Codex execution을 직접 연결하는
+  WorkSessionBinding
+- local-only bounded command queue와 macOS Local Companion heartbeat
+- Companion online + 사용자 explicit action일 때만 허용하는
+  `focus_or_resume`
+- native thread ID와 cwd를 저장하지 않고 실행 순간 App Server에서만 resolve
+- 기존 Companion-launched Terminal focus 또는 새 Terminal의
+  `codex resume <thread-id>`
+- prompt 자동 전송, 승인 자동 처리, 자동 재시도와 arbitrary shell 금지
+
+정확한 상태, 저장과 privacy boundary는
+`WORK_RESUMPTION_CONTRACT.md`를 따른다. 이 vertical slice는 Codex historical
+inventory를 live state로 승격하거나 failure/stall candidate를 만들지 않는다.
+
 다음 semantic detector와 managed runtime은 아직 구현하지 않는다.
 
 - confirmed non-draft review
 - Codex meaningful progress, stall, failure, recovery, completion
 - stable approval/input request lifecycle와 escalation
 - completed execution의 configured follow-through
-- Codex safe destination
+- semantic Codex exception candidate와 WorkSessionBinding을 자동 연결하는
+  relation-aware safe destination
 - explicit item-level Codex↔GitHub relation
 - GitHub checks, requested changes, merge conflict
 - blabase가 connection lifecycle을 소유하는 long-lived Codex App Server manager

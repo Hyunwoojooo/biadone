@@ -9,8 +9,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.8 |
-| 기준일 | 2026-07-29 |
+| 문서 상태 | Phase 0 dev contract closed, Draft v0.9 |
+| 기준일 | 2026-07-30 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
@@ -18,7 +18,7 @@
 | Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
 | Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization과 Codex historical capture v0.1 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1과 Phase 2B.0 local Work Resumption 완료 |
 
 ---
 
@@ -2634,6 +2634,17 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 
 #### Phase 2B — enriched connector contract
 
+완료한 첫 vertical slice:
+
+- `[Phase 2B.0]` explicit WorkSessionBinding과 macOS Local Companion 기반
+  Work Resumption
+- Work Cockpit의 현재 task와 opaque Codex execution을 사용자가 직접 연결
+- Companion online 상태에서만 `focus_or_resume` command를 생성
+- 실행 순간에만 native thread/cwd를 resolve하고, 기존 Companion-launched
+  Terminal focus 또는 새 Terminal의 `codex resume`로 이동
+- prompt 자동 전송, 승인 자동 처리, 자동 재시도와 arbitrary shell은 금지
+- 세부 안전·저장·상태 계약은 `WORK_RESUMPTION_CONTRACT.md`를 따른다.
+
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
@@ -2650,6 +2661,9 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - 정체·실패가 검증되고 material outcome과 연결된 경우에만 후보 생성
 - configured workflow가 없는 완료 실행에 후속조치를 추정하지 않음
 - 짧게 발생하거나 이미 해결된 승인·입력 요청을 추천하지 않음
+- explicit binding이 없는 task를 유사한 Codex title/path에 자동 연결하지 않음
+- native Codex thread ID, local cwd와 shell command를 API·queue·history에
+  저장하지 않음
 
 ### Phase 3 — Project mapping, lineage, conflict
 
@@ -3061,20 +3075,22 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 17. `[Phase 2A.1 완료]` Codex `conversation_and_execution` explicit consent,
     `thread/read(includeTurns=true)` historical collector, 7일 private raw store,
     v3 manifest/WorkSignal/Attention context와 opt-out/disconnect purge 작성
-18. `[Phase 2B]` blabase-owned long-lived App Server manager와 managed event
+18. `[Phase 2B.0 완료]` explicit task↔Codex binding, Local Companion command queue,
+    safe `focus_or_resume` destination과 Work Cockpit 재개 UI 작성
+19. `[Phase 2B]` blabase-owned long-lived App Server manager와 managed event
     persistence 작성
-19. `[Phase 2B]` Codex semantic progress/exception timeline과
+20. `[Phase 2B]` Codex semantic progress/exception timeline과
     meaningful-progress detector 작성
-20. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
-21. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
-22. native/explicit-link identity resolver와 execution-work 관계 작성
-23. claim authority resolver 작성
-24. full cross-source hard eligibility와 lane classifier 작성
-25. user-answer-required clarification route 작성
-26. Calendar free-block과 first-step 작성
-27. Notion task property mapping 작성
-28. formal feedback evaluation runner 작성
-29. frozen baseline 후에만 ranking policy 보정
+21. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
+22. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
+23. native/explicit-link identity resolver와 execution-work 관계 작성
+24. claim authority resolver 작성
+25. full cross-source hard eligibility와 lane classifier 작성
+26. user-answer-required clarification route 작성
+27. Calendar free-block과 first-step 작성
+28. Notion task property mapping 작성
+29. formal feedback evaluation runner 작성
+30. frozen baseline 후에만 ranking policy 보정
 
 ---
 
@@ -3124,7 +3140,10 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
   후보가 하나라도 있으면 minimum score나 preference 동점 때문에 보류하지 않는다.
 - 동급 후보는 deterministic default 한 개와 최대 두 alternatives, caveat로
   보여주며 더 중요하다는 의미를 만들지 않는다.
-- 첫 release의 source action은 read-only이며 제안과 safe destination만 제공한다.
+- 첫 release의 external source mutation은 read-only다. Work Resumption은 사용자의
+  명시적 동작으로 local Codex session을 focus/resume하는 safe destination만
+  제공하며 prompt, 승인, retry 또는 GitHub/Notion/Calendar mutation을
+  수행하지 않는다.
 - 현재 Attention monitor metadata store는
   `attention-monitor-run-v0.3`의 run/source/candidate gate/명시적 feedback,
   `analysisId`, `sessionId`, code provenance와 replay artifact hash를 최대

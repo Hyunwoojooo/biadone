@@ -45,6 +45,13 @@ vi.mock("../src/sync/runtime", () => ({
   syncRuntimeSources: vi.fn()
 }));
 
+vi.mock("../src/resumption/store", () => ({
+  clearWorkResumptionStateForCodexDisconnect: vi.fn(
+    async (disconnectCodex: () => Promise<void>) =>
+      disconnectCodex()
+  )
+}));
+
 import { POST as connect } from "../app/api/connectors/codex/connect/route";
 import { POST as disconnect } from "../app/api/connectors/codex/disconnect/route";
 import { GET as status } from "../app/api/connectors/codex/status/route";
@@ -64,6 +71,7 @@ import type {
   CodexSnapshot,
   StoredCodexConfig
 } from "../src/connectors/codex/types";
+import { clearWorkResumptionStateForCodexDisconnect } from "../src/resumption/store";
 import {
   supersedeRuntimeSourceConnection,
   syncRuntimeSources
@@ -834,7 +842,17 @@ describe("Codex connector routes", () => {
 
     expect(response.status).toBe(200);
     expectNoStore(response);
+    expect(
+      clearWorkResumptionStateForCodexDisconnect
+    ).toHaveBeenCalledOnce();
     expect(deleteStoredCodexConnection).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(clearWorkResumptionStateForCodexDisconnect).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(deleteStoredCodexConnection).mock
+        .invocationCallOrder[0]!
+    );
     await expect(response.json()).resolves.toEqual({
       status: "disconnected"
     });

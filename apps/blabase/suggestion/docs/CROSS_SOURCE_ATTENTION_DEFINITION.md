@@ -8,12 +8,12 @@
 |---|---|
 | 문서 상태 | Phase 0 dev contract closed, Phase 2A policy revision |
 | Definition ID | `cross-source-attention-definition-v0.2` |
-| 기준일 | 2026-07-26 |
+| 기준일 | 2026-07-30 |
 | 적용 대상 | `suggestion/`의 별도 Cross-source 엔진 |
 | 기존 엔진 | `suggestion-engine-v0.3`은 별도 경로로 유지 |
 | 상위 계획 | `CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md` |
 | 규범 기록 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1·2A와 local Phase 2A.1 Data Pipeline Stabilization 완료 |
+| 구현 상태 | Phase 0·1·2A, local Phase 2A.1 Data Pipeline Stabilization과 Phase 2B.0 Work Resumption safe destination 완료 |
 
 ---
 
@@ -1480,6 +1480,10 @@ ranking 차이는 선택 결과가 `acceptableTopItemIds` 안에 있으면 오�
 
 - connector는 read-only가 기본이다.
 - 추천과 외부 쓰기 권한을 분리한다.
+- Work Resumption은 사용자가 명시적으로 연결하고 실행한 local
+  `focus_or_resume` safe destination만 허용한다. 이는 source mutation 권한이
+  아니며 prompt 전송, 승인 처리, 자동 retry와 arbitrary shell을 포함하지
+  않는다.
 - Codex raw prompt, response, command, output 전체를 기본 저장하지 않는다.
   `metadata_only`가 기본이며 기존 task-summary consent를 raw consent로
   자동 승격하지 않는다.
