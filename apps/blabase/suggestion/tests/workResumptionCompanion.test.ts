@@ -34,6 +34,7 @@ const SCOPE_ID = "e".repeat(24);
 const NATIVE_THREAD_ID = "019c1234-abcd-7000-8000-123456789abc";
 const TERMINAL_MARKER = `blabase-resume-${"f".repeat(32)}`;
 const INSTANCE_ID = `instance_${"9".repeat(32)}`;
+const CONNECTION_GENERATION = `connection_${"8".repeat(32)}`;
 
 describe("macOS Work Resumption Terminal launcher", () => {
   it("passes only a quoted fixed resume command as AppleScript argv", async () => {
@@ -57,6 +58,9 @@ describe("macOS Work Resumption Terminal launcher", () => {
     await expect(
       launcher.focusOrResume({
         bindingId: BINDING_ID,
+        executionId: EXECUTION_ID,
+        scopeId: SCOPE_ID,
+        connectionGeneration: CONNECTION_GENERATION,
         codexBinaryPath: binaryPath,
         target: {
           nativeThreadId: NATIVE_THREAD_ID,
@@ -80,6 +84,58 @@ describe("macOS Work Resumption Terminal launcher", () => {
       ].join(" "),
       TERMINAL_MARKER
     ]);
+  });
+
+  it("connects a resumed TUI only to a validated local managed endpoint", async () => {
+    const runAppleScript = vi.fn(
+      async (_script: string, _argv: string[]) => "42"
+    );
+    const launcher = new MacOsTerminalResumeLauncher({
+      platform: "darwin",
+      runAppleScript,
+      validators: noOpValidators(),
+      createMarker: () => TERMINAL_MARKER
+    });
+
+    await launcher.focusOrResume({
+      ...launchInput(),
+      remoteEndpoint: "ws://127.0.0.1:4500"
+    });
+
+    expect(runAppleScript.mock.calls[0]?.[1]?.[0]).toBe(
+      [
+        "cd",
+        quotePosixShellArgument("/tmp/project"),
+        "&&",
+        "exec",
+        quotePosixShellArgument("/usr/local/bin/codex"),
+        "resume",
+        "--remote",
+        quotePosixShellArgument("ws://127.0.0.1:4500"),
+        quotePosixShellArgument(NATIVE_THREAD_ID)
+      ].join(" ")
+    );
+  });
+
+  it("rejects non-loopback managed endpoints before opening Terminal", async () => {
+    const runAppleScript = vi.fn(
+      async (_script: string, _argv: string[]) => "42"
+    );
+    const launcher = new MacOsTerminalResumeLauncher({
+      platform: "darwin",
+      runAppleScript,
+      validators: noOpValidators()
+    });
+
+    await expect(
+      launcher.focusOrResume({
+        ...launchInput(),
+        remoteEndpoint: "ws://0.0.0.0:4500"
+      })
+    ).rejects.toMatchObject({
+      code: "INVALID_RESUME_INVOCATION"
+    });
+    expect(runAppleScript).not.toHaveBeenCalled();
   });
 
   it("focuses a verified busy Companion-owned Terminal window", async () => {
@@ -455,6 +511,9 @@ describe("Work Resumption Companion runtime", () => {
 function launchInput() {
   return {
     bindingId: BINDING_ID,
+    executionId: EXECUTION_ID,
+    scopeId: SCOPE_ID,
+    connectionGeneration: CONNECTION_GENERATION,
     codexBinaryPath: "/usr/local/bin/codex",
     target: {
       nativeThreadId: NATIVE_THREAD_ID,
@@ -480,6 +539,7 @@ function command(
     operation: "focus_or_resume",
     executionId: EXECUTION_ID,
     scopeId: SCOPE_ID,
+    connectionGeneration: CONNECTION_GENERATION,
     createdAt: "2026-07-30T05:00:00.000Z",
     expiresAt: "2026-07-30T05:00:30.000Z",
     ...overrides

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   resolveCodexBinary,
   type CodexBinaryResolution
@@ -132,6 +134,9 @@ export async function runCompanionCycle(
         const resultCode =
           await dependencies.launcher.focusOrResume({
             bindingId: command.bindingId,
+            executionId: command.executionId,
+            scopeId: command.scopeId,
+            connectionGeneration: command.connectionGeneration,
             codexBinaryPath: binary.binaryPath,
             target
           });
@@ -358,4 +363,3 @@ function waitForNextCycle(
     }
   });
 }
-import { randomBytes } from "node:crypto";

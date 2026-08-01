@@ -1235,3 +1235,172 @@
   - remote/cloud 확장 전 device pairing, local authentication과 signed command
   - managed Codex App Server events, progress/stall/failure detector와 configured
     workflow follow-through
+
+## 2026-08-01 Phase 2B.1 Managed Codex Run Observability v0.1
+
+- Date: 2026-08-01
+- Owner: Codex with human direction
+- Goal:
+  - Blabase를 통해 재개한 Codex run의 현재 실행 진행을 Work Cockpit에서
+    실시간으로 확인
+  - inventory/historical session과 Blabase-owned live authority를 분리
+  - semantic detector에 앞서 bounded local transport, ordered metadata history,
+    liveness와 privacy 경계를 검증
+- Affected pipeline stages:
+  - Phase 2B.0 Local Companion daemon과 fixed Terminal resume destination
+  - local loopback Codex App Server WebSocket transport와 remote TUI launch
+  - explicit binding/connection ownership verification
+  - managed lifecycle notification normalization, private event history와 latest
+    projection
+  - local-only managed projection API와 Work Cockpit progress UI
+  - Codex disconnect managed-state cleanup
+  - Attention input, candidate derivation, eligibility, filtering, ordering,
+    ranking, result resolution, replay input과 monitor hash는 변경하지 않음
+- Behavior before:
+  - Companion은 existing thread를 새 local Terminal의
+    `codex resume <thread-id>`로 열거나 이미 자신이 연 창을 focus함
+  - Work Cockpit은 `thread/list` inventory와 opt-in historical content만
+    표시하며 current execution state는 항상 `unknown`
+  - managed schema/parser는 있었지만 Blabase-owned runtime event stream과
+    public progress projection이 없음
+- Behavior after:
+  - explicit `focus_or_resume` 시 Companion daemon이
+    `ws://127.0.0.1:<ephemeral-port>` App Server process와 observation
+    connection을 소유
+  - observer에서 `thread/resume`을 먼저 수행한 뒤 Terminal에
+    `codex resume --remote <loopback-endpoint> <thread-id>`를 실행
+  - queue execution lease 안에서는 manager가
+    `callerHoldsOwnershipLease` 경로를 사용해 동일 Work Resumption lease를
+    중첩 획득하지 않음
+  - `thread/status/changed`, turn/item lifecycle allowlist만 strict normalized
+    metadata로 append
+  - managed run lifecycle과 latest turn state를 분리해 turn completion 뒤에도
+    다음 turn을 계속 관찰
+  - unexpected disconnect는 live claim을 제거하고 reconnect에는
+    `gap_detected` continuity를 보존
+  - reconnect 직후 과거 `running`/`idle`은 current effective state로 재사용하지
+    않고 `unknown`으로 낮춤. `completed`/`failed`/`interrupted`는 마지막으로
+    검증한 turn 결과로만 보존하며 managed run 또는 work item의 현재 상태로
+    확대하지 않음. 이후 새 notification만 current state를 갱신하고 gap은 유지
+  - public API는 Work Resumption state lease 안에서 fresh Companion owner와
+    current binding/execution/scope/connection-generation exact authority를
+    projection read까지 유지해 stale connected 표시를 fail closed
+  - manager가 unbind/generation 변경을 감지하면 persisted `run_closed`를
+    best-effort 기록하고 idle App Server session을 종료
+  - registry, hash-chained ordered event history와 latest projection을 분리하고
+    settlement journal로 중간 crash를 exact recovery
+  - Work Cockpit의 historical overview와 별도인 “Codex 실시간 진행”에서
+    managed projection을 표시하고 “관찰 전용 · 추천 우선순위에 반영하지
+    않음”을 명시
+  - prompt/turn 자동 시작, approval/input 자동 응답, 실패한 작업 자동 재시도와
+    arbitrary shell은 수행하지 않음
+- Versions before:
+  - managed runtime registry/event/history/latest/public/settlement/retention:
+    없음
+  - Work Resumption: v1 계열
+  - Codex observation/history: v2 계열
+  - Cross-source Attention semantic versions: v0.3 계열
+- Versions after:
+  - registry: `codex-managed-run-registry-v1`
+  - event: `codex-managed-event-v1`
+  - ordered history: `codex-managed-event-history-v1`
+  - latest store: `codex-managed-latest-projection-store-v1`
+  - public projection: `codex-managed-public-projection-v1`
+  - crash settlement: `codex-managed-settlement-v1`
+  - retention: `codex-managed-retention-v1`
+  - Work Resumption, Codex observation/history와 Cross-source Attention
+    input/result/policy/rule versions: 변경 없음
+- Code commit:
+  - 이 Engine Change Record를 포함하는 Git commit을 Phase 2B.1 code version
+    authority로 사용
+  - exact SHA는 해당 commit의 repository history에서 확인
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-cross-source-dev-v0.1`
+  - revision: `2`
+  - class: mutable synthetic Dev Candidate
+  - case count: `30`
+  - materialized canonical SHA-256:
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  - dataset content, label, revision과 hash는 수정하지 않음
+- Candidate run ID: 없음. Attention semantic output을 변경하지 않음
+- Comparison run ID: 없음
+- Commands executed:
+  - `npx vitest run tests/managedCodexRuntime.test.ts tests/managedCodexStore.test.ts tests/managedCodexRunsRoute.test.ts tests/workResumptionStore.test.ts tests/workResumptionCompanion.test.ts tests/codexRoutes.test.ts`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e`
+  - `npm run check:managed-codex-transport`
+  - `npm run cross-source:dev-hash`
+  - `git diff --check`
+- Metrics changed:
+  - focused managed/Work Resumption/Codex Vitest `6` files/`76` tests 통과
+  - 전체 Vitest `51` files/`438` tests 통과
+  - Playwright Chromium E2E `5` tests 통과. 이 중 managed progress UI가
+    `2` tests
+  - suggestion typecheck, lint와 production build 통과
+  - 실제 `codex-cli 0.146.0`을 사용한 loopback App Server initialize/close
+    transport smoke 통과
+  - Cross-source Dev Candidate가 version `suggestion-cross-source-dev-v0.1`,
+    revision `2`, `30` cases와 기존 canonical SHA-256
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`를
+    그대로 유지함을 확인
+  - `git diff --check` 통과
+  - Attention Acceptable@1, preference agreement와 candidate precision/recall은
+    semantic selection이 바뀌지 않아 다시 측정하지 않음
+  - formal Golden baseline은 실행하지 않음. 이번 변경은 managed projection을
+    Attention input, output, filtering, ordering, interpretation과 hash에서
+    명시적으로 격리하고 dataset도 변경하지 않았기 때문
+- Regressions or accepted exceptions:
+  - App Server local WebSocket/remote TUI transport는 experimental beta로 취급
+  - local single-user Companion daemon과 macOS 기본 Terminal만 지원
+  - 기존 외부 Codex session은 historical/inventory context이며 managed live
+    state를 주장하지 않음
+  - Companion을 사용자가 별도 daemon으로 실행해야 하며 signed installer,
+    background packaging과 update는 없음
+  - 실제 Terminal launch와 native thread resume smoke는 활성 사용자 세션을
+    방해할 수 있어 실행하지 않았고 별도 manual beta verification으로 남김.
+    loopback App Server transport 자체는 실제 CLI smoke를 통과함
+  - meaningful progress, stall, scope drift, failure intervention, stable request
+    lifecycle와 configured follow-through detector는 아직 없음
+- Privacy or retention impact:
+  - `.local/connectors/codex/managed/` directory는 `0700`, file은 `0600`이며
+    atomic replacement, cross-process lock과 settlement recovery를 사용
+  - native Codex thread/turn/item ID, local cwd, prompt/answer/reasoning text,
+    command/stdout/stderr/output, file path/diff, tool arguments/results,
+    App Server endpoint와 raw error detail을 저장하지 않음
+  - managed store는 execution/lifecycle/item category의 sanitized metadata만
+    최대 30일, run별 최대 10,000 events 보존
+  - public API는 private scope/connection generation/owner/hash와 raw field를
+    제거하고 `Cache-Control: no-store`를 사용
+  - 별도 explicit opt-in historical `conversation_and_execution` raw store의
+    consent/7일 retention을 변경하거나 managed store로 복제하지 않음
+  - production managed event와 implicit UI feedback은 Gold가 아니며 자동으로
+    Golden/Regression dataset에 승격하지 않음
+- Release decision:
+  - Phase 2B.1 local beta observability vertical slice
+  - 모든 public managed run은 `forbiddenAsAttentionCandidate=true`이고 semantic
+    detector는 비활성화
+  - frozen baseline 재실행은 의도적으로 생략. dataset 및 Attention semantic
+    behavior가 변경되지 않았으며 기존 Dev Candidate revision/hash를 유지
+  - focused/full test, typecheck, lint, production build, browser E2E, 실제 CLI
+    transport smoke, dataset hash와 diff check가 모두 통과해 local beta release
+    gate를 충족
+- Rollback method:
+  - Companion daemon에서 managed manager/remote endpoint wrapper를 제거하고
+    Phase 2B.0의 direct local `codex resume <thread-id>`로 복귀
+  - `/api/managed-codex-runs`, Work Cockpit managed progress panel과
+    `src/managedCodex`/WebSocket transport를 제거
+  - `.local/connectors/codex/managed/` artifact를 clear하고 Codex disconnect의
+    managed cleanup hook을 제거
+  - Attention semantic versions은 변경되지 않았으므로 되돌릴 필요 없음
+- Follow-up work:
+  - actual macOS Terminal launch/native thread resume manual smoke와 protocol
+    compatibility checklist
+  - signed/background Companion, diagnostics와 production multi-process/device
+    ownership
+  - native `isDraft`, GitHub checks/requested changes/merge conflict evidence
+  - meaningful-progress/stall/failure/request lifecycle/follow-through detector는
+    별도 schema/rule/evaluation과 Engine Change Record로 구현
+  - reviewed/adjudicated Cross-source Golden freeze와 formal baseline

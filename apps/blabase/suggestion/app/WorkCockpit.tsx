@@ -23,6 +23,7 @@ import {
   fetchAttention,
   submitAttentionFeedback
 } from "./attentionClient";
+import { ManagedCodexProgress } from "./ManagedCodexProgress";
 import { ProjectMappings } from "./ProjectMappings";
 import { syncInvalidationBus } from "./sync/invalidationBus";
 import {
@@ -278,6 +279,8 @@ function CockpitResult({
           codexItems={result.workCockpit.codexExecutions}
         />
       ) : null}
+
+      <ManagedCodexProgress />
 
       <SourceHealthGrid
         sources={run.sources}

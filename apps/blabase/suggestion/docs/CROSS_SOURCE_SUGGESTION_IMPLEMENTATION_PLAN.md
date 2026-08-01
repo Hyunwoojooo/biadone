@@ -3,22 +3,24 @@
 > 첫 release에서는 GitHub와 Codex를 함께 쓰는 개발자의 실행 상태를
 > 가시화하고, 사용자가 지금 개입할 가치가 가장 큰 열린 루프 하나를 근거와
 > 함께 제안하는 Execution Observability + Action/Recommendation Layer 계획.
-> GitHub는 현재 직접 후보 source이고, Codex는 inventory와 opt-in historical
-> conversation/execution context를 제공하는 overview-only source다. Notion과
-> Google Calendar는 각각 project/schedule context source다.
+> GitHub는 현재 직접 후보 source이고, Codex는 inventory, opt-in historical
+> context와 Blabase-owned managed run의 실시간 metadata를 제공하는
+> overview-only source다. Notion과 Google Calendar는 각각 project/schedule
+> context source다.
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.9 |
-| 기준일 | 2026-07-30 |
+| 문서 상태 | Phase 0 dev contract closed, Draft v0.10 |
+| 기준일 | 2026-08-01 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
 | Attention 정의 | `suggestion/docs/CROSS_SOURCE_ATTENTION_DEFINITION.md` |
 | Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
 | Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
+| Managed Codex 계약 | `suggestion/docs/MANAGED_CODEX_RUN_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1과 Phase 2B.0 local Work Resumption 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption과 Phase 2B.1 managed observability local beta 완료 |
 
 ---
 
@@ -219,6 +221,8 @@ AI가 당신의 우선순위를 정확히 파악함
 - 정상 진행 중인 Codex 실행은 추천하지 않고 overview에만 표시
 - Codex thread inventory와 blabase가 소유한 managed App Server event stream을
   구분하고 inventory에는 live execution state를 부여하지 않음
+- Phase 2B.1 managed projection은 별도 관찰 UI에만 사용하고 Attention input,
+  hash, candidate, filtering, ordering과 ranking에는 사용하지 않음
 - Codex 승인·입력 요청의 발생, 해결, 만료 수명주기 검증
 - 해결되거나 만료된 일시적 attention 신호 즉시 제외
 - Codex 실행 완료와 GitHub/Notion task 완료를 분리
@@ -267,8 +271,8 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 ### 5.1 포함
 
 - 첫 release의 candidate-capable source는 GitHub로 제한
-- 첫 release의 Codex 역할은 current inventory-only contract 범위의 execution
-  overview
+- 첫 release의 Codex 역할은 inventory/historical context와 Blabase-owned
+  managed run metadata 범위의 observation-only execution overview
 - 네 source를 관리하는 server-side `SourceSyncCoordinator`
 - source별 latest attempt/success/failure, retry/backoff와 ordered sanitized
   attempt history
@@ -302,8 +306,9 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 - Notion 일반 페이지 본문과 댓글 전체 수집
 - Calendar 제목을 기본 task 의미로 해석
 - GitHub 코드, issue/PR 본문, 댓글 전체 수집
-- Codex prompt, response, command, output 전체 수집. 단, 로컬에서 최소화해
-  파생한 execution state/progress metadata는 허용
+- managed live stream의 Codex prompt, response, command, output, diff와 tool
+  payload 수집. 단, 별도 explicit opt-in historical collector와 로컬에서
+  최소화한 managed lifecycle metadata는 각각의 제한된 계약에서 허용
 - 제목 유사성만으로 자동 cross-source merge
 - 모든 source raw data를 하나의 LLM prompt에 전달
 - 자동 일정 생성, PR 처리, 메시지 전송
@@ -322,6 +327,7 @@ Initial hypothesis — frozen evaluation 결과에 따라 변경 가능
 ```text
 GitHub review/assigned issue
 + Codex inventory-only execution overview
++ Blabase-owned managed execution progress (관찰 전용)
 + Google Calendar schedule context
 + Notion project context
 + 사용자의 이번 주 목표 한 줄
@@ -334,10 +340,12 @@ Work Cockpit supporting context에 들어간다. Calendar event와 일반 Notion
 resource 자체는 후보가 아니다. Calendar first-step 적합성과 Notion task DB
 property mapping이 구현된 뒤에만 직접 결정 의미를 확대한다.
 
-현재 Codex v2의 `active`와 `taskSummary`는 progress, stall, failure 또는
+Codex inventory의 `active`와 `taskSummary`는 progress, stall, failure 또는
 사용자 obligation을 증명하지 않는다. 승인·입력 상태도 overview badge로만
-보여주며 ranking 후보로 만들지 않는다. richer native contract와 충분한
-ordered history가 생긴 뒤 Phase 2B detector에서만 예외 판정을 활성화한다.
+보여주며 ranking 후보로 만들지 않는다. Phase 2B.1 managed event는 live
+progress를 별도 표시하지만 아직 Attention에 연결하지 않는다. richer native
+contract와 detector 정책이 별도 version으로 검증된 뒤에만 예외 판정을
+활성화한다.
 
 `이번 주 최우선 결과`는 onboarding이나 매 화면마다 반복해서 묻지 않는다.
 기본 cadence는 일주일에 한 번이며, 사용자가 직접 변경할 때 즉시 갱신한다.
@@ -416,6 +424,9 @@ Server SourceSyncCoordinator
 Latest Connector Snapshots + Ordered Sanitized Attempt History
        ↓ snapshot revision
 UI Invalidation / Stored Snapshot Reload
+       +
+Blabase-owned App Server Events → Managed Progress Projection/UI
+                                  (Attention input으로 전달하지 않음)
        ↓
 Current + Prior Source Snapshots + Optional Conversation Candidates
                          ↓
@@ -461,9 +472,13 @@ AttentionItem을 파생한다.
 inventory history는 목록 관찰의 순서만 제공하며 progress/stall detector에
 사용하지 않는다.
 
-향후 managed Codex의 정체와 진전은 단일 snapshot으로 판단하지 않는다. 동일
-execution의
-순서가 보존된 현재·이전 snapshot window에서 `lastActivityAt`과
+Phase 2B.1의 Blabase-owned managed stream은 strict ordered lifecycle metadata와
+latest projection을 별도 Work Cockpit 영역에 표시한다. 이 projection은
+`forbiddenAsAttentionCandidate=true`이며 현재 pipeline의 WorkSignal,
+AttentionItem, replay input과 monitor hash에 들어가지 않는다.
+
+향후 managed Codex detector의 정체와 진전은 단일 event로 판단하지 않는다.
+동일 execution의 순서가 보존된 event window에서 `lastActivityAt`과
 `lastMeaningfulProgressAt`을 분리해 계산한다. heartbeat, 동일 로그 반복,
 단순 polling은 activity일 수 있지만 정체 시간을 초기화하는 meaningful
 progress는 아니다. Codex 이외의 source signal은 이 분기를 통과해 그대로
@@ -1576,6 +1591,12 @@ Codex-derived suggestion이면 추가로 다음을 표시한다.
 
 ### 15.2 Codex execution overview
 
+Phase 2B.1 UI는 먼저 managed run별 연결, 연속성, effective/last-verified state와
+최근 lifecycle item type만 보여준다. historical inventory와 managed progress를
+별도 영역으로 나누고 “관찰 전용 · 추천 우선순위에 반영하지 않음”을 표시한다.
+아래의 의미 있는 진전, 정체 reason과 후속조치는 detector가 구현된 뒤의 목표
+표현이다.
+
 추천 카드와 별도로 다음을 한눈에 보여준다.
 
 - 실행 중, 정체, 실패, 완료 개수
@@ -1699,11 +1720,18 @@ failure category를 확인한 뒤 policy version을 변경한다.
 | `POST /api/attention` | 네 source sync 후 Attention 평가와 run history 기록 |
 | `GET/POST /api/context/weekly-outcome` | active global weekly outcome read/capture |
 | `GET/POST /api/context/projects` | project registry read, project 생성과 explicit mapping confirm/remove |
+| `GET /api/work-resumption` | explicit binding, Companion heartbeat와 bounded command 결과 read |
+| `POST /api/work-resumption` | same-origin bind/unbind/focus-or-resume action |
+| `GET /api/managed-codex-runs` | Attention과 분리된 managed run public progress projection read |
 
 sync status는 source별 snapshot revision/hash를 반환한다. visible UI가 둘 중
 하나의 변화를 확인하면 connector, timeline, Work Cockpit과 Attention Lab을 invalidation해
 저장본을 다시 읽는다. client polling failure는 backoff 후 재시도하고,
 disconnect/connect/context mutation도 같은 invalidation 경계를 사용한다.
+
+managed run route도 local-only, `Cache-Control: no-store`이며 visible Work
+Cockpit에서 별도 2초 polling한다. 이 revision은 source snapshot/Attention
+revision과 독립이고 Attention invalidation을 만들지 않는다.
 
 connector connect/callback, Codex refresh/content mode와 direct live Attention
 refresh도 같은 coordinator attempt/history 경계를 통과한다. Work Cockpit의
@@ -2086,6 +2114,13 @@ supporting source adapter           supporting-source-adapter-v0.3
 Codex observation/history           codex-execution-observation-v2
                                      codex-observation-history-v2
                                      (exact v1 read compatibility)
+managed Codex registry/event         codex-managed-run-registry-v1
+                                     codex-managed-event-v1
+managed Codex history/latest         codex-managed-event-history-v1
+                                     codex-managed-latest-projection-store-v1
+managed Codex public projection      codex-managed-public-projection-v1
+managed Codex settlement/retention   codex-managed-settlement-v1
+                                     codex-managed-retention-v1
 ```
 
 ### 20.2 Run record
@@ -2212,6 +2247,12 @@ artifact나 새로운 Gold 근거가 아니다.
 `.local/connectors/codex/observation-history.json`도 current inventory의 ordered
 metadata일 뿐 managed execution event replay artifact가 아니다.
 
+Phase 2B.1의 `.local/connectors/codex/managed/events/`는 Blabase-owned run의
+sequence/hash-chain lifecycle history다. 이 history는 operational observability
+artifact이며 Attention replay input이나 평가 dataset이 아니다. public latest
+projection도 Attention monitor run, input hash 또는 selection replay에 결합하지
+않는다.
+
 Phase 2A.1에서 metadata run과 replay 저장이 모두 성공한 formal explicit
 evaluation은 실제 사용한 정확한 normalized Attention input을
 `.local/attention/replay-inputs/run_<id>.json`에
@@ -2297,6 +2338,13 @@ semantic output을 바꾸는 구현은 다음을 수행한다.
   보존하고 Git과 제품 API 응답에서 제외
 - Codex inventory observation history는 metadata-only, 최대 30일이며 raw
   prompt/response/command/output retention은 없음
+- managed Codex store도 metadata-only, 최대 30일/run별 10,000 events이며
+  native thread/turn/item ID, cwd, prompt/answer/reasoning, command/output,
+  diff와 tool arguments/results를 저장하지 않음
+- managed App Server는 `ws://127.0.0.1:<port>`만 허용하고 observer가
+  approval/user-input server request에 응답하지 않음
+- managed public projection은 Attention input, replay, monitor hash, candidate와
+  ranking에 사용하지 않음
 - source별 즉시 disconnect/delete 지원
 - production multi-user 저장소는 현재 cwd 단일 계정 local store와 분리 설계
 - notification에는 private title 또는 repository/page 식별자 노출 금지
@@ -2314,6 +2362,7 @@ suggestion/
 │   ├── CROSS_SOURCE_ATTENTION_DEFINITION.md
 │   ├── CROSS_SOURCE_EVALUATION_GUIDE.md
 │   ├── PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md
+│   ├── MANAGED_CODEX_RUN_CONTRACT.md
 │   └── ENGINE_CHANGE_RECORD.md
 ├── src/
 │   ├── crossSource/
@@ -2349,7 +2398,12 @@ suggestion/
 │   │   ├── github/toWorkSignals.ts
 │   │   └── codex/
 │   │       ├── toWorkSignals.ts
-│   │       └── observationContract.ts
+│   │       ├── observationContract.ts
+│   │       └── appServerWebSocket.ts
+│   ├── managedCodex/
+│   │   ├── contracts.ts
+│   │   ├── store.ts
+│   │   └── runtime.ts
 │   ├── sync/
 │   │   ├── schema.ts
 │   │   ├── coordinator.ts
@@ -2396,6 +2450,11 @@ suggestion/
 │   ├── contextRoutes.test.ts
 │   ├── liveAttention.test.ts
 │   ├── codexObservationContract.test.ts
+│   ├── codexAppServerWebSocket.test.ts
+│   ├── managedCodexStore.test.ts
+│   ├── managedCodexRuntime.test.ts
+│   ├── managedCodexRunsRoute.test.ts
+│   ├── managedCodexRunsClient.test.ts
 │   └── supportingSourceAdapters.test.ts
 └── eval/
     └── synthetic/
@@ -2482,7 +2541,7 @@ recommendation selection 연결은 아래 Phase 2A local orchestrator가 별도�
 
 ### Phase 2 — GitHub + Codex observability vertical slice
 
-상태: **Phase 2A and Phase 2A.1 local vertical slice completed**
+상태: **Phase 2A·2A.1 completed, Phase 2B.0·2B.1 local beta completed**
 
 Phase 2는 current decision, data-pipeline stabilization과 enriched connector
 capability의 세 단계로 나눈다.
@@ -2626,29 +2685,53 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - current coordinator timer는 local long-lived Next.js process 안에서 동작한다.
   production/serverless에는 durable scheduler 또는 external trigger가 필요하다.
 - UI revision 전파는 15초 visible polling 기반 eventual refresh다.
-- current Codex collector는 managed App Server connection을 소유하지 않으므로
-  semantic execution detector는 계속 비활성화한다.
+- source-sync Codex collector는 managed App Server connection을 소유하지
+  않는다. 별도 Phase 2B.1 manager가 owned run을 관찰하지만 Attention semantic
+  detector는 계속 비활성화한다.
 - 실제 browser E2E는 local single-process runtime을 검증한다. production
   multi-process scheduler/lease와 process 간 single-flight는 후속 운영 E2E
   범위다.
 
 #### Phase 2B — enriched connector contract
 
-완료한 첫 vertical slice:
+완료한 local vertical slice:
 
 - `[Phase 2B.0]` explicit WorkSessionBinding과 macOS Local Companion 기반
   Work Resumption
 - Work Cockpit의 현재 task와 opaque Codex execution을 사용자가 직접 연결
 - Companion online 상태에서만 `focus_or_resume` command를 생성
 - 실행 순간에만 native thread/cwd를 resolve하고, 기존 Companion-launched
-  Terminal focus 또는 새 Terminal의 `codex resume`로 이동
+  Terminal focus 또는 새 Terminal의 Codex resume로 이동
 - prompt 자동 전송, 승인 자동 처리, 자동 재시도와 arbitrary shell은 금지
 - 세부 안전·저장·상태 계약은 `WORK_RESUMPTION_CONTRACT.md`를 따른다.
+- `[Phase 2B.1]` Companion daemon이 소유한 local loopback App Server manager와
+  remote TUI
+- observer thread subscription 뒤 strict allowlist event를 실제 ingestion
+- latest projection과 sequence/hash-chain history를 분리하고 settlement recovery
+- sanitized metadata 30일/run별 10,000 event retention, raw Codex content 미저장
+- local-only managed projection route와 Work Cockpit의 별도 실시간 진행 UI
+- stream/owner 상실 시 live state fail-closed, reconnect continuity gap 표시
+- reconnect 직후 과거 running/idle은 current로 재사용하지 않고 unknown으로
+  낮추며, completed/failed/interrupted는 마지막으로 검증한 turn 결과로만 보존.
+  이후 직접 관찰한 새 notification으로 current를 갱신하되 gap은 유지
+- public read는 Work Resumption state lease 안에서 fresh owner와
+  binding/execution/scope/connection generation exact authority를 함께 검증
+- queue execution lease에서는 manager가 같은 lease를 중첩 획득하지 않으며,
+  unbind/generation 변경을 감지하면 best-effort `run_closed` 뒤 session 종료
+- 모든 managed projection을 Attention에서 금지
+- 세부 authority·privacy·상태 계약은 `MANAGED_CODEX_RUN_CONTRACT.md`를 따른다.
+
+2026-08-01 local beta gate는 focused Vitest `6` files/`76` tests, 전체 Vitest
+`51` files/`438` tests, Playwright Chromium E2E `5` tests(그중 managed UI `2`),
+typecheck/lint/production build, 실제 `codex-cli 0.146.0` loopback App Server
+initialize/close smoke와 `git diff --check`를 통과했다. Cross-source Dev Candidate는
+v0.1 revision 2, 30 cases와 기존 SHA-256을 유지했다. 실제 Terminal launch와
+native thread resume smoke만 활성 사용자 session 간섭 방지를 위해 수동 후속
+검증으로 남긴다.
 
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
-- blabase-owned long-lived Codex App Server manager와 managed event persistence
 - 충분한 ordered history를 사용한 의미 있는 진전, 정체, 실패 판정 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
@@ -2664,6 +2747,8 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - explicit binding이 없는 task를 유사한 Codex title/path에 자동 연결하지 않음
 - native Codex thread ID, local cwd와 shell command를 API·queue·history에
   저장하지 않음
+- Phase 2B.1 관찰 결과가 semantic version과 회귀 gate 없이 Attention input,
+  hash 또는 ranking으로 승격되지 않음
 
 ### Phase 3 — Project mapping, lineage, conflict
 
@@ -3077,8 +3162,8 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
     v3 manifest/WorkSignal/Attention context와 opt-out/disconnect purge 작성
 18. `[Phase 2B.0 완료]` explicit task↔Codex binding, Local Companion command queue,
     safe `focus_or_resume` destination과 Work Cockpit 재개 UI 작성
-19. `[Phase 2B]` blabase-owned long-lived App Server manager와 managed event
-    persistence 작성
+19. `[Phase 2B.1 완료]` blabase-owned loopback App Server manager, remote TUI,
+    managed event persistence와 관찰 전용 Work Cockpit UI 작성
 20. `[Phase 2B]` Codex semantic progress/exception timeline과
     meaningful-progress detector 작성
 21. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
@@ -3166,9 +3251,15 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 - Codex inventory observation history는 metadata-only로 최대 30일 보관하고
   Attention monitor history와 동일하게 취급하지 않는다. 별도 conversation
   store의 최대 7일 retention과 섞지 않는다.
-- managed Codex event contract/parser/ordered history schema는 존재하지만 실제
-  managed observation은 blabase-owned App Server execution lifecycle이 필요한
-  Phase 2B runtime이며 inventory polling history로 대체하지 않는다.
+- Phase 2B.1 managed observation은 explicit Work Resumption에서 Blabase-owned
+  App Server lifecycle을 만들고 ordered metadata를 별도 UI에 표시한다.
+  inventory polling history로 대체하지 않으며 Attention에는 아직 사용하지
+  않는다.
+- managed App Server는 local loopback만 허용하고 remote TUI가 사용자 interaction을
+  담당한다. observer는 prompt, approval/input response 또는 작업 retry를
+  자동으로 수행하지 않는다.
+- managed store는 raw prompt/answer/command/output/diff/tool payload를 저장하지
+  않고 30일/run별 10,000 event metadata만 보존한다.
 - hard gate와 attention lane을 가중치보다 먼저 적용한다.
 - rankable lane은 `must_now`, `unblock`, `close_loop`, `focus`로 제한하고
   clarification/no-action은 decision 단계에서 처리한다.
@@ -3199,8 +3290,8 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
 10. Codex 현황판에서 어느 수준의 progress summary를 opt-in으로 보여줄 것인가?
 11. production에서 coordinator를 유지할 durable scheduler/lease 또는 external
     trigger를 어떤 runtime에 둘 것인가?
-12. blabase가 Codex App Server connection/thread lifecycle을 어디까지 직접
-    소유할 것인가?
+12. production background service와 multi-device 환경에서 Blabase-owned App
+    Server connection/thread lifecycle을 어떻게 이전·복구할 것인가?
 13. 현재 Work Cockpit의 project mapping과 global Weekly focus UI를 확장해
     project-scoped weekly outcome을 어느 project 선택 UX로 편집할 것인가?
 

@@ -81,6 +81,16 @@ export type WorkResumptionStatus = {
   bindings: WorkSessionBinding[];
 };
 
+export type ManagedCodexAuthoritySnapshot = {
+  activeOwnerInstanceId: string | null;
+  activeOwnerships: Array<{
+    bindingId: string;
+    executionId: string;
+    scopeId: string;
+    connectionGeneration: string;
+  }>;
+};
+
 export class WorkResumptionStoreError extends Error {
   constructor(
     public readonly code:
@@ -157,7 +167,7 @@ export async function bindWorkSession(
   return withWorkResumptionMutation(cwd, async () => {
     const [scopeId] = await Promise.all([
       resolveStoredCodexExecutionScopeId(input.executionId, cwd),
-      currentCodexConnectionGeneration(cwd)
+      readCurrentCodexConnectionGeneration(cwd)
     ]);
     const store = await readWorkSessionBindingStore(cwd, decidedAt);
     const previous = lookupWorkSessionBinding(store, input.taskRef);
@@ -260,7 +270,7 @@ export async function openWorkSession(
     const command = createPendingWorkResumptionCommand({
       binding,
       connectionGeneration:
-        await currentCodexConnectionGeneration(cwd),
+        await readCurrentCodexConnectionGeneration(cwd),
       createdAt: now.toISOString()
     });
     await writeCommand(command, cwd);
@@ -464,7 +474,7 @@ export async function isClaimedCommandCurrent(
       await Promise.all([
       readCommand(commandId, cwd).catch(() => null),
       readWorkSessionBindingStore(cwd).catch(() => null),
-      currentCodexConnectionGeneration(cwd).catch(() => null)
+      readCurrentCodexConnectionGeneration(cwd).catch(() => null)
     ]);
     if (
       !command ||
@@ -478,7 +488,7 @@ export async function isClaimedCommandCurrent(
       return false;
     }
     return currentStoredWorkSessionBindings(store).some(
-      (binding) => binding.bindingId === command.bindingId
+      (binding) => bindingMatchesCommand(binding, command)
     );
   });
 }
@@ -529,13 +539,13 @@ export async function runClaimedCommandWithLaunchLease(
 
     const [store, connectionGeneration] = await Promise.all([
       readWorkSessionBindingStore(cwd).catch(() => null),
-      currentCodexConnectionGeneration(cwd).catch(() => null)
+      readCurrentCodexConnectionGeneration(cwd).catch(() => null)
     ]);
     if (
       !store ||
       connectionGeneration !== command.connectionGeneration ||
       !currentStoredWorkSessionBindings(store).some(
-        (binding) => binding.bindingId === command.bindingId
+        (binding) => bindingMatchesCommand(binding, command)
       )
     ) {
       return { state: "not_current" };
@@ -626,7 +636,7 @@ async function readHeartbeat(cwd: string) {
   return read.status === "available" ? read.value : null;
 }
 
-async function currentCodexConnectionGeneration(
+export async function readCurrentCodexConnectionGeneration(
   cwd: string
 ): Promise<string> {
   const config = await readStoredCodexConfig(cwd);
@@ -639,6 +649,94 @@ async function currentCodexConnectionGeneration(
     installationSecret: config.installationSecret,
     discoveredAt: config.discoveredAt
   });
+}
+
+export async function isManagedCodexOwnershipCurrent(
+  input: {
+    bindingId: string;
+    executionId: string;
+    scopeId: string;
+    connectionGeneration: string;
+  },
+  cwd = process.cwd()
+): Promise<boolean> {
+  try {
+    const [store, connectionGeneration] = await Promise.all([
+      readWorkSessionBindingStore(cwd),
+      readCurrentCodexConnectionGeneration(cwd)
+    ]);
+    if (connectionGeneration !== input.connectionGeneration) {
+      return false;
+    }
+    return currentStoredWorkSessionBindings(store).some(
+      (binding) =>
+        binding.bindingId === input.bindingId &&
+        binding.executionId === input.executionId &&
+        binding.scopeId === input.scopeId
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reads the Companion owner and exact managed binding identities while the
+ * Work Resumption state lease remains held through the caller's projection
+ * read. This preserves the global state -> managed-store lock order and keeps
+ * an unbound or disconnected run from being projected as live.
+ */
+export async function withManagedCodexAuthorityLease<T>(
+  cwd: string,
+  now: Date,
+  read: (authority: ManagedCodexAuthoritySnapshot) => Promise<T>
+): Promise<T> {
+  return withWorkResumptionMutation(cwd, async () => {
+    const [store, heartbeat] = await Promise.all([
+      readWorkSessionBindingStore(cwd, now.toISOString()),
+      readHeartbeat(cwd)
+    ]);
+    const connectionGeneration = await readCurrentCodexConnectionGeneration(
+      cwd
+    ).catch(() => null);
+    const authority: ManagedCodexAuthoritySnapshot = {
+      activeOwnerInstanceId:
+        heartbeat && isFreshWorkResumptionHeartbeat(heartbeat, now)
+          ? heartbeat.instanceId
+          : null,
+      activeOwnerships:
+        connectionGeneration === null
+          ? []
+          : currentStoredWorkSessionBindings(store).map((binding) => ({
+              bindingId: binding.bindingId,
+              executionId: binding.executionId,
+              scopeId: binding.scopeId,
+              connectionGeneration
+            }))
+    };
+    return read(authority);
+  });
+}
+
+export function withWorkResumptionStateLease<T>(
+  cwd: string,
+  mutation: () => Promise<T>
+): Promise<T> {
+  return withWorkResumptionMutation(cwd, mutation);
+}
+
+function bindingMatchesCommand(
+  binding: {
+    bindingId: string;
+    executionId: string;
+    scopeId: string;
+  },
+  command: WorkResumptionCommand
+): boolean {
+  return (
+    binding.bindingId === command.bindingId &&
+    binding.executionId === command.executionId &&
+    binding.scopeId === command.scopeId
+  );
 }
 
 async function readCommand(

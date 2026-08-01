@@ -77,7 +77,11 @@ export class MacOsTerminalResumeLauncher
 {
   private readonly terminalWindowByBinding = new Map<
     string,
-    { windowId: string; marker: string }
+    {
+      windowId: string;
+      marker: string;
+      remoteEndpoint: string | null;
+    }
   >();
 
   constructor(
@@ -109,7 +113,11 @@ export class MacOsTerminalResumeLauncher
       input.bindingId
     );
 
-    if (existingLocator) {
+    if (
+      existingLocator &&
+      existingLocator.remoteEndpoint ===
+        (input.remoteEndpoint ?? null)
+    ) {
       const focusResult = await runAppleScript(
         FOCUS_TERMINAL_SCRIPT,
         [existingLocator.windowId, existingLocator.marker]
@@ -123,6 +131,11 @@ export class MacOsTerminalResumeLauncher
           "Terminal 창 상태를 확인하지 못했습니다."
         );
       }
+      this.terminalWindowByBinding.delete(input.bindingId);
+    } else if (existingLocator) {
+      // A new managed App Server endpoint cannot safely reuse a TUI that is
+      // still connected to the previous endpoint. Leave the user's existing
+      // Terminal untouched and open a fresh managed session.
       this.terminalWindowByBinding.delete(input.bindingId);
     }
 
@@ -149,7 +162,8 @@ export class MacOsTerminalResumeLauncher
     }
     this.terminalWindowByBinding.set(input.bindingId, {
       windowId,
-      marker
+      marker,
+      remoteEndpoint: input.remoteEndpoint ?? null
     });
     return "RESUMED_IN_TERMINAL";
   }
@@ -197,6 +211,9 @@ async function buildFixedResumeCommand(
     "exec",
     quotePosixShellArgument(input.codexBinaryPath),
     "resume",
+    ...(input.remoteEndpoint
+      ? ["--remote", quotePosixShellArgument(input.remoteEndpoint)]
+      : []),
     quotePosixShellArgument(input.target.nativeThreadId)
   ].join(" ");
 }
@@ -209,7 +226,9 @@ async function validateResumeInvocation(
     !SAFE_BINDING_ID.test(input.bindingId) ||
     !isSafeAbsolutePath(input.target.cwd) ||
     !isSafeAbsolutePath(input.codexBinaryPath) ||
-    !SAFE_NATIVE_THREAD_ID.test(input.target.nativeThreadId)
+    !SAFE_NATIVE_THREAD_ID.test(input.target.nativeThreadId) ||
+    (input.remoteEndpoint !== undefined &&
+      !isSafeLoopbackEndpoint(input.remoteEndpoint))
   ) {
     throw new WorkResumptionCompanionError(
       "INVALID_RESUME_INVOCATION",
@@ -230,6 +249,13 @@ async function validateResumeInvocation(
       "Codex 프로젝트 또는 실행 파일을 확인하지 못했습니다."
     );
   }
+}
+
+function isSafeLoopbackEndpoint(value: string): boolean {
+  const match = value.match(/^ws:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/);
+  if (!match) return false;
+  const port = Number(match[1]);
+  return port >= 1 && port <= 65_535;
 }
 
 function isSafeAbsolutePath(value: string): boolean {

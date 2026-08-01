@@ -7,6 +7,7 @@ export type CompanionCommand = {
   operation: "focus_or_resume";
   executionId: string;
   scopeId: string;
+  connectionGeneration: string;
   createdAt: string;
   expiresAt: string;
 };
@@ -76,8 +77,12 @@ export interface WorkResumptionQueueAdapter {
 
 export type ResumeLaunchInput = {
   bindingId: string;
+  executionId: string;
+  scopeId: string;
+  connectionGeneration: string;
   codexBinaryPath: string;
   target: CodexResumeTarget;
+  remoteEndpoint?: string;
 };
 
 export interface CodexResumeLauncher {

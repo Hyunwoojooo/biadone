@@ -11,8 +11,10 @@ Work Resumption은 Work Cockpit의 제안을 사용자가 이미 작업하던 Co
 사용자가 Work Cockpit 제안과 Codex 세션을 명시적으로 연결
 → 사용자가 "Codex에서 작업 이어가기"를 직접 실행
 → Local Companion이 연결된 세션을 찾음
-→ 이미 Companion이 연 Terminal이면 해당 창을 앞으로 가져옴
-→ 아니면 새 Terminal에서 `codex resume <thread-id>` 실행
+→ Companion daemon이 local loopback App Server에서 thread를 먼저 subscribe
+→ 이미 같은 managed endpoint로 연 Terminal이면 해당 창을 앞으로 가져옴
+→ 아니면 새 Terminal에서
+  `codex resume --remote ws://127.0.0.1:<port> <thread-id>` 실행
 ```
 
 이 기능은 추천 엔진이 Codex를 자율 제어하는 기능이 아니다. 제안의 선택,
@@ -57,15 +59,23 @@ Work Resumption은 Work Cockpit의 제안을 사용자가 이미 작업하던 Co
 - private local queue를 polling하고 heartbeat를 기록한다.
 - pending command를 atomic claim한다.
 - opaque Codex execution ID를 실행 직전에 App Server 목록과 대조한다.
-- fixed Terminal adapter로 focus 또는 resume를 수행한다.
+- active binding, scope와 Codex connection generation을 다시 검증한다.
+- local loopback App Server process와 observation connection을 소유하고 해당
+  thread를 subscribe한다.
+- fixed Terminal adapter로 같은 App Server의 remote TUI를 focus 또는 resume한다.
 - 완료 상태에는 sanitized result code만 기록한다.
 
 ### Codex App Server와 CLI
 
 - App Server의 `thread/list`는 opaque execution ID에 해당하는 native
   thread와 작업 경로를 실행 순간에만 찾는 데 사용한다.
-- CLI의 `codex resume <thread-id>`는 기존 대화 맥락을 가진 interactive
-  session을 다시 여는 데만 사용한다.
+- Companion-owned App Server의 `thread/resume`은 explicit binding의 thread를
+  observation connection에 subscribe하는 데 사용한다.
+- CLI의
+  `codex resume --remote ws://127.0.0.1:<port> <thread-id>`는 같은 local App
+  Server에서 기존 대화 맥락을 가진 interactive session을 여는 데만 사용한다.
+- observation connection은 prompt를 보내거나 approval/user-input server
+  request에 응답하지 않는다.
 
 ## 4. Binding 계약
 
@@ -104,6 +114,9 @@ requested
 - claim의 최종 유효성 확인부터 Terminal 실행과 결과 저장까지 동일한
   filesystem execution lease를 유지한다. unbind, disconnect와 status expiry는
   이 lease 앞이나 뒤에만 직렬화되므로 실행 중간에 command를 덮어쓰지 않는다.
+- queue launch가 같은 lease 안에서 managed manager를 호출할 때는
+  `callerHoldsOwnershipLease` 경로를 사용해 동일 filesystem lease를 중첩
+  획득하지 않는다. lease 밖의 manager 호출은 ownership lease를 직접 획득한다.
 - Companion이 Terminal 실행 결과를 기록하기 전에 비정상 종료하면 자동
   재실행하지 않고 `LAUNCH_OUTCOME_UNKNOWN` terminal failure로 닫는다. 사용자는
   Terminal을 확인한 뒤에만 새 명시적 실행을 만들 수 있다.
@@ -113,12 +126,14 @@ requested
 macOS Terminal adapter는 다음 고정 template만 만들 수 있다.
 
 ```text
-cd <resolved-cwd> && exec <resolved-codex-binary> resume <resolved-thread-id>
+cd <resolved-cwd> && exec <resolved-codex-binary> resume \
+  --remote ws://127.0.0.1:<port> <resolved-thread-id>
 ```
 
 - `cwd`는 선택된 Codex scope의 absolute path여야 한다.
 - binary는 기존 Codex binary resolver가 확인한 executable이어야 한다.
 - native thread ID는 control character와 shell metacharacter를 거부한다.
+- remote endpoint는 `ws://127.0.0.1:<1..65535>`만 허용한다.
 - child process는 `shell: false`로 AppleScript에 argument를 전달한다.
 - shell argument는 POSIX quoting을 적용하고 interpolated AppleScript source로
   전달하지 않는다.
@@ -151,6 +166,13 @@ native Codex thread ID, 전체 작업 경로, prompt/answer, shell command와
 Terminal output은 이 store에 저장하지 않는다. production conversation이나
 binding/command 기록을 Golden 또는 Regression data로 자동 승격하지 않는다.
 
+daemon이 시작한 managed run의 sanitized event metadata는 별도
+`.local/connectors/codex/managed/` store에 최대 30일, run별 최대 10,000
+events로 보존한다. raw prompt/answer/command/output/diff/tool arguments/results,
+native thread ID와 cwd는 이 managed store에도 저장하지 않는다. 정확한
+authority, event, projection과 retention 경계는
+`MANAGED_CODEX_RUN_CONTRACT.md`를 따른다.
+
 heartbeat에는 공개하지 않는 random Companion instance ID를 포함한다. fresh한
 다른 instance가 있으면 두 번째 Companion은 ownership을 덮어쓰지 않고
 종료하며, 종료 시에도 자신의 heartbeat만 compare-and-clear한다.
@@ -169,8 +191,17 @@ heartbeat에는 공개하지 않는 random Companion instance ID를 포함한다
   식별하거나 focus하지 못한다. inventory `active`를 다른 client의 live
   ownership 증거로 사용하지 않으며, 같은 세션의 동시 재개를 자동 조정하지
   않는다.
-- 이 기능은 managed Codex live event ingestion, stall/failure detector,
-  workflow follow-through 또는 autonomous execution을 구현하지 않는다.
+- Phase 2B.1은 daemon이 이 흐름으로 시작한 run의 managed live event를 관찰
+  전용 UI에 표시한다. 기존 외부 session은 계속 historical/inventory context다.
+- managed public liveness는 fresh Companion owner와 현재 binding ID, execution
+  ID, scope ID, connection generation의 exact authority를 함께 요구한다.
+  unbind 또는 generation 변경 시 manager는 best-effort `run_closed`를 기록하고,
+  기록 실패와 무관하게 public projection은 fail closed한다.
+- managed progress는 Attention input, candidate, hash, filtering, ordering 또는
+  ranking에 사용하지 않는다. stall/failure detector, workflow follow-through와
+  autonomous execution은 구현하지 않는다.
+- local App Server WebSocket/remote TUI transport는 experimental beta이며
+  loopback 밖의 endpoint는 지원하지 않는다.
 - 첫 release는 active Companion 한 개만 허용한다. stale heartbeat takeover는
   허용하지만 여러 Companion 사이의 Terminal window ownership 이전은 하지
   않는다.
@@ -187,5 +218,11 @@ heartbeat에는 공개하지 않는 random Companion instance ID를 포함한다
 - 버튼은 pointer와 keyboard Enter 양쪽에서 같은 explicit action을 만든다.
 - action은 prompt 전송, 승인 자동 처리, 자동 재시도 또는 GitHub mutation을
   수행하지 않는다.
+- managed mode는 observation subscription을 Terminal launch 전에 만들고
+  loopback remote endpoint만 TUI에 전달한다.
+- API가 Work Resumption state lease 안에서 exact authority와 managed
+  projection을 함께 읽어 unbind/disconnect TOCTOU를 막는다.
+- raw Codex content 없이 bounded lifecycle metadata만 저장하고 모든 public
+  managed projection은 `forbiddenAsAttentionCandidate=true`다.
 - domain, store, route, resolver와 launcher가 합성 fixture로 회귀 테스트된다.
 - typecheck, lint, unit test와 production build가 통과한다.

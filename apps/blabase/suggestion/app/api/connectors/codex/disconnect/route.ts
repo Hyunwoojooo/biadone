@@ -7,6 +7,7 @@ import {
 } from "../../../../../src/connectors/codex/config";
 import { deleteStoredCodexConnection } from "../../../../../src/connectors/codex/localStore";
 import type { CodexConnectionState } from "../../../../../src/connectors/codex/types";
+import { clearManagedCodexState } from "../../../../../src/managedCodex/store";
 import { clearWorkResumptionStateForCodexDisconnect } from "../../../../../src/resumption/store";
 import { noteRuntimeSourceDisconnected } from "../../../../../src/sync/runtime";
 
@@ -22,9 +23,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    await clearWorkResumptionStateForCodexDisconnect(() =>
-      deleteStoredCodexConnection()
-    );
+    await clearWorkResumptionStateForCodexDisconnect(async () => {
+      await clearManagedCodexState();
+      await deleteStoredCodexConnection();
+      await clearManagedCodexState();
+    });
     await recordDisconnect();
     return noStoreJson({ status: "disconnected" });
   } catch (error) {

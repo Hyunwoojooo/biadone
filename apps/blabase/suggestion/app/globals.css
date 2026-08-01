@@ -1829,6 +1829,166 @@ summary {
   color: var(--error);
 }
 
+.managedCodexProgress {
+  padding: 18px;
+  border: 1px solid rgb(39 103 73 / 16%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 62%);
+}
+
+.managedCodexProgress .attentionSubsectionHeader {
+  margin-bottom: 8px;
+}
+
+.managedCodexBoundary {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.managedCodexRunList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.managedCodexRunList > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.managedCodexRunList > li.isActive {
+  border-color: rgb(39 103 73 / 26%);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.managedCodexRunList > li.isComplete {
+  border-color: rgb(39 103 73 / 18%);
+  background: #f8fbf8;
+}
+
+.managedCodexRunList > li.isWarning {
+  border-color: #e2cfae;
+  background: #fffaf0;
+}
+
+.managedCodexRunList > li.isError {
+  border-color: rgb(173 63 50 / 22%);
+  background: var(--error-soft);
+}
+
+.managedCodexRunMain {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.managedCodexRunTitle,
+.managedCodexRunState {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.managedCodexRunTitle strong {
+  font-size: 13px;
+}
+
+.managedCodexRunTitle > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.managedCodexRunState > span:first-child {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.managedCodexWaiting {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f7ecd8;
+  color: #85581f;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.managedCodexRunMain > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.managedCodexRunMeta {
+  display: grid;
+  min-width: 180px;
+  gap: 3px;
+  margin: 0;
+}
+
+.managedCodexRunMeta > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+}
+
+.managedCodexRunMeta dt,
+.managedCodexRunMeta dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.managedCodexRunMeta dt {
+  color: var(--muted);
+}
+
+.managedCodexRunMeta dd {
+  color: var(--text);
+  font-weight: 680;
+  text-align: right;
+}
+
+.managedCodexEmpty,
+.managedCodexNotice,
+.managedCodexRemainder,
+.managedCodexAsOf {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.managedCodexEmpty,
+.managedCodexNotice {
+  padding: 11px;
+  border-radius: 9px;
+  background: rgb(240 246 242 / 72%);
+  font-size: 11px;
+}
+
+.managedCodexNotice {
+  margin-bottom: 8px;
+  background: #fff5e9;
+  color: #85581f;
+}
+
+.managedCodexRemainder,
+.managedCodexAsOf {
+  margin-top: 8px;
+}
+
 .attentionSubsection {
   margin-top: 30px;
 }
@@ -2669,6 +2829,14 @@ summary {
 
   .workResumptionBinder label {
     grid-column: auto;
+  }
+
+  .managedCodexRunList > li {
+    grid-template-columns: 1fr;
+  }
+
+  .managedCodexRunMeta {
+    min-width: 0;
   }
 
   .sourceHealthGrid {

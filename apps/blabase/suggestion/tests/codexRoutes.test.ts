@@ -52,6 +52,10 @@ vi.mock("../src/resumption/store", () => ({
   )
 }));
 
+vi.mock("../src/managedCodex/store", () => ({
+  clearManagedCodexState: vi.fn(async () => undefined)
+}));
+
 import { POST as connect } from "../app/api/connectors/codex/connect/route";
 import { POST as disconnect } from "../app/api/connectors/codex/disconnect/route";
 import { GET as status } from "../app/api/connectors/codex/status/route";
@@ -66,6 +70,7 @@ import {
   readStoredCodexSnapshot
 } from "../src/connectors/codex/localStore";
 import { emptyCodexContentManifest } from "../src/connectors/codex/conversationContract";
+import { clearManagedCodexState } from "../src/managedCodex/store";
 import type {
   CodexSessionSignal,
   CodexSnapshot,
@@ -846,12 +851,25 @@ describe("Codex connector routes", () => {
       clearWorkResumptionStateForCodexDisconnect
     ).toHaveBeenCalledOnce();
     expect(deleteStoredCodexConnection).toHaveBeenCalledOnce();
+    expect(clearManagedCodexState).toHaveBeenCalledTimes(2);
     expect(
       vi.mocked(clearWorkResumptionStateForCodexDisconnect).mock
         .invocationCallOrder[0]
     ).toBeLessThan(
       vi.mocked(deleteStoredCodexConnection).mock
         .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(clearManagedCodexState).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(deleteStoredCodexConnection).mock
+        .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(deleteStoredCodexConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(clearManagedCodexState).mock.invocationCallOrder[1]!
     );
     await expect(response.json()).resolves.toEqual({
       status: "disconnected"

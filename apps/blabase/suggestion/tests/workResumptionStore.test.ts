@@ -59,6 +59,7 @@ import {
   workResumptionLocalDirectory,
   workSessionBindingStoreSchema,
   workResumptionCodexConnectionGeneration,
+  withManagedCodexAuthorityLease,
   writeCompanionHeartbeat,
   bindWorkSession,
   type WorkResumptionTaskRef
@@ -213,6 +214,42 @@ describe("work resumption contracts", () => {
 });
 
 describe("private work resumption store", () => {
+  it("reads exact managed authority under the shared state lease", async () => {
+    const cwd = await testDirectory();
+    await bindFixture(cwd);
+    await writeCompanionHeartbeat(cwd, T0, INSTANCE_1);
+
+    const current = await withManagedCodexAuthorityLease(
+      cwd,
+      T0,
+      async (authority) => authority
+    );
+    expect(current).toEqual({
+      activeOwnerInstanceId: INSTANCE_1,
+      activeOwnerships: [
+        {
+          bindingId: expect.stringMatching(/^binding_[a-f0-9]{32}$/),
+          executionId: EXECUTION_1,
+          scopeId: SCOPE_1,
+          connectionGeneration: CONNECTION_GENERATION
+        }
+      ]
+    });
+
+    await unbindWorkSession(
+      { taskRef, explicitUserConfirmation: true },
+      cwd,
+      plusMs(T0, 1_000)
+    );
+    const unbound = await withManagedCodexAuthorityLease(
+      cwd,
+      plusMs(T0, 1_000),
+      async (authority) => authority
+    );
+    expect(unbound.activeOwnerInstanceId).toBe(INSTANCE_1);
+    expect(unbound.activeOwnerships).toEqual([]);
+  });
+
   it("allows one heartbeat owner, compare-clears, and permits stale takeover", async () => {
     const cwd = await testDirectory();
     const starts = await Promise.allSettled([

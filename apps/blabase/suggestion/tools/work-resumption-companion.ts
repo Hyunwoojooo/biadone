@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -11,6 +12,7 @@ import {
   resolveCodexResumeTarget
 } from "../src/connectors/codex/resumeTarget";
 import {
+  readCurrentCodexConnectionGeneration,
   resolveStoredCodexExecutionScopeId,
   WorkResumptionStoreError
 } from "../src/resumption/store";
@@ -24,6 +26,11 @@ import {
   DryRunResumeValidator,
   MacOsTerminalResumeLauncher
 } from "../src/resumption/companion/terminal";
+import {
+  ManagedCodexResumeLauncher,
+  ManagedCodexRunManager,
+  isManagedCodexRuntimeError
+} from "../src/managedCodex/runtime";
 import {
   WorkResumptionCompanionError
 } from "../src/resumption/companion/types";
@@ -77,24 +84,40 @@ async function main(): Promise<void> {
   const stop = () => abortController.abort();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  const instanceId = `instance_${randomBytes(16).toString("hex")}`;
+  const managedRunManager =
+    mode.kind === "daemon"
+      ? new ManagedCodexRunManager({
+          cwd: SUGGESTION_ROOT,
+          ownerInstanceId: instanceId
+        })
+      : null;
+  const terminalLauncher = new MacOsTerminalResumeLauncher();
   try {
     if (mode.kind === "daemon") {
       process.stdout.write(
-        "Work Resumption Companion is running.\n"
+        "Work Resumption Companion and managed Codex observation are running.\n"
       );
     }
     const result = await runCompanionDaemon({
       queue: createLocalWorkResumptionQueueAdapter(
         SUGGESTION_ROOT
       ),
-      launcher: new MacOsTerminalResumeLauncher(),
+      launcher: managedRunManager
+        ? new ManagedCodexResumeLauncher(
+            managedRunManager,
+            terminalLauncher,
+            { callerHoldsOwnershipLease: true }
+          )
+        : terminalLauncher,
       resolveTarget: (input) =>
         resolveCodexResumeTarget(input, {
           cwd: SUGGESTION_ROOT
         }),
       resolveBinary: () => resolveCodexBinary(),
       signal: abortController.signal,
-      once: mode.kind === "once"
+      once: mode.kind === "once",
+      instanceId
     });
     if (mode.kind === "once") {
       process.stdout.write(
@@ -104,6 +127,7 @@ async function main(): Promise<void> {
       );
     }
   } finally {
+    await managedRunManager?.close();
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
   }
@@ -112,10 +136,13 @@ async function main(): Promise<void> {
 async function runStandaloneDryRun(
   executionId: string
 ): Promise<void> {
-  const scopeId = await resolveStoredCodexExecutionScopeId(
-    executionId,
-    SUGGESTION_ROOT
-  );
+  const [scopeId, connectionGeneration] = await Promise.all([
+    resolveStoredCodexExecutionScopeId(
+      executionId,
+      SUGGESTION_ROOT
+    ),
+    readCurrentCodexConnectionGeneration(SUGGESTION_ROOT)
+  ]);
   const [target, binary] = await Promise.all([
     resolveCodexResumeTarget(
       { executionId, scopeId },
@@ -131,6 +158,9 @@ async function runStandaloneDryRun(
   }
   await new DryRunResumeValidator().validate({
     bindingId: DIAGNOSTIC_BINDING_ID,
+    executionId,
+    scopeId,
+    connectionGeneration,
     codexBinaryPath: binary.binaryPath,
     target
   });
@@ -177,7 +207,8 @@ function safeErrorCode(error: unknown): string {
     error instanceof WorkResumptionCompanionError ||
     error instanceof CodexResumeTargetError ||
     error instanceof CodexConnectorError ||
-    error instanceof WorkResumptionStoreError
+    error instanceof WorkResumptionStoreError ||
+    isManagedCodexRuntimeError(error)
   ) {
     return error.code;
   }

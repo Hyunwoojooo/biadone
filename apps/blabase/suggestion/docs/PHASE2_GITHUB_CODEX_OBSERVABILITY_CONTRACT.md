@@ -4,8 +4,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 상태 | Phase 2A.1 stabilization + Codex historical capture v0.1 + Phase 2B.0 local Work Resumption |
-| 기준일 | 2026-07-30 |
+| 상태 | Phase 2A.1 stabilization + Codex historical capture v0.1 + Phase 2B.1 managed observability local beta |
+| 기준일 | 2026-08-01 |
 | 입력 계약 | `cross-source-attention-input-v0.3` |
 | 결과 계약 | `cross-source-attention-result-v0.3` |
 | 정책 | `aggressive-evidence-bound-attention-policy-v0.2` |
@@ -24,7 +24,10 @@
 | Codex content consent | `codex-conversation-content-consent-v1`, 별도 explicit opt-in |
 | Work Resumption | `work-resumption-binding-store-v1`, `work-resumption-schema-v1` |
 | Local Companion protocol | `work-resumption-local-protocol-v1`, `work-resumption-command-v1`, `work-resumption-heartbeat-v1` |
-| 제품 route | local-only `/api/attention`, `/api/sync`, `/api/sync/start`, `/api/sync/status`, `/api/context/*`, `/api/work-resumption`, Work Cockpit, Attention Lab |
+| Managed Codex run | `codex-managed-run-registry-v1`, `codex-managed-event-v1`, `codex-managed-event-history-v1` |
+| Managed Codex projection | `codex-managed-latest-projection-store-v1`, `codex-managed-public-projection-v1` |
+| Managed Codex durability | `codex-managed-settlement-v1`, `codex-managed-retention-v1` |
+| 제품 route | local-only `/api/attention`, `/api/sync`, `/api/sync/start`, `/api/sync/status`, `/api/context/*`, `/api/work-resumption`, `/api/managed-codex-runs`, Work Cockpit, Attention Lab |
 
 ---
 
@@ -43,6 +46,7 @@ SourceSyncCoordinator
 → GitHub intervention candidates
 + inventory-only Codex Work Cockpit overview
 + explicitly opted-in historical Codex content manifest
++ managed-only Codex progress projection (Attention과 분리)
 → suggested / scoped no_action / insufficient_evidence
 ```
 
@@ -133,6 +137,9 @@ Phase 2A.1의 source sync audit는 별도 store다.
 
 .local/connectors/codex/conversation-history.json
 → explicit opt-in prompt/answer/execution raw artifact, 최대 7일
+
+.local/connectors/codex/managed/{registry,latest,events,settlement}
+→ Blabase-owned run의 sanitized lifecycle metadata, 최대 30일/run별 10,000 events
 
 .local/attention/replay-inputs/run_<id>.json
 → run별 exact normalized Attention input, immutable, 최대 30일
@@ -429,10 +436,11 @@ item/completed
 ```
 
 `running`, `completed`, `failed`, `interrupted`는 위 managed event의 native
-status에만 대응한다. 현재 collector는 이 managed connection을 만들지 않고,
-다른 Codex client가 소유한 세션의 event stream에 attach하지 않는다. 따라서
-managed schema와 parser가 있어도 현재 Work Cockpit은 inventory 세션에 live
-state를 표시하거나 exception candidate를 생성하지 않는다.
+status에만 대응한다. Phase 2B.1 Local Companion daemon은 사용자가 explicit
+Work Resumption으로 시작한 run에 한해 loopback App Server connection을 직접
+소유하고, observation connection에서 thread를 먼저 subscribe한 뒤 같은
+endpoint의 remote TUI를 연다. 다른 Codex client가 소유한 기존 세션의 event
+stream에는 attach하지 않는다.
 
 managed record도 다음 exact tuple만 허용한다.
 
@@ -445,9 +453,44 @@ managed record도 다음 exact tuple만 허용한다.
 | turn completed | native `completed`/`failed`/`interrupted` | `null` | 대응 managed turn reason |
 | item started/completed | `running` | `null` | `CODEX_MANAGED_ITEM_ACTIVITY` |
 
-모든 managed record는 `liveObservationAvailable=true`,
-`inventoryActivityState=null`, `sourceUpdatedAt=null`이다. event/state/reason을
-교차 조합하거나 inventory timestamp/activity를 섞으면 거부한다.
+직접 수신해 검증한 native managed record는
+`liveObservationAvailable=true`, `inventoryActivityState=null`,
+`sourceUpdatedAt=null`이다. event/state/reason을 교차 조합하거나 inventory
+timestamp/activity를 섞으면 거부한다.
+
+managed runtime은 run lifecycle과 최신 turn 상태를 분리한다. turn completion은
+latest verified execution state를 바꾸지만 run을 닫지 않으며 다음 turn도 같은
+managed run에서 관찰할 수 있다. `run_failed`와 `run_closed`만 managed run을
+terminal lifecycle로 닫는다.
+
+ordered event와 latest projection은
+`.local/connectors/codex/managed/` 아래 별도 private store에 보존한다. event는
+strict sequence와 previous-event SHA-256 chain을 가지며 registry/history/latest
+사이 write는 settlement journal로 복구한다. sanitized metadata retention은
+최대 30일, run별 최대 10,000 events다. native thread/turn/item ID, cwd,
+prompt/answer, reasoning text, command/output, file diff와 tool arguments/results는
+저장하지 않는다.
+
+fresh Companion owner, connected stream 또는 current
+`bindingId+executionId+scopeId+connectionGeneration` exact authority 중 하나라도
+없으면 public `liveObservationAvailable=false`, waiting state `null`, 현재
+nonterminal execution state `unknown`으로 낮춘다. API는 Work Resumption state
+lease 안에서 authority와 projection을 함께 읽는다. manager가 authority 상실을
+감지하면 best-effort `run_closed`를 기록하고 idle session을 닫는다.
+reconnect 직후에는 관찰 공백을 `continuity=gap_detected`로 남기고 과거
+nonterminal `running`/`idle`을 current로 재사용하지 않아 effective state가
+`unknown`이다. `completed`/`failed`/`interrupted`는 마지막으로 직접 검증된
+turn 결과라는 terminal fact로 보존할 수 있지만 managed run의 현재 활동이나
+연결된 work item 상태를 뜻하지 않는다. 이후 새 managed notification을 직접
+관찰하면 그 새 상태는 current로 표시할 수 있지만 continuity gap과 누락 구간은
+계속 보존하며 역추정하지 않는다. public projection은 항상
+`forbiddenAsAttentionCandidate=true`이며 현재 Attention input/result, replay,
+monitor hash, candidate, eligibility, lane 또는 ranking에 들어가지 않는다.
+Work Cockpit은 historical Codex overview와 별도인 “Codex 실시간 진행” 영역에
+이 projection을 관찰 전용으로 표시한다.
+
+transport, 저장, privacy와 UI의 정확한 계약은
+`MANAGED_CODEX_RUN_CONTRACT.md`를 따른다.
 
 exact validation을 식별하기 위해 observation/history contract를 `v2`로
 올렸다. semantically valid한 private `v1` history는 read 시 메모리에서 `v2`로
@@ -704,7 +747,7 @@ active global outcome으로 fallback한다.
 
 ---
 
-## 9. Phase 2B 진입 조건
+## 9. Phase 2B 구현 상태
 
 Phase 2A.1에서 다음 기반은 구현됐다.
 
@@ -727,15 +770,32 @@ Phase 2B.0의 첫 safe-destination vertical slice는 semantic detector와 분리
 - Companion online + 사용자 explicit action일 때만 허용하는
   `focus_or_resume`
 - native thread ID와 cwd를 저장하지 않고 실행 순간 App Server에서만 resolve
-- 기존 Companion-launched Terminal focus 또는 새 Terminal의
-  `codex resume <thread-id>`
+- 기존 Companion-launched Terminal focus 또는 새 Terminal의 bounded Codex
+  resume
 - prompt 자동 전송, 승인 자동 처리, 자동 재시도와 arbitrary shell 금지
 
 정확한 상태, 저장과 privacy boundary는
 `WORK_RESUMPTION_CONTRACT.md`를 따른다. 이 vertical slice는 Codex historical
 inventory를 live state로 승격하거나 failure/stall candidate를 만들지 않는다.
 
-다음 semantic detector와 managed runtime은 아직 구현하지 않는다.
+Phase 2B.1 managed observability vertical slice도 semantic detector와 분리한다.
+
+- Companion daemon이 소유한 local loopback App Server WebSocket과 remote TUI
+- observer `thread/resume` 뒤
+  `codex resume --remote ws://127.0.0.1:<port> <thread-id>` 실행
+- `thread/status/changed`, turn/item lifecycle allowlist의 실제 runtime ingestion
+- strict sequence/hash chain, latest projection과 settlement recovery
+- stream disconnect/reconnect와 continuity gap 표시
+- sanitized metadata 최대 30일, run별 최대 10,000 event retention
+- local-only `/api/managed-codex-runs`와 Work Cockpit의 별도 관찰 전용 UI
+- raw prompt/answer/command/output/diff/tool payload 미저장
+- 모든 public projection의 `forbiddenAsAttentionCandidate=true`
+- prompt/turn, approval/input 응답과 작업 재시도 자동화 금지
+
+정확한 계약은 `MANAGED_CODEX_RUN_CONTRACT.md`를 따른다. Phase 2B.1은
+Attention input/result/filtering/ordering/ranking/hash를 변경하지 않는다.
+
+다음 semantic detector와 richer connector evidence는 아직 구현하지 않는다.
 
 - confirmed non-draft review
 - Codex meaningful progress, stall, failure, recovery, completion
@@ -745,14 +805,12 @@ inventory를 live state로 승격하거나 failure/stall candidate를 만들지 
   relation-aware safe destination
 - explicit item-level Codex↔GitHub relation
 - GitHub checks, requested changes, merge conflict
-- blabase가 connection lifecycle을 소유하는 long-lived Codex App Server manager
-- managed event reconnect, sequence gap, replay와 retention 운영
-- semantic detector가 사용할 managed event의 실제 runtime ingestion/persistence
+- managed event를 Attention 후보로 승격하는 versioned rule
 
 inventory observation history를 polling 횟수가 충분하다는 이유로 managed event
 history로 승격하거나 semantic detector에 입력해서는 안 된다.
 
-Phase 2B connector 계약이 위 native evidence를 제공한 뒤 별도 schema/rule
+위 semantic behavior는 native evidence와 정책이 확정된 뒤 별도 schema/rule
 version과 regression case를 추가한다.
 
 ---
@@ -844,6 +902,45 @@ private fixture와 실제 Chromium browser/Next.js route/React UI를 사용해
 Cockpit→Attention Lab 전파, 실제 Codex disconnect route의 snapshot revision
 제거와 두 UI 전파를 검증한다. production multi-process scheduler/lease E2E는
 후속 운영 검증 범위다.
+
+### 10.1 Phase 2B.1 managed observability regression
+
+추가 deterministic regression은 다음을 포함한다.
+
+- loopback-only App Server spawn, initialize/initialized, bounded timeout/message와
+  notification/server-request 분리
+- observer thread subscription이 remote TUI launch보다 먼저 수행됨
+- explicit binding, scope, connection generation과 Companion owner가 바뀌면
+  managed append와 live projection이 fail closed함
+- queue execution lease 안의 manager launch가 lease를 중첩 획득하지 않고,
+  API authority/projection read가 같은 lease에서 TOCTOU 없이 수행됨
+- unbind/generation 변경 감지 뒤 best-effort `run_closed`와 public liveness
+  fail-closed
+- allowlisted native thread notification만 normalized metadata로 저장
+- raw prompt/answer/command/output/diff/tool payload와 native ID sentinel 비저장
+- turn completion 뒤 managed run이 계속 다음 turn을 관찰
+- unexpected disconnect의 liveness downgrade와 reconnect continuity gap
+- reconnect 직후 과거 nonterminal effective state unknown, terminal state는
+  마지막으로 검증한 turn 결과로만 보존, 이후 직접 관찰한 새 notification만
+  current state로 사용하면서 continuity gap은 유지
+- strict sequence/hash chain, clock regression ordering, settlement recovery와
+  corrupt-store rejection
+- directory `0700`, file `0600`, 30일 retention과 10,000 event hash anchor
+- local-only/no-store public route와 private identity/raw field 비노출
+- Work Cockpit visible polling, historical/managed empty state 분리와
+  “추천 우선순위에 반영하지 않음” 표시
+- Codex disconnect 시 managed artifact cleanup
+
+검증 범위는 `codexAppServerWebSocket`, `managedCodexRuntime`,
+`managedCodexStore`, `managedCodexRunsClient`, managed route와 browser UI E2E,
+전체 test/typecheck/lint/build다. 2026-08-01 최종 검증은 focused Vitest
+`6` files/`76` tests, 전체 Vitest `51` files/`438` tests, Playwright Chromium
+E2E `5` tests(그중 managed UI `2`), typecheck/lint/production build를 통과했다.
+실제 `codex-cli 0.146.0` loopback App Server initialize/close smoke와 기존
+Cross-source Dev Candidate revision/hash 확인, `git diff --check`도 통과했다.
+
+실제 macOS Terminal launch와 native thread resume smoke는 활성 사용자 session을
+방해할 수 있어 실행하지 않았으며 별도 수동 beta checklist로 남긴다.
 
 Cross-source evaluation dataset은 이번 변경에서 수정하지 않았다. 현재 dataset은
 mutable synthetic Dev Candidate이고 reviewed/adjudicated Golden이 없으므로

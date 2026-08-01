@@ -13,6 +13,7 @@
     "start": "next start --hostname 127.0.0.1 --port 3102",
     "check:config": "vite-node tools/check-config.ts",
     "check:provider": "vite-node tools/check-provider.ts",
+    "check:managed-codex-transport": "vite-node tools/check-managed-codex-transport.ts",
     "companion:work-resumption": "vite-node tools/work-resumption-companion.ts",
     "cross-source:dev-hash": "vite-node tools/print-cross-source-dev-hash.ts",
     "typecheck": "tsc --noEmit",

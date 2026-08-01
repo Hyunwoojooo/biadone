@@ -48,6 +48,7 @@ export function createLocalWorkResumptionQueueAdapter(
         operation: command.operation,
         executionId: command.executionId,
         scopeId: command.scopeId,
+        connectionGeneration: command.connectionGeneration,
         createdAt: command.createdAt,
         expiresAt: command.expiresAt
       };
