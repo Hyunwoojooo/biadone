@@ -69,6 +69,8 @@ export type ListNotesInput = {
   tag?: string;
 };
 
+export type DeleteNoteMode = "soft" | "permanent";
+
 export class ApiRequestError extends Error {
   readonly code: string;
   readonly status: number;
@@ -124,6 +126,17 @@ export function parseListNotesInput(request: Request): ListNotesInput {
     ...(query ? { query } : {}),
     ...(tag ? { tag } : {}),
   };
+}
+
+export function parseDeleteNoteMode(request: Request): DeleteNoteMode {
+  const values = new URL(request.url).searchParams.getAll("permanent");
+  if (values.length === 0) return "soft";
+  if (values.length === 1 && values[0] === "true") return "permanent";
+  throw new ApiRequestError(
+    "INVALID_DELETE_MODE",
+    "permanent must be specified exactly once with the value true.",
+    400,
+  );
 }
 
 export function parseCreateNoteInput(value: unknown): CreateNoteInput {

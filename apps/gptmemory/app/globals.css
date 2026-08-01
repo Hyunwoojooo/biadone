@@ -720,6 +720,20 @@ button:disabled {
   border-color: #edd4cb;
 }
 
+.toolbar-actions button.danger-toolbar-button {
+  color: #a7463f;
+}
+
+.toolbar-actions button.danger-toolbar-button:hover:not(:disabled) {
+  color: #8e332d;
+  background: #fae8e5;
+  border-color: #efc8c3;
+}
+
+.toolbar-actions button:disabled {
+  opacity: 0.55;
+}
+
 .note-paper {
   width: min(720px, calc(100% - 80px));
   padding: 52px 0 112px;
@@ -1267,6 +1281,89 @@ button:disabled {
   opacity: 0.62;
 }
 
+.permanent-delete-backdrop {
+  z-index: 60;
+  background: rgb(43 29 27 / 48%);
+}
+
+.permanent-delete-dialog {
+  width: min(440px, 100%);
+  padding: 34px;
+  background: #fffdf9;
+  border: 1px solid #e9cec9;
+  border-radius: 17px;
+  box-shadow: 0 28px 80px rgb(57 31 27 / 28%);
+  text-align: center;
+  animation: rise-in 190ms ease-out;
+}
+
+.permanent-delete-symbol {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  margin: 0 auto 17px;
+  color: #9d4039;
+  background: #f8e2df;
+  border-radius: 50%;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.permanent-delete-dialog .dialog-kicker {
+  color: #a7463f;
+}
+
+.permanent-delete-dialog h2 {
+  margin: 0 0 12px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 27px;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+
+.permanent-delete-description {
+  margin: 0;
+  color: #746c64;
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.permanent-delete-description strong {
+  color: #4d4640;
+}
+
+.permanent-delete-error {
+  padding: 10px 12px;
+  margin: 16px 0 0;
+  color: #984a44;
+  background: #fae8e5;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.permanent-delete-actions {
+  justify-content: center;
+  margin-top: 25px;
+}
+
+.dialog-actions > .permanent-delete-action:not(.primary-action) {
+  min-width: 112px;
+  color: white;
+  background: #a7463f;
+  border: 1px solid #a7463f;
+  border-radius: 10px;
+  font-weight: 750;
+}
+
+.dialog-actions > .permanent-delete-action:not(.primary-action):hover:not(:disabled) {
+  background: #8e332d;
+  border-color: #8e332d;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -1413,6 +1510,10 @@ button:disabled {
 
   .import-dialog h2 {
     font-size: 27px;
+  }
+
+  .permanent-delete-dialog {
+    padding: 30px 22px 24px;
   }
 
   .dialog-actions {

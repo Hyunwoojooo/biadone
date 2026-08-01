@@ -230,6 +230,12 @@ export function GPTMemoryApp() {
     return () => window.clearTimeout(timer);
   }, [loadNotes]);
 
+  useEffect(() => {
+    if (selectedId !== null) return;
+    const timer = window.setTimeout(() => setMobilePane("list"), 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedId]);
+
   const changeQuery = (value: string) => {
     setQueryInput(value);
     if (queryTimer.current) window.clearTimeout(queryTimer.current);
@@ -461,11 +467,19 @@ export function GPTMemoryApp() {
               <span className="empty-glyph" aria-hidden="true">
                 ✦
               </span>
-              <h2>{queryInput || activeTag ? "맞는 노트가 없어요" : "첫 노트를 만들어보세요"}</h2>
+              <h2>
+                {queryInput || activeTag
+                  ? "맞는 노트가 없어요"
+                  : view === "trash"
+                    ? "휴지통이 비어 있어요"
+                    : "첫 노트를 만들어보세요"}
+              </h2>
               <p>
                 {queryInput || activeTag
                   ? "다른 검색어나 태그를 사용해보세요."
-                  : "ChatGPT 공유 링크 하나면 대화의 흐름이 읽기 좋은 노트가 됩니다."}
+                  : view === "trash"
+                    ? "삭제한 노트가 없거나 모두 영구 삭제되었습니다."
+                    : "ChatGPT 공유 링크 하나면 대화의 흐름이 읽기 좋은 노트가 됩니다."}
               </p>
               {!queryInput && !activeTag && view === "all" ? (
                 <button type="button" onClick={() => setImportOpen(true)}>
@@ -594,7 +608,14 @@ function NoteDetail({
   });
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [actionError, setActionError] = useState("");
+  const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false);
+  const [permanentDeleteError, setPermanentDeleteError] = useState("");
+  const [permanentlyDeleting, setPermanentlyDeleting] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const permanentDeleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const permanentDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const permanentDeleteConfirmRef = useRef<HTMLButtonElement>(null);
+  const permanentDeleteInFlight = useRef(false);
 
   useEffect(
     () => () => {
@@ -602,6 +623,25 @@ function NoteDetail({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!permanentDeleteOpen) return;
+    const focusTimer = window.setTimeout(
+      () => permanentDeleteCancelRef.current?.focus(),
+      0,
+    );
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || permanentDeleteInFlight.current) return;
+      setPermanentDeleteOpen(false);
+      setPermanentDeleteError("");
+      window.setTimeout(() => permanentDeleteTriggerRef.current?.focus(), 0);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [permanentDeleteOpen]);
 
   const patchNote = async (patch: Record<string, unknown>) => {
     const response = await fetch(`/api/notes/${encodeURIComponent(note.id)}`, {
@@ -699,6 +739,53 @@ function NoteDetail({
     }
   };
 
+  const closePermanentDelete = () => {
+    if (permanentDeleteInFlight.current) return;
+    setPermanentDeleteOpen(false);
+    setPermanentDeleteError("");
+    window.setTimeout(() => permanentDeleteTriggerRef.current?.focus(), 0);
+  };
+
+  const permanentlyDeleteNote = async () => {
+    if (permanentDeleteInFlight.current) return;
+    permanentDeleteInFlight.current = true;
+    setPermanentlyDeleting(true);
+    setPermanentDeleteError("");
+
+    try {
+      const response = await fetch(
+        `/api/notes/${encodeURIComponent(note.id)}?permanent=true`,
+        {
+          method: "DELETE",
+          headers: { "x-gptmemory-owner": ownerKey },
+        },
+      );
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        // A successful permanent delete may intentionally return no body.
+      }
+      if (!response.ok) {
+        throw new Error(
+          parseError(payload, "노트를 영구 삭제하지 못했습니다."),
+        );
+      }
+
+      permanentDeleteInFlight.current = false;
+      setPermanentlyDeleting(false);
+      onRemoved(note.id);
+    } catch (error) {
+      permanentDeleteInFlight.current = false;
+      setPermanentlyDeleting(false);
+      setPermanentDeleteError(
+        error instanceof Error
+          ? error.message
+          : "노트를 영구 삭제하지 못했습니다.",
+      );
+    }
+  };
+
   const closeEditor = async () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (
@@ -734,9 +821,27 @@ function NoteDetail({
         </div>
         <div className="toolbar-actions">
           {view === "trash" ? (
-            <button type="button" onClick={() => void restore()}>
-              복원
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => void restore()}
+                disabled={permanentlyDeleting}
+              >
+                복원
+              </button>
+              <button
+                ref={permanentDeleteTriggerRef}
+                className="danger-toolbar-button"
+                type="button"
+                onClick={() => {
+                  setPermanentDeleteError("");
+                  setPermanentDeleteOpen(true);
+                }}
+                disabled={permanentlyDeleting}
+              >
+                영구 삭제
+              </button>
+            </>
           ) : (
             <>
               {note.sourceUrl ? (
@@ -932,6 +1037,78 @@ function NoteDetail({
         >
           <span aria-hidden="true">✎</span> Edit note
         </button>
+      ) : null}
+
+      {view === "trash" && permanentDeleteOpen ? (
+        <div
+          className="dialog-backdrop permanent-delete-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePermanentDelete();
+          }}
+        >
+          <section
+            className="permanent-delete-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="permanent-delete-title"
+            aria-describedby="permanent-delete-description"
+            aria-busy={permanentlyDeleting}
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              const cancelButton = permanentDeleteCancelRef.current;
+              const confirmButton = permanentDeleteConfirmRef.current;
+              if (!cancelButton || !confirmButton) return;
+              if (event.shiftKey && document.activeElement === cancelButton) {
+                event.preventDefault();
+                confirmButton.focus();
+              } else if (
+                !event.shiftKey &&
+                document.activeElement === confirmButton
+              ) {
+                event.preventDefault();
+                cancelButton.focus();
+              }
+            }}
+          >
+            <span className="permanent-delete-symbol" aria-hidden="true">
+              !
+            </span>
+            <p className="dialog-kicker">Permanent deletion</p>
+            <h2 id="permanent-delete-title">이 노트를 완전히 삭제할까요?</h2>
+            <p
+              className="permanent-delete-description"
+              id="permanent-delete-description"
+            >
+              <strong>{note.title}</strong> 노트와 저장된 대화 정리를 즉시
+              삭제합니다. 이 작업은 취소하거나 복원할 수 없습니다.
+            </p>
+            {permanentDeleteError ? (
+              <p className="permanent-delete-error" role="alert">
+                {permanentDeleteError}
+              </p>
+            ) : null}
+            <div className="dialog-actions permanent-delete-actions">
+              <button
+                ref={permanentDeleteCancelRef}
+                type="button"
+                onClick={closePermanentDelete}
+                disabled={permanentlyDeleting}
+              >
+                취소
+              </button>
+              <button
+                ref={permanentDeleteConfirmRef}
+                className="permanent-delete-action"
+                type="button"
+                onClick={() => void permanentlyDeleteNote()}
+                disabled={permanentlyDeleting}
+              >
+                {permanentlyDeleting ? "삭제하는 중…" : "완전히 삭제"}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
     </article>
   );

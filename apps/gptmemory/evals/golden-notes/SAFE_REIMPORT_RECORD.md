@@ -27,7 +27,7 @@
   - `gptmemory-note-import.v2`
   - generation metadata schema: `NoteImportGenerationMetadata` in `gptmemory-note-import.v2`
   - unchanged: `gptmemory-chatgpt-share.v4`, `gptmemory-note-engine.v1`, `gptmemory.note-draft.v1`
-- Code commit: human-approved commit 대기; base revision `4d98216083b33633bfad778ed87cf47555619e60`
+- Code commit: `5aeb3a3525206f04230e83e9e553449c0bc3ceae`
 - Evaluation dataset version and SHA-256: unchanged `gptmemory-golden-notes-dev-v1`, `3975c01140f1354a776292c64e6abe6d3e2943b403aed539deab631d1a8ee849`
 - Candidate run ID: N/A — import orchestration/storage/UI reliability change이며 note output 후보를 새로 생성하지 않음
 - Comparison run ID: N/A — semantic candidate comparison이 아님
@@ -39,10 +39,12 @@
   - `npm run build`
   - localhost dev server에서 합성 owner/source를 사용한 notes/import API smoke test
 - Metrics changed:
-  - full automated suite: `50 passed / 0 failed`
+  - current full automated suite, including the later hard-delete contract: `53 passed / 0 failed`
+  - production hard-delete SQL executes in an in-memory SQLite database and proves the active-row, owner and trash-state guards plus whole-row metadata removal
   - new safe-reimport service scenarios: `9 passed / 0 failed`
   - covered: query/fragment URL normalization, pre-fetch duplicate short circuit, owner isolation, exact generation versions and digest, import failure preservation, stale precheck, conditional-write race, successful state-preserving replacement, insert-race fallback
   - localhost D1/API smoke: 신규 생성 `201 created`; query/fragment variant 중복 `409 already_exists`; owner header 누락 `401`; 동시 생성 `201 created + 200 existing`; stale replace `409 NOTE_CHANGED_SINCE_CONFIRMATION`; stale 요청 전후 기존 노트 본문·`updatedAt` 유지
+  - later hard-delete localhost D1/API smoke: synthetic note 생성 `201`; active 상태 영구 삭제 차단 `404`; 다른 owner 차단 `404`; soft delete `200`; 확인된 hard delete `200`; 삭제 후 조회와 반복 삭제 `404`
   - Golden semantic metrics: unchanged and not rerun
 - Regressions or accepted exceptions:
   - 다시 생성을 명시적으로 확인하면 사용자가 편집한 title, overview, sections, tags는 새 생성 결과로 교체된다. 경고 문구로 이를 알리며 favorite/archive/trash 상태는 보존한다.
@@ -53,11 +55,22 @@
 - Privacy or retention impact:
   - owner header 검증을 duplicate lookup과 외부 fetch보다 먼저 수행한다.
   - duplicate lookup은 `owner_key + normalized source_url` 범위이고 응답은 기존 노트의 최소 요약만 포함한다.
-  - generation metadata는 버전, ID, 시각, 원문 파생 SHA-256만 서버 내부 D1 column에 저장하고 public note 응답에는 반환하지 않는다. 복원된 대화 본문도 별도 저장하지 않는다.
+  - active, archive, trash 상태에서는 normalized source URL, source title/message count, share ID, canonical source SHA-256와 generation metadata를 note row와 함께 보존한다. 현재 자동 TTL은 없다.
+  - generation metadata는 버전, ID, 시각, 원문 파생 SHA-256만 서버 내부 D1 column에 저장하고 public note 응답에는 반환하지 않는다.
+  - 원본 HTML, 복원된 전체 대화 메시지와 별도 `sourceSnapshot`은 저장하지 않는다.
+  - bare `DELETE /api/notes/:id`는 `deleted_at`을 설정하는 soft delete다. 명시적인 `?permanent=true`는 owner가 일치하고 이미 trash 상태인 D1 row만 전체 삭제하며, 노트와 URL/share ID/digest/generation metadata를 함께 제거한다.
   - 새 raw conversation, 공유 URL, private output을 Git에 추가하지 않았다.
 - Release decision: 자동 테스트·typecheck·lint·build를 통과한 local MVP 후보로 유지한다. adapter와 deterministic note engine의 입력·정규화·출력은 바뀌지 않았으므로 Golden baseline rerun은 필요하지 않다. 배포·push는 이 기록의 범위가 아니다.
 - Rollback method: import route를 이전 client import + note save 흐름으로 되돌리고 workflow/UI/repository 연결을 제거한다. nullable `generation_metadata_json`은 데이터 손실 위험을 피하기 위해 즉시 삭제하지 않고 미사용 상태로 남길 수 있다.
+- UI verification checklist:
+  - [x] localhost D1/API 신규 생성, 정규화 중복 차단, owner gate, 동시 insert race, stale 교체 보존
+  - [ ] duplicate 카드에서 `기존 노트 열기`가 active/archive/trash의 기존 노트를 올바른 view로 여는지 확인
+  - [ ] `취소`가 fetch와 write 없이 dialog만 닫는지 확인
+  - [ ] 성공한 `다시 생성`이 favorite/archive/trash 상태를 보존하고 새 생성 결과를 표시하는지 확인
+  - [ ] import 실패가 기존 사용자 편집본을 보존하고 재시도 가능한 오류를 표시하는지 확인
+  - [ ] stale 409가 기존 사용자 편집본을 보존하고 최신 노트로 돌아갈 수 있는 오류를 표시하는지 확인
+  - 위 미확인 항목은 인앱 브라우저가 연결되지 않아 자동화하지 못한 실제 UI 수동 검증이다. API 실패나 미구현으로 판정한 상태가 아니다.
 - Follow-up work:
-  - localhost D1/API의 신규 생성, 정규화 중복 차단, owner gate, 동시 insert race, stale 교체 보존은 확인했다. 인앱 브라우저가 연결되지 않아 `기존 노트 열기`, `취소`, 성공 교체의 화면 전환은 사용자 브라우저에서 수동 확인한다.
+  - 위 UI checklist를 사용자 브라우저에서 수동 확인하고 결과를 이 기록에 체크한다.
   - 지인 공개 전에는 사용자 편집본의 revision/history 또는 교체 전 백업 정책을 별도 결정한다.
-  - URL과 derived digest의 보존 기간 및 삭제 시 metadata 처리 정책을 제품 개인정보 문서에 연결한다.
+  - 현재 보존 정책은 note가 active/archive/trash에 존재하는 동안 provenance를 함께 유지하고 hard delete에서 전체 row를 제거하는 것이다. 향후 TTL을 도입하면 제품 개인정보 문서와 이 기록을 함께 갱신한다.

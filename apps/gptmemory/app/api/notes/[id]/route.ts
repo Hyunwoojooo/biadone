@@ -1,12 +1,14 @@
 import {
   getNote,
   patchNote,
+  permanentlyDeleteNote,
   softDeleteNote,
 } from "../_repository";
 import {
   ApiRequestError,
   noteApiResponse,
   noteErrorResponse,
+  parseDeleteNoteMode,
   parsePatchNoteInput,
   readJsonBody,
   requireOwnerKey,
@@ -54,6 +56,12 @@ export async function DELETE(
   try {
     const ownerKey = requireOwnerKey(request);
     const id = await noteId(context);
+    if (parseDeleteNoteMode(request) === "permanent") {
+      const deleted = await permanentlyDeleteNote(ownerKey, id);
+      if (!deleted) throw noteNotFound();
+      return noteApiResponse({ deleted: true, id, permanent: true });
+    }
+
     const note = await softDeleteNote(ownerKey, id);
     if (!note) throw noteNotFound();
     return noteApiResponse({ note });

@@ -12,6 +12,7 @@ import {
   type PatchNoteInput,
   type PublicNote,
 } from "./_shared";
+import { PERMANENT_DELETE_NOTE_SQL } from "./_sql";
 
 /*
  * Imported notes bypass the public create route, so the repository reuses the
@@ -332,6 +333,19 @@ export async function softDeleteNote(
     .first<NoteDbRow>();
 
   return note ? toPublicNote(note) : null;
+}
+
+export async function permanentlyDeleteNote(
+  ownerKey: string,
+  id: string,
+): Promise<boolean> {
+  const database = await getNotesDatabase();
+  const deleted = await database
+    .prepare(PERMANENT_DELETE_NOTE_SQL)
+    .bind(id, ownerKey)
+    .first<{ id: string }>();
+
+  return deleted?.id === id;
 }
 
 function toPublicNote(row: NoteDbRow): PublicNote {

@@ -49,6 +49,48 @@ test("declares durable D1 storage and keeps R2 disabled", async () => {
   assert.deepEqual(hosting, { d1: "DB", r2: null });
 });
 
+test("offers an accessible two-step permanent delete only from Trash", async () => {
+  const [component, styles] = await Promise.all([
+    readFile(new URL("components/GPTMemoryApp.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+
+  assert.match(
+    component,
+    /view === "trash" \? \([\s\S]{0,900}setPermanentDeleteOpen\(true\)[\s\S]{0,200}영구 삭제/,
+  );
+  assert.match(component, /\?permanent=true/);
+  assert.match(component, /role="alertdialog"/);
+  assert.match(component, /aria-modal="true"/);
+  assert.match(component, /aria-labelledby="permanent-delete-title"/);
+  assert.match(component, /aria-describedby="permanent-delete-description"/);
+  assert.match(component, /이 작업은 취소하거나 복원할 수 없습니다/);
+  assert.match(component, /permanentDeleteInFlight\.current/);
+  assert.match(component, /disabled=\{permanentlyDeleting\}/);
+  assert.match(component, /role="alert"/);
+  assert.match(component, /onRemoved\(note\.id\)/);
+  assert.match(
+    component,
+    /setNotes\(\(current\) => current\.filter\(\(note\) => note\.id !== id\)\)/,
+  );
+  assert.match(
+    component,
+    /setSelectedId\(\(current\) => \(current === id \? null : current\)\)/,
+  );
+  assert.match(
+    component,
+    /if \(selectedId !== null\) return;[\s\S]{0,160}setMobilePane\("list"\)/,
+  );
+  assert.doesNotMatch(component, /const removedIndex = notes\.findIndex/);
+  assert.match(component, /휴지통이 비어 있어요/);
+  assert.match(component, /모두 영구 삭제되었습니다/);
+
+  assert.match(styles, /danger-toolbar-button/);
+  assert.match(styles, /permanent-delete-dialog/);
+  assert.match(styles, /permanent-delete-action/);
+  assert.match(styles, /permanent-delete-error/);
+});
+
 test("declares the duplicate-safe import and generation metadata contract", async () => {
   const [
     importRoute,
