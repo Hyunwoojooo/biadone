@@ -1,4 +1,4 @@
-export const CHATGPT_SHARE_ADAPTER_VERSION = "gptmemory-chatgpt-share.v2";
+export const CHATGPT_SHARE_ADAPTER_VERSION = "gptmemory-chatgpt-share.v4";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -94,6 +94,8 @@ export type ChatGPTShareImportResult = {
     omittedInternalCount: number;
     preservedEventCount: number;
     unsupportedContentCount: number;
+    privateArtifactReferenceRedactedCount: number;
+    richReferenceMarkerOmittedCount: number;
     titleSource: "payload" | "html" | "first_user_message" | "none";
   };
 };
@@ -147,6 +149,8 @@ type NormalizedMessageResult = {
   omittedInternalCount: number;
   preservedEventCount: number;
   unsupportedContentCount: number;
+  privateArtifactReferenceRedactedCount: number;
+  richReferenceMarkerOmittedCount: number;
 };
 
 type ArtifactEvent = {
@@ -388,6 +392,10 @@ export async function importChatGPTShareUrl(
         omittedInternalCount: normalized.omittedInternalCount,
         preservedEventCount: normalized.preservedEventCount,
         unsupportedContentCount: normalized.unsupportedContentCount,
+        privateArtifactReferenceRedactedCount:
+          normalized.privateArtifactReferenceRedactedCount,
+        richReferenceMarkerOmittedCount:
+          normalized.richReferenceMarkerOmittedCount,
         titleSource: title.source,
       },
     };
@@ -1159,12 +1167,21 @@ function normalizeMessages(rawMessages: RawChatGPTMessage[]): NormalizedMessageR
   let omittedInternalCount = 0;
   let preservedEventCount = 0;
   let unsupportedContentCount = 0;
+  let privateArtifactReferenceRedactedCount = 0;
+  let richReferenceMarkerOmittedCount = 0;
 
   for (const [rawIndex, rawMessage] of rawMessages.entries()) {
     const role = rawMessage.role ?? rawMessage.authorRole;
-    const text = extractContentText(rawMessage.content)
+    const extractedText = extractContentText(rawMessage.content)
       .replace(/\r\n?/g, "\n")
       .trim();
+    const richReferenceSanitized = sanitizeRichReferenceMarkers(extractedText);
+    const sanitizedText = sanitizePrivateArtifactReferences(
+      richReferenceSanitized.text,
+    );
+    const text = sanitizedText.text;
+    richReferenceMarkerOmittedCount += richReferenceSanitized.omittedCount;
+    privateArtifactReferenceRedactedCount += sanitizedText.redactedCount;
     let sourceIndex: number | null = null;
     const internalAssistantMessage =
       role === "assistant" && isInternalAssistantMessage(rawMessage);
@@ -1173,14 +1190,14 @@ function normalizeMessages(rawMessages: RawChatGPTMessage[]): NormalizedMessageR
     // sourceIndex intentionally matches the v1 adapter's user/assistant +
     // nonblank index space. Golden cutoffs can therefore be applied before
     // semantic sanitization without being invalidated by omitted tool calls.
-    if ((role === "user" || role === "assistant") && text) {
+    if ((role === "user" || role === "assistant") && extractedText) {
       sourceMessageCount += 1;
       sourceIndex = sourceMessageCount;
 
       if (internalAssistantMessage) {
         omittedInternalCount += 1;
         internalMessageOmitted = true;
-      } else {
+      } else if (text) {
         messages.push({
           id: rawMessage.id ?? `message-${sourceIndex}`,
           index: messages.length + 1,
@@ -1246,7 +1263,45 @@ function normalizeMessages(rawMessages: RawChatGPTMessage[]): NormalizedMessageR
     omittedInternalCount,
     preservedEventCount,
     unsupportedContentCount,
+    privateArtifactReferenceRedactedCount,
+    richReferenceMarkerOmittedCount,
   };
+}
+
+function sanitizeRichReferenceMarkers(value: string): {
+  text: string;
+  omittedCount: number;
+} {
+  let omittedCount = 0;
+  const marker = /\uE200[a-z][a-z0-9_-]{0,63}\uE202[^\uE201]{0,10000}\uE201/giu;
+  const text = value.replace(marker, () => {
+    omittedCount += 1;
+    return "";
+  });
+  return { text: text.trim(), omittedCount };
+}
+
+function sanitizePrivateArtifactReferences(value: string): {
+  text: string;
+  redactedCount: number;
+} {
+  let redactedCount = 0;
+  const markdownTarget =
+    /\[([^\]\n]{1,500})\]\(\s*(?:sandbox:[^\s)]*|file-service:\/\/[^\s)]+|\/mnt\/data\/[^\s)]+|\/home\/oai\/share\/[^\s)]+)\s*\)/gi;
+  const rawTarget =
+    /(?:sandbox:[^\s)>\]]*|file-service:\/\/[^\s)>\]]+|\/mnt\/data\/[^\s)>\]]+|\/home\/oai\/share\/[^\s)>\]]+)/gi;
+  const withoutMarkdownTargets = value.replace(
+    markdownTarget,
+    (_match, label: string) => {
+      redactedCount += 1;
+      return `${label.trim()} [private artifact link removed]`;
+    },
+  );
+  const text = withoutMarkdownTargets.replace(rawTarget, () => {
+    redactedCount += 1;
+    return "[private artifact link removed]";
+  });
+  return { text: text.trim(), redactedCount };
 }
 
 function isInternalAssistantMessage(message: RawChatGPTMessage): boolean {
@@ -1552,6 +1607,18 @@ function buildImportWarnings(
     warnings.push({
       code: "UNSUPPORTED_CONTENT_OMITTED",
       message: `${normalized.unsupportedContentCount}개의 지원하지 않는 비텍스트 내용을 제외했습니다.`,
+    });
+  }
+  if (normalized.privateArtifactReferenceRedactedCount > 0) {
+    warnings.push({
+      code: "PRIVATE_ARTIFACT_REFERENCES_REDACTED",
+      message: `${normalized.privateArtifactReferenceRedactedCount}개의 비공개 로컬 artifact 경로를 안전한 표시로 대체했습니다.`,
+    });
+  }
+  if (normalized.richReferenceMarkerOmittedCount > 0) {
+    warnings.push({
+      code: "RICH_REFERENCE_MARKERS_OMITTED",
+      message: `${normalized.richReferenceMarkerOmittedCount}개의 ChatGPT 내부 인용·참조 마커를 표시 텍스트에서 제거했습니다.`,
     });
   }
   if (title.source !== "payload") {

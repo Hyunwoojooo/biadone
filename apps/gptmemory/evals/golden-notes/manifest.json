@@ -1,5 +1,7 @@
 {
   "schemaVersion": "gptmemory.golden-note-manifest.v1",
+  "datasetVersion": "gptmemory-golden-notes-dev-v1",
+  "datasetClass": "development",
   "cases": [
     {
       "id": "saber-aaai27-001",

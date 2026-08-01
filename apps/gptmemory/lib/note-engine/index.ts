@@ -6,6 +6,8 @@
  * order and turns each user turn into a readable, plain-text note section.
  */
 
+export const NOTE_ENGINE_VERSION = "gptmemory-note-engine.v1";
+
 export type ConversationRole = "user" | "assistant";
 
 export type ConversationSourceType =

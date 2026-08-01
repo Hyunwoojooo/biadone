@@ -566,6 +566,102 @@ test("preserves confirmed image and file results as deduplicated safe events", a
   );
 });
 
+test("redacts private artifact paths from visible text while preserving link labels", async () => {
+  const result = await importChatGPTShareUrl({
+    url: "https://chatgpt.com/share/private-visible-links",
+    fetchHtml: async () =>
+      enqueueFixture({
+        title: "Private links",
+        linear_conversation: [
+          {
+            id: "u1",
+            author: { role: "user" },
+            content: { content_type: "text", parts: ["파일을 만들어 줘"] },
+          },
+          {
+            id: "a1",
+            author: { role: "assistant" },
+            content: {
+              content_type: "text",
+              parts: [
+                "[결과 파일](sandbox:/mnt/data/report.md)과 file-service://private-asset, /home/oai/share/secret.txt를 확인하세요.",
+              ],
+            },
+          },
+        ],
+      }),
+  });
+
+  const serialized = JSON.stringify(result.conversation.messages);
+  assert.match(result.conversation.messages[1].text, /결과 파일/);
+  assert.match(
+    result.conversation.messages[1].text,
+    /\[private artifact link removed\]/,
+  );
+  assert.doesNotMatch(
+    serialized,
+    /sandbox:|file-service:\/\/|\/mnt\/data|\/home\/oai\/share/,
+  );
+  assert.equal(
+    result.diagnostics.privateArtifactReferenceRedactedCount,
+    3,
+  );
+  assert.ok(
+    result.warnings.some(
+      (warning) =>
+        warning.code === "PRIVATE_ARTIFACT_REFERENCES_REDACTED",
+    ),
+  );
+});
+
+test("omits ChatGPT rich-reference markers while preserving readable text and source indexes", async () => {
+  const result = await importChatGPTShareUrl({
+    url: "https://chatgpt.com/share/rich-reference-markers",
+    fetchHtml: async () =>
+      enqueueFixture({
+        title: "Rich references",
+        linear_conversation: [
+          {
+            id: "u1",
+            author: { role: "user" },
+            content: { content_type: "text", parts: ["자동 적응을 설명해 줘"] },
+          },
+          {
+            id: "a1",
+            author: { role: "assistant" },
+            content: {
+              content_type: "text",
+              parts: [
+                "RMA는 빠른 적응을 목표로 합니다. \uE200cite\uE202turn1search0\uE202turn1search8\uE201\n파일 근거도 있습니다. \uE200filecite\uE202turn4file5\uE202L75-L90\uE201\n추가 근거입니다. \uE200cite\uE202turn8academia13\uE201\uE200cite\uE202turn9view0\uE201\n\uE200navlist\uE202관련 자료\uE202turn2news0,turn2news1\uE201",
+              ],
+            },
+          },
+          {
+            id: "a2",
+            author: { role: "assistant" },
+            content: {
+              content_type: "text",
+              parts: ["\uE200cite\uE202turn3search0\uE201"],
+            },
+          },
+        ],
+      }),
+  });
+
+  const serialized = JSON.stringify(result.conversation.messages);
+  assert.match(result.conversation.messages[1].text, /RMA는 빠른 적응/);
+  assert.match(result.conversation.messages[1].text, /파일 근거도 있습니다/);
+  assert.doesNotMatch(serialized, /[\uE200-\uE202]|turn\d+(?:search|view|file|news)\d+/i);
+  assert.equal(result.diagnostics.sourceMessageCount, 3);
+  assert.equal(result.diagnostics.noteMessageCount, 2);
+  assert.equal(result.diagnostics.richReferenceMarkerOmittedCount, 6);
+  assert.ok(
+    result.warnings.some(
+      (warning) => warning.code === "RICH_REFERENCE_MARKERS_OMITTED",
+    ),
+  );
+});
+
 test("enforces the fetched response body limit before parsing", async () => {
   await assert.rejects(
     fetchShareHtml({

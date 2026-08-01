@@ -1,0 +1,40 @@
+# ChatGPT Rich-Reference Marker Normalization — Engine Change Record
+
+- Date: 2026-08-02 (Asia/Seoul)
+- Owner: Codex; visual defect reported by project owner
+- Goal: ChatGPT 공유 대화의 내부 citation/filecite/navlist 제어 구문이 노트에서 깨진 글자로 보이지 않도록 표시 텍스트를 정제한다.
+- Affected pipeline stages: ChatGPT share restoration normalization, import diagnostics/warnings, Golden output guardrail, baseline report schema
+- Behavior before: adapter v3가 `U+E200` opener, `U+E202` separator, `U+E201` closer로 감싼 rich-reference marker를 일반 텍스트로 보존했다. 이전 전체 baseline candidate 12개에는 완전한 marker 679개가 남아 있었다.
+- Behavior after: adapter v4가 알려진 wrapper 구조의 complete marker를 메시지 방출 전에 제거하고 제거 개수를 진단·warning으로 기록한다. marker-only 메시지도 기존 source index 공간은 소비하므로 Golden cutoff 번호는 유지한다. 별도 output gate가 marker 잔존 시 candidate를 격리한다.
+- Versions before: `gptmemory-chatgpt-share.v3`, `gptmemory.golden-baseline-report.v1`, `gptmemory-golden-baseline-guardrails.v1`
+- Versions after: `gptmemory-chatgpt-share.v4`, `gptmemory.golden-baseline-report.v2`, `gptmemory-golden-baseline-guardrails.v2`
+- Unchanged versions: `gptmemory-golden-baseline-runner.v1`, `gptmemory-note-engine.v1`, `gptmemory-golden-notes-dev-v1`
+- Code commit: human-approved commit 대기; base revision `25d4f26bbfc858b3a4ac2ba666c5883ba195d2fc`
+- Relevant working-tree content manifest SHA-256: `bc2818ff809686ffa63d357bef8ba2e035c9a377fab984169813aa3e9a664aba`
+  - Scope: `evals/golden-notes/README.md`, `lib/chatgpt/index.ts`, `lib/golden-notes/golden-notes.test.mjs`, `lib/golden-notes/index.ts`, `tests/chatgpt-import.test.mjs`의 경로순 file SHA-256 manifest
+- Evaluation dataset version and SHA-256: `gptmemory-golden-notes-dev-v1`, `3975c01140f1354a776292c64e6abe6d3e2943b403aed539deab631d1a8ee849`
+- Candidate run ID: `golden-20260801155214-a7e62565`
+- Comparison run ID: `golden-20260801151947-ef16795a` (adapter v3)
+- Commands executed:
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run eval:golden -- --allow-live-fetch`
+  - residual marker scan over the new private candidate bundle
+- Metrics changed:
+  - technical pass/fail/blocked는 `12/0/0`으로 유지
+  - previous candidate complete marker count `679` → new residual marker count `0`
+  - new diagnostic `richReferenceMarkerOmittedCount` 합계 `679`
+  - input characters `726,806` → `705,583`; note characters `742,845` → `721,056`
+  - 새 output gate 추가로 pass gate `264` → `276`; content-identity warning은 12개 유지
+  - candidate bundle SHA-256 `fc0356c2f98c5f10f8cd45e9057e24206f984d7a8722c187b276ae86febeaca2` → `7a3ec51243a00f877132628da6b084f604bb8a30fcd286879ed2cc681bfab4bd`
+- Regressions or accepted exceptions:
+  - 내부 marker에는 원본 URL mapping이 없어 `[출처]` 같은 가짜 링크 텍스트를 만들지 않고 wrapper 전체를 제거한다.
+  - navlist의 사람이 읽을 수 있는 label도 내부 reference bundle의 일부로 제거한다.
+  - 완전하지 않은 malformed marker는 자동으로 넓게 삭제하지 않는다. output gate가 잔존 opener/separator를 발견하면 fail-closed 처리한다.
+  - source content identity digest가 아직 human-pinned 상태가 아니므로 두 live run의 의미 품질 비교는 주장하지 않는다.
+- Privacy or retention impact: 새로운 원문·공유 URL을 Git에 추가하지 않았다. raw HTML은 저장하지 않았고 private candidates/reports만 ignored `outputs/`에 유지한다. 실패한 sandbox run과 중간 targeted run은 최종 전체 run 확인 후 삭제했다.
+- Release decision: 새 import와 명시적 reimport에는 adapter v4 정제를 사용한다. 이미 DB에 저장된 노트는 자동 변경하지 않는다.
+- Rollback method: adapter/report/guardrail version과 sanitizer·diagnostic·gate를 이전 버전으로 되돌린다. private v3 baseline은 비교 기록으로 유지한다.
+- Follow-up work: 기존 저장 노트에서 같은 marker가 보이면 사용자 승인 하에 해당 노트만 reimport하거나 범위가 명시된 one-time migration을 별도로 구현한다.
