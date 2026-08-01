@@ -1,0 +1,54 @@
+{
+  "version": "claim-authority-resolver-config-v0.1",
+  "purpose": "targeted_synthetic_claim_authority_evaluation_only",
+  "inputBoundary": "normalized_claim_resolution_inputs",
+  "orderingAuthority": {
+    "claims": "canonical_claim_id",
+    "lineage": "source_updated_at_within_exact_lineage_only",
+    "resolutions": "canonical_resolution_id",
+    "conflicts": "canonical_conflict_id"
+  },
+  "authority": {
+    "githubNativeFields": "github_exact_object_fields",
+    "managedCodexExecution": "blabase_owned_direct_event_stream",
+    "codexInventory": "context_only",
+    "projectAlignment": "two_explicit_user_scope_mappings",
+    "notionTaskFields": "future_configured_task_database_only",
+    "calendarFields": "future_native_event_only",
+    "unsupportedSourceFieldRejected": true
+  },
+  "identity": {
+    "exactOpaqueTargetAndSemanticField": true,
+    "sameProjectCreatesFieldEquivalence": false,
+    "titleSimilarityAllowed": false,
+    "timeSimilarityAllowed": false,
+    "genericStateFieldAllowed": false
+  },
+  "resolution": {
+    "sameLineageStrictlyNewerMaySupersede": true,
+    "crossLineageTimestampOverride": false,
+    "equalAuthorityDisagreement": "review_required",
+    "staleAuthorityCanWin": false,
+    "contextOnlyCanWin": false,
+    "absenceCreatesCompletion": false,
+    "activityCreatesCurrentState": false
+  },
+  "runtimeCoverage": {
+    "githubCurrentStateValues": ["open"],
+    "managedCodexDirectExecution": true,
+    "notionTaskProperties": false,
+    "calendarWorkEquivalence": false
+  },
+  "attention": {
+    "disposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "privacy": {
+    "publicRawTitles": false,
+    "publicRepositoryNames": false,
+    "publicRawUrls": false,
+    "publicNativeObjectIds": false,
+    "publicPromptAnswerCommandOrPath": false,
+    "boundedValuesOnly": true
+  }
+}

@@ -70,6 +70,24 @@ export const ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION =
 export const GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION =
   "github-native-artifact-id-v0.1" as const;
 
+export const CLAIM_AUTHORITY_PROJECTION_CONTRACT =
+  "claim-authority-projection-v0.1" as const;
+
+export const WORK_CLAIM_SCHEMA_VERSION =
+  "work-claim-schema-v0.1" as const;
+
+export const CLAIM_CONFLICT_SCHEMA_VERSION =
+  "claim-conflict-schema-v0.1" as const;
+
+export const CROSS_SOURCE_CLAIM_RESOLVER_VERSION =
+  "cross-source-claim-resolver-v0.1" as const;
+
+export const FIELD_CLAIM_AUTHORITY_POLICY_VERSION =
+  "field-claim-authority-policy-v0.1" as const;
+
+export const CLAIM_EVIDENCE_POLICY_VERSION =
+  "direct-source-claim-evidence-v0.1" as const;
+
 export const SNAPSHOT_VALIDITY_POLICY_VERSION =
   "snapshot-validity-policy-v0.2" as const;
 

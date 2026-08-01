@@ -1849,6 +1849,189 @@ summary {
   font-weight: 780;
 }
 
+.claimConflictSummary {
+  margin: 0 0 12px;
+  padding: 11px 12px;
+  border: 1px solid rgb(39 103 73 / 14%);
+  border-radius: 10px;
+  background: rgb(248 250 248 / 84%);
+}
+
+.claimConflictSummary.hasConflict {
+  border-color: rgb(173 63 50 / 22%);
+  background: rgb(255 248 246 / 88%);
+}
+
+.claimConflictSummary.isUnavailable {
+  border-color: #e2cfae;
+  background: #fffaf0;
+}
+
+.claimConflictSummary.isLoading {
+  border-color: rgb(39 103 73 / 14%);
+  background: rgb(248 250 248 / 84%);
+}
+
+.claimConflictHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.claimConflictHeader h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.claimConflictHeader span {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #edf3ee;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.claimConflictBoundary,
+.claimConflictAsOf,
+.claimConflictEmpty,
+.claimConflictSummary.isLoading > p,
+.claimConflictSummary.isUnavailable > p,
+.claimCoverageDetails > p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.claimConflictBoundary {
+  color: var(--accent);
+  font-weight: 720;
+}
+
+.claimConflictAsOf {
+  margin-top: 3px;
+}
+
+.claimConflictList {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.claimConflictList > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.claimConflictList > li > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.claimConflictList strong {
+  font-size: 13px;
+}
+
+.claimConflictList small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.claimConflictList small.claimConflictContext {
+  color: var(--text-soft, var(--muted));
+  font-weight: 650;
+}
+
+.claimConflictList > li > span:last-child {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #dceee2;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.claimConflictList > li > span.isWarning {
+  background: #f7ecd8;
+  color: #85581f;
+}
+
+.claimConflictList > li > span.isError {
+  background: rgb(173 63 50 / 12%);
+  color: var(--error);
+}
+
+.claimConflictMore {
+  margin-top: 7px;
+}
+
+.claimConflictMore > summary,
+.claimCoverageDetails > summary {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.claimConflictMore > summary:focus-visible,
+.claimCoverageDetails > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.claimConflictMore .claimConflictList {
+  margin-top: 4px;
+}
+
+.claimCoverageDetails {
+  margin-top: 8px;
+}
+
+.claimCoverageDetails > summary {
+  padding-top: 8px;
+}
+
+.claimCoverageDetails ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.claimCoverageDetails li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.claimCoverageDetails li strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
 .managedCodexRunList {
   display: grid;
   gap: 8px;
@@ -3144,6 +3327,12 @@ summary {
 
   .managedCodexRunList > li {
     grid-template-columns: 1fr;
+  }
+
+  .claimConflictList > li,
+  .claimCoverageDetails li {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .managedCodexRunMeta {

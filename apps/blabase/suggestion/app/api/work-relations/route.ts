@@ -11,6 +11,10 @@ import {
   resolveManagedCodexArtifactRelations
 } from "../../../src/artifacts";
 import {
+  claimAuthorityProjectionSchema,
+  resolveCurrentClaimAuthority
+} from "../../../src/claims";
+import {
   readStoredGitHubSnapshot
 } from "../../../src/connectors/github/localStore";
 import { normalizeGitHubSnapshotToWorkSignals } from "../../../src/connectors/github/toWorkSignals";
@@ -19,7 +23,11 @@ import {
   readWorkContextRegistry,
   type WorkContextRegistry
 } from "../../../src/context";
-import { readManagedCodexPublicProjection } from "../../../src/managedCodex";
+import {
+  managedCodexPublicProjectionSchema,
+  managedCodexSemanticProjectionSchema,
+  readManagedCodexObservability
+} from "../../../src/managedCodex";
 import {
   managedCodexWorkRelationProjectionSchema,
   resolveManagedCodexWorkRelations
@@ -72,11 +80,11 @@ export async function GET(request: Request) {
           asOf
         });
         const [
-          managedProjection,
+          managedObservability,
           bindingStore,
           artifactAttributionStore
         ] = await Promise.all([
-          readManagedCodexPublicProjection(
+          readManagedCodexObservability(
             {
               activeOwnerInstanceId: authority.activeOwnerInstanceId,
               activeOwnerships: authority.activeOwnerships,
@@ -87,6 +95,12 @@ export async function GET(request: Request) {
           readWorkSessionBindingStore(cwd, asOf),
           readWorkArtifactAttributionStore(cwd, now)
         ]);
+        const managedProjection = managedCodexPublicProjectionSchema.parse(
+          managedObservability.projection
+        );
+        const managedSemantics = managedCodexSemanticProjectionSchema.parse(
+          managedObservability.semantics
+        );
         const workRelations = managedCodexWorkRelationProjectionSchema.parse(
           resolveManagedCodexWorkRelations({
             asOf,
@@ -105,14 +119,26 @@ export async function GET(request: Request) {
               githubBatch
             })
           );
-        return { workRelations, artifacts };
+        const claims = claimAuthorityProjectionSchema.parse(
+          resolveCurrentClaimAuthority({
+            asOf,
+            managedProjection,
+            managedSemantics,
+            workRelationProjection: workRelations,
+            artifactRelationProjection: artifacts,
+            githubBatch,
+            contextRegistry
+          })
+        );
+        return { workRelations, artifacts, claims };
       }
     );
 
     return noStoreJson({
       status: "ready",
       ...projection.workRelations,
-      artifacts: projection.artifacts
+      artifacts: projection.artifacts,
+      claims: projection.claims
     });
   } catch {
     return errorResponse(

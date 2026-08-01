@@ -19,6 +19,7 @@
     "managed-codex:detector-baseline": "vite-node tools/run-managed-codex-detector-baseline.ts",
     "work-relation:baseline": "vite-node tools/run-work-relation-baseline.ts",
     "artifact-relation:baseline": "vite-node tools/run-artifact-relation-baseline.ts",
+    "claim-authority:baseline": "vite-node tools/run-claim-authority-baseline.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern '.next/**' --ignore-pattern '.next-dev/**' --ignore-pattern '.next-build/**'",
     "test": "vitest run",

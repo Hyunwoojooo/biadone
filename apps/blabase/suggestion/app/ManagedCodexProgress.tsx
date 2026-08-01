@@ -13,6 +13,7 @@ import {
   type ManagedCodexSourceEvent,
   type ManagedCodexStreamState
 } from "./managedCodexRunsClient";
+import { ClaimConflictSummary } from "./ClaimConflictSummary";
 import { ManagedCodexArtifacts } from "./ManagedCodexArtifacts";
 import {
   useSyncInvalidation,
@@ -45,36 +46,7 @@ export function ManagedCodexProgress() {
     null
   );
   const relationRequestSequence = useRef(0);
-
-  const load = useCallback(async () => {
-    try {
-      const response = await fetchManagedCodexRuns();
-      if (response.status !== "ready") {
-        setNotice(
-          response.message ??
-            "Blabase가 관리하는 Codex 실행 상태를 확인할 수 없습니다."
-        );
-        return;
-      }
-      // Liveness is also derived from the current Companion owner heartbeat.
-      // It can safely degrade while the persisted event revision stays the
-      // same, so every no-store projection must replace the previous view.
-      setPayload(response);
-      setNotice(null);
-    } catch (error) {
-      setNotice(
-        "Codex 실시간 관찰 상태를 갱신하지 못했습니다. 마지막으로 검증된 상태만 표시합니다."
-      );
-      throw error;
-    } finally {
-      setIsInitialLoading(false);
-    }
-  }, []);
-
-  useVisiblePolling(load, {
-    intervalMs: MANAGED_RUN_POLL_INTERVAL_MS,
-    maxBackoffMs: MANAGED_RUN_MAX_BACKOFF_MS
-  });
+  const managedClaimInputKey = useRef<string | null>(null);
 
   const loadRelations = useCallback(async () => {
     const sequence = ++relationRequestSequence.current;
@@ -102,14 +74,55 @@ export function ManagedCodexProgress() {
     }
   }, []);
 
+  const load = useCallback(async () => {
+    try {
+      const response = await fetchManagedCodexRuns();
+      if (response.status !== "ready") {
+        setNotice(
+          response.message ??
+            "Blabase가 관리하는 Codex 실행 상태를 확인할 수 없습니다."
+        );
+        return;
+      }
+      const nextClaimInputKey = managedClaimRefreshKey(response);
+      const shouldRefreshRelations =
+        managedClaimInputKey.current !== null &&
+        managedClaimInputKey.current !== nextClaimInputKey;
+      managedClaimInputKey.current = nextClaimInputKey;
+      // Liveness can degrade while the persisted event revision stays the
+      // same. Replace the view and refresh the claim projection whenever any
+      // managed field used by relation/claim resolution changes.
+      setPayload(response);
+      setNotice(null);
+      if (shouldRefreshRelations) {
+        void loadRelations().catch(() => undefined);
+      }
+    } catch (error) {
+      setNotice(
+        "Codex 실시간 관찰 상태를 갱신하지 못했습니다. 마지막으로 검증된 상태만 표시합니다."
+      );
+      throw error;
+    } finally {
+      setIsInitialLoading(false);
+    }
+  }, [loadRelations]);
+
+  useVisiblePolling(load, {
+    intervalMs: MANAGED_RUN_POLL_INTERVAL_MS,
+    maxBackoffMs: MANAGED_RUN_MAX_BACKOFF_MS
+  });
+
   useVisiblePolling(loadRelations, {
     intervalMs: WORK_RELATION_POLL_INTERVAL_MS,
     maxBackoffMs: WORK_RELATION_MAX_BACKOFF_MS
   });
 
-  useSyncInvalidation(["github", "codex", "attention"], () => {
-    void loadRelations().catch(() => undefined);
-  });
+  useSyncInvalidation(
+    ["github", "codex", "notion", "google_calendar", "attention"],
+    () => {
+      void loadRelations().catch(() => undefined);
+    }
+  );
 
   const visibleRuns = payload?.runs.slice(0, MAX_VISIBLE_MANAGED_RUNS) ?? [];
   const relationById = new Map(
@@ -142,6 +155,20 @@ export function ManagedCodexProgress() {
       <p className="managedCodexBoundary">
         관찰 전용 · 추천 우선순위에 반영하지 않음
       </p>
+
+      <ClaimConflictSummary
+        projection={relationPayload?.claims}
+        workRelations={relationPayload?.relations}
+        artifactRelations={relationPayload?.artifacts.relations}
+        readState={
+          relationPayload
+            ? "ready"
+            : isRelationLoading
+              ? "loading"
+              : "unavailable"
+        }
+        notice={relationNotice}
+      />
 
       <div aria-live="polite" aria-atomic="false">
         {isInitialLoading && payload === null ? (
@@ -220,6 +247,30 @@ export function ManagedCodexProgress() {
       ) : null}
     </section>
   );
+}
+
+function managedClaimRefreshKey(
+  response: ManagedCodexRunsReadyResponse
+): string {
+  return JSON.stringify({
+    revision: response.revision,
+    runs: [...response.runs]
+      .sort((left, right) =>
+        left.managedRunId.localeCompare(right.managedRunId)
+      )
+      .map((run) => ({
+        managedRunId: run.managedRunId,
+        bindingId: run.bindingId,
+        executionId: run.executionId,
+        lifecycle: run.lifecycle,
+        streamState: run.streamState,
+        continuity: run.continuity,
+        effectiveExecutionState: run.effectiveExecutionState,
+        sourceEvent: run.sourceEvent,
+        lastObservedAt: run.lastObservedAt,
+        liveObservationAvailable: run.liveObservationAvailable
+      }))
+  });
 }
 
 function exactManagedRunRelation(

@@ -25,6 +25,15 @@ import {
   type ManagedCodexArtifactRelationProjection
 } from "../src/artifacts";
 import {
+  canonicalClaimCoverage,
+  createClaimEvidenceRef,
+  createClaimLineageRef,
+  createClaimTargetRef,
+  createNormalizedWorkClaim,
+  deriveManagedCodexClaims,
+  resolveClaimAuthority
+} from "../src/claims";
+import {
   ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION,
   ARTIFACT_RELATION_SCHEMA_VERSION,
   GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION,
@@ -91,6 +100,13 @@ test("shows managed progress without refreshing the Attention decision", async (
       exact: true
     })
   ).toBeVisible();
+  await expect(progress.locator(".claimConflictSummary")).toContainText(
+    "현재 평가 가능한 범위에서 확인된 충돌이 없습니다."
+  );
+  await progress.getByText("source별 평가 범위").click();
+  await expect(progress.locator(".claimCoverageDetails")).toContainText(
+    "Notion맥락 전용 · 상태 충돌 미평가"
+  );
   await expect(progress.locator(".managedCodexRunState")).toContainText(
     "진행 중"
   );
@@ -138,8 +154,12 @@ test("shows managed progress without refreshing the Attention decision", async (
   await expect(progress.locator(".managedCodexRunMeta")).toContainText(
     "마지막 검증 상태진행 중"
   );
+  await expect
+    .poll(() => relationReads)
+    .toBeGreaterThan(relationReadsBeforeTransition);
 
   const readsBeforeReconnect = managedReads;
+  const relationReadsBeforeReconnect = relationReads;
   runOverride = {
     continuity: "gap_detected",
     effectiveExecutionState: "unknown",
@@ -151,8 +171,12 @@ test("shows managed progress without refreshing the Attention decision", async (
   await expect(progress.locator(".managedCodexRunState")).toContainText(
     "이벤트 누락 · 현재 상태 미확인"
   );
+  await expect
+    .poll(() => relationReads)
+    .toBeGreaterThan(relationReadsBeforeReconnect);
 
   const readsBeforeNewEvidence = managedReads;
+  const relationReadsBeforeNewEvidence = relationReads;
   runOverride = {
     continuity: "gap_detected",
     effectiveExecutionState: "running",
@@ -167,8 +191,153 @@ test("shows managed progress without refreshing the Attention decision", async (
   await expect(progress.locator(".managedCodexRunMeta")).toContainText(
     "이벤트 누락 감지"
   );
+  await expect
+    .poll(() => relationReads)
+    .toBeGreaterThan(relationReadsBeforeNewEvidence);
   expect(attentionReads).toBe(attentionReadsBeforeTransition);
-  expect(relationReads).toBe(relationReadsBeforeTransition);
+});
+
+test("shows an unresolved field conflict as observation-only without refreshing Attention", async ({
+  page
+}) => {
+  let attentionReads = 0;
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const workRelations = workRelationProjection(run);
+  const claims = conflictingClaimProjection(workRelations);
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      new URL(request.url()).pathname === "/api/attention"
+    ) {
+      attentionReads += 1;
+    }
+  });
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...workRelations, claims })
+    });
+  });
+
+  await page.goto("/");
+
+  const summary = page.locator(".claimConflictSummary");
+  await expect(summary).toContainText("Cross-source 상태 판정");
+  await expect(summary).toContainText(
+    "관찰 전용 · 추천 판단에는 아직 반영하지 않음"
+  );
+  await expect(summary).toContainText("Codex 실행 상태");
+  await expect(summary).toContainText(
+    "GitHub 이슈 #42에 연결된 Codex 실행"
+  );
+  await expect(summary).toContainText("Managed Codex");
+  await expect(summary).toContainText("판정 보류");
+  await expect(summary).toContainText("미해결 1개");
+  const privateProjectionIds = [
+    ...claims.conflicts.flatMap((conflict) => [
+      conflict.conflictId,
+      conflict.target.ref
+    ]),
+    ...claims.claims.flatMap((claim) => [
+      claim.claimId,
+      claim.lineageRef,
+      ...claim.evidenceRefs
+    ])
+  ];
+  for (const privateId of privateProjectionIds) {
+    await expect(summary).not.toContainText(privateId);
+  }
+
+  const attentionReadsAfterRender = attentionReads;
+  await page.waitForTimeout(400);
+  expect(attentionReads).toBe(attentionReadsAfterRender);
+});
+
+test("puts unresolved conflicts first and keeps every conflict accessible", async ({
+  page
+}) => {
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const workRelations = workRelationProjection(run);
+  const claims = manyConflictProjection(workRelations);
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...workRelations, claims })
+    });
+  });
+
+  await page.goto("/");
+
+  const summary = page.locator(".claimConflictSummary");
+  const visibleRows = summary
+    .locator(".claimConflictList")
+    .first()
+    .locator(":scope > li");
+  await expect(visibleRows).toHaveCount(5);
+  await expect(visibleRows.first()).toContainText("판정 보류");
+  await expect(summary).toContainText("미해결 1개 · 기록 6개");
+  await summary.getByText("나머지 1개 모두 보기").click();
+  await expect(summary.locator(".claimConflictList > li")).toHaveCount(6);
+});
+
+test("distinguishes stale source refresh from a user-review conflict", async ({
+  page
+}) => {
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const workRelations = workRelationProjection(run);
+  const claims = staleGitHubConflictProjection(workRelations);
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...workRelations, claims })
+    });
+  });
+
+  await page.goto("/");
+
+  const summary = page.locator(".claimConflictSummary");
+  await expect(summary.locator(".claimConflictList > li")).toContainText(
+    "source 갱신 필요"
+  );
+  await expect(summary.locator(".claimConflictList > li")).toContainText(
+    "GitHub 이슈 #42"
+  );
+  await expect(summary.locator(".claimConflictList > li .isWarning")).toHaveCount(
+    1
+  );
+  await expect(summary.locator(".claimConflictList > li .isError")).toHaveCount(
+    0
+  );
 });
 
 test("distinguishes an empty managed view from historical Codex context", async ({
@@ -488,7 +657,9 @@ test("shows only exact active commit and PR results without exposing repository 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...workRelations, artifacts })
+      body: JSON.stringify(
+        workRelationsWithArtifacts(workRelations, artifacts)
+      )
     });
   });
 
@@ -552,7 +723,9 @@ test("attaches and detaches an exact artifact with an immediate relation refresh
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...workRelations, artifacts })
+      body: JSON.stringify(
+        workRelationsWithArtifacts(workRelations, artifacts)
+      )
     });
   });
   await page.route("**/api/work-artifacts", async (route) => {
@@ -609,14 +782,6 @@ test("attaches and detaches an exact artifact with an immediate relation refresh
 function projection(
   override: Partial<ManagedCodexPublicRun> = {}
 ): ManagedCodexRunsReadyResponse {
-  const revision =
-    override.sourceEvent === "turn_started"
-      ? 4
-      : override.sourceEvent === "stream_reconnected"
-        ? 3
-        : override.streamState === "disconnected"
-          ? 2
-          : 1;
   const run: ManagedCodexPublicRun = {
     managedRunId: `managed_run_${"a".repeat(32)}`,
     bindingId: `binding_${"b".repeat(32)}`,
@@ -634,6 +799,13 @@ function projection(
     forbiddenAsAttentionCandidate: true,
     ...override
   };
+  return managedProjectionForRun(run);
+}
+
+function managedProjectionForRun(
+  run: ManagedCodexPublicRun
+): ManagedCodexRunsReadyResponse {
+  const revision = managedRevision(run);
   return {
     status: "ready",
     contract: "codex-managed-public-projection-v1",
@@ -644,10 +816,21 @@ function projection(
   };
 }
 
+function managedRevision(run: ManagedCodexPublicRun): number {
+  return run.sourceEvent === "turn_started"
+    ? 4
+    : run.sourceEvent === "stream_reconnected"
+      ? 3
+      : run.streamState === "disconnected"
+        ? 2
+        : 1;
+}
+
 function workRelationProjection(
   run: ManagedCodexPublicRun,
   relationOverride: Partial<ManagedCodexWorkRelation> = {}
 ): WorkRelationsReadyResponse {
+  const managed = managedProjectionForRun(run);
   const relation: ManagedCodexWorkRelation = {
     relationId: `relation_${"1".repeat(32)}`,
     managedRunIds: [run.managedRunId],
@@ -701,8 +884,8 @@ function workRelationProjection(
     resolverVersion: MANAGED_CODEX_WORK_RELATION_RESOLVER_VERSION,
     evidencePolicyVersion: WORK_RELATION_EVIDENCE_POLICY_VERSION,
     asOf: OBSERVED_AT,
-    managedSourceRevision: 1,
-    managedGeneratedAt: OBSERVED_AT,
+    managedSourceRevision: managed.revision,
+    managedGeneratedAt: managed.generatedAt,
     bindingStoreRevision: 1,
     bindingStoreSha256: "7".repeat(64),
     contextRegistrySha256: "8".repeat(64),
@@ -724,12 +907,35 @@ function workRelationProjection(
     attentionDisposition: "not_connected",
     forbiddenAsAttentionCandidate: true
   });
+  const artifacts = emptyArtifactRelationProjection(
+    projection.projectionSha256
+  );
+  const claims = deriveManagedCodexClaims({
+    managedProjection: managed,
+    managedSemantics: managed.semantics,
+    workRelations: projection
+  });
   return {
     status: "ready",
     ...projection,
-    artifacts: emptyArtifactRelationProjection(
-      projection.projectionSha256
-    )
+    artifacts,
+    claims: resolveClaimAuthority({
+      asOf: OBSERVED_AT,
+      dependencies: {
+        workRelationProjectionSha256: projection.projectionSha256,
+        artifactRelationProjectionSha256: artifacts.projectionSha256,
+        githubBatchSha256: projection.githubBatchSha256,
+        githubSourceSnapshotSha256:
+          projection.githubSourceSnapshotSha256,
+        managedSourceRevision: managed.revision,
+        managedGeneratedAt: managed.generatedAt,
+        managedSemanticProjectionSha256:
+          managed.semantics.projectionSha256,
+        contextRegistrySha256: projection.contextRegistrySha256
+      },
+      sourceCoverage: canonicalClaimCoverage({ github: "unavailable" }),
+      claims
+    })
   };
 }
 
@@ -755,13 +961,258 @@ function emptyWorkRelationProjection(): WorkRelationsReadyResponse {
     attentionDisposition: "not_connected",
     forbiddenAsAttentionCandidate: true
   });
+  const artifacts = emptyArtifactRelationProjection(
+    projection.projectionSha256
+  );
+  const semantics = emptySemanticProjection(0);
   return {
     status: "ready",
     ...projection,
-    artifacts: emptyArtifactRelationProjection(
-      projection.projectionSha256
+    artifacts,
+    claims: emptyClaimProjection(
+      projection.projectionSha256,
+      artifacts.projectionSha256,
+      0,
+      semantics.projectionSha256
     )
   };
+}
+
+function emptyClaimProjection(
+  workRelationProjectionSha256: string,
+  artifactRelationProjectionSha256: string,
+  managedSourceRevision: number,
+  managedSemanticProjectionSha256: string
+) {
+  return resolveClaimAuthority({
+    asOf: OBSERVED_AT,
+    dependencies: {
+      workRelationProjectionSha256,
+      artifactRelationProjectionSha256,
+      githubBatchSha256: null,
+      githubSourceSnapshotSha256: null,
+      managedSourceRevision,
+      managedGeneratedAt: OBSERVED_AT,
+      managedSemanticProjectionSha256,
+      contextRegistrySha256: null
+    },
+    sourceCoverage: canonicalClaimCoverage({ github: "unavailable" }),
+    claims: []
+  });
+}
+
+function workRelationsWithArtifacts(
+  workRelations: WorkRelationsReadyResponse,
+  artifacts: ManagedCodexArtifactRelationProjection
+): WorkRelationsReadyResponse {
+  return {
+    ...workRelations,
+    artifacts,
+    claims: resolveClaimAuthority({
+      asOf: workRelations.claims.asOf,
+      dependencies: {
+        ...workRelations.claims.inputs,
+        workRelationProjectionSha256: workRelations.projectionSha256,
+        artifactRelationProjectionSha256: artifacts.projectionSha256
+      },
+      sourceCoverage: workRelations.claims.sourceCoverage,
+      claims: workRelations.claims.claims
+    })
+  };
+}
+
+function conflictingClaimProjection(
+  workRelations: WorkRelationsReadyResponse
+) {
+  const managedClaim = workRelations.claims.claims.find(
+    (claim) => claim.field === "managed_codex_execution_state"
+  );
+  if (!managedClaim) {
+    throw new Error("Synthetic managed execution claim is missing.");
+  }
+  const claims = [
+    managedClaim,
+    createNormalizedWorkClaim({
+      target: managedClaim.target,
+      lineageRef: createClaimLineageRef({
+        source: "codex_managed",
+        syntheticObserver: "independent-e2e-observer"
+      }),
+      field: managedClaim.field,
+      value: { type: "enum", value: "failed" },
+      source: managedClaim.source,
+      origin: managedClaim.origin,
+      freshness: managedClaim.freshness,
+      completeness: managedClaim.completeness,
+      directness: managedClaim.directness,
+      observedAt: managedClaim.observedAt,
+      sourceUpdatedAt: managedClaim.sourceUpdatedAt,
+      evidenceRefs: [
+        createClaimEvidenceRef({
+          source: "codex_managed",
+          syntheticObserver: "independent-e2e-observer"
+        })
+      ],
+      relationRefs: managedClaim.relationRefs
+    })
+  ];
+  return resolveClaimAuthority({
+    asOf: OBSERVED_AT,
+    dependencies: workRelations.claims.inputs,
+    sourceCoverage: workRelations.claims.sourceCoverage,
+    claims
+  });
+}
+
+function manyConflictProjection(
+  workRelations: WorkRelationsReadyResponse
+) {
+  const relationRefs = workRelations.relations.map(
+    (relation) => relation.relationId
+  );
+  const claims = [];
+
+  for (let targetIndex = 0; targetIndex < 6; targetIndex += 1) {
+    const target = {
+      kind: "codex_execution" as const,
+      ref: createClaimTargetRef({
+        kind: "codex_execution",
+        identity: {
+          fixture: "managed-conflict-accessibility",
+          targetIndex
+        }
+      })
+    };
+    const lineageRef = createClaimLineageRef({
+      fixture: "managed-conflict-accessibility",
+      targetIndex,
+      observer: "primary"
+    });
+    claims.push(
+      createNormalizedWorkClaim({
+        target,
+        lineageRef,
+        field: "managed_codex_execution_state",
+        value: { type: "enum", value: "running" },
+        source: "codex_managed",
+        origin: "managed_codex_event_stream",
+        freshness: "current",
+        completeness: "complete",
+        directness: "explicit",
+        observedAt: "2026-08-01T02:58:00.000Z",
+        sourceUpdatedAt: "2026-08-01T02:58:00.000Z",
+        evidenceRefs: [
+          createClaimEvidenceRef({
+            fixture: "managed-conflict-accessibility",
+            targetIndex,
+            value: "running"
+          })
+        ],
+        relationRefs
+      }),
+      createNormalizedWorkClaim({
+        target,
+        lineageRef:
+          targetIndex === 0
+            ? createClaimLineageRef({
+                fixture: "managed-conflict-accessibility",
+                targetIndex,
+                observer: "independent"
+              })
+            : lineageRef,
+        field: "managed_codex_execution_state",
+        value: { type: "enum", value: "failed" },
+        source: "codex_managed",
+        origin: "managed_codex_event_stream",
+        freshness: "current",
+        completeness: "complete",
+        directness: "explicit",
+        observedAt: "2026-08-01T02:59:00.000Z",
+        sourceUpdatedAt: "2026-08-01T02:59:00.000Z",
+        evidenceRefs: [
+          createClaimEvidenceRef({
+            fixture: "managed-conflict-accessibility",
+            targetIndex,
+            value: "failed"
+          })
+        ],
+        relationRefs
+      })
+    );
+  }
+
+  return resolveClaimAuthority({
+    asOf: OBSERVED_AT,
+    dependencies: workRelations.claims.inputs,
+    sourceCoverage: workRelations.claims.sourceCoverage,
+    claims
+  });
+}
+
+function staleGitHubConflictProjection(
+  workRelations: WorkRelationsReadyResponse
+) {
+  const relation = workRelations.relations[0];
+  if (!relation) throw new Error("Synthetic work relation is missing.");
+  const target = {
+    kind: "github_work_item" as const,
+    ref: createClaimTargetRef({
+      kind: "github_work_item",
+      identity: {
+        relationId: relation.relationId,
+        equivalence: "bound_github_native_identity"
+      }
+    })
+  };
+  const common = {
+    target,
+    field: "github_work_item_state" as const,
+    source: "github" as const,
+    origin: "github_normalized_snapshot" as const,
+    freshness: "stale" as const,
+    completeness: "complete" as const,
+    directness: "explicit" as const,
+    observedAt: "2026-08-01T02:59:00.000Z",
+    sourceUpdatedAt: "2026-08-01T02:59:00.000Z",
+    relationRefs: [relation.relationId]
+  };
+  const claims = [
+    createNormalizedWorkClaim({
+      ...common,
+      lineageRef: createClaimLineageRef({
+        fixture: "stale-github-conflict",
+        observer: "snapshot-a"
+      }),
+      value: { type: "enum", value: "open" },
+      evidenceRefs: [
+        createClaimEvidenceRef({
+          fixture: "stale-github-conflict",
+          observer: "snapshot-a"
+        })
+      ]
+    }),
+    createNormalizedWorkClaim({
+      ...common,
+      lineageRef: createClaimLineageRef({
+        fixture: "stale-github-conflict",
+        observer: "snapshot-b"
+      }),
+      value: { type: "enum", value: "completed" },
+      evidenceRefs: [
+        createClaimEvidenceRef({
+          fixture: "stale-github-conflict",
+          observer: "snapshot-b"
+        })
+      ]
+    })
+  ];
+
+  return resolveClaimAuthority({
+    asOf: OBSERVED_AT,
+    dependencies: workRelations.claims.inputs,
+    sourceCoverage: canonicalClaimCoverage({ github: "stale" }),
+    claims
+  });
 }
 
 function emptyArtifactRelationProjection(

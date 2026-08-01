@@ -43,7 +43,7 @@ vi.mock("../src/managedCodex", async (importOriginal) => {
     await importOriginal<typeof import("../src/managedCodex")>();
   return {
     ...actual,
-    readManagedCodexPublicProjection: vi.fn()
+    readManagedCodexObservability: vi.fn()
   };
 });
 
@@ -55,6 +55,14 @@ vi.mock("../src/artifacts", async (importOriginal) => {
     ...actual,
     readWorkArtifactAttributionStore: vi.fn(),
     resolveManagedCodexArtifactRelations: vi.fn()
+  };
+});
+
+vi.mock("../src/claims", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/claims")>();
+  return {
+    ...actual,
+    resolveCurrentClaimAuthority: vi.fn()
   };
 });
 
@@ -82,6 +90,11 @@ import {
   resolveManagedCodexArtifactRelations,
   sealManagedCodexArtifactRelationProjection
 } from "../src/artifacts";
+import {
+  canonicalClaimCoverage,
+  resolveClaimAuthority,
+  resolveCurrentClaimAuthority
+} from "../src/claims";
 import { readStoredGitHubSnapshot } from "../src/connectors/github/localStore";
 import { normalizeGitHubSnapshotToWorkSignals } from "../src/connectors/github/toWorkSignals";
 import {
@@ -100,7 +113,10 @@ import {
   WORK_RELATION_EVIDENCE_POLICY_VERSION,
   WORK_RELATION_SCHEMA_VERSION
 } from "../src/crossSource/versions";
-import { readManagedCodexPublicProjection } from "../src/managedCodex";
+import {
+  buildManagedCodexSemanticProjection,
+  readManagedCodexObservability
+} from "../src/managedCodex";
 import {
   resolveManagedCodexWorkRelations,
   sealManagedCodexWorkRelationProjection
@@ -123,6 +139,11 @@ const managedProjection = {
   generatedAt: AS_OF,
   runs: []
 } as never;
+const managedSemantics = buildManagedCodexSemanticProjection({
+  sourceRevision: 4,
+  generatedAt: AS_OF,
+  runs: []
+});
 const bindingStore = {
   revision: 2,
   storeSha256: "b".repeat(64)
@@ -171,6 +192,23 @@ const artifactProjection = sealManagedCodexArtifactRelationProjection({
   attentionDisposition: "not_connected",
   forbiddenAsAttentionCandidate: true
 });
+const claimProjection = resolveClaimAuthority({
+  asOf: AS_OF,
+  dependencies: {
+    workRelationProjectionSha256: projection.projectionSha256,
+    artifactRelationProjectionSha256:
+      artifactProjection.projectionSha256,
+    githubBatchSha256: "d".repeat(64),
+    githubSourceSnapshotSha256: "e".repeat(64),
+    managedSourceRevision: 4,
+    managedGeneratedAt: AS_OF,
+    managedSemanticProjectionSha256:
+      managedSemantics.projectionSha256,
+    contextRegistrySha256: "c".repeat(64)
+  },
+  sourceCoverage: canonicalClaimCoverage({ github: "evaluated" }),
+  claims: []
+});
 
 let authorityLeaseActive = false;
 
@@ -188,9 +226,10 @@ beforeEach(() => {
     status: "normalized",
     batch: githubBatch
   });
-  vi.mocked(readManagedCodexPublicProjection).mockResolvedValue(
-    managedProjection
-  );
+  vi.mocked(readManagedCodexObservability).mockResolvedValue({
+    projection: managedProjection,
+    semantics: managedSemantics
+  });
   vi.mocked(readWorkSessionBindingStore).mockResolvedValue(bindingStore);
   vi.mocked(readWorkArtifactAttributionStore).mockImplementation(
     async () => {
@@ -201,6 +240,9 @@ beforeEach(() => {
   vi.mocked(resolveManagedCodexWorkRelations).mockReturnValue(projection);
   vi.mocked(resolveManagedCodexArtifactRelations).mockReturnValue(
     artifactProjection
+  );
+  vi.mocked(resolveCurrentClaimAuthority).mockReturnValue(
+    claimProjection
   );
   vi.mocked(withManagedCodexAuthorityLease).mockImplementation(
     async (_cwd, leaseTime, read) => {
@@ -245,14 +287,15 @@ describe("work relations route", () => {
     expect(body).toEqual({
       status: "ready",
       ...projection,
-      artifacts: artifactProjection
+      artifacts: artifactProjection,
+      claims: claimProjection
     });
     expect(withManagedCodexAuthorityLease).toHaveBeenCalledWith(
       process.cwd(),
       expect.any(Function),
       expect.any(Function)
     );
-    expect(readManagedCodexPublicProjection).toHaveBeenCalledWith(
+    expect(readManagedCodexObservability).toHaveBeenCalledWith(
       {
         activeOwnerInstanceId: null,
         activeOwnerships: [],
@@ -280,6 +323,15 @@ describe("work relations route", () => {
       workRelationProjection: projection,
       attributionStore: artifactAttributionStore,
       githubBatch
+    });
+    expect(resolveCurrentClaimAuthority).toHaveBeenCalledWith({
+      asOf: AS_OF,
+      managedProjection,
+      managedSemantics,
+      workRelationProjection: projection,
+      artifactRelationProjection: artifactProjection,
+      githubBatch,
+      contextRegistry
     });
 
     const normalizationOptions = vi.mocked(
@@ -314,6 +366,9 @@ describe("work relations route", () => {
       expect.objectContaining({ githubBatch: null })
     );
     expect(resolveManagedCodexArtifactRelations).toHaveBeenCalledWith(
+      expect.objectContaining({ githubBatch: null })
+    );
+    expect(resolveCurrentClaimAuthority).toHaveBeenCalledWith(
       expect.objectContaining({ githubBatch: null })
     );
   });
@@ -371,6 +426,24 @@ describe("work relations route", () => {
 
     expect(response.status).toBe(500);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      status: "error",
+      code: "WORK_RELATIONS_READ_FAILED",
+      message: "작업 연결 근거를 확인하지 못했습니다."
+    });
+  });
+
+  it("fails closed when the nested claim projection does not pass its authoritative schema", async () => {
+    vi.mocked(resolveCurrentClaimAuthority).mockReturnValueOnce({
+      ...claimProjection,
+      projectionSha256: "0".repeat(64)
+    });
+
+    const response = await GET(
+      new Request("http://localhost:3102/api/work-relations")
+    );
+
+    expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
       status: "error",
       code: "WORK_RELATIONS_READ_FAILED",

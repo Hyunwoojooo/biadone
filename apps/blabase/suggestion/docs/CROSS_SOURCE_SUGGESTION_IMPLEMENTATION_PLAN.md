@@ -10,8 +10,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.10 |
-| 기준일 | 2026-08-01 |
+| 문서 상태 | Phase 0 dev contract closed, Draft v0.11 |
+| 기준일 | 2026-08-02 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
@@ -21,8 +21,9 @@
 | Managed Codex 계약 | `suggestion/docs/MANAGED_CODEX_RUN_CONTRACT.md` |
 | Managed semantic 계약 | `suggestion/docs/CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md` |
 | Work relation 계약 | `suggestion/docs/WORK_RELATION_RESOLUTION_CONTRACT.md` |
+| Claim authority 계약 | `suggestion/docs/CLAIM_AUTHORITY_RESOLUTION_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`와 Phase 3B explicit GitHub artifact `produces` local beta 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C observation-only claim authority/conflict local beta final gate 완료 |
 
 ---
 
@@ -2770,6 +2771,26 @@ order determinism failure는 모두 `0`이다. focused Vitest `13` files/`112` t
 lint와 production build를 통과했다. 이 projection은 Attention에 연결하지 않았고
 기존 Phase 3A dataset canonical SHA-256도 유지했다.
 
+2026-08-02 Phase 3C는 source-specific claim을 exact target/field로 분리하고,
+current authority, stale/context-only evidence, lineage와 conflict를 보수적으로
+판정하는 observation-only projection을 구현했다. Phase 3A work relation,
+Phase 3B artifact relation, GitHub batch/snapshot, managed source revision/time,
+managed semantic projection과 context registry의 exact dependency를 하나의 managed
+authority lease/`asOf`에서 검증한다. managed execution claim은 state와 일치하는
+semantic evidence ID/sequence와 window, detector, projection hash가 없으면 생성하지
+않는다. provider clock skew는 최대 `60,000ms`, deduplicated projection은
+최대 `12,000` claims/resolutions/conflicts, relation refs는 최대 `100`개로
+제한한다.
+
+별도 mutable synthetic Dev Candidate `40` cases는 exact case/projection `40/40`,
+resolution `42/42`, conflict `9/9`, precision/recall `1.0/1.0`과 authority,
+stale/context winner, cross-domain conflation, false/missed conflict, timestamp-only
+override, future evidence, privacy, determinism, Attention leakage guardrail `0`을 고정한다.
+Phase 3A, Phase 3B와 Cross-source Dev Candidate canonical hash는 dependency로 검증하며
+변경하지 않았다. final candidate run
+`claim_authority_run_f2bc1b560e8e1b298f0c3bf2b5174648`는 full Vitest `588`,
+Playwright `14`, typecheck/lint/build와 Phase 3A/3B regression gate를 통과했다.
+
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
@@ -2777,7 +2798,8 @@ lint와 production build를 통과했다. 이 projection은 Attention에 연결�
 - direct failure를 material work와 연결해 개입 여부를 판단하는 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
-- user-confirmed `related_to`, field authority와 materiality gate
+- user-confirmed `related_to`와 claim authority를 Attention에 적용하는 materiality/
+  eligibility gate
 
 완료 조건:
 
@@ -2794,9 +2816,10 @@ lint와 production build를 통과했다. 이 projection은 Attention에 연결�
 
 ### Phase 3 — Project mapping, lineage, conflict
 
-상태: **Project registry, Phase 3A explicit managed Codex↔GitHub `executes`와
-Phase 3B explicit GitHub artifact `produces` local beta delivered; `related_to`와
-field conflict work remains**
+상태: **Project registry, Phase 3A explicit managed Codex↔GitHub `executes`,
+Phase 3B explicit GitHub artifact `produces`, Phase 3C observation-only field
+authority/conflict local beta final gate delivered; `related_to`와 Attention
+eligibility integration remains**
 
 산출물:
 
@@ -2804,18 +2827,21 @@ field conflict work remains**
 - `[Phase 3A 완료]` managed run↔explicit GitHub binding native identity resolver
 - `[Phase 3A 완료]` `executes` 관계, binding lifecycle와 project conflict record
 - `[Phase 3B 완료]` explicit-user commit/PR attribution과 `produces` lineage
-- user-confirmed `related_to` 관계 처리
-- field-level authority resolver
-- conflict record
+- `[Phase 3C 구현 완료]` exact source/field claim authority resolver
+- `[Phase 3C 구현 완료]` original claim을 보존하는 conflict record와 strict graph/API/client validation
+- `[Phase 3C 완료]` final candidate baseline artifact, fingerprint와 run ID 기록
+- `[Phase 3 후속]` user-confirmed `related_to` 관계 처리
 
 완료 조건:
 
-- 동일 native object 중복 제거
-- Codex execution과 GitHub/Notion work item을 자동 merge하지 않음
-- 비슷한 제목의 다른 프로젝트를 분리
-- GitHub completed와 Notion stale open conflict 처리
-- snapshot absence를 completion으로 해석하지 않음
-- unresolved critical conflict를 top suggestion에서 제외
+- `[Phase 3A/3C 완료]` 동일 native object 중복 제거
+- `[Phase 3A/3C 완료]` Codex execution과 GitHub/Notion work item을 자동 merge하지 않음
+- `[Phase 3A/3C 완료]` 비슷한 제목의 다른 프로젝트를 분리
+- `[Phase 3C 완료]` snapshot absence를 completion으로 해석하지 않음
+- `[adapter 후속]` GitHub completed와 configured Notion task stale open을 실제
+  runtime에서 비교. 현재 Notion v1은 context-only라 이 충돌을 생성하지 않음
+- `[Phase 4 후속]` unresolved critical conflict를 top suggestion의 hard
+  eligibility에서 제외. Phase 3C는 아직 Attention에 연결하지 않음
 
 Phase 3A local beta는 append-only WorkSessionBinding의 explicit-user bind
 decision을 유일한 `executes` 권위로 사용한다. managed run의 exact binding/execution
@@ -2844,6 +2870,21 @@ projection하며 detach/reattach lineage와 unavailable/stale/not-observed/confl
 Attention과 격리한다.
 
 세부 계약은 `ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
+Phase 3C local beta는 GitHub native field, Blabase-owned managed Codex direct
+semantic event와 두 explicit source-scope mapping만 current runtime authority로
+사용한다. Codex inventory는 context-only고 Notion/Calendar는 현재 adapter가
+직접 task/event field와 same-work equivalence를 제공하지 않으므로 충돌 판정에
+사용하지 않는다. managed run target은 run/binding/execution identity를 모두 포함해
+재사용된 execution ID의 이전 terminal state를 새 run과 합치지 않는다.
+projection은 source coverage와 claim의 authority/freshness, pre-dedup multiplicity,
+stable IDs, exact resolution partition과 conflict graph를 검증하고 Work Cockpit에
+`관찰 전용 · 추천 판단에는 아직 반영하지 않음`으로만 표시한다.
+
+세부 계약은 `CLAIM_AUTHORITY_RESOLUTION_CONTRACT.md`를 따른다. 이 범위는
+이미 확정한 conservative/fail-closed 원칙의 구현이므로 final gate 완료에
+추가 사용자 판단이 필요하지 않다. future adapter, same-work equivalence,
+correction UX와 Attention gate는 이번 release에 포함하지 않는다.
 
 ### Phase 4 — Eligibility, lane, ranking, selection
 
@@ -3247,7 +3288,9 @@ Attention과 격리한다.
     Codex↔GitHub `executes` 관계 작성
 24. `[Phase 3B 완료]` privacy-safe explicit-user artifact identity와 `produces`
     lineage 작성. user-confirmed `related_to`는 후속 범위
-25. claim authority resolver 작성
+25. `[Phase 3C 완료]` observation-only claim authority/conflict resolver,
+    exact dependency/semantic evidence, strict API/client graph validation과
+    final candidate baseline fingerprint/run ID 기록
 26. full cross-source hard eligibility와 lane classifier 작성
 27. user-answer-required clarification route 작성
 28. Calendar free-block과 first-step 작성
@@ -3346,6 +3389,16 @@ Attention과 격리한다.
   자동으로 수행하지 않는다.
 - managed store는 raw prompt/answer/command/output/diff/tool payload를 저장하지
   않고 30일/run별 10,000 event metadata만 보존한다.
+- Phase 3C claim authority는 exact source semantic field를 범용 state/deadline으로
+  합치지 않고, managed semantic direct evidence와 Phase 3A/3B/source
+  dependency가 모두 일치할 때만 관찰 projection을 만든다.
+- Phase 3C projection/conflict는 Work Cockpit 관찰 전용이고 Attention input,
+  replay/monitor hash, filtering, ordering, candidate, ranking과 selection을 변경하지
+  않는다.
+- Notion/Calendar future field의 schema 존재는 live authority가 아니다. configured
+  adapter와 exact equivalence가 없는 현재 runtime에서는 context-only로 보존한다.
+- Phase 3C final gate는 이미 확정한 fail-closed 범위를 검증하는 작업이므로
+  추가 사용자 판단이 필요하지 않다.
 - hard gate와 attention lane을 가중치보다 먼저 적용한다.
 - rankable lane은 `must_now`, `unblock`, `close_loop`, `focus`로 제한하고
   clarification/no-action은 decision 단계에서 처리한다.
@@ -3361,7 +3414,9 @@ Attention과 격리한다.
 
 ## 28. 남은 제품 결정
 
-다음 질문은 Phase 2A를 막지 않는 Phase 2B+ 제품·정책 결정이다.
+현재 Phase 3C observation-only local beta의 final gate에는 사용자가 추가로
+판단할 항목이 없다. 다음 질문은 Phase 3C를 막지 않는 후속
+Phase 2B+/4+ 제품·정책 결정이다.
 
 1. Calendar는 free/busy만 사용할 것인가, title linking을 opt-in으로 제공할 것인가?
 2. Notion task DB property mapping UX를 어디까지 지원할 것인가?
@@ -3381,6 +3436,7 @@ Attention과 격리한다.
 13. 현재 Work Cockpit의 project mapping과 global Weekly focus UI를 확장해
     project-scoped weekly outcome을 어느 project 선택 UX로 편집할 것인가?
 
-이 질문은 Phase 0, Phase 2A 또는 local Phase 2A.1의 미완료 항목이 아니다.
-production scheduling과 richer managed connector가 필요한 Phase 2B부터 평가
-가능한 형태로 좁힌다.
+이 질문은 Phase 0, Phase 2A, local Phase 2A.1 또는 Phase 3C final
+gate의 미완료 항목이 아니다.
+production scheduling과 richer managed connector가 필요한 후속 Phase 2B+/4+에서
+평가 가능한 형태로 좁힌다.

@@ -1949,3 +1949,218 @@
   - relation + materiality를 요구하는 Codex failure/stall intervention gate
   - configured project workflow 기반 completion follow-through
   - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-08-02 Phase 3C observation-only claim authority and conflict resolution
+
+- Date: 2026-08-02
+- Owner: Codex with human direction
+- Goal:
+  - GitHub, managed Codex와 explicit project mapping이 직접 증명하는 서로 다른
+    semantic field를 범용 state/deadline으로 합치지 않고 canonical claim으로
+    보존
+  - exact target/field/lineage 안에서 authority, freshness, completeness와
+    conflict를 보수적으로 판정하고 원본 claim을 유지
+  - 결과를 Work Cockpit의 관찰 정보로만 표시하고 Attention 추천 판단과
+    격리
+- Affected pipeline stages:
+  - GitHub normalized work signal과 direct field evidence의 claim normalization
+  - managed Codex public projection + exact semantic window/detector evidence의 claim
+    normalization
+  - Phase 3A work relation과 explicit source-scope mapping의 project alignment claim
+  - field authority, lineage selection, resolution/conflict graph와 canonical hash
+  - local-only `/api/work-relations` nested `claims` projection, strict browser client
+    validation과 Work Cockpit conflict/coverage UI
+  - 별도 mutable synthetic Phase 3C Dev Candidate loader/evaluator/baseline runner
+  - Attention input/router/replay/monitor/filtering/ordering/candidate/ranking/selection은
+    변경하지 않음
+- Behavior before:
+  - Phase 3A는 managed Codex run과 GitHub work item의 explicit `executes` relation,
+    Phase 3B는 explicit GitHub artifact `produces` relation만 제공
+  - source별 current state, authority, stale/context-only 근거와 field conflict를
+    하나의 reproducible projection으로 설명하지 못함
+  - managed Codex execution state와 GitHub work-item state가 서로 다른 semantic
+    field라는 machine-readable claim boundary가 없음
+- Behavior after:
+  - current live authority는 GitHub exact native fields, Blabase-owned managed Codex
+    direct semantic evidence와 서로 다른 두 explicit project mapping lineage로 제한
+  - Codex inventory는 context-only고, 현재 Notion/Calendar adapter는 task/event
+    direct field와 exact same-work equivalence가 없어 live conflict authority로 사용하지
+    않음
+  - source-origin-field-target matrix, bounded value, evidence/relation refs, source
+    coverage/claim authority/freshness coherence와 duplicate coverage를 fail closed
+  - managed target은 `managedRunId + bindingId + executionId`를 모두 포함하고,
+    state와 일치하는 semantic evidence ID/sequence/event와 window, detector,
+    semantic projection SHA를 evidence ref에 포함
+  - Phase 3A/3B projection SHA, GitHub batch/snapshot SHA, managed revision/time,
+    managed semantic projection SHA와 context registry SHA를 exact dependency로 기록
+  - claim evidence timestamp는 `asOf + 60,000ms` provider clock skew까지 허용하고
+    managed projection generation time은 future skew 없이 거부
+  - deduplicated claims/resolutions/conflicts 각각 최대 `12,000`, claim/conflict
+    relation refs 최대 `100`; projection overflow를 silent truncation하지 않음
+  - pre-dedup claim multiplicity를 input hash에 포함하고 stable resolution/conflict
+    ID, exact partition, winner, reason/next action, relation union과 충돌 그래프를
+    server schema에서 재검증
+  - browser client는 ready/non-ready union, version/dependency, bounded nested fields,
+    refs와 resolution/conflict graph를 검증한 경우에만 UI에 전달
+  - 모든 projection/resolution/conflict에
+    `attentionDisposition=not_connected`, `forbiddenAsAttentionCandidate=true`를 강제
+- Versions before:
+  - Phase 3C claim projection/schema/conflict/resolver/authority/evidence policy: 없음
+  - Phase 3A work relation과 Phase 3B artifact relation: v0.1
+  - Cross-source Attention: v0.3 input/result, v0.2 policy/rules
+- Versions after:
+  - projection: `claim-authority-projection-v0.1`
+  - claim schema: `work-claim-schema-v0.1`
+  - conflict schema: `claim-conflict-schema-v0.1`
+  - resolver: `cross-source-claim-resolver-v0.1`
+  - field authority policy: `field-claim-authority-policy-v0.1`
+  - evidence policy: `direct-source-claim-evidence-v0.1`
+  - evaluation dataset/case/run:
+    `claim-authority-resolver-evaluation-dataset-v0.1` /
+    `claim-authority-resolver-evaluation-case-v0.1` /
+    `claim-authority-resolver-evaluation-run-v0.1`
+  - managed semantic v0.1, Phase 3A/3B와 Attention versions: 변경 없음
+- Code commit:
+  - base commit: `25d4f26bbfc858b3a4ac2ba666c5883ba195d2fc`
+  - candidate run code state: `dirty_worktree`
+  - final candidate fingerprint:
+    `0848f74ca1d1557007a24f430ab7cd0c3c3b77f5b49076d9ebd37784fbb17b9b`
+  - final release commit: 생성하지 않음 — 이 작업에서는 commit 승인을 받지 않음
+  - 이 fingerprint는 아래 candidate run 직전의 전체 `suggestion/` 변경과 ECR
+    placeholder를 나타낸다. run 뒤의 ECR 값 치환과 gate 상태 갱신은 semantic
+    code/dataset/materialized input/output을 바꾸지 않는 documentation-only 변경
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-claim-authority-dev-v0.1`
+  - revision: `1`
+  - class/lifecycle: mutable synthetic Dev Candidate
+  - data origin/production data: `synthetic` / `false`
+  - input boundary: `normalized_claim_resolution_inputs`
+  - case count: `40` (`current_runtime 21`, `future_contract 9`, `integrity 10`)
+  - normal projection/expected rejection: `38/2`
+  - computed canonical SHA-256:
+    `65e7b3dea1b197133b3c776970b2bf3342bfb59777cbc2a1a0a01b31ec11606d`
+  - materialized input SHA-256:
+    `12f1eb24d6522170e828bfbf406b324d8d2d600b7a9013016d6c6adf95d5f8f1`
+  - resolver config: `eval/synthetic/claimAuthorityResolverConfig.v0.1.json`
+  - resolver config SHA-256:
+    `98ddd2fd399286a89f23737ab7a3fa76cd16e2317150ca78800edcd2bfe63db0`
+  - Phase 3A dependency SHA-256:
+    `b12660720c657123fe6e94b0e4ba6dcf29704f72b90cd5b630ecd8331091b002`
+  - Phase 3B dependency SHA-256:
+    `fdc9112a5164c63619489304ec8af398cae498597631303ffe6e3cda51f8a2c8`
+  - Cross-source Dev Candidate revision 2 dependency SHA-256:
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  - 이 dataset은 frozen Golden이 아니며 lifecycle `datasetSha256`/`immutableRef`/
+    `frozenAt`은 `null`인 mutable targeted Dev Candidate
+- Candidate run ID:
+  `claim_authority_run_f2bc1b560e8e1b298f0c3bf2b5174648`
+- Comparison run ID: 없음 — 최초 Phase 3C targeted Dev Candidate baseline
+- Commands executed:
+  - `npm test -- tests/claimAuthorityResolver.test.ts tests/currentClaimAuthority.test.ts tests/claimAuthorityEvaluation.test.ts tests/workRelationsRoute.test.ts tests/workRelationsClient.test.ts`
+  - `npm run claim-authority:baseline`
+  - `npm run work-relation:baseline`
+  - `npm run artifact-relation:baseline`
+  - `npm run cross-source:dev-hash`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e -- e2e/managed-codex-progress.spec.ts`
+  - `git diff --check -- apps/blabase/suggestion`
+- Metrics changed:
+  - targeted deterministic evaluation exact case/projection: `40/40`
+  - expected/observed resolution: `42/42`
+  - expected/observed conflict: `9/9`
+  - resolution precision/recall: `1.0/1.0`
+  - conflict precision/recall: `1.0/1.0`
+  - semantic projection mismatch, wrong authority winner, context/stale winner,
+    cross-domain conflation, false/missed conflict, critical auto-resolution,
+    activity/absence completion, timestamp-only override, unsupported authority,
+    future evidence, original claim loss, Attention/privacy leakage, order
+    determinism과 Phase 3A/3B/Cross-source hash mismatch: 모두 `0`
+  - deterministic output SHA-256:
+    `cb8e60f7a62d35ab87cac554967c370244bf9a252afa74dcc30452c74b3d08bd`
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+  - focused claim/resolver/route/client: `5` files / `56` tests 통과
+  - full Vitest: `68` files / `588` tests 통과
+  - Playwright Desktop Chrome: `14/14` tests 통과
+  - typecheck, lint, production build와 diff check 통과
+  - final persisted baseline latency: `68ms`
+  - record artifact:
+    `.local/evaluations/claim-authority/claim_authority_run_f2bc1b560e8e1b298f0c3bf2b5174648.json`
+  - record artifact SHA-256:
+    `59567057b198efacf34dc96b7db4fae958977e72e1ff4b4cc043c139b9ffe4c0`
+  - Phase 3A regression run:
+    `relation_run_3b0e1446ac0d74eecf577681c8c021b8`, exact `28/28`, relation
+    `24/24`, deterministic output
+    `bbf9d6a97090b44a464d362fee24cceb97b89b7a265baa2d8be30c454b1776a4`
+  - Phase 3B regression run:
+    `artifact_relation_run_a9891994e1c6dece303cf0e144063df4`, exact `32/32`,
+    relation `23/23`, deterministic output
+    `c93da98c113dfe8d9187ba363b43f6c3027c6150396d039480079cab8b3c7d04`
+- Regressions or accepted exceptions:
+  - 현재 GitHub collector는 query membership이 직접 증명하는 `open`만 current
+    work-item state로 생성. closed/merged는 exact bound-object adapter 후속 범위
+  - Notion v1과 Calendar는 context-only이므로 live `GitHub completed ↔ Notion
+    open` conflict를 생성하지 않음. future-contract synthetic cases는 schema/
+    resolver boundary를 검증하지 live adapter 제공을 의미하지 않음
+  - same project, title/path/time similarity, `executes`/`produces`만으로
+    cross-source same-work/equivalent-field relation을 만들지 않음
+  - managed execution `completed`는 GitHub/Notion task/project 완료를 의미하지 않음
+  - conflict correction/feedback ledger가 없어 UI는 해결 button을 제공하지 않음
+  - unresolved critical conflict는 아직 Attention hard eligibility에 연결하지
+    않음. Phase 4의 별도 version/evaluation gate 후에만 적용
+  - synthetic dataset은 human-reviewed Golden이나 실제 recommendation 품질 증명이
+    아님
+- Privacy or retention impact:
+  - 새 production claim/conflict store를 만들지 않고 기존 GitHub snapshot,
+    context registry, managed semantic evidence와 Phase 3A/3B projection에서 request-time
+    projection을 계산
+  - claim/conflict를 persistence하지 않으므로 source store의 기존 retention을
+    연장하지 않음
+  - public projection/UI는 bounded enum/timestamp, opaque hash/ID, reason code만
+    노출하고 repository name/title/URL, GitHub native object ID/full commit OID,
+    Notion/Calendar title/native ID를 복사하지 않음
+  - raw Codex prompt/answer/reasoning, command/output, diff/path와 tool payload를
+    claim, API, UI, committed evaluation data에 포함하지 않음
+  - evaluation artifact는 synthetic sanitized metadata만 사용하고 final run은
+    `.local/evaluations/claim-authority/`의 `0700` directory/`0600` exclusive file로
+    저장
+  - production conversation, implicit feedback, runtime projection을 Golden/Regression
+    dataset으로 자동 승격하지 않음
+- Compatibility:
+  - local-only `GET /api/work-relations`에 `claims` nested object를 추가한 additive
+    contract이며 internal server/client는 함께 업데이트
+  - Phase 3A `executes`, Phase 3B `produces`, source store schema/retention은 변경
+    없음
+  - Attention v0.3 input/result, v0.2 policy/rules, replay/monitor hash와 기존
+    frozen/Dev Candidate datasets는 변경 없음
+  - old/partial runtime의 dependency mismatch는 거짓 ready 응답 대신 sanitized
+    fail-closed error로 표시. 이는 보수적 관찰 계약의 의도된 호환성 경계
+- Release decision:
+  - Phase 3C local beta observation-only candidate의 final gate를 통과해 허용
+  - final candidate baseline run/fingerprint, full regression,
+    typecheck/lint/build/E2E와 dependency regression을 위 값으로 기록
+  - Work Cockpit의 상태/coverage/conflict 가시성에만 사용하고 Attention
+    input/result/filtering/ordering, replay/monitor hash, candidate/ranking/selection에는
+    연결하지 않음
+  - formal Golden baseline은 실행하지 않음. frozen dataset을 바꾸지 않고
+    별도 mutable synthetic targeted resolver baseline으로 gate하기 때문
+  - 현재 범위는 이미 확정한 exact identity, observation-only, fail-closed,
+    Attention 격리 원칙을 구현하므로 추가 사용자 판단이 필요하지 않음
+- Rollback method:
+  - Work Cockpit claim/conflict summary, claim-aware client guard와
+    `/api/work-relations` nested `claims` projection을 제거해 Phase 3B UI/API로 복귀
+  - `src/claims`, claim evaluation dataset/config/evaluator/runner를 제거하고 Phase 3A
+    work relation, Phase 3B artifact relation과 source ledgers는 유지
+  - 신규 production store/migration이 없어 data migration, purge나 backfill이 필요
+    없음
+  - Attention semantic version과 dataset을 변경하지 않았으므로 Attention
+    rollback은 필요 없음
+- Follow-up work:
+  - exact bound GitHub object의 closed/merged current-state adapter
+  - configured Notion task DB property mapping과 Calendar native event adapter
+  - user-confirmed same-work-item/equivalent-field `related_to` relation
+  - explicit feedback/correction ledger와 conflict resolution UX
+  - Phase 4 `NoCriticalConflict` hard eligibility와 materiality gate
+  - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
