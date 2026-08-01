@@ -1,3 +1,13 @@
+import type {
+  ManagedCodexSemanticProjection as ServerManagedCodexSemanticProjection,
+  ManagedCodexSemanticRunResult as ServerManagedCodexSemanticRunResult
+} from "../src/managedCodex/semanticTimeline";
+
+export type ManagedCodexSemanticProjection =
+  ServerManagedCodexSemanticProjection;
+export type ManagedCodexSemanticRunResult =
+  ServerManagedCodexSemanticRunResult;
+
 export type ManagedCodexRunLifecycle =
   | "starting"
   | "observing"
@@ -77,6 +87,7 @@ export type ManagedCodexRunsReadyResponse = {
   revision: number;
   generatedAt: string;
   runs: ManagedCodexPublicRun[];
+  semantics: ManagedCodexSemanticProjection;
 };
 
 export type ManagedCodexRunsUnavailableResponse = {

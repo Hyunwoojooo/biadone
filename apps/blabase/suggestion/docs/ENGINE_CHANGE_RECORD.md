@@ -1404,3 +1404,164 @@
   - meaningful-progress/stall/failure/request lifecycle/follow-through detector는
     별도 schema/rule/evaluation과 Engine Change Record로 구현
   - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-08-01 Phase 2B.2A managed direct-fact semantic timeline
+
+- Date: 2026-08-01
+- Owner: Codex with human direction
+- Goal:
+  - Blabase가 직접 소유한 managed Codex ordered history를 사용해 사용자가
+    실행 진행을 눈으로 확인할 수 있는 semantic timeline 제공
+  - 직접 관찰한 Codex lifecycle과 사용자 task/outcome의 실제 진전을 분리
+  - richer evidence가 없는 progress, stall과 request escalation을 fail closed
+- Affected pipeline stages:
+  - managed event history의 same-snapshot sanitized semantic window
+  - direct-fact timeline과 turn/managed-run failure lifecycle detector
+  - local-only managed observability API와 Work Cockpit UI
+  - 별도 synthetic detector Dev Candidate loader, runner와 metric gate
+  - Attention input/router/replay/monitor/ranking은 변경하지 않음
+- Behavior before:
+  - Work Cockpit은 managed run의 최신 projection 한 건만 표시
+  - ordered history에서 turn completion/failure/interruption, managed run failure와
+    continuity boundary를 해석하는 versioned semantic output이 없음
+  - progress/stall/failure detector 전용 event-history evaluation dataset과 run
+    record가 없음
+- Behavior after:
+  - verified private history를 public run projection과 같은 managed store lock에서
+    읽고 private identity/hash/raw content를 제거한 semantic projection 생성
+  - direct turn started/completed/failed/interrupted, item activity, thread state와
+    stream/run lifecycle의 bounded timeline 제공
+  - latest direct turn failure와 managed launch/transport failure를 분리
+  - failure 뒤 새 turn이 있으면 현재 failure에서 억제하지만 recovery로 표현하지
+    않음
+  - reconnect 전 stale nonterminal state, prefix-pruned history와 clock regression을
+    보수적으로 처리
+  - task-level `meaningfulProgress=unknown`, `stall=not_evaluable`,
+    `requestEscalation=unsupported`
+  - public evidence와 timeline은 run별 최근 24개로 제한하고 전체 sanitized input은
+    digest로 결합
+  - Work Cockpit에 직접 이벤트 해석, 작업 진전 판단 불가, 정체 평가 불가와
+    접이식 timeline 표시
+  - 모든 결과는 `attentionDisposition=not_connected`와
+    `forbiddenAsAttentionCandidate=true`
+- Versions before:
+  - managed semantic window/timeline/detector/run/projection: 없음
+  - managed registry/event/history/latest/public/settlement: v1 계열
+  - Codex observation/history: v2 계열
+  - Cross-source Attention: v0.3 input/result, v0.2 policy/rules
+- Versions after:
+  - window: `codex-managed-semantic-window-v0.1`
+  - timeline: `codex-managed-semantic-timeline-v0.1`
+  - detector result: `codex-managed-semantic-detector-result-v0.1`
+  - run result: `codex-managed-semantic-run-result-v0.1`
+  - projection: `codex-managed-semantic-projection-v0.1`
+  - schema: `codex-managed-semantic-schema-v0.1`
+  - rule: `codex-managed-direct-event-detector-v0.1`
+  - evidence policy: `codex-managed-direct-metadata-evidence-v0.1`
+  - detector dataset schema: `codex-managed-detector-case-v0.1`
+  - detector run record: `codex-managed-detector-evaluation-run-v0.1`
+  - managed v1, Codex observation v2와 Cross-source Attention semantic versions:
+    변경 없음
+- Code commit:
+  - base commit: `bddccfd98747939c386058762491eeebb65b5476`
+  - candidate run code state: `dirty_worktree`
+  - candidate run pre-record fingerprint:
+    `160be65d538e8f4cc2d4eca0c85c14ab24ac7ea8ef678f1e9bff81574286ccd5`
+  - 이 fingerprint는 아래 candidate run 직전의 전체 `suggestion/` 변경을
+    나타낸다. 이 Engine Change Record 자체를 append한 문서-only 변경은 run 뒤에
+    추가되었으며 semantic code/dataset/input/output을 변경하지 않음
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-codex-detector-dev-v0.1`
+  - revision: `1`
+  - class/lifecycle: mutable synthetic Dev Candidate
+  - input boundary: `managed_codex_event_history`
+  - case count: `18`
+  - canonical SHA-256:
+    `5436c590c8768b8b2732d675e96b6bd0d837e882dccffbeec67602466e76c838`
+  - materialized input SHA-256:
+    `d161272fe5815e42a7ac9fe30caf2ad45e2189e6acee9cdd5c5d1a0aedcaa747`
+  - detector config:
+    `eval/synthetic/managedCodexDetectorConfig.v0.1.json`
+  - detector config SHA-256:
+    `70df024c080ee8b7407273bd7005e2b5ebed9f8cf0c97994b0cf6a28dbeb47a7`
+  - 기존 `suggestion-cross-source-dev-v0.1` revision `2`, `30` cases와 SHA-256
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+    는 변경하지 않음
+- Candidate run ID: `detector_run_a4836622e4b5b1b483dfb2a5acc0551c`
+- Comparison run ID: 없음 — 최초 event-history detector targeted baseline
+- Commands executed:
+  - `npx vitest run tests/managedCodexSemanticTimeline.test.ts tests/managedCodexStore.test.ts tests/managedCodexRunsRoute.test.ts tests/managedCodexRunsClient.test.ts`
+  - `npx vitest run tests/managedCodexDetectorEvaluation.test.ts`
+  - `npm run managed-codex:detector-baseline`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e`
+  - `npm run cross-source:dev-hash`
+  - `git diff --check`
+- Metrics changed:
+  - detector exact case match: `18/18` (`1.0`)
+  - latest-direct failure precision/recall: `1.0/1.0`
+  - active failure false positive/false negative: `0/0`
+  - superseded failure leakage: `0`
+  - gap stale-state leakage: `0`
+  - systemError false failure: `0`
+  - unsupported stall/request emission: `0`
+  - deterministic output SHA-256:
+    `60292c648f169be965c2da239d4b21315004c730c02455b4042dfacd2f69fd81`
+  - focused managed semantic/store/route/client Vitest: `4` files/`31` tests 통과
+  - detector evaluation Vitest: `5` tests 통과
+  - full Vitest: `53` files/`455` tests 통과
+  - Playwright Chromium E2E: `5` tests 통과, managed semantic UI `2` tests 포함
+  - typecheck, lint, production build와 diff check 통과
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+- Regressions or accepted exceptions:
+  - 현재 metadata는 task/outcome progress, verified stall, scope drift, stable
+    request lifecycle와 configured follow-through를 증명하지 못함
+  - Codex turn completed는 project task 완료로 해석하지 않음
+  - `item_completed(file_change|command_execution)`은 성공 artifact/test/build
+    근거가 아니므로 activity-only
+  - `run_failed`는 managed launch/transport failure이며 Codex turn failure와 분리
+  - failure 뒤 새 turn은 과거 failure를 current에서 억제하지만 해결됐다고 단정하지
+    않음
+  - synthetic dataset은 human-reviewed Golden이 아니며 제품 추천 품질을 증명하지
+    않음
+  - full E2E는 local single-process runtime이며 production multi-process/device
+    ownership은 범위 밖
+- Privacy or retention impact:
+  - 기존 sanitized managed metadata만 입력으로 사용하고 새 production semantic
+    store를 만들지 않음
+  - prompt/answer/reasoning text, command/output, diff/path, tool arguments/results,
+    native thread/turn/item ID, cwd, owner/scope/generation과 event hash를 semantic
+    API/UI/dataset에 포함하지 않음
+  - public semantic evidence와 timeline은 각각 최근 24개로 제한
+  - source history와 같은 최대 30일 retention/cleanup 경계를 따르고 derived
+    result를 별도 보존하지 않음
+  - dataset은 synthetic sanitized metadata만 포함
+  - production detector result와 implicit UI feedback은 Gold가 아니며 자동으로
+    Golden/Regression dataset에 승격하지 않음
+- Release decision:
+  - Phase 2B.2A local beta observational semantic slice로 허용
+  - Work Cockpit 가시성에는 사용하지만 Attention input/result/filtering/ordering,
+    replay/monitor hash, candidate/ranking/selection에는 연결하지 않음
+  - formal Golden baseline은 실행하지 않음. 이 branch는 Attention semantic
+    behavior와 기존 Cross-source dataset을 변경하지 않고 별도 mutable synthetic
+    detector targeted baseline으로 gate했기 때문
+  - verified progress/stall이나 failure intervention의 production release가 아님
+- Rollback method:
+  - `/api/managed-codex-runs`의 `semantics` field와 Work Cockpit semantic summary/
+    timeline을 제거하고 v1 public projection-only UI로 복귀
+  - `src/managedCodex/semanticTimeline.ts`, managed observability combined reader와
+    detector evaluation files/script를 제거
+  - managed history v1 storage와 Phase 2B.1 latest projection은 유지 가능
+  - Attention versions과 dataset은 변경되지 않아 별도 rollback 불필요
+- Follow-up work:
+  - private run-scoped opaque turn/item identity와 outcome pairing 검토
+  - sanitized command/tool/test/build result와 artifact state evidence
+  - stream/thread heartbeat, phase와 expected-next-event contract
+  - stable approval/input request ID와 pending/resolved/expired lifecycle
+  - Phase 3 explicit execution↔work/artifact relation과 project workflow
+  - relation/materiality gate 뒤 failure intervention candidate를 별도 version과
+    regression으로 구현
+  - reviewed/adjudicated Cross-source Golden freeze와 formal baseline

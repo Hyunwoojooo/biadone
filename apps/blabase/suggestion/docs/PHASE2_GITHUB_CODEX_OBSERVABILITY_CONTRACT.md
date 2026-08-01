@@ -795,10 +795,26 @@ Phase 2B.1 managed observability vertical slice도 semantic detector와 분리�
 정확한 계약은 `MANAGED_CODEX_RUN_CONTRACT.md`를 따른다. Phase 2B.1은
 Attention input/result/filtering/ordering/ranking/hash를 변경하지 않는다.
 
-다음 semantic detector와 richer connector evidence는 아직 구현하지 않는다.
+Phase 2B.2A는 managed history에 한정한 관찰 전용 direct-fact semantic branch를
+추가한다.
+
+- 같은 atomic read snapshot의 verified ordered history만 입력으로 사용
+- turn started/completed/failed/interrupted와 managed run failure를 직접 사실로
+  구분
+- failure 뒤 새 turn을 current failure에서 억제하되 recovery로 추정하지 않음
+- reconnect/prefix pruning/clock regression을 보수적으로 표시
+- task-level meaningful progress `unknown`, verified stall `not_evaluable`, stable
+  request escalation `unsupported`
+- local Work Cockpit에 bounded timeline을 표시하고 모든 결과를 Attention에서 금지
+
+정확한 의미와 평가 경계는
+`CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md`를 따른다.
+
+다음 richer connector evidence와 candidate behavior는 아직 구현하지 않는다.
 
 - confirmed non-draft review
-- Codex meaningful progress, stall, failure, recovery, completion
+- artifact/outcome 기반 Codex meaningful progress와 verified stall
+- direct failure를 material work와 연결한 intervention eligibility
 - stable approval/input request lifecycle와 escalation
 - completed execution의 configured follow-through
 - semantic Codex exception candidate와 WorkSessionBinding을 자동 연결하는

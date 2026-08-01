@@ -55,6 +55,10 @@ import {
   type ManagedCodexRunRegistry,
   type ManagedCodexSettlement
 } from "./contracts";
+import {
+  buildManagedCodexSemanticProjection,
+  type ManagedCodexSemanticProjection
+} from "./semanticTimeline";
 
 const REGISTRY_FILENAME = "registry.json";
 const LATEST_FILENAME = "latest.json";
@@ -388,6 +392,44 @@ export async function readManagedCodexPublicProjection(
   },
   cwd = process.cwd()
 ): Promise<ManagedCodexPublicProjection> {
+  const read = await readManagedCodexContext(input, cwd);
+  return read.projection;
+}
+
+export type ManagedCodexObservability = {
+  projection: ManagedCodexPublicProjection;
+  semantics: ManagedCodexSemanticProjection;
+};
+
+export async function readManagedCodexObservability(
+  input: {
+    activeOwnerInstanceId: string | null;
+    activeOwnerships: ManagedCodexOwnershipIdentity[];
+    now: Date;
+  },
+  cwd = process.cwd()
+): Promise<ManagedCodexObservability> {
+  const read = await readManagedCodexContext(input, cwd);
+  return {
+    projection: read.projection,
+    semantics: read.semantics
+  };
+}
+
+type ManagedCodexReadContext = {
+  projection: ManagedCodexPublicProjection;
+  histories: ManagedCodexEventHistory[];
+  semantics: ManagedCodexSemanticProjection;
+};
+
+async function readManagedCodexContext(
+  input: {
+    activeOwnerInstanceId: string | null;
+    activeOwnerships: ManagedCodexOwnershipIdentity[];
+    now: Date;
+  },
+  cwd: string
+): Promise<ManagedCodexReadContext> {
   const generatedAt = input.now.toISOString();
   const activeOwnerInstanceId =
     input.activeOwnerInstanceId === null
@@ -480,7 +522,7 @@ export async function readManagedCodexPublicProjection(
     const registry = stores.registry;
     const latest = stores.latest;
     assertRegistryLatestCoherent(registry, latest);
-    return managedCodexPublicProjectionSchema.parse({
+    const projection = managedCodexPublicProjectionSchema.parse({
       contract: "codex-managed-public-projection-v1",
       revision: latest.revision,
       generatedAt,
@@ -500,6 +542,35 @@ export async function readManagedCodexPublicProjection(
           })
         )
     });
+    const histories = await Promise.all(
+      projection.runs.map((run) =>
+        readHistory(run.managedRunId, cwd)
+      )
+    );
+    histories.forEach((history, index) => {
+      const run = projection.runs[index];
+      const privateProjection = run
+        ? latest.runs.find(
+            (item) => item.managedRunId === run.managedRunId
+          )
+        : null;
+      if (!privateProjection) {
+        throw new ManagedCodexStoreError("STORE_INVALID");
+      }
+      assertProjectionHistoryCoherent(privateProjection, history);
+    });
+    const semantics = buildManagedCodexSemanticProjection({
+      sourceRevision: projection.revision,
+      generatedAt: projection.generatedAt,
+      runs: projection.runs.map((run, index) => {
+        const history = histories[index];
+        if (!history) {
+          throw new ManagedCodexStoreError("STORE_INVALID");
+        }
+        return { run, history };
+      })
+    });
+    return { projection, histories, semantics };
   });
 }
 

@@ -4,11 +4,12 @@
 
 | 항목 | 값 |
 |---|---|
-| 상태 | Phase 2B.1 local beta |
+| 상태 | Phase 2B.2A local beta |
 | 기준일 | 2026-08-01 |
 | 시작 조건 | 사용자의 explicit Work Resumption 실행 |
 | transport | local loopback Codex App Server WebSocket + remote TUI |
 | public projection | `codex-managed-public-projection-v1` |
+| semantic projection | `codex-managed-semantic-projection-v0.1` |
 | retention | sanitized metadata 최대 30일, run별 최대 10,000 events |
 | Attention 사용 | 금지 |
 
@@ -29,20 +30,24 @@ explicit task↔Codex binding
 → Work Cockpit의 "Codex 실시간 진행"에서 별도 표시
 ```
 
-이 단계의 목적은 사용자가 여러 Codex 작업의 현재 상태를 눈으로 파악하게 하는
-것이다. 다음 기능은 포함하지 않는다.
+이 단계의 목적은 사용자가 여러 Codex 작업의 현재 상태와 직접 관찰된 실행
+timeline을 눈으로 파악하게 하는 것이다. Phase 2B.2A는 direct turn/managed-run
+사실을 해석하지만 다음 기능은 포함하지 않는다.
 
 - managed event를 Attention input, candidate, ranking, selection 또는 result
   resolution에 사용
-- progress, stall, scope drift, failure 후 개입 또는 완료 후 후속 작업 추천
+- task/outcome progress 확정, verified stall, scope drift, failure 후 개입 또는
+  완료 후 후속 작업 추천
 - prompt 자동 입력 또는 turn 자동 시작
 - 승인 요청의 자동 승인·거절
 - 사용자 입력 요청의 자동 답변
 - 실패한 Codex 작업의 자동 재실행·재시도
 - GitHub, Notion 또는 Calendar mutation
 
-향후 semantic detector가 managed event를 사용하려면 별도 schema/rule version,
-회귀 사례, privacy review와 Engine Change Record가 필요하다.
+direct-fact semantic 계약은
+`CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md`를 따른다. 이를 Attention 후보로
+승격하려면 별도 relation/evidence, schema/rule version, 회귀 사례, privacy
+review와 Engine Change Record가 다시 필요하다.
 
 ## 2. Live authority
 
@@ -235,7 +240,8 @@ review 없이 평가 dataset으로 승격하지 않는다.
 ## 6. Public API와 UI 계약
 
 local product는 `GET /api/managed-codex-runs`에서
-`codex-managed-public-projection-v1`만 반환한다.
+`codex-managed-public-projection-v1`과 별도
+`codex-managed-semantic-projection-v0.1`을 함께 반환한다.
 
 - local request만 허용하고 응답은 `Cache-Control: no-store`다.
 - current fresh Companion owner를 read 시점에 결합해 liveness를 계산한다.
@@ -245,6 +251,8 @@ local product는 `GET /api/managed-codex-runs`에서
   disconnect TOCTOU를 허용하지 않는다.
 - native thread ID, scope ID, connection generation, owner instance ID, cwd,
   event hash와 raw payload를 반환하지 않는다.
+- projection과 semantic result는 같은 authority lease/store lock snapshot에서
+  생성하고 revision, generated time와 public identity가 다르면 fail closed한다.
 - Work Cockpit은 visible 상태에서 기본 2초 polling하고 일시 실패 시 bounded
   backoff를 적용한다.
 - managed 실시간 진행은 historical Codex overview와 별도 empty/error state를
@@ -284,9 +292,18 @@ candidate derivation, eligibility, lane, ranking 또는 selection에 절대 결�
 - local loopback experimental WebSocket transport
 - metadata-only progress UI
 
-다음은 별도 Phase 2B semantic change다.
+Phase 2B.2A에서 추가된 관찰 전용 semantic 범위:
 
-- meaningful progress와 stall detector
+- direct turn started/completed/failed/interrupted timeline
+- managed launch failure와 Codex turn failure 분리
+- failure 뒤 newer turn이 있으면 현재 failure에서 억제하되 recovery로 표현하지 않음
+- task-level progress `unknown`, stall `not_evaluable`, request escalation
+  `unsupported`
+- bounded public timeline과 canonical input/output hash
+
+다음은 후속 Phase 2B/Phase 3 semantic change다.
+
+- artifact/outcome evidence를 사용한 meaningful progress와 verified stall
 - stable approval/input request lifecycle와 escalation threshold
 - failed execution intervention
 - configured workflow 기반 completion follow-through
@@ -313,6 +330,8 @@ candidate derivation, eligibility, lane, ranking 또는 selection에 절대 결�
   managed notification 뒤에만 current nonterminal state를 다시 표시함.
   terminal state는 마지막으로 검증된 turn 결과로만 보존함
 - managed projection이 Attention input, hash, ranking 또는 결과를 바꾸지 않음
+- semantic projection이 같은 revision의 verified history에서 생성되고 task
+  progress/stall/request를 근거 없이 확정하지 않음
 - transport, store, runtime, route, UI polling과 disconnect가 synthetic fixture로
   회귀 테스트됨
 
@@ -332,3 +351,23 @@ candidate derivation, eligibility, lane, ranking 또는 selection에 절대 결�
 실제 macOS Terminal launch와 native thread resume smoke는 활성 사용자 session을
 방해할 수 있어 실행하지 않았다. 이는 transport 실패가 아니라 별도의 manual
 beta verification 후속 항목이다.
+
+## 11. 2026-08-01 Phase 2B.2A 검증
+
+- managed semantic/store/route/client focused Vitest: `4` files/`31` tests 통과
+- detector evaluation Vitest: `5` tests 통과
+- 전체 Vitest: `53` files/`455` tests 통과
+- typecheck, lint와 production build 통과
+- Playwright Chromium E2E: 전체 `5` tests 통과. managed semantic UI `2` tests 포함
+- synthetic detector Dev Candidate: `18/18` exact match
+- latest-direct failure precision/recall: `1.0/1.0`
+- superseded failure leakage, gap stale-state leakage, systemError false failure,
+  unsupported stall/request emission: 모두 `0`
+- 기존 Cross-source Dev Candidate revision `2`, `30` cases와 SHA-256
+  `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  유지
+- `git diff --check` 통과
+
+formal Golden baseline은 실행하지 않았다. 새 detector dataset은 synthetic mutable
+Dev Candidate이고 semantic projection은 Attention input/result/hash/ranking과
+격리되어 있다.

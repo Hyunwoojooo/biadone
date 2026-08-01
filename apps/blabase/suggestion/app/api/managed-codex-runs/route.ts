@@ -6,7 +6,10 @@ import {
 } from "../../../src/attention/access";
 import {
   managedCodexPublicProjectionSchema,
-  readManagedCodexPublicProjection
+  managedCodexSemanticProjectionSchema,
+  readManagedCodexObservability,
+  type ManagedCodexPublicProjection,
+  type ManagedCodexSemanticProjection
 } from "../../../src/managedCodex";
 import { withManagedCodexAuthorityLease } from "../../../src/resumption";
 
@@ -35,20 +38,28 @@ export async function GET(request: Request) {
   const now = new Date();
   const cwd = process.cwd();
   try {
-    const projection = await withManagedCodexAuthorityLease(
+    const observability = await withManagedCodexAuthorityLease(
       cwd,
       now,
-      async (authority) =>
-        managedCodexPublicProjectionSchema.parse(
-          await readManagedCodexPublicProjection(
-            { ...authority, now },
-            cwd
-          )
-        )
+      async (authority) => {
+        const read = await readManagedCodexObservability(
+          { ...authority, now },
+          cwd
+        );
+        const projection = managedCodexPublicProjectionSchema.parse(
+          read.projection
+        );
+        const semantics = managedCodexSemanticProjectionSchema.parse(
+          read.semantics
+        );
+        assertObservabilityCoherent(projection, semantics);
+        return { projection, semantics };
+      }
     );
     return noStoreJson({
       status: "ready",
-      ...projection
+      ...observability.projection,
+      semantics: observability.semantics
     });
   } catch {
     return errorResponse(
@@ -56,6 +67,31 @@ export async function GET(request: Request) {
       "Codex 실시간 관찰 상태를 확인하지 못했습니다.",
       500
     );
+  }
+}
+
+function assertObservabilityCoherent(
+  projection: ManagedCodexPublicProjection,
+  semantics: ManagedCodexSemanticProjection
+): void {
+  if (
+    semantics.sourceRevision !== projection.revision ||
+    semantics.generatedAt !== projection.generatedAt ||
+    Object.keys(semantics.runs).length !== projection.runs.length
+  ) {
+    throw new TypeError("Managed Codex observability snapshots do not match.");
+  }
+  for (const run of projection.runs) {
+    const semantic = semantics.runs[run.managedRunId];
+    if (
+      !semantic ||
+      semantic.sourceRevision !== projection.revision ||
+      semantic.generatedAt !== projection.generatedAt ||
+      semantic.bindingId !== run.bindingId ||
+      semantic.executionId !== run.executionId
+    ) {
+      throw new TypeError("Managed Codex run semantics do not match.");
+    }
   }
 }
 

@@ -26,6 +26,8 @@ import {
   managedCodexLocalDirectory,
   managedCodexPublicProjectionSchema,
   managedCodexRunRegistrySchema,
+  managedCodexSemanticProjectionSchema,
+  readManagedCodexObservability,
   readManagedCodexPublicProjection,
   sealManagedCodexHistory,
   type ManagedCodexPublicRunProjection
@@ -100,6 +102,37 @@ describe("managed Codex private store", () => {
       "revision",
       "runs"
     ]);
+    const observability = await readManagedCodexObservability(
+      {
+        activeOwnerInstanceId: OWNER_ID,
+        activeOwnerships: [ACTIVE_OWNERSHIP],
+        now: T0
+      },
+      cwd
+    );
+    expect(
+      managedCodexSemanticProjectionSchema.parse(observability.semantics)
+    ).toEqual(observability.semantics);
+    expect(observability.projection.revision).toBe(
+      observability.semantics.sourceRevision
+    );
+    expect(observability.semantics.generatedAt).toBe(
+      observability.projection.generatedAt
+    );
+    expect(
+      observability.semantics.runs[run.managedRunId]
+    ).toMatchObject({
+      managedRunId: run.managedRunId,
+      detector: {
+        assessment: "observation_unavailable",
+        meaningfulProgress: "unknown",
+        stall: "not_evaluable",
+        attentionDisposition: "not_connected",
+        forbiddenAsAttentionCandidate: true
+      }
+    });
+    expect(JSON.stringify(observability.semantics)).not.toContain(SCOPE_ID);
+    expect(JSON.stringify(observability.semantics)).not.toContain(OWNER_ID);
     const ownerMissing = await readManagedCodexPublicProjection(
       {
         activeOwnerInstanceId: null,

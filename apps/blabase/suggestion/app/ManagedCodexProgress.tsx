@@ -9,6 +9,7 @@ import {
   type ManagedCodexItemType,
   type ManagedCodexPublicRun,
   type ManagedCodexRunsReadyResponse,
+  type ManagedCodexSemanticRunResult,
   type ManagedCodexSourceEvent,
   type ManagedCodexStreamState
 } from "./managedCodexRunsClient";
@@ -99,7 +100,11 @@ export function ManagedCodexProgress() {
             ) : null}
             <ul className="managedCodexRunList">
               {visibleRuns.map((run) => (
-                <ManagedCodexRunItem key={run.managedRunId} run={run} />
+                <ManagedCodexRunItem
+                  key={run.managedRunId}
+                  run={run}
+                  semantic={payload.semantics.runs[run.managedRunId]}
+                />
               ))}
             </ul>
             {payload.runs.length > MAX_VISIBLE_MANAGED_RUNS ? (
@@ -124,7 +129,13 @@ export function ManagedCodexProgress() {
   );
 }
 
-function ManagedCodexRunItem({ run }: { run: ManagedCodexPublicRun }) {
+function ManagedCodexRunItem({
+  run,
+  semantic
+}: {
+  run: ManagedCodexPublicRun;
+  semantic: ManagedCodexSemanticRunResult | undefined;
+}) {
   const tone = managedRunTone(run);
   const currentWaitingState =
     run.liveObservationAvailable &&
@@ -171,8 +182,117 @@ function ManagedCodexRunItem({ run }: { run: ManagedCodexPublicRun }) {
           <dd>{executionStateLabel(run.lastVerifiedExecutionState)}</dd>
         </div>
       </dl>
+      {semantic ? (
+        <ManagedCodexSemanticSummary semantic={semantic} />
+      ) : (
+        <p className="managedCodexSemanticUnavailable">
+          직접 이벤트 해석을 확인할 수 없습니다. 작업 진전은 판단 불가하며
+          정체도 평가하지 않습니다.
+        </p>
+      )}
     </li>
   );
+}
+
+function ManagedCodexSemanticSummary({
+  semantic
+}: {
+  semantic: ManagedCodexSemanticRunResult;
+}) {
+  const recentEvents = semantic.timeline.entries.slice(-8).reverse();
+  const hiddenEventCount = Math.max(
+    0,
+    semantic.timeline.totalEntryCount - recentEvents.length
+  );
+  const assessment =
+    semantic.detector.failureLifecycle ===
+    "latest_direct_managed_run_failure"
+      ? "관리 실행 실패가 직접 관찰됨"
+      : semanticAssessmentLabel(semantic.detector.assessment);
+
+  return (
+    <div className="managedCodexSemantic">
+      <div className="managedCodexSemanticStatus">
+        <span>
+          직접 이벤트 해석 <strong>{assessment}</strong>
+        </span>
+        <span>
+          작업 진전 <strong>판단 불가</strong>
+        </span>
+        <span>
+          정체 <strong>평가 불가</strong>
+        </span>
+      </div>
+      <p>
+        {semantic.window.historyCompleteness === "complete" &&
+        semantic.window.continuity === "continuous"
+          ? "보존된 이벤트 순서가 연속 검증되었습니다."
+          : "보존 이력이나 연속 근거가 부족해 현재 상태를 단정하지 않습니다."}{" "}
+        이 해석은 관찰 전용이며 Attention 추천 입력이 아닙니다.
+      </p>
+      <details className="managedCodexTimeline">
+        <summary>
+          최근 직접 관찰 타임라인 ({recentEvents.length}개)
+        </summary>
+        {hiddenEventCount > 0 ? (
+          <p>
+            앞선 {hiddenEventCount}개 이벤트는 이 목록에서 생략했습니다.
+          </p>
+        ) : null}
+        {recentEvents.length === 0 ? (
+          <p>아직 직접 관찰된 이벤트가 없습니다.</p>
+        ) : (
+          <ol>
+            {recentEvents.map((entry) => (
+              <li key={entry.entryId}>
+                <span>
+                  <span className="monoValue">
+                    #{entry.evidence.sequence}
+                  </span>{" "}
+                  {sourceEventLabel(
+                    entry.evidence.sourceEvent,
+                    entry.evidence.itemType
+                  )}
+                </span>
+                <time dateTime={entry.evidence.observedAt}>
+                  {formatTimestamp(entry.evidence.observedAt)}
+                </time>
+              </li>
+            ))}
+          </ol>
+        )}
+      </details>
+    </div>
+  );
+}
+
+function semanticAssessmentLabel(
+  assessment: ManagedCodexSemanticRunResult["detector"]["assessment"]
+): string {
+  switch (assessment) {
+    case "turn_running":
+      return "turn 진행 관찰됨";
+    case "activity_observed":
+      return "활동 관찰됨";
+    case "thread_idle":
+      return "현재 turn 없음";
+    case "turn_completed":
+      return "turn 완료 관찰됨";
+    case "turn_failed":
+      return "turn 실패 관찰됨";
+    case "turn_interrupted":
+      return "turn 중단 관찰됨";
+    case "managed_run_failed":
+      return "관리 실행 실패 관찰됨";
+    case "managed_run_closed":
+      return "관리 관찰 종료됨";
+    case "observation_gap":
+      return "이벤트 누락으로 평가 불가";
+    case "observation_unavailable":
+      return "실시간 관찰 불가";
+    default:
+      return "근거 부족";
+  }
 }
 
 function effectiveExecutionLabel(run: ManagedCodexPublicRun): string {

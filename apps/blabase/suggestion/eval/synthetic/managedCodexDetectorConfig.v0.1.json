@@ -1,0 +1,33 @@
+{
+  "version": "codex-managed-direct-event-detector-config-v0.1",
+  "purpose": "targeted_synthetic_detector_evaluation_only",
+  "inputBoundary": "managed_codex_event_history",
+  "orderingAuthority": "event_sequence",
+  "latestTurn": {
+    "acceptedEvents": ["turn_started", "turn_completed"],
+    "disconnectOrReconnectWithoutLiveState": "unknown",
+    "prefixPrunedHistory": "unknown"
+  },
+  "failure": {
+    "acceptedDirectEvents": ["turn_completed_failed", "run_failed"],
+    "newerTurnSupersedesTurnFailure": true,
+    "continuityBoundaryAfterFailure": "unknown",
+    "systemErrorIsExecutionFailure": false
+  },
+  "meaningfulProgress": {
+    "status": "unknown",
+    "reason": "task_and_outcome_evidence_missing"
+  },
+  "stall": {
+    "status": "not_evaluable",
+    "reason": "phase_heartbeat_outcome_evidence_missing"
+  },
+  "requestEscalation": {
+    "status": "unsupported",
+    "reason": "stable_request_lifecycle_missing"
+  },
+  "attention": {
+    "disposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  }
+}

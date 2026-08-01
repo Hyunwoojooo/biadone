@@ -13,7 +13,18 @@ describe("managed Codex runs client", () => {
       contract: "codex-managed-public-projection-v1" as const,
       revision: 3,
       generatedAt: "2026-08-01T00:00:00.000Z",
-      runs: []
+      runs: [],
+      semantics: {
+        contract: "codex-managed-semantic-projection-v0.1" as const,
+        schemaVersion: "codex-managed-semantic-schema-v0.1" as const,
+        ruleVersion: "codex-managed-direct-event-detector-v0.1" as const,
+        evidencePolicyVersion:
+          "codex-managed-direct-metadata-evidence-v0.1" as const,
+        sourceRevision: 3,
+        generatedAt: "2026-08-01T00:00:00.000Z",
+        runs: {},
+        projectionSha256: "e".repeat(64)
+      }
     };
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(projection), {

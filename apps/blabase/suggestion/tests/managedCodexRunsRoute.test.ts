@@ -12,7 +12,7 @@ vi.mock("../src/managedCodex", async (importOriginal) => {
     await importOriginal<typeof import("../src/managedCodex")>();
   return {
     ...actual,
-    readManagedCodexPublicProjection: vi.fn()
+    readManagedCodexObservability: vi.fn()
   };
 });
 
@@ -27,8 +27,11 @@ vi.mock("../src/resumption", async (importOriginal) => {
 
 import { GET as getManagedCodexRuns } from "../app/api/managed-codex-runs/route";
 import {
-  readManagedCodexPublicProjection,
-  type ManagedCodexPublicProjection
+  buildManagedCodexSemanticProjection,
+  createEmptyManagedCodexHistory,
+  readManagedCodexObservability,
+  type ManagedCodexPublicProjection,
+  type ManagedCodexSemanticProjection
 } from "../src/managedCodex";
 import { withManagedCodexAuthorityLease } from "../src/resumption";
 
@@ -50,8 +53,8 @@ beforeEach(() => {
         activeOwnerships: [ACTIVE_OWNERSHIP]
       })
   );
-  vi.mocked(readManagedCodexPublicProjection).mockResolvedValue(
-    publicProjection()
+  vi.mocked(readManagedCodexObservability).mockResolvedValue(
+    observability()
   );
 });
 
@@ -70,7 +73,8 @@ describe("managed Codex runs route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({
       status: "ready",
-      ...publicProjection()
+      ...publicProjection(),
+      semantics: semanticProjection()
     });
   });
 
@@ -89,7 +93,7 @@ describe("managed Codex runs route", () => {
     expect(remote.status).toBe(404);
     expect(remote.headers.get("cache-control")).toBe("no-store");
     expect(withManagedCodexAuthorityLease).not.toHaveBeenCalled();
-    expect(readManagedCodexPublicProjection).not.toHaveBeenCalled();
+    expect(readManagedCodexObservability).not.toHaveBeenCalled();
   });
 
   it("passes the same read time and fresh Companion owner into the projection", async () => {
@@ -105,7 +109,7 @@ describe("managed Codex runs route", () => {
     const readAt = authorityCall?.[1];
     expect(authorityCall?.[0]).toBe(process.cwd());
     expect(readAt).toBeInstanceOf(Date);
-    expect(readManagedCodexPublicProjection).toHaveBeenCalledWith(
+    expect(readManagedCodexObservability).toHaveBeenCalledWith(
       {
         activeOwnerInstanceId: OWNER_INSTANCE_ID,
         activeOwnerships: [ACTIVE_OWNERSHIP],
@@ -127,6 +131,7 @@ describe("managed Codex runs route", () => {
       "generatedAt",
       "revision",
       "runs",
+      "semantics",
       "status"
     ]);
     expect(Object.keys(payload.runs[0]).sort()).toEqual([
@@ -159,10 +164,38 @@ describe("managed Codex runs route", () => {
       expect(payload.runs[0]).not.toHaveProperty(forbidden);
     }
     expect(serialized).not.toContain(RAW_SENTINEL);
+    expect(Object.keys(payload.semantics).sort()).toEqual([
+      "contract",
+      "evidencePolicyVersion",
+      "generatedAt",
+      "projectionSha256",
+      "ruleVersion",
+      "runs",
+      "schemaVersion",
+      "sourceRevision"
+    ]);
+    expect(Object.keys(payload.semantics.runs[MANAGED_RUN_ID])).not.toContain(
+      "ownerInstanceId"
+    );
+    for (const forbidden of [
+      "ownerInstanceId",
+      "scopeId",
+      "connectionGeneration",
+      "streamGeneration",
+      "nativeThreadId",
+      "previousEventSha256",
+      "eventSha256",
+      "rawPayload",
+      "prompt",
+      "answer",
+      "output"
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
   it("sanitizes store failures without returning their original details", async () => {
-    vi.mocked(readManagedCodexPublicProjection).mockRejectedValueOnce(
+    vi.mocked(readManagedCodexObservability).mockRejectedValueOnce(
       new Error(`${RAW_SENTINEL}: /private/path native-thread-id`)
     );
 
@@ -183,9 +216,45 @@ describe("managed Codex runs route", () => {
   });
 
   it("fails closed when a projection attempts to add a private field", async () => {
-    vi.mocked(readManagedCodexPublicProjection).mockResolvedValueOnce({
-      ...publicProjection(),
-      nativeThreadId: RAW_SENTINEL
+    vi.mocked(readManagedCodexObservability).mockResolvedValueOnce({
+      ...observability(),
+      projection: {
+        ...publicProjection(),
+        nativeThreadId: RAW_SENTINEL
+      }
+    } as never);
+
+    const response = await getManagedCodexRuns(
+      new Request("http://localhost:3102/api/managed-codex-runs")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(payload)).not.toContain(RAW_SENTINEL);
+  });
+
+  it("fails closed when the semantic source revision is from another snapshot", async () => {
+    vi.mocked(readManagedCodexObservability).mockResolvedValueOnce({
+      projection: publicProjection(),
+      semantics: semanticProjection(2)
+    });
+
+    const response = await getManagedCodexRuns(
+      new Request("http://localhost:3102/api/managed-codex-runs")
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(payload.code).toBe("MANAGED_CODEX_RUNS_READ_FAILED");
+  });
+
+  it("fails closed when semantics attempt to add a private field", async () => {
+    vi.mocked(readManagedCodexObservability).mockResolvedValueOnce({
+      projection: publicProjection(),
+      semantics: {
+        ...semanticProjection(),
+        ownerInstanceId: RAW_SENTINEL
+      }
     } as never);
 
     const response = await getManagedCodexRuns(
@@ -198,6 +267,15 @@ describe("managed Codex runs route", () => {
   });
 });
 
+const MANAGED_RUN_ID = `managed_run_${"1".repeat(32)}`;
+
+function observability() {
+  return {
+    projection: publicProjection(),
+    semantics: semanticProjection()
+  };
+}
+
 function publicProjection(): ManagedCodexPublicProjection {
   return {
     contract: "codex-managed-public-projection-v1",
@@ -205,7 +283,7 @@ function publicProjection(): ManagedCodexPublicProjection {
     generatedAt: "2026-08-01T03:00:00.000Z",
     runs: [
       {
-        managedRunId: `managed_run_${"1".repeat(32)}`,
+        managedRunId: MANAGED_RUN_ID,
         bindingId: `binding_${"2".repeat(32)}`,
         executionId: `codex:execution:${"3".repeat(24)}`,
         lifecycle: "observing",
@@ -222,4 +300,24 @@ function publicProjection(): ManagedCodexPublicProjection {
       }
     ]
   };
+}
+
+function semanticProjection(
+  sourceRevision = 3
+): ManagedCodexSemanticProjection {
+  const run = publicProjection().runs[0];
+  if (!run) throw new Error("Managed Codex route fixture run is missing.");
+  return buildManagedCodexSemanticProjection({
+    sourceRevision,
+    generatedAt: "2026-08-01T03:00:00.000Z",
+    runs: [
+      {
+        run,
+        history: createEmptyManagedCodexHistory({
+          managedRunId: run.managedRunId,
+          updatedAt: "2026-08-01T03:00:00.000Z"
+        })
+      }
+    ]
+  });
 }

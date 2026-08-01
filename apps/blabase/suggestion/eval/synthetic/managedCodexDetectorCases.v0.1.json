@@ -1,0 +1,734 @@
+{
+  "contract": "codex-managed-detector-evaluation-dataset-v0.1",
+  "schemaVersion": "codex-managed-detector-case-v0.1",
+  "datasetVersion": "suggestion-codex-detector-dev-v0.1",
+  "datasetRevision": 1,
+  "datasetClass": "dev_candidate",
+  "inputBoundary": "managed_codex_event_history",
+  "dataOrigin": "synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-01T00:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "detectorConfig": {
+    "immutableRef": "eval/synthetic/managedCodexDetectorConfig.v0.1.json",
+    "version": "codex-managed-direct-event-detector-config-v0.1",
+    "sha256": "70df024c080ee8b7407273bd7005e2b5ebed9f8cf0c97994b0cf6a28dbeb47a7"
+  },
+  "fixtureIdentity": {
+    "managedRunId": "managed_run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bindingId": "binding_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "executionId": "codex:execution:cccccccccccccccccccccccc",
+    "ownerInstanceId": "instance_dddddddddddddddddddddddddddddddd",
+    "streamGeneration1": "stream_11111111111111111111111111111111",
+    "streamGeneration2": "stream_22222222222222222222222222222222",
+    "retentionAt": "2026-08-31T00:00:00.000Z"
+  },
+  "expectedInvariantSemantics": {
+    "contract": "codex-managed-semantic-detector-result-v0.1",
+    "ruleVersion": "codex-managed-direct-event-detector-v0.1",
+    "evidencePolicyVersion": "codex-managed-direct-metadata-evidence-v0.1",
+    "meaningfulProgress": "unknown",
+    "meaningfulProgressReason": "TASK_OUTCOME_EVIDENCE_MISSING",
+    "stall": "not_evaluable",
+    "stallReason": "STALL_PHASE_HEARTBEAT_OUTCOME_EVIDENCE_MISSING",
+    "requestEscalation": "unsupported",
+    "requestEscalationReason": "STABLE_REQUEST_LIFECYCLE_MISSING",
+    "attentionDisposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "cases": [
+    {
+      "caseId": "MCD-DEV-001",
+      "title": "completed turn remains a direct terminal observation",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "item_completed", "itemType": "file_change", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "turn_completed", "status": "completed", "at": "2026-08-01T00:00:03.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "completed",
+        "lastVerifiedExecutionState": "completed",
+        "waitingState": null,
+        "sourceEvent": "turn_completed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:03.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_completed",
+        "latestTurnState": "completed",
+        "latestTurnEvidence": {
+          "sequence": 3,
+          "observedAt": "2026-08-01T00:00:03.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "completed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_COMPLETED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["completed", "direct_terminal"]
+    },
+    {
+      "caseId": "MCD-DEV-002",
+      "title": "latest failed turn remains active failure evidence",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "failed", "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "failed",
+        "lastVerifiedExecutionState": "failed",
+        "waitingState": null,
+        "sourceEvent": "turn_completed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_failed",
+        "latestTurnState": "failed",
+        "latestTurnEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "failed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_FAILED"
+        },
+        "failureLifecycle": "latest_direct_turn_failure",
+        "failureEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "failed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_FAILED"
+        }
+      },
+      "labels": ["latest_failure", "active_failure_positive"]
+    },
+    {
+      "caseId": "MCD-DEV-003",
+      "title": "successful turn supersedes an earlier failure",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "failed", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:03.000Z" },
+        { "type": "turn_completed", "status": "completed", "at": "2026-08-01T00:00:04.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "completed",
+        "lastVerifiedExecutionState": "completed",
+        "waitingState": null,
+        "sourceEvent": "turn_completed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:04.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_completed",
+        "latestTurnState": "completed",
+        "latestTurnEvidence": {
+          "sequence": 4,
+          "observedAt": "2026-08-01T00:00:04.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "completed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_COMPLETED"
+        },
+        "failureLifecycle": "superseded_by_newer_turn",
+        "failureEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "failed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_FAILED"
+        }
+      },
+      "labels": ["failure_superseded", "completed"]
+    },
+    {
+      "caseId": "MCD-DEV-004",
+      "title": "a new running turn supersedes an earlier failed turn",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "failed", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:03.000Z" },
+        { "type": "item_started", "itemType": "command_execution", "at": "2026-08-01T00:00:04.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "item_started",
+        "itemType": "command_execution",
+        "lastObservedAt": "2026-08-01T00:00:04.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 3,
+          "observedAt": "2026-08-01T00:00:03.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "superseded_by_newer_turn",
+        "failureEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "failed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_FAILED"
+        }
+      },
+      "labels": ["failure_superseded", "running"]
+    },
+    {
+      "caseId": "MCD-DEV-005",
+      "title": "interrupted turn stays distinct from failure",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "interrupted", "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "interrupted",
+        "lastVerifiedExecutionState": "interrupted",
+        "waitingState": null,
+        "sourceEvent": "turn_completed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_interrupted",
+        "latestTurnState": "interrupted",
+        "latestTurnEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "interrupted",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_INTERRUPTED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["interrupted", "false_failure_guard"]
+    },
+    {
+      "caseId": "MCD-DEV-006",
+      "title": "disconnect invalidates a nonterminal running claim",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "stream_disconnected", "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "disconnected",
+        "continuity": "gap_detected",
+        "effectiveExecutionState": "unknown",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "stream_disconnected",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": false
+      },
+      "expected": {
+        "assessment": "observation_unavailable",
+        "latestTurnState": "unknown",
+        "latestTurnEvidence": {
+          "sequence": 1,
+          "observedAt": "2026-08-01T00:00:01.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "unknown",
+        "failureEvidence": null
+      },
+      "labels": ["gap", "stale_state_guard"]
+    },
+    {
+      "caseId": "MCD-DEV-007",
+      "title": "reconnect alone does not restore stale running state",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "stream_disconnected", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "stream_reconnected", "stream": 2, "at": "2026-08-01T00:00:03.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "gap_detected",
+        "effectiveExecutionState": "unknown",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "stream_reconnected",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:03.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "observation_gap",
+        "latestTurnState": "unknown",
+        "latestTurnEvidence": {
+          "sequence": 1,
+          "observedAt": "2026-08-01T00:00:01.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "unknown",
+        "failureEvidence": null
+      },
+      "labels": ["gap", "reconnected_without_native_evidence", "stale_state_guard"]
+    },
+    {
+      "caseId": "MCD-DEV-008",
+      "title": "fresh native turn evidence after reconnect restores running",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "stream_disconnected", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "stream_reconnected", "stream": 2, "at": "2026-08-01T00:00:03.000Z" },
+        { "type": "turn_started", "stream": 2, "at": "2026-08-01T00:00:04.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "gap_detected",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "turn_started",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:04.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 4,
+          "observedAt": "2026-08-01T00:00:04.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "unknown",
+        "failureEvidence": null
+      },
+      "labels": ["gap_recovered", "running"]
+    },
+    {
+      "caseId": "MCD-DEV-009",
+      "title": "thread systemError never becomes execution failure",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "thread_system_error", "at": "2026-08-01T00:00:01.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "unknown",
+        "lastVerifiedExecutionState": "unknown",
+        "waitingState": null,
+        "sourceEvent": "thread_status_changed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:01.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "insufficient_evidence",
+        "latestTurnState": "not_observed",
+        "latestTurnEvidence": null,
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["system_error", "false_failure_guard"]
+    },
+    {
+      "caseId": "MCD-DEV-010",
+      "title": "normal run close preserves a directly completed turn",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "completed", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "run_closed", "at": "2026-08-01T00:00:03.000Z" }
+      ],
+      "run": {
+        "lifecycle": "ended",
+        "streamState": "closed",
+        "continuity": "continuous",
+        "effectiveExecutionState": "completed",
+        "lastVerifiedExecutionState": "completed",
+        "waitingState": null,
+        "sourceEvent": "run_closed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:03.000Z",
+        "liveObservationAvailable": false
+      },
+      "expected": {
+        "assessment": "managed_run_closed",
+        "latestTurnState": "completed",
+        "latestTurnEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "turn_completed",
+          "executionState": "completed",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_COMPLETED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["run_closed", "completed"]
+    },
+    {
+      "caseId": "MCD-DEV-011",
+      "title": "managed run failure is distinct direct failure evidence",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "run_failed", "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "failed",
+        "streamState": "closed",
+        "continuity": "continuous",
+        "effectiveExecutionState": "unknown",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "run_failed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": false
+      },
+      "expected": {
+        "assessment": "managed_run_failed",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 1,
+          "observedAt": "2026-08-01T00:00:01.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "latest_direct_managed_run_failure",
+        "failureEvidence": {
+          "sequence": 2,
+          "observedAt": "2026-08-01T00:00:02.000Z",
+          "sourceEvent": "run_failed",
+          "executionState": null,
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_RUN_FAILED"
+        }
+      },
+      "labels": ["run_failed", "active_failure_positive"]
+    },
+    {
+      "caseId": "MCD-DEV-012",
+      "title": "transient approval waiting flag resolves without escalation",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "thread_active", "waitingState": "waiting_on_approval", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "thread_active", "waitingState": null, "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "thread_status_changed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "not_observed",
+        "latestTurnEvidence": null,
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["transient_waiting", "request_escalation_unsupported"]
+    },
+    {
+      "caseId": "MCD-DEV-013",
+      "title": "long waiting flag lacks a stable request lifecycle",
+      "generatedAt": "2026-08-01T02:00:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "thread_active", "waitingState": "waiting_on_user_input", "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": "waiting_on_user_input",
+        "sourceEvent": "thread_status_changed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 1,
+          "observedAt": "2026-08-01T00:00:01.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["long_waiting", "request_escalation_unsupported", "stall_unsupported"]
+    },
+    {
+      "caseId": "MCD-DEV-014",
+      "title": "non-result items remain activity only",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "item_started", "itemType": "reasoning", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "item_completed", "itemType": "agent_message", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "item_completed", "itemType": "context_compaction", "at": "2026-08-01T00:00:03.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "item_completed",
+        "itemType": "context_compaction",
+        "lastObservedAt": "2026-08-01T00:00:03.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "not_observed",
+        "latestTurnEvidence": null,
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["activity_only", "meaningful_progress_unknown"]
+    },
+    {
+      "caseId": "MCD-DEV-015",
+      "title": "wall clock regression is diagnosed without reordering sequence",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "turn_started",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:01.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 1,
+          "observedAt": "2026-08-01T00:00:01.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["clock_regression", "ordered_sequence"]
+    },
+    {
+      "caseId": "MCD-DEV-016",
+      "title": "retention anchor exposes an incomplete history prefix",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "anchor": {
+        "prunedThroughSequence": 9,
+        "prunedThroughEventSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "anchoredAt": "2026-08-01T00:00:00.000Z"
+      },
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "thread_active", "waitingState": null, "at": "2026-08-01T00:00:02.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "thread_status_changed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:02.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "insufficient_evidence",
+        "latestTurnState": "unknown",
+        "latestTurnEvidence": null,
+        "failureLifecycle": "unknown",
+        "failureEvidence": null
+      },
+      "labels": ["history_anchor", "incomplete_prefix"]
+    },
+    {
+      "caseId": "MCD-DEV-017",
+      "title": "a later turn start supersedes a completed turn",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:01.000Z" },
+        { "type": "turn_completed", "status": "completed", "at": "2026-08-01T00:00:02.000Z" },
+        { "type": "turn_started", "at": "2026-08-01T00:00:03.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "running",
+        "lastVerifiedExecutionState": "running",
+        "waitingState": null,
+        "sourceEvent": "turn_started",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:03.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "turn_running",
+        "latestTurnState": "running",
+        "latestTurnEvidence": {
+          "sequence": 3,
+          "observedAt": "2026-08-01T00:00:03.000Z",
+          "sourceEvent": "turn_started",
+          "executionState": "running",
+          "waitingState": null,
+          "itemType": null,
+          "reasonCode": "CODEX_MANAGED_TURN_STARTED"
+        },
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["completion_superseded", "running"]
+    },
+    {
+      "caseId": "MCD-DEV-018",
+      "title": "thread status alone never fabricates a turn",
+      "generatedAt": "2026-08-01T00:10:00.000Z",
+      "events": [
+        { "type": "stream_connected", "at": "2026-08-01T00:00:00.000Z" },
+        { "type": "thread_idle", "at": "2026-08-01T00:00:01.000Z" }
+      ],
+      "run": {
+        "lifecycle": "observing",
+        "streamState": "connected",
+        "continuity": "continuous",
+        "effectiveExecutionState": "idle",
+        "lastVerifiedExecutionState": "idle",
+        "waitingState": null,
+        "sourceEvent": "thread_status_changed",
+        "itemType": null,
+        "lastObservedAt": "2026-08-01T00:00:01.000Z",
+        "liveObservationAvailable": true
+      },
+      "expected": {
+        "assessment": "thread_idle",
+        "latestTurnState": "not_observed",
+        "latestTurnEvidence": null,
+        "failureLifecycle": "not_observed_in_retained_window",
+        "failureEvidence": null
+      },
+      "labels": ["idle", "no_turn"]
+    }
+  ]
+}

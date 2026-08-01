@@ -2,8 +2,18 @@ import { expect, test } from "@playwright/test";
 
 import type {
   ManagedCodexPublicRun,
-  ManagedCodexRunsReadyResponse
+  ManagedCodexRunsReadyResponse,
+  ManagedCodexSemanticProjection
 } from "../app/managedCodexRunsClient";
+import {
+  buildManagedCodexSemanticProjection,
+  CODEX_MANAGED_EVENT_HISTORY_CONTRACT,
+  createEmptyManagedCodexHistory,
+  createManagedCodexEvent,
+  sealManagedCodexHistory,
+  type ManagedCodexEventHistory
+} from "../src/managedCodex";
+import { observeCodexManagedNotification } from "../src/connectors/codex/observationContract";
 
 const OBSERVED_AT = "2026-08-01T03:00:00.000Z";
 
@@ -44,6 +54,19 @@ test("shows managed progress without refreshing the Attention decision", async (
   ).toBeVisible();
   await expect(progress.locator(".managedCodexRunState")).toContainText(
     "진행 중"
+  );
+  await expect(progress.locator(".managedCodexSemanticStatus")).toContainText(
+    "직접 이벤트 해석 turn 진행 관찰됨"
+  );
+  await expect(progress.locator(".managedCodexSemanticStatus")).toContainText(
+    "작업 진전 판단 불가"
+  );
+  await expect(progress.locator(".managedCodexSemanticStatus")).toContainText(
+    "정체 평가 불가"
+  );
+  await progress.getByText("최근 직접 관찰 타임라인 (1개)").click();
+  await expect(progress.locator(".managedCodexTimeline")).toContainText(
+    "명령 실행 시작"
   );
 
   await page.waitForTimeout(400);
@@ -110,7 +133,8 @@ test("distinguishes an empty managed view from historical Codex context", async 
         contract: "codex-managed-public-projection-v1",
         revision: 0,
         generatedAt: OBSERVED_AT,
-        runs: []
+        runs: [],
+        semantics: emptySemanticProjection(0)
       } satisfies ManagedCodexRunsReadyResponse)
     });
   });
@@ -131,36 +155,128 @@ test("distinguishes an empty managed view from historical Codex context", async 
 function projection(
   override: Partial<ManagedCodexPublicRun> = {}
 ): ManagedCodexRunsReadyResponse {
+  const revision =
+    override.sourceEvent === "turn_started"
+      ? 4
+      : override.sourceEvent === "stream_reconnected"
+        ? 3
+        : override.streamState === "disconnected"
+          ? 2
+          : 1;
+  const run: ManagedCodexPublicRun = {
+    managedRunId: `managed_run_${"a".repeat(32)}`,
+    bindingId: `binding_${"b".repeat(32)}`,
+    executionId: `codex:execution:${"c".repeat(24)}`,
+    lifecycle: "observing",
+    streamState: "connected",
+    continuity: "continuous",
+    effectiveExecutionState: "running",
+    lastVerifiedExecutionState: "running",
+    waitingState: null,
+    sourceEvent: "item_started",
+    itemType: "command_execution",
+    lastObservedAt: OBSERVED_AT,
+    liveObservationAvailable: true,
+    forbiddenAsAttentionCandidate: true,
+    ...override
+  };
   return {
     status: "ready",
     contract: "codex-managed-public-projection-v1",
-    revision:
-      override.sourceEvent === "turn_started"
-        ? 4
-        : override.sourceEvent === "stream_reconnected"
-          ? 3
-          : override.streamState === "disconnected"
-            ? 2
-            : 1,
+    revision,
+    generatedAt: OBSERVED_AT,
+    runs: [run],
+    semantics: semanticProjection(run, revision)
+  };
+}
+
+function emptySemanticProjection(
+  sourceRevision: number
+): ManagedCodexSemanticProjection {
+  return buildManagedCodexSemanticProjection({
+    sourceRevision,
+    generatedAt: OBSERVED_AT,
+    runs: []
+  });
+}
+
+function semanticProjection(
+  run: ManagedCodexPublicRun,
+  sourceRevision: number
+): ManagedCodexSemanticProjection {
+  return buildManagedCodexSemanticProjection({
+    sourceRevision,
     generatedAt: OBSERVED_AT,
     runs: [
       {
-        managedRunId: `managed_run_${"a".repeat(32)}`,
-        bindingId: `binding_${"b".repeat(32)}`,
-        executionId: `codex:execution:${"c".repeat(24)}`,
-        lifecycle: "observing",
-        streamState: "connected",
-        continuity: "continuous",
-        effectiveExecutionState: "running",
-        lastVerifiedExecutionState: "running",
-        waitingState: null,
-        sourceEvent: "item_started",
-        itemType: "command_execution",
-        lastObservedAt: OBSERVED_AT,
-        liveObservationAvailable: true,
-        forbiddenAsAttentionCandidate: true,
-        ...override
+        run,
+        history: semanticHistory(run)
       }
     ]
-  };
+  });
+}
+
+function semanticHistory(
+  run: ManagedCodexPublicRun
+): ManagedCodexEventHistory {
+  const native =
+    run.sourceEvent === "item_started" ||
+    run.sourceEvent === "turn_started";
+  const observation = native
+    ? observeCodexManagedNotification({
+        notification:
+          run.sourceEvent === "turn_started"
+            ? {
+                method: "turn/started",
+                params: {
+                  threadId: "synthetic-thread",
+                  turn: { id: "synthetic-turn", status: "inProgress" }
+                }
+              }
+            : {
+                method: "item/started",
+                params: {
+                  threadId: "synthetic-thread",
+                  turnId: "synthetic-turn",
+                  item: {
+                    id: "synthetic-item",
+                    type: "commandExecution"
+                  }
+                }
+              },
+        executionId: run.executionId.slice(
+          "codex:execution:".length
+        ),
+        expectedThreadId: "synthetic-thread",
+        observedAt: OBSERVED_AT,
+        sequence: 0
+      })
+    : null;
+  const event = createManagedCodexEvent({
+    managedRunId: run.managedRunId,
+    sequence: 0,
+    ownerInstanceId: `instance_${"d".repeat(32)}`,
+    streamGeneration: `stream_${"e".repeat(32)}`,
+    observedAt: OBSERVED_AT,
+    retentionAt: OBSERVED_AT,
+    kind: native ? "native_notification" : "stream_lifecycle",
+    streamKind:
+      run.sourceEvent === "stream_disconnected" ||
+      run.sourceEvent === "stream_reconnected"
+        ? run.sourceEvent
+        : null,
+    observation,
+    itemType:
+      run.sourceEvent === "item_started"
+        ? "command_execution"
+        : null,
+    previousEventSha256: null
+  });
+  return sealManagedCodexHistory({
+    contract: CODEX_MANAGED_EVENT_HISTORY_CONTRACT,
+    managedRunId: run.managedRunId,
+    updatedAt: OBSERVED_AT,
+    anchor: null,
+    events: [event]
+  });
 }

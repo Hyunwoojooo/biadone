@@ -19,8 +19,9 @@
 | Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
 | Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
 | Managed Codex 계약 | `suggestion/docs/MANAGED_CODEX_RUN_CONTRACT.md` |
+| Managed semantic 계약 | `suggestion/docs/CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption과 Phase 2B.1 managed observability local beta 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability와 Phase 2B.2A direct-fact semantic timeline local beta 완료 |
 
 ---
 
@@ -2720,6 +2721,16 @@ provisional 후보가 하나라도 있으면 질문으로 멈추지 않고 best-
   unbind/generation 변경을 감지하면 best-effort `run_closed` 뒤 session 종료
 - 모든 managed projection을 Attention에서 금지
 - 세부 authority·privacy·상태 계약은 `MANAGED_CODEX_RUN_CONTRACT.md`를 따른다.
+- `[Phase 2B.2A]` 같은 atomic read의 verified managed history로 sanitized
+  direct-fact semantic timeline과 detector projection 생성
+- turn completed/failed/interrupted와 managed run failure를 분리하고, 실패 뒤
+  새 turn은 현재 failure에서 억제하되 recovery로 표현하지 않음
+- task-level meaningful progress는 `unknown`, stall은 `not_evaluable`, stable
+  request escalation은 `unsupported`로 fail closed
+- Work Cockpit에 direct event 해석과 bounded timeline을 표시하되 모든 semantic
+  result는 Attention과 분리
+- 세부 의미·평가 계약은
+  `CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md`를 따른다.
 
 2026-08-01 local beta gate는 focused Vitest `6` files/`76` tests, 전체 Vitest
 `51` files/`438` tests, Playwright Chromium E2E `5` tests(그중 managed UI `2`),
@@ -2729,10 +2740,20 @@ v0.1 revision 2, 30 cases와 기존 SHA-256을 유지했다. 실제 Terminal lau
 native thread resume smoke만 활성 사용자 session 간섭 방지를 위해 수동 후속
 검증으로 남긴다.
 
+2026-08-01 Phase 2B.2A gate는 managed semantic/store/route/client focused
+Vitest `4` files/`31` tests, detector evaluation `5` tests, 전체 Vitest `53`
+files/`455` tests, typecheck/lint/production build와 Playwright Chromium E2E
+`5` tests를 통과했다. 별도 synthetic detector Dev Candidate `18` cases는 exact
+match `18/18`, latest-direct failure precision/recall `1.0/1.0`, 모든
+failure/gap/systemError/unsupported-emission guardrail `0`을 기록했다. 기존
+Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변경하지
+않았다.
+
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
-- 충분한 ordered history를 사용한 의미 있는 진전, 정체, 실패 판정 규칙
+- artifact/outcome/phase evidence를 사용한 의미 있는 진전과 verified 정체 규칙
+- direct failure를 material work와 연결해 개입 여부를 판단하는 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
 - Codex safe destination과 explicit GitHub/workflow relation
@@ -2747,7 +2768,7 @@ native thread resume smoke만 활성 사용자 session 간섭 방지를 위해 �
 - explicit binding이 없는 task를 유사한 Codex title/path에 자동 연결하지 않음
 - native Codex thread ID, local cwd와 shell command를 API·queue·history에
   저장하지 않음
-- Phase 2B.1 관찰 결과가 semantic version과 회귀 gate 없이 Attention input,
+- Phase 2B.1/2B.2A 관찰 결과가 relation/evidence와 추가 회귀 gate 없이 Attention input,
   hash 또는 ranking으로 승격되지 않음
 
 ### Phase 3 — Project mapping, lineage, conflict
@@ -3164,9 +3185,10 @@ native thread resume smoke만 활성 사용자 session 간섭 방지를 위해 �
     safe `focus_or_resume` destination과 Work Cockpit 재개 UI 작성
 19. `[Phase 2B.1 완료]` blabase-owned loopback App Server manager, remote TUI,
     managed event persistence와 관찰 전용 Work Cockpit UI 작성
-20. `[Phase 2B]` Codex semantic progress/exception timeline과
-    meaningful-progress detector 작성
-21. `[Phase 2B]` stall/failure/follow-through/scope-drift detector 작성
+20. `[Phase 2B.2A 완료]` managed Codex direct-fact semantic timeline과
+    task-level meaningful-progress `unknown` gate 작성
+21. `[Phase 2B.2A 일부 완료]` direct turn/managed-run failure lifecycle 작성.
+    verified stall/follow-through/scope-drift detector는 richer evidence 뒤 진행
 22. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
 23. native/explicit-link identity resolver와 execution-work 관계 작성
 24. claim authority resolver 작성

@@ -19,6 +19,30 @@ export const RUNTIME_SNAPSHOT_WINDOW_CONTRACT =
 export const CODEX_NATIVE_OBSERVATION_TIMELINE_CONTRACT =
   "codex-native-observation-timeline-v0.2" as const;
 
+export const CODEX_MANAGED_SEMANTIC_WINDOW_CONTRACT =
+  "codex-managed-semantic-window-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT =
+  "codex-managed-semantic-timeline-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_DETECTOR_RESULT_CONTRACT =
+  "codex-managed-semantic-detector-result-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_RUN_RESULT_CONTRACT =
+  "codex-managed-semantic-run-result-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_PROJECTION_CONTRACT =
+  "codex-managed-semantic-projection-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_SCHEMA_VERSION =
+  "codex-managed-semantic-schema-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_RULE_VERSION =
+  "codex-managed-direct-event-detector-v0.1" as const;
+
+export const CODEX_MANAGED_SEMANTIC_EVIDENCE_POLICY_VERSION =
+  "codex-managed-direct-metadata-evidence-v0.1" as const;
+
 export const SNAPSHOT_VALIDITY_POLICY_VERSION =
   "snapshot-validity-policy-v0.2" as const;
 

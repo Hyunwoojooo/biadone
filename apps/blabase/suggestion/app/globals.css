@@ -1960,6 +1960,88 @@ summary {
   text-align: right;
 }
 
+.managedCodexSemantic,
+.managedCodexSemanticUnavailable {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.managedCodexSemanticStatus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.managedCodexSemanticStatus > span {
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: rgb(240 246 242 / 78%);
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.managedCodexSemanticStatus strong {
+  margin-left: 3px;
+  color: var(--text);
+  font-weight: 780;
+}
+
+.managedCodexSemantic > p,
+.managedCodexSemanticUnavailable,
+.managedCodexTimeline > p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.managedCodexSemantic > p {
+  margin: 7px 0 0;
+}
+
+.managedCodexTimeline {
+  margin-top: 8px;
+}
+
+.managedCodexTimeline summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.managedCodexTimeline > p {
+  margin: 7px 0 0;
+}
+
+.managedCodexTimeline ol {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.managedCodexTimeline li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: rgb(245 247 245 / 84%);
+  color: var(--text);
+  font-size: 10px;
+}
+
+.managedCodexTimeline time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .managedCodexEmpty,
 .managedCodexNotice,
 .managedCodexRemainder,

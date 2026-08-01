@@ -16,6 +16,7 @@
     "check:managed-codex-transport": "vite-node tools/check-managed-codex-transport.ts",
     "companion:work-resumption": "vite-node tools/work-resumption-companion.ts",
     "cross-source:dev-hash": "vite-node tools/print-cross-source-dev-hash.ts",
+    "managed-codex:detector-baseline": "vite-node tools/run-managed-codex-detector-baseline.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern '.next/**' --ignore-pattern '.next-dev/**' --ignore-pattern '.next-build/**'",
     "test": "vitest run",
