@@ -1960,6 +1960,92 @@ summary {
   text-align: right;
 }
 
+.managedCodexRelation,
+.managedCodexRelationUnavailable {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid rgb(39 103 73 / 12%);
+  border-radius: 9px;
+  background: rgb(240 246 242 / 62%);
+}
+
+.managedCodexRelationHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.managedCodexRelationHeader > span:first-child {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.managedCodexRelationBadge {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #dceee2;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.managedCodexRelationBadge.isWarning {
+  background: #f7ecd8;
+  color: #85581f;
+}
+
+.managedCodexRelationBadge.isError {
+  background: rgb(173 63 50 / 12%);
+  color: var(--error);
+}
+
+.managedCodexRelationTarget {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
+.managedCodexRelationTarget a,
+.managedCodexRelationTarget strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.managedCodexRelationTarget a {
+  color: var(--accent);
+}
+
+.managedCodexRelationTarget span,
+.managedCodexRelation > p,
+.managedCodexRelationUnavailable {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.managedCodexRelation > p {
+  margin: 5px 0 0;
+}
+
+.managedCodexRelation > p.isWarning {
+  color: #85581f;
+}
+
+.managedCodexRelation > p.isError {
+  color: var(--error);
+  font-weight: 680;
+}
+
 .managedCodexSemantic,
 .managedCodexSemanticUnavailable {
   grid-column: 1 / -1;

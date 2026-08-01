@@ -301,13 +301,26 @@ Phase 2B.2A에서 추가된 관찰 전용 semantic 범위:
   `unsupported`
 - bounded public timeline과 canonical input/output hash
 
+Phase 3A에서 추가된 관찰 전용 relation 범위:
+
+- managed run의 exact `bindingId`를 append-only explicit-user bind decision과
+  연결한 `executes` relation
+- current/stale/not-observed/unavailable/conflict GitHub native observation
+- active/superseded-by-rebind/superseded-by-unbind binding lineage
+- current explicit Codex scope/GitHub repository project alignment와 conflict
+- 별도 local-only `/api/work-relations`, 15초 UI polling과 canonical hash
+- 모든 relation의 `attentionDisposition=not_connected`와
+  `forbiddenAsAttentionCandidate=true`
+
+정확한 의미와 평가 경계는 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
 다음은 후속 Phase 2B/Phase 3 semantic change다.
 
 - artifact/outcome evidence를 사용한 meaningful progress와 verified stall
 - stable approval/input request lifecycle와 escalation threshold
 - failed execution intervention
 - configured workflow 기반 completion follow-through
-- explicit item-level Codex↔GitHub relation
+- privacy-safe artifact identity 기반 `produces`와 user-confirmed `related_to`
 - scope drift detector
 - production multi-process/device ownership, pairing과 durable background service
 
@@ -370,4 +383,24 @@ beta verification 후속 항목이다.
 
 formal Golden baseline은 실행하지 않았다. 새 detector dataset은 synthetic mutable
 Dev Candidate이고 semantic projection은 Attention input/result/hash/ranking과
+격리되어 있다.
+
+## 12. 2026-08-01 Phase 3A relation 검증
+
+- relation/binding/API/client/route/evaluation focused Vitest: `6` files/`31`
+  tests 통과
+- 전체 Vitest: `58` files/`479` tests 통과
+- typecheck, lint와 production build 통과
+- Playwright Chromium E2E: 전체 `11` tests 통과. relation 상태 UI `7` tests 포함
+- synthetic relation Dev Candidate: `28/28` exact match, relation `24/24`
+- relation precision/recall: `1.0/1.0`
+- false identity merge, unsupported relation/authority, title-only/project-only
+  inference, superseded-as-current, privacy sentinel와 Attention leakage: 모두 `0`
+- 기존 Cross-source Dev Candidate revision `2`, `30` cases와 SHA-256
+  `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  유지
+- `git diff --check` 통과
+
+formal Golden baseline은 실행하지 않았다. 새 relation dataset은 synthetic mutable
+Dev Candidate이고 relation projection은 Attention input/result/hash/ranking과
 격리되어 있다.

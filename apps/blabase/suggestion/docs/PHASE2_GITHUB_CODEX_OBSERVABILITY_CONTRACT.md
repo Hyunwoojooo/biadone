@@ -810,6 +810,22 @@ Phase 2B.2A는 managed history에 한정한 관찰 전용 direct-fact semantic b
 정확한 의미와 평가 경계는
 `CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md`를 따른다.
 
+Phase 3A는 managed run과 GitHub work item 사이의 첫 explicit relation branch를
+추가한다.
+
+- append-only WorkSessionBinding의 exact explicit-user bind decision만
+  `executes` 권위로 사용
+- managed run `bindingId`/`executionId`와 bind decision을 exact join
+- GitHub `github:object:<native id>` work signal만 identity 보강에 사용하고
+  title/project/path 유사성은 사용하지 않음
+- rebind/unbind 뒤 과거 run relation은 lineage로 보존하되 current relation으로
+  사용하지 않음
+- GitHub snapshot absence는 `not_observed`이며 completion이 아님
+- current explicit Codex/GitHub project mapping 불일치는 conflict로 기록
+- 별도 local-only relation API/UI로 표시하고 Attention에는 연결하지 않음
+
+정확한 계약은 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
 다음 richer connector evidence와 candidate behavior는 아직 구현하지 않는다.
 
 - confirmed non-draft review
@@ -817,9 +833,9 @@ Phase 2B.2A는 managed history에 한정한 관찰 전용 direct-fact semantic b
 - direct failure를 material work와 연결한 intervention eligibility
 - stable approval/input request lifecycle와 escalation
 - completed execution의 configured follow-through
-- semantic Codex exception candidate와 WorkSessionBinding을 자동 연결하는
-  relation-aware safe destination
-- explicit item-level Codex↔GitHub relation
+- relation/materiality를 통과한 semantic Codex exception candidate와 safe
+  destination
+- privacy-safe artifact identity 기반 `produces`와 user-confirmed `related_to`
 - GitHub checks, requested changes, merge conflict
 - managed event를 Attention 후보로 승격하는 versioned rule
 

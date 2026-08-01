@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   fetchManagedCodexRuns,
@@ -13,10 +13,23 @@ import {
   type ManagedCodexSourceEvent,
   type ManagedCodexStreamState
 } from "./managedCodexRunsClient";
-import { useVisiblePolling } from "./sync/useSourceSync";
+import {
+  useSyncInvalidation,
+  useVisiblePolling
+} from "./sync/useSourceSync";
+import {
+  fetchWorkRelations,
+  type WorkRelationsReadyResponse
+} from "./workRelationsClient";
+import type {
+  ManagedCodexWorkRelation,
+  ManagedCodexWorkRelationRunResolution
+} from "../src/relations";
 
 const MANAGED_RUN_POLL_INTERVAL_MS = 2_000;
 const MANAGED_RUN_MAX_BACKOFF_MS = 30_000;
+const WORK_RELATION_POLL_INTERVAL_MS = 15_000;
+const WORK_RELATION_MAX_BACKOFF_MS = 120_000;
 const MAX_VISIBLE_MANAGED_RUNS = 8;
 
 export function ManagedCodexProgress() {
@@ -24,6 +37,13 @@ export function ManagedCodexProgress() {
     useState<ManagedCodexRunsReadyResponse | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [relationPayload, setRelationPayload] =
+    useState<WorkRelationsReadyResponse | null>(null);
+  const [isRelationLoading, setIsRelationLoading] = useState(true);
+  const [relationNotice, setRelationNotice] = useState<string | null>(
+    null
+  );
+  const relationRequestSequence = useRef(0);
 
   const load = useCallback(async () => {
     try {
@@ -55,7 +75,54 @@ export function ManagedCodexProgress() {
     maxBackoffMs: MANAGED_RUN_MAX_BACKOFF_MS
   });
 
+  const loadRelations = useCallback(async () => {
+    const sequence = ++relationRequestSequence.current;
+    try {
+      const response = await fetchWorkRelations();
+      if (sequence !== relationRequestSequence.current) return;
+      if (response.status !== "ready") {
+        setRelationPayload(null);
+        setRelationNotice(
+          response.message ?? "연결 근거 확인 불가"
+        );
+        return;
+      }
+      setRelationPayload(response);
+      setRelationNotice(null);
+    } catch (error) {
+      if (sequence !== relationRequestSequence.current) return;
+      setRelationPayload(null);
+      setRelationNotice("연결 근거 확인 불가");
+      throw error;
+    } finally {
+      if (sequence === relationRequestSequence.current) {
+        setIsRelationLoading(false);
+      }
+    }
+  }, []);
+
+  useVisiblePolling(loadRelations, {
+    intervalMs: WORK_RELATION_POLL_INTERVAL_MS,
+    maxBackoffMs: WORK_RELATION_MAX_BACKOFF_MS
+  });
+
+  useSyncInvalidation(["github", "codex", "attention"], () => {
+    void loadRelations().catch(() => undefined);
+  });
+
   const visibleRuns = payload?.runs.slice(0, MAX_VISIBLE_MANAGED_RUNS) ?? [];
+  const relationById = new Map(
+    relationPayload?.relations.map((relation) => [
+      relation.relationId,
+      relation
+    ]) ?? []
+  );
+  const resolutionByManagedRunId = new Map(
+    relationPayload?.runResolutions.map((resolution) => [
+      resolution.managedRunId,
+      resolution
+    ]) ?? []
+  );
 
   return (
     <section
@@ -99,13 +166,31 @@ export function ManagedCodexProgress() {
               </p>
             ) : null}
             <ul className="managedCodexRunList">
-              {visibleRuns.map((run) => (
-                <ManagedCodexRunItem
-                  key={run.managedRunId}
-                  run={run}
-                  semantic={payload.semantics.runs[run.managedRunId]}
-                />
-              ))}
+              {visibleRuns.map((run) => {
+                const resolution = resolutionByManagedRunId.get(
+                  run.managedRunId
+                );
+                const relation = resolution?.relationId
+                  ? relationById.get(resolution.relationId)
+                  : undefined;
+                return (
+                  <ManagedCodexRunItem
+                    key={run.managedRunId}
+                    run={run}
+                    semantic={payload.semantics.runs[run.managedRunId]}
+                    relation={relation}
+                    relationResolution={resolution}
+                    relationReadState={
+                      relationPayload
+                        ? "ready"
+                        : isRelationLoading
+                          ? "loading"
+                          : "unavailable"
+                    }
+                    relationNotice={relationNotice}
+                  />
+                );
+              })}
             </ul>
             {payload.runs.length > MAX_VISIBLE_MANAGED_RUNS ? (
               <p className="managedCodexRemainder">
@@ -131,10 +216,20 @@ export function ManagedCodexProgress() {
 
 function ManagedCodexRunItem({
   run,
-  semantic
+  semantic,
+  relation,
+  relationResolution,
+  relationReadState,
+  relationNotice
 }: {
   run: ManagedCodexPublicRun;
   semantic: ManagedCodexSemanticRunResult | undefined;
+  relation: ManagedCodexWorkRelation | undefined;
+  relationResolution:
+    | ManagedCodexWorkRelationRunResolution
+    | undefined;
+  relationReadState: "loading" | "ready" | "unavailable";
+  relationNotice: string | null;
 }) {
   const tone = managedRunTone(run);
   const currentWaitingState =
@@ -182,6 +277,12 @@ function ManagedCodexRunItem({
           <dd>{executionStateLabel(run.lastVerifiedExecutionState)}</dd>
         </div>
       </dl>
+      <ManagedCodexRelationSummary
+        relation={relation}
+        resolution={relationResolution}
+        readState={relationReadState}
+        notice={relationNotice}
+      />
       {semantic ? (
         <ManagedCodexSemanticSummary semantic={semantic} />
       ) : (
@@ -192,6 +293,197 @@ function ManagedCodexRunItem({
       )}
     </li>
   );
+}
+
+function ManagedCodexRelationSummary({
+  relation,
+  resolution,
+  readState,
+  notice
+}: {
+  relation: ManagedCodexWorkRelation | undefined;
+  resolution: ManagedCodexWorkRelationRunResolution | undefined;
+  readState: "loading" | "ready" | "unavailable";
+  notice: string | null;
+}) {
+  if (readState !== "ready") {
+    return (
+      <p className="managedCodexRelationUnavailable" role="status">
+        {readState === "loading"
+          ? "연결 근거 확인 중"
+          : notice ?? "연결 근거 확인 불가"}
+      </p>
+    );
+  }
+  if (!relation) {
+    return (
+      <p className="managedCodexRelationUnavailable">
+        {relationResolutionLabel(resolution)}
+      </p>
+    );
+  }
+
+  const presentation = relationPresentation(relation);
+  const targetLabel = githubRelationTargetLabel(relation);
+  const active = relation.bindingEvidence.bindingState === "active";
+  const canOpenTarget =
+    active && relation.githubObservation.destinationUrl !== null;
+
+  return (
+    <div className="managedCodexRelation">
+      <div className="managedCodexRelationHeader">
+        <span>연결된 작업</span>
+        <span
+          className={`managedCodexRelationBadge ${presentation.className}`}
+        >
+          {presentation.badge}
+        </span>
+      </div>
+      <div className="managedCodexRelationTarget">
+        {canOpenTarget ? (
+          <a
+            href={relation.githubObservation.destinationUrl as string}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {targetLabel}
+            <span className="srOnly"> (새 탭)</span>
+          </a>
+        ) : (
+          <strong>{targetLabel}</strong>
+        )}
+        <span>executes · 사용자가 직접 연결</span>
+      </div>
+      <p className={presentation.detailClassName}>
+        {presentation.detail}
+      </p>
+    </div>
+  );
+}
+
+function relationPresentation(relation: ManagedCodexWorkRelation): {
+  badge: string;
+  className: "" | "isWarning" | "isError";
+  detail: string;
+  detailClassName: "" | "isWarning" | "isError";
+} {
+  if (relation.identityStatus === "conflict") {
+    return {
+      badge: "GitHub 정보 충돌",
+      className: "isError",
+      detail:
+        "동일 GitHub 작업에 서로 다른 native 관찰이 있어 현재 작업으로 사용하지 않습니다.",
+      detailClassName: "isError"
+    };
+  }
+  if (relation.projectAlignment.status === "conflict") {
+    return {
+      badge: "프로젝트 충돌",
+      className: "isError",
+      detail:
+        "Codex scope와 GitHub 저장소가 서로 다른 프로젝트에 연결되어 있습니다. 추천에는 사용하지 않습니다.",
+      detailClassName: "isError"
+    };
+  }
+  if (relation.bindingEvidence.bindingState === "superseded_by_unbind") {
+    return {
+      badge: "연결 해제됨",
+      className: "isWarning",
+      detail:
+        "실행 당시 사용자가 연결한 관계입니다. 현재 작업 연결이나 실행 대상으로 사용하지 않습니다.",
+      detailClassName: "isWarning"
+    };
+  }
+  if (relation.bindingEvidence.bindingState === "superseded_by_rebind") {
+    return {
+      badge: "다른 세션으로 변경됨",
+      className: "isWarning",
+      detail:
+        "실행 당시 사용자가 연결한 관계입니다. 현재는 다른 Codex 세션에 연결되어 있습니다.",
+      detailClassName: "isWarning"
+    };
+  }
+
+  switch (relation.githubObservation.status) {
+    case "current":
+      return {
+        badge: "사용자 직접 연결",
+        className: "",
+        detail:
+          relation.projectAlignment.status === "aligned"
+            ? "GitHub native ID와 명시적 프로젝트 연결이 확인되었습니다. 관찰 전용이며 추천에는 아직 사용하지 않습니다."
+            : "GitHub native ID가 확인되었습니다. 프로젝트 연결은 아직 모두 확인되지 않았으며 추천에는 사용하지 않습니다.",
+        detailClassName: ""
+      };
+    case "stale":
+      return {
+        badge: "GitHub 데이터 오래됨",
+        className: "isWarning",
+        detail:
+          "사용자 연결은 보존하지만 GitHub 상태가 오래되어 현재 작업 상태로 단정하지 않습니다.",
+        detailClassName: "isWarning"
+      };
+    case "not_observed":
+      return {
+        badge: "최신 데이터에서 미확인",
+        className: "isWarning",
+        detail:
+          "사용자 연결은 보존하지만 최신 GitHub snapshot에 보이지 않습니다. 완료로 해석하지 않습니다.",
+        detailClassName: "isWarning"
+      };
+    case "unavailable":
+      return {
+        badge: "GitHub 확인 불가",
+        className: "isWarning",
+        detail:
+          "사용자 연결은 보존하지만 현재 GitHub 관찰 근거를 확인할 수 없습니다.",
+        detailClassName: "isWarning"
+      };
+    case "conflict":
+      return {
+        badge: "GitHub 정보 충돌",
+        className: "isError",
+        detail:
+          "GitHub native 관찰이 충돌해 현재 작업으로 사용하지 않습니다.",
+        detailClassName: "isError"
+      };
+  }
+}
+
+function githubRelationTargetLabel(
+  relation: ManagedCodexWorkRelation
+): string {
+  const objectLabel =
+    relation.githubObservation.objectType === "pull_request"
+      ? "GitHub PR"
+      : relation.githubObservation.objectType === "issue"
+        ? "GitHub 이슈"
+        : "GitHub 작업";
+  const number = relation.githubObservation.number;
+  if (number !== null) return `${objectLabel} #${number}`;
+  const nativeId = /^github:object:([1-9][0-9]*)$/.exec(
+    relation.to.subjectId
+  )?.[1];
+  return nativeId ? `${objectLabel} ID ${nativeId}` : objectLabel;
+}
+
+function relationResolutionLabel(
+  resolution: ManagedCodexWorkRelationRunResolution | undefined
+): string {
+  switch (resolution?.status) {
+    case "binding_not_found":
+      return "이 실행의 사용자 연결 결정을 찾지 못했습니다.";
+    case "binding_not_bind":
+      return "이 실행의 연결 결정이 유효한 bind 기록이 아닙니다.";
+    case "execution_mismatch":
+      return "Codex 실행과 연결된 작업의 execution ID가 일치하지 않습니다.";
+    case "unsupported_task_source":
+      return "현재 Phase 3A 범위의 GitHub 작업 연결이 아닙니다.";
+    case "invalid_github_subject":
+      return "연결된 GitHub 작업의 native ID를 확인하지 못했습니다.";
+    default:
+      return "이 실행의 연결 근거를 현재 projection에서 확인하지 못했습니다.";
+  }
 }
 
 function ManagedCodexSemanticSummary({

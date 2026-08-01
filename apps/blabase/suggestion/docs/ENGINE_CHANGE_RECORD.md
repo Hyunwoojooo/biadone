@@ -1565,3 +1565,170 @@
   - relation/materiality gate 뒤 failure intervention candidate를 별도 version과
     regression으로 구현
   - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-08-01 Phase 3A explicit managed Codex↔GitHub work relation
+
+- Date: 2026-08-01
+- Owner: Codex with human direction
+- Goal:
+  - Blabase가 관리하는 Codex 실행이 사용자가 직접 확인한 어떤 GitHub 작업을
+    수행하는지 exact identity와 append-only lineage로 설명
+  - GitHub snapshot freshness/absence/conflict와 current explicit project mapping을
+    관계와 분리된 evidence로 표시
+  - relation을 Work Cockpit에서 확인하되 Attention 추천에는 연결하지 않음
+- Affected pipeline stages:
+  - new GitHub bind의 exact native target pre-persistence validation
+  - managed public run + WorkSessionBinding + normalized GitHub batch + context
+    registry의 deterministic relation resolution
+  - local-only relation API/client와 Work Cockpit relation status UI
+  - 별도 synthetic relation Dev Candidate loader, evaluator와 baseline runner
+  - Attention input/router/replay/monitor/candidate/ranking/selection은 변경하지 않음
+- Behavior before:
+  - managed run에 `bindingId`가 있었지만 GitHub native object와의 versioned
+    `executes` projection 및 binding lifecycle 설명이 없음
+  - stale/not-observed/unavailable GitHub evidence와 project conflict를 managed run
+    UI에서 구분할 수 없음
+  - new GitHub binding이 current stored snapshot의 exact native identity와
+    일치하는지 persist 직전에 검증하지 않음
+- Behavior after:
+  - append-only WorkSessionBinding의 `explicit_user` bind만 `executes` authority로
+    인정하고 exact binding/execution/managed-run identity coherence를 검증
+  - `github:object:<native id>`만 join하며 title, URL, repository, project와 path
+    유사성으로 relation을 만들지 않음
+  - new GitHub bind는 current stored snapshot에서 exact object를 확인하고 absent,
+    invalid 또는 incompatible duplicate identity를 typed error로 거부
+  - rebind/unbind 뒤 과거 relation은 superseded lineage로 보존하고 current
+    destination이나 Attention 후보로 사용하지 않음
+  - GitHub current/stale/not-observed/unavailable/conflict와 project
+    aligned/unmapped/conflict/unavailable을 서로 독립적으로 표시
+  - snapshot absence는 completion이 아니며 `produces`와 `related_to`는 필요한
+    explicit privacy-safe 계약 전까지 생성하지 않음
+  - 별도 `GET /api/work-relations`와 15초 polling UI에서 관계 상태를 표시
+  - UI는 exact managed-run resolution으로 join하고 polling revision이 엇갈릴 때
+    같은 binding의 오래된 relation을 새 run에 붙이지 않음
+  - 모든 projection/relation에 `attentionDisposition=not_connected`와
+    `forbiddenAsAttentionCandidate=true`
+- Versions before:
+  - managed Codex work relation projection/schema/resolver/evidence policy: 없음
+  - WorkSessionBinding, managed public projection, GitHub normalized signal과
+    context registry: 기존 버전 유지
+  - Cross-source Attention: v0.3 input/result, v0.2 policy/rules
+- Versions after:
+  - projection: `managed-codex-work-relation-projection-v0.1`
+  - schema: `work-relation-schema-v0.1`
+  - resolver: `managed-codex-explicit-binding-resolver-v0.1`
+  - evidence policy: `explicit-binding-native-id-evidence-v0.1`
+  - evaluation case: `work-relation-resolver-evaluation-case-v0.1`
+  - evaluation run: `work-relation-resolver-evaluation-run-v0.1`
+  - 기존 managed, binding, GitHub, context와 Attention semantic versions: 변경 없음
+- Code commit:
+  - base commit: `76dfc8d8391035f86a5d8e0a3c429feba187ebfd`
+  - candidate run code state: `dirty_worktree`
+  - candidate run pre-record fingerprint:
+    `703ff5a9b8184be35e343e2492382650578adbbf460aa7208d5b614d670b4539`
+  - 이 fingerprint는 아래 candidate run 직전의 전체 `suggestion/` 변경을
+    나타낸다. 이 record와 평가 수치를 반영한 문서-only 변경은 run 뒤에
+    추가됐으며 semantic code/dataset/input/output을 변경하지 않음
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-work-relation-dev-v0.1`
+  - revision: `1`
+  - class/lifecycle: mutable synthetic Dev Candidate
+  - input boundary: `work_relation_resolution_inputs`
+  - case count: `28`
+  - canonical SHA-256:
+    `b12660720c657123fe6e94b0e4ba6dcf29704f72b90cd5b630ecd8331091b002`
+  - materialized input SHA-256:
+    `7d43dd080f3730cf45557448ba57728632def4fabf30683c8729caf314d8424f`
+  - resolver config: `eval/synthetic/workRelationResolverConfig.v0.1.json`
+  - resolver config SHA-256:
+    `f75d01cb54b58f8d76ba4174662df481b5637bae6824b40fd6d07be55987ecee`
+  - 기존 `suggestion-cross-source-dev-v0.1` revision `2`, `30` cases와 SHA-256
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+    는 변경하지 않음
+  - 기존 `suggestion-codex-detector-dev-v0.1` revision `1`, `18` cases와
+    SHA-256
+    `5436c590c8768b8b2732d675e96b6bd0d837e882dccffbeec67602466e76c838`
+    는 변경하지 않음
+- Candidate run ID: `relation_run_2fce51ef1e1447638f1d9ab1b79623b7`
+- Comparison run ID: 없음 — 최초 relation resolver targeted Dev Candidate baseline
+- Commands executed:
+  - `npx vitest run tests/managedCodexWorkRelations.test.ts tests/githubBindingTarget.test.ts tests/workRelationsRoute.test.ts tests/workRelationsClient.test.ts tests/workResumptionRoutes.test.ts tests/workRelationEvaluation.test.ts`
+  - `npm run work-relation:baseline`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e`
+  - `npm run cross-source:dev-hash`
+  - `git diff --check`
+- Metrics changed:
+  - relation exact case match: `28/28` (`1.0`)
+  - expected/observed relation: `24/24`
+  - relation precision/recall: `1.0/1.0`
+  - false positive/false negative relation: `0/0`
+  - false identity merge: `0`
+  - unsupported relation/authority emission: `0/0`
+  - title-only/project-only observation leakage: `0/0`
+  - superseded-as-current leakage: `0`
+  - conflict Attention leakage: `0`
+  - lifecycle-only `produces` leakage: `0`
+  - unsupported run resolved: `0`
+  - permutation determinism/privacy sentinel leakage: `0/0`
+  - deterministic output SHA-256:
+    `bbf9d6a97090b44a464d362fee24cceb97b89b7a265baa2d8be30c454b1776a4`
+  - focused Vitest: `6` files/`31` tests 통과
+  - full Vitest: `58` files/`479` tests 통과
+  - Playwright Chromium E2E: `11` tests 통과, relation 상태 UI `7` tests 포함
+  - typecheck, lint, production build와 diff check 통과
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+- Regressions or accepted exceptions:
+  - explicit binding 없는 managed run을 title/path/project 유사성으로 자동
+    연결하지 않음
+  - GitHub snapshot absence와 stale/truncated data는 task completion이 아님
+  - Codex execution completion은 GitHub task completion이 아님
+  - project mapping은 alignment/conflict evidence일 뿐 item relation authority가
+    아님
+  - `produces`, `related_to`, field-level claim authority, materiality와 failure
+    intervention은 현재 범위 밖
+  - synthetic dataset은 human-reviewed Golden이 아니며 제품 추천 품질을
+    증명하지 않음
+  - 직접 인앱 viewport 점검은 이 세션에 해당 browser surface가 연결되지 않아
+    수행하지 못했으나 실제 Next.js server + Chromium E2E로 렌더링/interaction을
+    검증함
+- Privacy or retention impact:
+  - 새 production relation store를 만들지 않고 현재 source ledger에서 bounded
+    projection을 계산
+  - raw prompt/answer/reasoning, command/output, diff/path, tool payload, native
+    Codex thread/turn/item ID, private scope, GitHub title/repository name을 relation
+    output/dataset에 포함하지 않음
+  - safe GitHub destination URL은 exact normalized observation에서만 가져와
+    local-only/no-store API에 노출하며 identity inference 또는 별도 보존에 사용하지
+    않음
+  - relation lifetime은 managed run과 source ledger의 기존 retention을 넘겨
+    연장하지 않음
+  - dataset은 synthetic sanitized metadata만 포함
+  - production relation과 implicit UI feedback은 Gold가 아니며 자동으로
+    Golden/Regression dataset에 승격하지 않음
+- Release decision:
+  - Phase 3A local beta observational relation slice로 허용
+  - Work Cockpit 가시성과 bind integrity에는 사용하지만 Attention
+    input/result/filtering/ordering, replay/monitor hash, candidate/ranking/selection에는
+    연결하지 않음
+  - formal Golden baseline은 실행하지 않음. Attention semantic behavior와 기존
+    Cross-source dataset은 변경하지 않고 별도 mutable synthetic relation targeted
+    baseline으로 gate했기 때문
+  - execution failure/stall/follow-through 추천의 production release가 아님
+- Rollback method:
+  - `/api/work-relations`, relation client와 Work Cockpit relation badge/status를
+    제거해 Phase 2B.2A managed semantic-only UI로 복귀
+  - `src/relations`, relation evaluation dataset/runner와 new bind target validator를
+    제거하고 기존 WorkSessionBinding ledger는 유지
+  - relation production store가 없어 별도 data migration 또는 purge 불필요
+  - Attention versions과 dataset은 변경되지 않아 별도 rollback 불필요
+- Follow-up work:
+  - privacy-safe explicit artifact identity와 `produces`
+  - user-confirmed work-to-work `related_to`
+  - GitHub/Notion field-level claim authority와 conflict record
+  - relation + materiality를 요구하는 Codex failure intervention gate
+  - configured project workflow 기반 completion follow-through
+  - reviewed/adjudicated Cross-source Golden freeze와 formal baseline

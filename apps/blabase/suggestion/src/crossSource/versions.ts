@@ -43,6 +43,18 @@ export const CODEX_MANAGED_SEMANTIC_RULE_VERSION =
 export const CODEX_MANAGED_SEMANTIC_EVIDENCE_POLICY_VERSION =
   "codex-managed-direct-metadata-evidence-v0.1" as const;
 
+export const MANAGED_CODEX_WORK_RELATION_PROJECTION_CONTRACT =
+  "managed-codex-work-relation-projection-v0.1" as const;
+
+export const WORK_RELATION_SCHEMA_VERSION =
+  "work-relation-schema-v0.1" as const;
+
+export const MANAGED_CODEX_WORK_RELATION_RESOLVER_VERSION =
+  "managed-codex-explicit-binding-resolver-v0.1" as const;
+
+export const WORK_RELATION_EVIDENCE_POLICY_VERSION =
+  "explicit-binding-native-id-evidence-v0.1" as const;
+
 export const SNAPSHOT_VALIDITY_POLICY_VERSION =
   "snapshot-validity-policy-v0.2" as const;
 

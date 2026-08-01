@@ -208,5 +208,7 @@ deterministic output SHA-256은
 - project workflow와 expected next event
 - stable approval/input request ID와 pending/resolved/expired lifecycle
 
-이 evidence, Phase 3 relation과 별도 regression gate가 준비되기 전에는 managed
-semantic 결과를 Attention candidate로 승격하지 않는다.
+Phase 3A의 explicit execution↔GitHub `executes` relation은 별도 관찰 projection으로
+구현됐다. 그러나 artifact/outcome evidence, materiality, candidate eligibility와
+별도 regression gate가 준비되기 전에는 managed semantic 결과나 relation을
+Attention candidate로 승격하지 않는다.

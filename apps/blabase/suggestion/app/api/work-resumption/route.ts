@@ -15,6 +15,10 @@ import {
   workResumptionCommandIdSchema,
   workResumptionMutationSchema
 } from "../../../src/resumption";
+import {
+  WorkRelationTargetError,
+  validateStoredGitHubBindingTarget
+} from "../../../src/relations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +105,7 @@ export async function POST(request: Request) {
 
   try {
     if (input.action === "bind") {
+      await validateStoredGitHubBindingTarget(input.taskRef);
       await bindWorkSession({
         taskRef: input.taskRef,
         executionId: input.executionId,
@@ -132,6 +137,27 @@ export async function POST(request: Request) {
       202
     );
   } catch (error) {
+    if (error instanceof WorkRelationTargetError) {
+      if (error.code === "GITHUB_WORK_ITEM_SOURCE_UNAVAILABLE") {
+        return errorResponse(
+          error.code,
+          "GitHub 최신 작업 정보를 확인한 뒤 다시 연결해주세요.",
+          409
+        );
+      }
+      if (error.code === "GITHUB_WORK_ITEM_IDENTITY_CONFLICT") {
+        return errorResponse(
+          error.code,
+          "GitHub 작업 identity가 충돌해 연결하지 않았습니다.",
+          409
+        );
+      }
+      return errorResponse(
+        error.code,
+        "현재 GitHub 작업에서 정확한 연결 대상을 찾지 못했습니다.",
+        404
+      );
+    }
     if (error instanceof WorkResumptionStoreError) {
       if (error.code === "CODEX_EXECUTION_NOT_FOUND") {
         return errorResponse(

@@ -1,0 +1,49 @@
+{
+  "version": "managed-codex-work-relation-resolver-config-v0.1",
+  "purpose": "targeted_synthetic_relation_resolution_evaluation_only",
+  "inputBoundary": "work_relation_resolution_inputs",
+  "orderingAuthority": {
+    "bindingDecisions": "append_only_decision_order",
+    "managedRuns": "stable_managed_run_id",
+    "githubSignals": "stable_signal_id",
+    "resolutions": "stable_managed_run_id"
+  },
+  "identity": {
+    "managedRunBindingMatch": "exact_binding_and_execution_id",
+    "githubTargetMatch": "exact_source_and_subject_id",
+    "executionAndWorkItemRemainDistinct": true,
+    "titleSimilarityAllowed": false
+  },
+  "sourceNormalization": {
+    "githubNormalizerVersion": "github-project-context-normalizer-v0.2",
+    "snapshotValidityPolicyVersion": "snapshot-validity-policy-v0.2"
+  },
+  "relations": {
+    "supportedTypes": ["executes"],
+    "supportedAuthorities": ["user_configured"],
+    "activeBindingCanResolve": true,
+    "supersededBindingCanResolve": true,
+    "unsupportedBindingSourceIsRelation": false,
+    "turnCompletionCreatesProduces": false,
+    "itemActivityCreatesProduces": false
+  },
+  "projectAlignment": {
+    "sameConfirmedProject": "aligned",
+    "differentConfirmedProjects": "conflict",
+    "missingEitherProject": "unmapped",
+    "proposalIsConfirmation": false,
+    "removedMappingRemainsActive": false
+  },
+  "attention": {
+    "disposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "privacy": {
+    "publicRawTitles": false,
+    "publicRepositoryNames": false,
+    "publicRawUrls": false,
+    "safeDestinationUrl": "exact_observation_local_only_no_store",
+    "publicPaths": false,
+    "publicPromptOrAnswer": false
+  }
+}

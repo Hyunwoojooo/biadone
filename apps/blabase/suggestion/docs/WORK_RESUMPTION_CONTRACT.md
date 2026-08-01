@@ -94,6 +94,12 @@ task source + stable task subject ID + opaque Codex execution ID
   제거한다.
 - initial UI는 GitHub top suggestion을 지원하지만 계약은 Codex, Notion,
   manual attention subject로 확장할 수 있다.
+- 새 GitHub binding은 persisted decision을 만들기 전에 현재 stored GitHub
+  snapshot의 exact `github:object:<native id>`와 대조한다. 제목, URL 또는
+  repository 유사성으로 대체 identity를 찾지 않는다.
+- GitHub snapshot이 이후 해당 object를 관찰하지 못해도 기존 binding을 완료로
+  해석하거나 삭제하지 않는다. relation projection에서 `not_observed` 또는
+  `unavailable`로 보존한다.
 
 ## 5. Command 상태
 
@@ -218,6 +224,8 @@ heartbeat에는 공개하지 않는 random Companion instance ID를 포함한다
 - 버튼은 pointer와 keyboard Enter 양쪽에서 같은 explicit action을 만든다.
 - action은 prompt 전송, 승인 자동 처리, 자동 재시도 또는 GitHub mutation을
   수행하지 않는다.
+- 새 GitHub binding은 exact native object가 없거나 identity claim이 충돌하면
+  persisted decision을 만들지 않고 typed failure를 반환한다.
 - managed mode는 observation subscription을 Terminal launch 전에 만들고
   loopback remote endpoint만 TUI에 전달한다.
 - API가 Work Resumption state lease 안에서 exact authority와 managed

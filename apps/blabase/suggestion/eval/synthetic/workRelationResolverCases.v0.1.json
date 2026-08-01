@@ -1,0 +1,226 @@
+{
+  "contract": "work-relation-resolver-evaluation-dataset-v0.1",
+  "schemaVersion": "work-relation-resolver-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-work-relation-dev-v0.1",
+  "datasetRevision": 1,
+  "datasetClass": "dev_candidate",
+  "inputBoundary": "work_relation_resolution_inputs",
+  "dataOrigin": "synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-01T06:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "resolverConfig": {
+    "immutableRef": "eval/synthetic/workRelationResolverConfig.v0.1.json",
+    "version": "managed-codex-work-relation-resolver-config-v0.1",
+    "sha256": "f75d01cb54b58f8d76ba4174662df481b5637bae6824b40fd6d07be55987ecee"
+  },
+  "expectedInvariants": {
+    "relationType": "executes",
+    "authority": "user_configured",
+    "attentionDisposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "cases": [
+    {
+      "caseId": "WREL-DEV-001",
+      "title": "active explicit GitHub issue binding with aligned project",
+      "scenario": "active_aligned_issue",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "identity_positive", "active_binding", "aligned_project"]
+    },
+    {
+      "caseId": "WREL-DEV-002",
+      "title": "active explicit GitHub pull request binding",
+      "scenario": "active_aligned_pull_request",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "identity_positive", "pull_request"]
+    },
+    {
+      "caseId": "WREL-DEV-003",
+      "title": "duplicate exact GitHub observations remain one identity",
+      "scenario": "duplicate_exact_github_observation",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "identity_positive", "duplicate_observation"]
+    },
+    {
+      "caseId": "WREL-DEV-004",
+      "title": "bound GitHub target absent from fresh snapshot",
+      "scenario": "target_not_observed",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["not_observed"], "githubCompleteness": ["complete"], "projectAlignments": ["unavailable"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "target_not_observed", "absence_not_completion"]
+    },
+    {
+      "caseId": "WREL-DEV-005",
+      "title": "stale GitHub observation preserves source limitation",
+      "scenario": "stale_github_observation",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["stale"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "stale_source"]
+    },
+    {
+      "caseId": "WREL-DEV-006",
+      "title": "truncated GitHub observation preserves source limitation",
+      "scenario": "truncated_github_observation",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["truncated"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "truncated_source"]
+    },
+    {
+      "caseId": "WREL-DEV-007",
+      "title": "historical run binding superseded by rebind",
+      "scenario": "superseded_by_rebind",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["superseded_by_rebind"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "superseded_binding", "superseded_not_current"]
+    },
+    {
+      "caseId": "WREL-DEV-008",
+      "title": "historical run binding superseded by unbind",
+      "scenario": "superseded_by_unbind",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["superseded_by_unbind"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "superseded_binding", "superseded_not_current"]
+    },
+    {
+      "caseId": "WREL-DEV-009",
+      "title": "managed run references an unknown binding decision",
+      "scenario": "binding_decision_missing",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["binding_not_found"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "missing_binding"]
+    },
+    {
+      "caseId": "WREL-DEV-010",
+      "title": "managed run execution does not match bind decision",
+      "scenario": "execution_identity_mismatch",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["execution_mismatch"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "execution_mismatch"]
+    },
+    {
+      "caseId": "WREL-DEV-011",
+      "title": "Notion task binding is outside Phase 3A",
+      "scenario": "unsupported_notion_task",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["unsupported_task_source"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "unsupported_task_source"]
+    },
+    {
+      "caseId": "WREL-DEV-012",
+      "title": "manual task binding is outside Phase 3A",
+      "scenario": "unsupported_manual_task",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["unsupported_task_source"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "unsupported_task_source"]
+    },
+    {
+      "caseId": "WREL-DEV-013",
+      "title": "malformed GitHub subject identity cannot resolve",
+      "scenario": "malformed_github_subject",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["invalid_github_subject"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "malformed_identity"]
+    },
+    {
+      "caseId": "WREL-DEV-014",
+      "title": "same title with another native ID does not link",
+      "scenario": "title_only_other_native_id",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["not_observed"], "githubCompleteness": ["complete"], "projectAlignments": ["unavailable"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "title_only_guard", "target_not_observed"]
+    },
+    {
+      "caseId": "WREL-DEV-015",
+      "title": "same project with another native ID does not link",
+      "scenario": "project_only_other_native_id",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["not_observed"], "githubCompleteness": ["complete"], "projectAlignments": ["unavailable"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "project_only_guard", "target_not_observed"]
+    },
+    {
+      "caseId": "WREL-DEV-016",
+      "title": "missing Codex project mapping remains unmapped",
+      "scenario": "codex_project_unmapped",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["unmapped"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "project_unmapped"]
+    },
+    {
+      "caseId": "WREL-DEV-017",
+      "title": "missing GitHub project mapping remains unmapped",
+      "scenario": "github_project_unmapped",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["unmapped"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "project_unmapped"]
+    },
+    {
+      "caseId": "WREL-DEV-018",
+      "title": "different confirmed projects create conflict",
+      "scenario": "confirmed_project_conflict",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["conflict"], "identityStatuses": ["resolved"], "conflictCodes": [["PROJECT_MISMATCH"]] },
+      "labels": ["relation_positive", "project_conflict", "conflict_attention_guard"]
+    },
+    {
+      "caseId": "WREL-DEV-019",
+      "title": "mapping proposals do not align projects",
+      "scenario": "mapping_proposals_only",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["unmapped"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "proposal_not_confirmation", "project_unmapped"]
+    },
+    {
+      "caseId": "WREL-DEV-020",
+      "title": "removed mappings do not remain active",
+      "scenario": "removed_project_mappings",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["unmapped"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "removed_mapping_guard", "project_unmapped"]
+    },
+    {
+      "caseId": "WREL-DEV-021",
+      "title": "completed Codex turn does not create produces",
+      "scenario": "completed_turn_no_produces",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "lifecycle_only_produces_guard"]
+    },
+    {
+      "caseId": "WREL-DEV-022",
+      "title": "file change activity does not create produces",
+      "scenario": "file_change_no_produces",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "lifecycle_only_produces_guard"]
+    },
+    {
+      "caseId": "WREL-DEV-023",
+      "title": "two exact managed bindings resolve independently",
+      "scenario": "two_independent_runs",
+      "expected": { "resolutionCount": 2, "relationCount": 2, "statuses": ["resolved", "resolved"], "bindingStates": ["active", "active"], "githubStatuses": ["current", "current"], "githubCompleteness": ["complete", "complete"], "projectAlignments": ["aligned", "aligned"], "identityStatuses": ["resolved", "resolved"], "conflictCodes": [[], []] },
+      "labels": ["relation_positive", "multi_run", "identity_positive"]
+    },
+    {
+      "caseId": "WREL-DEV-024",
+      "title": "managed input order does not change canonical output order",
+      "scenario": "reversed_managed_run_input",
+      "expected": { "resolutionCount": 2, "relationCount": 2, "statuses": ["resolved", "resolved"], "bindingStates": ["active", "active"], "githubStatuses": ["current", "current"], "githubCompleteness": ["complete", "complete"], "projectAlignments": ["aligned", "aligned"], "identityStatuses": ["resolved", "resolved"], "conflictCodes": [[], []] },
+      "labels": ["relation_positive", "permutation_determinism", "multi_run"]
+    },
+    {
+      "caseId": "WREL-DEV-025",
+      "title": "conflicting exact GitHub observations stay conflicted",
+      "scenario": "conflicting_github_identity",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["conflict"], "githubCompleteness": ["complete"], "projectAlignments": ["unavailable"], "identityStatuses": ["conflict"], "conflictCodes": [["GITHUB_IDENTITY_CONFLICT"]] },
+      "labels": ["relation_positive", "identity_conflict", "conflict_attention_guard"]
+    },
+    {
+      "caseId": "WREL-DEV-026",
+      "title": "missing GitHub batch is unavailable rather than negative evidence",
+      "scenario": "github_batch_unavailable",
+      "expected": { "resolutionCount": 1, "relationCount": 1, "statuses": ["resolved"], "bindingStates": ["active"], "githubStatuses": ["unavailable"], "githubCompleteness": [null], "projectAlignments": ["unavailable"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "github_unavailable", "absence_not_completion"]
+    },
+    {
+      "caseId": "WREL-DEV-027",
+      "title": "managed run cannot treat an unbind decision as a bind",
+      "scenario": "run_references_unbind_decision",
+      "expected": { "resolutionCount": 1, "relationCount": 0, "statuses": ["binding_not_bind"], "bindingStates": [], "githubStatuses": [], "githubCompleteness": [], "projectAlignments": [], "identityStatuses": [], "conflictCodes": [] },
+      "labels": ["hard_negative", "unbind_decision_guard"]
+    },
+    {
+      "caseId": "WREL-DEV-028",
+      "title": "two managed runs sharing one bind produce one relation",
+      "scenario": "two_runs_share_one_binding",
+      "expected": { "resolutionCount": 2, "relationCount": 1, "statuses": ["resolved", "resolved"], "bindingStates": ["active"], "githubStatuses": ["current"], "githubCompleteness": ["complete"], "projectAlignments": ["aligned"], "identityStatuses": ["resolved"], "conflictCodes": [[]] },
+      "labels": ["relation_positive", "multi_run", "deduplicated_relation"]
+    }
+  ]
+}

@@ -20,8 +20,9 @@
 | Phase 2 계약 | `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md` |
 | Managed Codex 계약 | `suggestion/docs/MANAGED_CODEX_RUN_CONTRACT.md` |
 | Managed semantic 계약 | `suggestion/docs/CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md` |
+| Work relation 계약 | `suggestion/docs/WORK_RELATION_RESOLUTION_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability와 Phase 2B.2A direct-fact semantic timeline local beta 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline과 Phase 3A explicit Codex↔GitHub executes relation local beta 완료 |
 
 ---
 
@@ -2749,6 +2750,15 @@ failure/gap/systemError/unsupported-emission guardrail `0`을 기록했다. 기�
 Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변경하지
 않았다.
 
+2026-08-01 Phase 3A gate는 relation/binding/API/client/route/evaluation focused
+Vitest `6` files/`31` tests, 전체 Vitest `58` files/`479` tests,
+typecheck/lint/production build와 Playwright Chromium E2E `11` tests를 통과했다.
+별도 synthetic relation Dev Candidate `28` cases는 exact match `28/28`, 예상/관찰
+relation `24/24`, precision/recall `1.0/1.0`을 기록했다. false identity merge,
+title-only/project-only inference, superseded-as-current, unsupported relation/authority,
+privacy sentinel와 Attention leakage는 모두 `0`이다. 기존 Cross-source Dev
+Candidate revision `2`, `30` cases와 canonical SHA-256은 유지했다.
+
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
@@ -2756,7 +2766,7 @@ Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변�
 - direct failure를 material work와 연결해 개입 여부를 판단하는 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
-- Codex safe destination과 explicit GitHub/workflow relation
+- privacy-safe artifact/workflow relation과 materiality gate
 
 완료 조건:
 
@@ -2773,13 +2783,15 @@ Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변�
 
 ### Phase 3 — Project mapping, lineage, conflict
 
-상태: **Foundation partially delivered in Phase 2A.1**
+상태: **Project registry와 Phase 3A explicit managed Codex↔GitHub executes
+relation delivered; artifact/field conflict work remains**
 
 산출물:
 
 - `[완료]` 네 source scope의 explicit project mapping registry
-- native/explicit-link identity resolver
-- `executes`, `produces`, `related_to` 관계 처리
+- `[Phase 3A 완료]` managed run↔explicit GitHub binding native identity resolver
+- `[Phase 3A 완료]` `executes` 관계, binding lifecycle와 project conflict record
+- `produces`, `related_to` 관계 처리
 - field-level authority resolver
 - conflict record
 
@@ -2791,6 +2803,15 @@ Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변�
 - GitHub completed와 Notion stale open conflict 처리
 - snapshot absence를 completion으로 해석하지 않음
 - unresolved critical conflict를 top suggestion에서 제외
+
+Phase 3A local beta는 append-only WorkSessionBinding의 explicit-user bind
+decision을 유일한 `executes` 권위로 사용한다. managed run의 exact binding/execution
+identity와 `github:object:<native id>`만 join하며 title, project, URL 또는 path
+유사성으로 관계를 만들지 않는다. rebind/unbind 뒤 과거 relation은 lineage로만
+보존하고, snapshot absence는 completion으로 해석하지 않는다. 결과는 별도
+`/api/work-relations`와 Work Cockpit에서 관찰하지만 Attention에는 연결하지 않는다.
+
+세부 계약은 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
 
 ### Phase 4 — Eligibility, lane, ranking, selection
 
@@ -3190,14 +3211,17 @@ Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변�
 21. `[Phase 2B.2A 일부 완료]` direct turn/managed-run failure lifecycle 작성.
     verified stall/follow-through/scope-drift detector는 richer evidence 뒤 진행
 22. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
-23. native/explicit-link identity resolver와 execution-work 관계 작성
-24. claim authority resolver 작성
-25. full cross-source hard eligibility와 lane classifier 작성
-26. user-answer-required clarification route 작성
-27. Calendar free-block과 first-step 작성
-28. Notion task property mapping 작성
-29. formal feedback evaluation runner 작성
-30. frozen baseline 후에만 ranking policy 보정
+23. `[Phase 3A 완료]` native/explicit-link identity resolver와 managed
+    Codex↔GitHub `executes` 관계 작성
+24. `[Phase 3B]` privacy-safe artifact identity와 `produces`, user-confirmed
+    `related_to` 관계 작성
+25. claim authority resolver 작성
+26. full cross-source hard eligibility와 lane classifier 작성
+27. user-answer-required clarification route 작성
+28. Calendar free-block과 first-step 작성
+29. Notion task property mapping 작성
+30. formal feedback evaluation runner 작성
+31. frozen baseline 후에만 ranking policy 보정
 
 ---
 
@@ -3229,6 +3253,14 @@ Cross-source Dev Candidate revision `2`, `30` cases와 canonical SHA-256은 변�
 - 짧은 Codex 승인·입력 요청은 일시 상태이며, 미해결 상태가 versioned
   threshold를 넘을 때만 조건부 후보가 된다.
 - Codex 실행 완료는 연결된 GitHub/Notion work item 완료를 의미하지 않는다.
+- managed Codex↔GitHub `executes`의 유일한 권위는 사용자가 직접 확인한
+  WorkSessionBinding이며 exact `bindingId`, execution identity와
+  `github:object:<native id>`가 모두 일치해야 한다.
+- rebind/unbind 뒤 과거 `executes` 관계는 lineage로만 보존하고 현재 연결이나
+  Attention 후보로 사용하지 않는다.
+- project mapping은 alignment/conflict 설명에만 사용하며 item relation을 만들지
+  않는다. Phase 3A relation은 별도 관찰 API/UI에만 노출하고 Attention input,
+  candidate, ranking과 selection에는 연결하지 않는다.
 - Calendar는 기본적으로 시간 constraint다.
 - Notion은 mapped task database만 직접 후보 source로 사용한다.
 - Calendar와 Notion은 Phase 2A.1 Attention input에 각각

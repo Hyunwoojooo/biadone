@@ -20,6 +20,15 @@ vi.mock("../src/resumption", async (importOriginal) => {
   };
 });
 
+vi.mock("../src/relations", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/relations")>();
+  return {
+    ...actual,
+    validateStoredGitHubBindingTarget: vi.fn()
+  };
+});
+
 import {
   GET as getWorkResumption,
   POST as postWorkResumption
@@ -32,6 +41,10 @@ import {
   readWorkResumptionStatus,
   unbindWorkSession
 } from "../src/resumption";
+import {
+  WorkRelationTargetError,
+  validateStoredGitHubBindingTarget
+} from "../src/relations";
 
 const EXECUTION_ID = `codex:execution:${"1".repeat(24)}`;
 const SCOPE_ID = "a".repeat(24);
@@ -80,6 +93,11 @@ beforeEach(() => {
   vi.mocked(readWorkResumptionCommandStatus).mockResolvedValue(
     command
   );
+  vi.mocked(validateStoredGitHubBindingTarget).mockResolvedValue({
+    subjectId: taskRef.subjectId,
+    objectType: "issue",
+    number: 42
+  });
 });
 
 afterEach(() => {
@@ -132,10 +150,35 @@ describe("work resumption route", () => {
       executionId: EXECUTION_ID,
       explicitUserConfirmation: true
     });
+    expect(validateStoredGitHubBindingTarget).toHaveBeenCalledWith(
+      taskRef
+    );
     await expect(response.json()).resolves.toEqual({
       status: "ready",
       ...snapshot
     });
+  });
+
+  it("fails closed when an exact GitHub work identity cannot be verified", async () => {
+    vi.mocked(validateStoredGitHubBindingTarget).mockRejectedValueOnce(
+      new WorkRelationTargetError("GITHUB_WORK_ITEM_NOT_FOUND")
+    );
+
+    const response = await postWorkResumption(
+      mutationRequest({
+        action: "bind",
+        taskRef,
+        executionId: EXECUTION_ID,
+        explicitUserConfirmation: true
+      })
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "error",
+      code: "GITHUB_WORK_ITEM_NOT_FOUND"
+    });
+    expect(bindWorkSession).not.toHaveBeenCalled();
   });
 
   it("rejects bare IDs, client scope injection, and missing explicit confirmation", async () => {
