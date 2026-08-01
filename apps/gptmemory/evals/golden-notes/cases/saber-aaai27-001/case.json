@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "saber-aaai27-001",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "reinforcement-learning-research",
+  "title": "SABER 연구 이론 정립과 AAAI-27 논문 준비",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d838a-1b70-83ee-b1cf-66d71b231fab",
+    "messageCountAtCapture": 88,
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 86,
+    "excludedMessageIndexes": [87, 88],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 87,
+    "teacherResponseMessageIndex": 88
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

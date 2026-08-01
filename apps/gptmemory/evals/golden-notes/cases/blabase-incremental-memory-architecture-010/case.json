@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "blabase-incremental-memory-architecture-010",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "ai-memory-system-architecture",
+  "title": "Blabase 대화 기억 시스템의 증분형 아키텍처와 구조도",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d97e8-302c-83e8-999a-6dc2c3260d98",
+    "messageCountAtCapture": 15,
+    "candidateContentSha256": "ff39a72015de2b4703948b5b015fa08912a439b63790b34c3eef8d909c4eb17b",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "captureWarnings": [
+      {
+        "code": "tool_call_like_assistant_messages",
+        "messageIndexes": [2, 4, 11, 13],
+        "handling": "retained_in_candidate_input",
+        "notes": "Messages 11 and 13 are image generation calls; generated image payloads are not represented as text messages."
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 13,
+    "excludedMessageIndexes": [14, 15],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 14,
+    "teacherResponseMessageIndex": 15
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "rl-adaptation-business-008",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "reinforcement-learning-strategy",
+  "title": "변화하는 환경에서 강화학습의 사업성과 자동 적응 연구",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d952a-5514-83ee-bfeb-0b4c5ac45c76",
+    "messageCountAtCapture": 10,
+    "candidateContentSha256": "b4ba95ff6ed23ec0e6668f251df90682e34c707efadc087efa81a355e9e537cf",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 8,
+    "excludedMessageIndexes": [9, 10],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 9,
+    "teacherResponseMessageIndex": 10
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

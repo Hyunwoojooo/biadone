@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "pieces-personal-memory-os-009",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "personal-memory-product-architecture",
+  "title": "Pieces OS와 유사한 로컬 퍼스널 메모리 시스템 구현 구상",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d96c8-9844-83ee-9b08-233994bc8a7f",
+    "messageCountAtCapture": 14,
+    "candidateContentSha256": "a93e93b0b60f90cb5fcda1e45b06a73d798e812c3e90a681f30eadba44690e57",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "captureWarnings": [
+      {
+        "code": "tool_call_like_assistant_messages",
+        "messageIndexes": [3, 4, 5, 6, 7, 9, 10, 11],
+        "handling": "retained_in_candidate_input"
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 12,
+    "excludedMessageIndexes": [13, 14],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 13,
+    "teacherResponseMessageIndex": 14
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

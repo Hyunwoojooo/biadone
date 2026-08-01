@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "note-service-video-research-011",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "market-research-and-taxonomy",
+  "title": "노트 서비스 영상 조사와 생각 정리형 서비스 분류",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d99a9-570c-83ee-8c84-1e01eb71fd85",
+    "messageCountAtCapture": 54,
+    "candidateContentSha256": "a644f509f1a2873a3520ea887a8aab181a592e52dc8ed8121e979c782b2aa9cf",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "captureWarnings": [
+      {
+        "code": "tool_call_like_assistant_messages",
+        "messageIndexRanges": [
+          { "from": 3, "to": 24 },
+          { "from": 29, "to": 50 }
+        ],
+        "messageCount": 44,
+        "handling": "retained_in_candidate_input"
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 52,
+    "excludedMessageIndexes": [53, 54],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 53,
+    "teacherResponseMessageIndex": 54
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

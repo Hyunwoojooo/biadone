@@ -48,3 +48,9 @@ CHATGPT_SHARE_FETCHER_SECRET
 
 자세한 제품·구현 결정은 [implementation_plan.md](./implementation_plan.md)에
 기록합니다.
+
+## 평가 데이터
+
+강한 모델의 Teacher draft, 입력 cutoff, 사람 검수 상태는
+[`evals/golden-notes/`](./evals/golden-notes/)에서 관리합니다. Teacher 요청과
+답변은 저비용 모델의 평가 입력에서 항상 제외합니다.

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "remote-dev-ghostty-codex-003",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "remote-development-tooling",
+  "title": "맥북·맥미니·DGX Spark 원격 개발 환경 구성",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d8808-43e0-83e8-9669-8a89a3b37506",
+    "messageCountAtCapture": 172,
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 170,
+    "excludedMessageIndexes": [171, 172],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 171,
+    "teacherResponseMessageIndex": 172
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

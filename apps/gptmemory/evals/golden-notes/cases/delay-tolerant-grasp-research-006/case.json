@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "delay-tolerant-grasp-research-006",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "robotics-ai-research",
+  "title": "Robotics+AI 연구 탐색과 Delay-Tolerant Grasp 심화",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d91f1-cfa0-83ee-bf1e-e8cf2c8225f3",
+    "messageCountAtCapture": 16,
+    "candidateContentSha256": "f2bc73f33d646ac757d297dfe0c49a80d06539275d5c4f6d29eec7c77f7f2377",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "alternateCaptures": [
+      {
+        "shareUrl": "https://chatgpt.com/share/6a6d943c-2b70-83e8-9ef1-814beaed00cd",
+        "messageCountAtCapture": 18,
+        "candidateMessageCount": 14,
+        "candidateContentSha256": "f2bc73f33d646ac757d297dfe0c49a80d06539275d5c4f6d29eec7c77f7f2377",
+        "candidateMatchesPrimary": true,
+        "excludedMessageIndexes": [15, 16, 17, 18],
+        "teacherPromptMessageIndexes": [15, 17],
+        "teacherResponseMessageIndexes": [16, 18]
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 14,
+    "excludedMessageIndexes": [15, 16],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 15,
+    "teacherResponseMessageIndex": 16
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md",
+    "variantDrafts": [
+      {
+        "draftPath": "teacher-draft-variant-02.md",
+        "sourceShareUrl": "https://chatgpt.com/share/6a6d943c-2b70-83e8-9ef1-814beaed00cd",
+        "teacherPromptMessageIndex": 17,
+        "teacherResponseMessageIndex": 18,
+        "status": "alternate_teacher_draft_not_independent_eval_case"
+      }
+    ]
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

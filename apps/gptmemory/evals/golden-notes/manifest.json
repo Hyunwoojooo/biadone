@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "gptmemory.golden-note-manifest.v1",
+  "cases": [
+    {
+      "id": "saber-aaai27-001",
+      "path": "cases/saber-aaai27-001/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "reinforcement-learning-research"
+    },
+    {
+      "id": "mac-mini-cross-migration-002",
+      "path": "cases/mac-mini-cross-migration-002/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "macos-migration-remote-operations"
+    },
+    {
+      "id": "remote-dev-ghostty-codex-003",
+      "path": "cases/remote-dev-ghostty-codex-003/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "remote-development-tooling"
+    },
+    {
+      "id": "nuvin-ai-learning-service-004",
+      "path": "cases/nuvin-ai-learning-service-004/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "product-concept-and-naming"
+    },
+    {
+      "id": "playmcp-codex-remote-control-005",
+      "path": "cases/playmcp-codex-remote-control-005/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "developer-tooling-product-design"
+    },
+    {
+      "id": "delay-tolerant-grasp-research-006",
+      "path": "cases/delay-tolerant-grasp-research-006/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "robotics-ai-research"
+    },
+    {
+      "id": "world-action-model-research-007",
+      "path": "cases/world-action-model-research-007/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "robotics-ai-systems-research"
+    },
+    {
+      "id": "rl-adaptation-business-008",
+      "path": "cases/rl-adaptation-business-008/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "reinforcement-learning-strategy"
+    },
+    {
+      "id": "pieces-personal-memory-os-009",
+      "path": "cases/pieces-personal-memory-os-009/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "personal-memory-product-architecture"
+    },
+    {
+      "id": "blabase-incremental-memory-architecture-010",
+      "path": "cases/blabase-incremental-memory-architecture-010/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "ai-memory-system-architecture"
+    },
+    {
+      "id": "note-service-video-research-011",
+      "path": "cases/note-service-video-research-011/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "market-research-and-taxonomy"
+    },
+    {
+      "id": "llm-context-acquisition-preference-012",
+      "path": "cases/llm-context-acquisition-preference-012/case.json",
+      "status": "teacher_draft_pending_human_review",
+      "language": "ko",
+      "domain": "human-ai-interaction-research"
+    }
+  ]
+}

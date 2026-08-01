@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "world-action-model-research-007",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "robotics-ai-systems-research",
+  "title": "로보틱스 시장 공백과 실시간 World Action Model 설계",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d9331-8530-83e8-95b6-182de5b89fff",
+    "messageCountAtCapture": 66,
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "captureWarnings": [
+      {
+        "code": "tool_call_like_assistant_message",
+        "messageIndexes": [63],
+        "handling": "retained_in_candidate_input"
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 64,
+    "excludedMessageIndexes": [65, 66],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 65,
+    "teacherResponseMessageIndex": 66
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

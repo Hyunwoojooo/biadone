@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "mac-mini-cross-migration-002",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "macos-migration-remote-operations",
+  "title": "M2·M4 맥미니 환경 교차 이전과 원격 제어 구성",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d8611-1aec-83e8-a3b6-3d9da7dfc31e",
+    "messageCountAtCapture": 91,
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 89,
+    "excludedMessageIndexes": [90, 91],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 90,
+    "teacherResponseMessageIndex": 91
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

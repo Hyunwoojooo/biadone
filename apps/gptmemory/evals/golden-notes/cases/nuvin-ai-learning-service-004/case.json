@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "nuvin-ai-learning-service-004",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "product-concept-and-naming",
+  "title": "개인 맞춤형 AI 학습지 서비스 Nuvin 기획과 네이밍",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6d8bbb-4f60-83e8-bd16-a73ea3b8b3b1",
+    "messageCountAtCapture": 90,
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 88,
+    "excludedMessageIndexes": [89, 90],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 89,
+    "teacherResponseMessageIndex": 90
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}

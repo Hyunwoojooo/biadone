@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "gptmemory.golden-note-case.v1",
+  "id": "llm-context-acquisition-preference-012",
+  "createdAt": "2026-08-01",
+  "language": "ko",
+  "domain": "human-ai-interaction-research",
+  "title": "LLM 맥락 획득 방식과 사용자 선호 비교 연구",
+  "source": {
+    "type": "chatgpt_share_link",
+    "shareUrl": "https://chatgpt.com/share/6a6def88-b0b4-83ee-a79f-60c588580fdf",
+    "messageCountAtCapture": 60,
+    "candidateContentSha256": "6970a760a2ae0a58620f96b0c261eea552609dec08688ef0a859b88c4459a784",
+    "adapterObservedTitle": "create_time",
+    "titleExtractionWarning": true,
+    "captureWarnings": [
+      {
+        "code": "tool_call_like_assistant_messages",
+        "messageIndexRanges": [
+          { "from": 3, "to": 17 },
+          { "from": 22, "to": 35 }
+        ],
+        "messageIndexes": [43, 44, 45, 49, 51, 53, 54, 56],
+        "messageCount": 37,
+        "handling": "retained_in_candidate_input"
+      },
+      {
+        "code": "code_execution_like_assistant_message",
+        "messageIndexes": [55],
+        "messageCount": 1,
+        "handling": "retained_in_candidate_input"
+      }
+    ]
+  },
+  "inputCutoff": {
+    "indexBase": 1,
+    "strategy": "exclude_teacher_turn",
+    "lastIncludedMessageIndex": 58,
+    "excludedMessageIndexes": [59, 60],
+    "excludedTrailingMessageCount": 2,
+    "teacherPromptMessageIndex": 59,
+    "teacherResponseMessageIndex": 60
+  },
+  "teacher": {
+    "promptVersion": "teacher-note-v1",
+    "promptPath": "../../prompts/teacher-note-v1.md",
+    "draftPath": "teacher-draft.md"
+  },
+  "humanReview": {
+    "status": "pending",
+    "reviewPath": "review.md",
+    "referencePath": null
+  },
+  "status": "teacher_draft_pending_human_review"
+}
