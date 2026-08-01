@@ -113,12 +113,12 @@ WorkSessionBinding, GitHub snapshot과 context registry가 하나의 원자적 s
 - GitHub subject 형식이 exact native identity가 아님
 - 중복 native observation이 서로 충돌함
 
-## 5. 현재 생성하지 않는 관계
+## 5. Phase 3A projection이 생성하지 않는 관계
 
-다음 관계는 필요한 explicit artifact/link 계약이 없어 생성하지 않는다.
+Phase 3A work relation projection은 다음 관계를 생성하지 않는다.
 
-- `produces`: commit, branch, PR 등 privacy-safe artifact identity와 명시적
-  execution link가 필요
+- `produces`: Phase 3B의 별도 explicit-user artifact attribution 계약과
+  projection에서만 생성
 - `related_to`: 별도의 user-confirmed work-to-work link가 필요
 - `same_work_item`: provider-native 동일 객체 또는 사용자 확인이 필요
 
@@ -185,13 +185,14 @@ relation projection은 managed event API와 별도의 local-only, read-only GET�
 
 ## 9. 다음 단계
 
-Phase 3A 이후에 다음 계약과 평가를 별도로 추가한다.
+Phase 3A 이후 계약의 현재 상태는 다음과 같다.
 
-1. privacy-safe explicit artifact identity와 `produces`
-2. user-confirmed work-to-work `related_to`
-3. field-level claim authority와 GitHub/Notion conflict record
-4. relation과 materiality를 요구하는 Codex failure intervention gate
-5. configured project workflow 기반 completed follow-through
+1. `[Phase 3B 완료]` privacy-safe explicit-user artifact identity와 `produces`.
+   `ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따름
+2. `[후속]` user-confirmed work-to-work `related_to`
+3. `[후속]` field-level claim authority와 GitHub/Notion conflict record
+4. `[후속]` relation과 materiality를 요구하는 Codex failure intervention gate
+5. `[후속]` configured project workflow 기반 completed follow-through
 
 위 단계가 완료되기 전에는 relation projection을 Attention input, replay hash,
 candidate, ranking 또는 selection에 연결하지 않는다.

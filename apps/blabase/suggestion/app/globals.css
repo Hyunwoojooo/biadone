@@ -901,6 +901,8 @@ h1 {
 .attentionAlternatives a:focus-visible,
 .workResumption button:focus-visible,
 .workResumption select:focus-visible,
+.managedCodexArtifacts button:focus-visible,
+.managedCodexArtifacts input:focus-visible,
 .attentionFeedback button:focus-visible,
 .attentionLabLink:focus-visible,
 .labIntroActions button:focus-visible,
@@ -2046,6 +2048,147 @@ summary {
   font-weight: 680;
 }
 
+.managedCodexArtifacts {
+  grid-column: 1 / -1;
+  padding: 10px;
+  border: 1px solid rgb(39 103 73 / 12%);
+  border-radius: 9px;
+  background: rgb(248 250 248 / 80%);
+}
+
+.managedCodexArtifactsHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.managedCodexArtifactsHeader strong {
+  font-size: 11px;
+}
+
+.managedCodexArtifactsBoundary {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.managedCodexArtifactList {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.managedCodexArtifactList > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.managedCodexArtifactIdentity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.managedCodexArtifactIdentity strong {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.managedCodexArtifactIdentity span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.managedCodexArtifactActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.managedCodexArtifactObservation {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #dceee2;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.managedCodexArtifactObservation.isWarning {
+  background: #f7ecd8;
+  color: #85581f;
+}
+
+.managedCodexArtifactObservation.isError {
+  background: rgb(173 63 50 / 12%);
+  color: var(--error);
+}
+
+.managedCodexArtifacts button,
+.managedCodexArtifacts input {
+  min-height: 36px;
+  border: 1px solid rgb(39 103 73 / 22%);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+}
+
+.managedCodexArtifacts button {
+  padding: 0 10px;
+  color: var(--accent);
+  font-weight: 760;
+}
+
+.managedCodexArtifacts button:disabled,
+.managedCodexArtifacts input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.managedCodexArtifactAttach {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.managedCodexArtifactAttach label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.managedCodexArtifactAttach input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 9px;
+}
+
+.managedCodexArtifactMessage,
+.managedCodexArtifactEmpty {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.managedCodexArtifactMessage.isError {
+  color: var(--error);
+  font-weight: 680;
+}
+
 .managedCodexSemantic,
 .managedCodexSemanticUnavailable {
   grid-column: 1 / -1;
@@ -3005,6 +3148,18 @@ summary {
 
   .managedCodexRunMeta {
     min-width: 0;
+  }
+
+  .managedCodexArtifactAttach {
+    grid-template-columns: 1fr;
+  }
+
+  .managedCodexArtifactAttach label {
+    grid-column: auto;
+  }
+
+  .managedCodexArtifactAttach button {
+    min-height: 42px;
   }
 
   .sourceHealthGrid {

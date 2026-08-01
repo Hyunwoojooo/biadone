@@ -2,19 +2,24 @@ import { randomBytes } from "node:crypto";
 import {
   chmod,
   mkdir,
+  lstat,
   open,
   readFile,
   readdir,
   rename,
   rm,
-  stat,
   unlink,
+  utimes,
   writeFile
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { ZodType } from "zod";
 
+import {
+  WORK_ARTIFACT_ATTRIBUTIONS_FILENAME,
+  isWorkArtifactAttributionTempFilename
+} from "../artifacts/contracts";
 import {
   readStoredCodexConfig,
   readStoredCodexSnapshot
@@ -63,6 +68,7 @@ const HEARTBEAT_LOCK_NAME = "heartbeat";
 const FILESYSTEM_LOCK_STALE_MS = 30_000;
 const FILESYSTEM_LOCK_WAIT_MS = 35_000;
 const FILESYSTEM_LOCK_RETRY_MS = 20;
+const FILESYSTEM_LOCK_RENEW_MS = 5_000;
 const commandFilePattern = /^command_[a-f0-9]{32}\.json$/;
 const mutationQueues = new Map<string, Promise<unknown>>();
 
@@ -607,14 +613,30 @@ export async function clearWorkResumptionStateForCodexDisconnect(
 
 async function clearWorkResumptionFiles(cwd: string): Promise<void> {
   const directory = workResumptionLocalDirectory(cwd);
+  const artifactTempFiles = await readdir(directory).catch((error) => {
+    if (isNodeError(error, "ENOENT")) return [];
+    throw error;
+  });
   await Promise.all([
     unlink(join(directory, BINDINGS_FILENAME)).catch((error) => {
       if (!isNodeError(error, "ENOENT")) throw error;
     }),
+    unlink(join(directory, WORK_ARTIFACT_ATTRIBUTIONS_FILENAME)).catch(
+      (error) => {
+        if (!isNodeError(error, "ENOENT")) throw error;
+      }
+    ),
     rm(join(directory, COMMANDS_DIRECTORY), {
       recursive: true,
       force: true
-    })
+    }),
+    ...artifactTempFiles
+      .filter(isWorkArtifactAttributionTempFilename)
+      .map((filename) =>
+        unlink(join(directory, filename)).catch((error) => {
+          if (!isNodeError(error, "ENOENT")) throw error;
+        })
+      )
   ]);
 }
 
@@ -687,10 +709,18 @@ export async function isManagedCodexOwnershipCurrent(
  */
 export async function withManagedCodexAuthorityLease<T>(
   cwd: string,
-  now: Date,
-  read: (authority: ManagedCodexAuthoritySnapshot) => Promise<T>
+  leaseTime: Date | (() => Date),
+  read: (
+    authority: ManagedCodexAuthoritySnapshot,
+    leaseNow: Date
+  ) => Promise<T>
 ): Promise<T> {
   return withWorkResumptionMutation(cwd, async () => {
+    // A caller may wait behind a launch, bind, or disconnect. Capture time
+    // only after that wait so freshness and append-only decisions share the
+    // exact authority snapshot protected by this lease.
+    const now =
+      typeof leaseTime === "function" ? leaseTime() : leaseTime;
     const [store, heartbeat] = await Promise.all([
       readWorkSessionBindingStore(cwd, now.toISOString()),
       readHeartbeat(cwd)
@@ -713,7 +743,7 @@ export async function withManagedCodexAuthorityLease<T>(
               connectionGeneration
             }))
     };
-    return read(authority);
+    return read(authority, now);
   });
 }
 
@@ -967,10 +997,11 @@ function withNamedFilesystemLock<T>(
     .catch(() => undefined)
     .then(async () => {
       const lease = await acquireFilesystemLock(cwd, name);
+      const renewal = startFilesystemLockRenewal(lease);
       try {
         return await mutation();
       } finally {
-        await releaseFilesystemLock(lease);
+        await finishFilesystemLease(lease, renewal);
       }
     });
   mutationQueues.set(key, next);
@@ -982,6 +1013,13 @@ function withNamedFilesystemLock<T>(
 type FilesystemLease = {
   path: string;
   token: string;
+  ownerPid: number;
+  device: number;
+  inode: number;
+};
+
+type FilesystemLockRenewal = {
+  stop: () => Promise<void>;
 };
 
 async function acquireFilesystemLock(
@@ -999,16 +1037,29 @@ async function acquireFilesystemLock(
   while (Date.now() <= deadline) {
     const token = randomBytes(16).toString("hex");
     let handle;
+    let created = false;
     try {
       handle = await open(path, "wx", 0o600);
-      await handle.writeFile(`${token}\n`, "utf8");
+      created = true;
+      await handle.writeFile(`${token}\n${process.pid}\n`, "utf8");
+      const metadata = await handle.stat();
       await handle.close();
       await chmod(path, 0o600);
-      return { path, token };
+      return {
+        path,
+        token,
+        ownerPid: process.pid,
+        device: metadata.dev,
+        inode: metadata.ino
+      };
     } catch (error) {
       await handle?.close().catch(() => undefined);
       if (!isNodeError(error, "EEXIST")) {
-        await unlink(path).catch(() => undefined);
+        if (created) {
+          await removeFilesystemLockIfTokenMatches(path, token).catch(
+            () => undefined
+          );
+        }
         throw new WorkResumptionStoreError(
           "LOCK_ACQUISITION_FAILED"
         );
@@ -1024,13 +1075,25 @@ async function acquireFilesystemLock(
 
 async function removeStaleFilesystemLock(path: string): Promise<void> {
   try {
-    const metadata = await stat(path);
+    const first = await readFilesystemLockSnapshot(path);
+    if (!filesystemLockSnapshotIsStale(first)) return;
+    // A live local process is authoritative even when its event loop could
+    // not renew on time. Prefer a bounded acquisition failure to overlapping
+    // mutations. Legacy token-only locks still use the stale-time fallback.
+    if (filesystemLockOwnerMayBeAlive(first.ownerPid)) return;
+
+    // A live owner may renew between the first observation and deletion.
+    // Re-read the token, inode, and mtime immediately before unlinking so an
+    // old observation cannot remove a replacement or freshly renewed lease.
+    const confirmed = await readFilesystemLockSnapshot(path);
     if (
-      Date.now() - metadata.mtimeMs >
-      FILESYSTEM_LOCK_STALE_MS
+      !sameFilesystemLockSnapshot(first, confirmed) ||
+      !filesystemLockSnapshotIsStale(confirmed) ||
+      filesystemLockOwnerMayBeAlive(confirmed.ownerPid)
     ) {
-      await unlink(path);
+      return;
     }
+    await unlink(path);
   } catch (error) {
     if (!isNodeError(error, "ENOENT")) {
       throw new WorkResumptionStoreError(
@@ -1044,17 +1107,177 @@ async function releaseFilesystemLock(
   lease: FilesystemLease
 ): Promise<void> {
   try {
-    const token = (await readFile(lease.path, "utf8")).trim();
-    if (token === lease.token) {
-      await unlink(lease.path);
-    }
-  } catch (error) {
-    if (!isNodeError(error, "ENOENT")) {
+    const current = await readFilesystemLockSnapshot(lease.path);
+    if (!filesystemLockSnapshotBelongsToLease(current, lease)) {
       throw new WorkResumptionStoreError(
         "LOCK_ACQUISITION_FAILED"
       );
     }
+    await unlink(lease.path);
+  } catch (error) {
+    if (error instanceof WorkResumptionStoreError) throw error;
+    throw new WorkResumptionStoreError(
+      "LOCK_ACQUISITION_FAILED"
+    );
   }
+}
+
+function startFilesystemLockRenewal(
+  lease: FilesystemLease
+): FilesystemLockRenewal {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let inFlight: Promise<void> = Promise.resolve();
+  let failure: WorkResumptionStoreError | null = null;
+
+  const schedule = () => {
+    if (stopped || failure) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (stopped || failure) return;
+      inFlight = renewFilesystemLock(lease).catch(() => {
+        failure = new WorkResumptionStoreError(
+          "LOCK_ACQUISITION_FAILED"
+        );
+      });
+      void inFlight.then(schedule);
+    }, FILESYSTEM_LOCK_RENEW_MS);
+    timer.unref?.();
+  };
+
+  schedule();
+  return {
+    stop: async () => {
+      stopped = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      await inFlight;
+      if (failure) throw failure;
+    }
+  };
+}
+
+async function renewFilesystemLock(
+  lease: FilesystemLease
+): Promise<void> {
+  const before = await readFilesystemLockSnapshot(lease.path);
+  if (!filesystemLockSnapshotBelongsToLease(before, lease)) {
+    throw new WorkResumptionStoreError(
+      "LOCK_ACQUISITION_FAILED"
+    );
+  }
+  const renewedAtMs = Math.max(Date.now(), before.modifiedAtMs + 1);
+  const renewedAt = new Date(renewedAtMs);
+  await utimes(lease.path, renewedAt, renewedAt);
+  const after = await readFilesystemLockSnapshot(lease.path);
+  if (!filesystemLockSnapshotBelongsToLease(after, lease)) {
+    throw new WorkResumptionStoreError(
+      "LOCK_ACQUISITION_FAILED"
+    );
+  }
+}
+
+async function finishFilesystemLease(
+  lease: FilesystemLease,
+  renewal: FilesystemLockRenewal
+): Promise<void> {
+  let renewalError: unknown = null;
+  try {
+    await renewal.stop();
+  } catch (error) {
+    renewalError = error;
+  }
+
+  let releaseError: unknown = null;
+  try {
+    await releaseFilesystemLock(lease);
+  } catch (error) {
+    releaseError = error;
+  }
+  if (renewalError) throw renewalError;
+  if (releaseError) throw releaseError;
+}
+
+type FilesystemLockSnapshot = {
+  token: string;
+  ownerPid: number | null;
+  device: number;
+  inode: number;
+  modifiedAtMs: number;
+};
+
+async function readFilesystemLockSnapshot(
+  path: string
+): Promise<FilesystemLockSnapshot> {
+  const [content, metadata] = await Promise.all([
+    readFile(path, "utf8"),
+    lstat(path)
+  ]);
+  const [token = "", ownerPidText] = content.trim().split("\n");
+  const ownerPid = Number(ownerPidText);
+  return {
+    token,
+    ownerPid:
+      Number.isSafeInteger(ownerPid) && ownerPid > 0
+        ? ownerPid
+        : null,
+    device: metadata.dev,
+    inode: metadata.ino,
+    modifiedAtMs: metadata.mtimeMs
+  };
+}
+
+function filesystemLockSnapshotBelongsToLease(
+  snapshot: FilesystemLockSnapshot,
+  lease: FilesystemLease
+): boolean {
+  return (
+    snapshot.token === lease.token &&
+    snapshot.ownerPid === lease.ownerPid &&
+    snapshot.device === lease.device &&
+    snapshot.inode === lease.inode
+  );
+}
+
+function sameFilesystemLockSnapshot(
+  left: FilesystemLockSnapshot,
+  right: FilesystemLockSnapshot
+): boolean {
+  return (
+    left.token === right.token &&
+    left.ownerPid === right.ownerPid &&
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.modifiedAtMs === right.modifiedAtMs
+  );
+}
+
+function filesystemLockSnapshotIsStale(
+  snapshot: FilesystemLockSnapshot
+): boolean {
+  return Date.now() - snapshot.modifiedAtMs > FILESYSTEM_LOCK_STALE_MS;
+}
+
+function filesystemLockOwnerMayBeAlive(
+  ownerPid: number | null
+): boolean {
+  if (ownerPid === null) return false;
+  try {
+    process.kill(ownerPid, 0);
+    return true;
+  } catch (error) {
+    return !isNodeError(error, "ESRCH");
+  }
+}
+
+async function removeFilesystemLockIfTokenMatches(
+  path: string,
+  token: string
+): Promise<void> {
+  const current = await readFilesystemLockSnapshot(path);
+  if (current.token === token) await unlink(path);
 }
 
 function waitForFilesystemLock(): Promise<void> {

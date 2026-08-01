@@ -47,11 +47,17 @@ const RAW_SENTINEL = "PRIVATE_NATIVE_THREAD_PROMPT_OUTPUT_SENTINEL";
 beforeEach(() => {
   vi.stubEnv("NODE_ENV", "development");
   vi.mocked(withManagedCodexAuthorityLease).mockImplementation(
-    async (_cwd, _now, read) =>
-      read({
-        activeOwnerInstanceId: OWNER_INSTANCE_ID,
-        activeOwnerships: [ACTIVE_OWNERSHIP]
-      })
+    async (_cwd, leaseTime, read) => {
+      const now =
+        typeof leaseTime === "function" ? leaseTime() : leaseTime;
+      return read(
+        {
+          activeOwnerInstanceId: OWNER_INSTANCE_ID,
+          activeOwnerships: [ACTIVE_OWNERSHIP]
+        },
+        now
+      );
+    }
   );
   vi.mocked(readManagedCodexObservability).mockResolvedValue(
     observability()
@@ -106,8 +112,10 @@ describe("managed Codex runs route", () => {
     expect(withManagedCodexAuthorityLease).toHaveBeenCalledOnce();
     const authorityCall = vi.mocked(withManagedCodexAuthorityLease)
       .mock.calls[0];
-    const readAt = authorityCall?.[1];
     expect(authorityCall?.[0]).toBe(process.cwd());
+    expect(authorityCall?.[1]).toEqual(expect.any(Function));
+    const readAt = vi.mocked(readManagedCodexObservability).mock
+      .calls[0]?.[0].now;
     expect(readAt).toBeInstanceOf(Date);
     expect(readManagedCodexObservability).toHaveBeenCalledWith(
       {

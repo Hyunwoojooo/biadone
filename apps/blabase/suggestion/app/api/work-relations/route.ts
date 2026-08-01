@@ -6,6 +6,11 @@ import {
 } from "../../../src/attention/access";
 import { LIVE_ATTENTION_FRESHNESS_POLICY } from "../../../src/attention/liveAttention";
 import {
+  managedCodexArtifactRelationProjectionSchema,
+  readWorkArtifactAttributionStore,
+  resolveManagedCodexArtifactRelations
+} from "../../../src/artifacts";
+import {
   readStoredGitHubSnapshot
 } from "../../../src/connectors/github/localStore";
 import { normalizeGitHubSnapshotToWorkSignals } from "../../../src/connectors/github/toWorkSignals";
@@ -45,8 +50,6 @@ export async function GET(request: Request) {
     );
   }
 
-  const now = new Date();
-  const asOf = now.toISOString();
   const cwd = process.cwd();
 
   try {
@@ -58,17 +61,21 @@ export async function GET(request: Request) {
       registryRead.status === "available"
         ? registryRead.value
         : null;
-    const githubBatch = normalizeGitHubBatch({
-      snapshot: githubSnapshot,
-      contextRegistry,
-      asOf
-    });
-
     const projection = await withManagedCodexAuthorityLease(
       cwd,
-      now,
-      async (authority) => {
-        const [managedProjection, bindingStore] = await Promise.all([
+      () => new Date(),
+      async (authority, now) => {
+        const asOf = now.toISOString();
+        const githubBatch = normalizeGitHubBatch({
+          snapshot: githubSnapshot,
+          contextRegistry,
+          asOf
+        });
+        const [
+          managedProjection,
+          bindingStore,
+          artifactAttributionStore
+        ] = await Promise.all([
           readManagedCodexPublicProjection(
             {
               activeOwnerInstanceId: authority.activeOwnerInstanceId,
@@ -77,9 +84,10 @@ export async function GET(request: Request) {
             },
             cwd
           ),
-          readWorkSessionBindingStore(cwd, asOf)
+          readWorkSessionBindingStore(cwd, asOf),
+          readWorkArtifactAttributionStore(cwd, now)
         ]);
-        return managedCodexWorkRelationProjectionSchema.parse(
+        const workRelations = managedCodexWorkRelationProjectionSchema.parse(
           resolveManagedCodexWorkRelations({
             asOf,
             managedProjection,
@@ -88,12 +96,23 @@ export async function GET(request: Request) {
             contextRegistry
           })
         );
+        const artifacts =
+          managedCodexArtifactRelationProjectionSchema.parse(
+            resolveManagedCodexArtifactRelations({
+              asOf,
+              workRelationProjection: workRelations,
+              attributionStore: artifactAttributionStore,
+              githubBatch
+            })
+          );
+        return { workRelations, artifacts };
       }
     );
 
     return noStoreJson({
       status: "ready",
-      ...projection
+      ...projection.workRelations,
+      artifacts: projection.artifacts
     });
   } catch {
     return errorResponse(

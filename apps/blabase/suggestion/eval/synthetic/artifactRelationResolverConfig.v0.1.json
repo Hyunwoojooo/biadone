@@ -1,0 +1,72 @@
+{
+  "version": "managed-codex-artifact-relation-resolver-config-v0.1",
+  "purpose": "targeted_synthetic_explicit_artifact_relation_evaluation_only",
+  "inputBoundary": "explicit_artifact_attribution_inputs",
+  "orderingAuthority": {
+    "attributionDecisions": "append_only_decision_order",
+    "managedRuns": "stable_managed_run_id",
+    "artifactRelations": "stable_relation_id"
+  },
+  "authority": {
+    "supportedRelationAuthority": ["user_configured"],
+    "requiredDecisionSource": "explicit_user",
+    "implicitSignalsCanCreateRelation": false,
+    "automaticManagedRepositoryHeadTransitionProduces": false
+  },
+  "identity": {
+    "commit": "exact_repository_native_id_and_full_40_or_64_hex_oid",
+    "pullRequest": "exact_repository_native_id_and_pull_request_native_object_id",
+    "pullRequestNumberAuthority": "display_and_corroboration_only",
+    "pullRequestRequiresStoredSnapshotNativeIdMatch": true,
+    "pullRequestAttachRequiresFreshSnapshot": false,
+    "pullRequestAttachRequiresCompleteSnapshot": false,
+    "artifactUrlValidation": "exact_github_url_parse_before_transient_discard",
+    "repositoryNamesAreIdentity": false,
+    "shortShaAllowed": false,
+    "titleSimilarityAllowed": false,
+    "branchSimilarityAllowed": false,
+    "projectAlignmentAllowed": false,
+    "timeProximityAllowed": false
+  },
+  "runBinding": {
+    "managedRunMustExist": true,
+    "bindingIdMustMatch": true,
+    "executionIdMustMatch": true
+  },
+  "relations": {
+    "supportedTypes": ["produces"],
+    "deduplicateExactActiveIdentity": true,
+    "preserveSupersededLineage": true,
+    "detachedRelationIsCurrent": false
+  },
+  "observation": {
+    "unavailableCanCreateImplicitRelation": false,
+    "staleCanPreserveExplicitRelation": true,
+    "truncatedCanPreserveExplicitRelation": true,
+    "notObservedCanPreserveExplicitRelation": true,
+    "conflictCanPreserveExplicitRelation": true,
+    "sourceLimitCanCreateImplicitRelation": false
+  },
+  "attention": {
+    "disposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "privacy": {
+    "dataOrigin": "synthetic",
+    "containsProductionData": false,
+    "rawUrlHandling": "transient_parse_only",
+    "persistRawUrl": false,
+    "persistPromptOrAnswer": false,
+    "persistFilePath": false,
+    "metadataStorage": "local_only",
+    "metadataRetentionDays": 30
+  },
+  "releaseGates": {
+    "falsePositiveCount": 0,
+    "hardNegativeLeakageCount": 0,
+    "privacySentinelLeakageCount": 0,
+    "attentionLeakageCount": 0,
+    "permutationDeterminismFailureCount": 0,
+    "phase3aDatasetHashMustRemain": "b12660720c657123fe6e94b0e4ba6dcf29704f72b90cd5b630ecd8331091b002"
+  }
+}

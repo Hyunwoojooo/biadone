@@ -60,6 +60,7 @@ import {
   workSessionBindingStoreSchema,
   workResumptionCodexConnectionGeneration,
   withManagedCodexAuthorityLease,
+  withWorkResumptionStateLease,
   writeCompanionHeartbeat,
   bindWorkSession,
   type WorkResumptionTaskRef
@@ -100,6 +101,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   await Promise.all(
     tempDirectories.splice(0).map((directory) =>
@@ -795,6 +797,83 @@ describe("private work resumption store", () => {
     });
   });
 
+  it("renews a live state lease beyond the stale cutoff and clears its timer", async () => {
+    const cwd = await testDirectory();
+    vi.useFakeTimers();
+    let markStarted!: () => void;
+    let releaseLease!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLease = resolve;
+    });
+    const lease = withWorkResumptionStateLease(cwd, async () => {
+      markStarted();
+      await release;
+      return "completed" as const;
+    });
+    await started;
+
+    const lock = join(
+      workResumptionLocalDirectory(cwd),
+      "locks",
+      "state.lock"
+    );
+    const initialModifiedAt = (await stat(lock)).mtimeMs;
+    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.waitFor(
+      async () => {
+        expect((await stat(lock)).mtimeMs).toBeGreaterThan(
+          initialModifiedAt
+        );
+      },
+      { timeout: 1_000, interval: 10 }
+    );
+    const renewedModifiedAt = (await stat(lock)).mtimeMs;
+
+    expect(Date.now() - renewedModifiedAt).toBeLessThan(30_000);
+    releaseLease();
+    await expect(lease).resolves.toBe("completed");
+    await expect(readFile(lock, "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("verifies the current token before releasing a filesystem lease", async () => {
+    const cwd = await testDirectory();
+    let markStarted!: () => void;
+    let releaseLease!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLease = resolve;
+    });
+    const lease = withWorkResumptionStateLease(cwd, async () => {
+      markStarted();
+      await release;
+    });
+    await started;
+
+    const lock = join(
+      workResumptionLocalDirectory(cwd),
+      "locks",
+      "state.lock"
+    );
+    const replacementToken = "e".repeat(32);
+    await writeFile(lock, `${replacementToken}\n`, { mode: 0o600 });
+    releaseLease();
+
+    await expect(lease).rejects.toMatchObject({
+      code: "LOCK_ACQUISITION_FAILED"
+    });
+    await expect(readFile(lock, "utf8")).resolves.toBe(
+      `${replacementToken}\n`
+    );
+  });
+
   it("cancels a claim on unbind and clears all resumable state on disconnect", async () => {
     const cwd = await testDirectory();
     await bindFixture(cwd);
@@ -841,6 +920,20 @@ describe("private work resumption store", () => {
       cwd,
       plusMs(T0, 3_000)
     );
+    const artifactAttributionPath = join(
+      workResumptionLocalDirectory(cwd),
+      "artifact-attributions.json"
+    );
+    const artifactTemporaryPath =
+      `${artifactAttributionPath}.4321.${"a".repeat(16)}.tmp`;
+    const unrelatedSiblingPath = `${artifactAttributionPath}.backup.tmp`;
+    await writeFile(artifactAttributionPath, "{}\n", {
+      mode: 0o600
+    });
+    await Promise.all([
+      writeFile(artifactTemporaryPath, "partial\n", { mode: 0o600 }),
+      writeFile(unrelatedSiblingPath, "preserve\n", { mode: 0o600 })
+    ]);
     await clearWorkResumptionState(cwd);
     const afterClear = await readWorkResumptionStatus(
       cwd,
@@ -851,6 +944,15 @@ describe("private work resumption store", () => {
     await expect(
       readdir(join(workResumptionLocalDirectory(cwd), "commands"))
     ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(artifactAttributionPath, "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(artifactTemporaryPath, "utf8")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(unrelatedSiblingPath, "utf8")).resolves.toBe(
+      "preserve\n"
+    );
   });
 
   it("prunes terminal command metadata after seven days", async () => {

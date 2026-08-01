@@ -22,7 +22,7 @@
 | Managed semantic 계약 | `suggestion/docs/CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md` |
 | Work relation 계약 | `suggestion/docs/WORK_RELATION_RESOLUTION_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline과 Phase 3A explicit Codex↔GitHub executes relation local beta 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`와 Phase 3B explicit GitHub artifact `produces` local beta 완료 |
 
 ---
 
@@ -2759,6 +2759,17 @@ title-only/project-only inference, superseded-as-current, unsupported relation/a
 privacy sentinel와 Attention leakage는 모두 `0`이다. 기존 Cross-source Dev
 Candidate revision `2`, `30` cases와 canonical SHA-256은 유지했다.
 
+2026-08-01 Phase 3B gate는 explicit-user artifact attribution ledger, exact GitHub
+commit/PR native identity, Phase 3A `executes` join과 local-only artifact relation
+projection을 별도 synthetic Dev Candidate `32` cases로 검증했다. exact match
+`32/32`, 예상/관찰 `produces` relation `23/23`, precision/recall `1.0/1.0`이며
+false positive/negative, implicit signal/similarity, invalid identity,
+run-binding-execution mismatch, source-limit current claim, privacy/Attention leakage와
+order determinism failure는 모두 `0`이다. focused Vitest `13` files/`112` tests,
+전체 Vitest `65` files/`542` tests, Playwright Chromium E2E `14/14`, typecheck,
+lint와 production build를 통과했다. 이 projection은 Attention에 연결하지 않았고
+기존 Phase 3A dataset canonical SHA-256도 유지했다.
+
 남은 산출물:
 
 - native `isDraft`를 사용한 confirmed GitHub `review`
@@ -2766,7 +2777,7 @@ Candidate revision `2`, `30` cases와 canonical SHA-256은 유지했다.
 - direct failure를 material work와 연결해 개입 여부를 판단하는 규칙
 - Codex exception/follow-through candidate rules
 - 승인·입력 대기의 stable request state/TTL/escalation 처리
-- privacy-safe artifact/workflow relation과 materiality gate
+- user-confirmed `related_to`, field authority와 materiality gate
 
 완료 조건:
 
@@ -2783,15 +2794,17 @@ Candidate revision `2`, `30` cases와 canonical SHA-256은 유지했다.
 
 ### Phase 3 — Project mapping, lineage, conflict
 
-상태: **Project registry와 Phase 3A explicit managed Codex↔GitHub executes
-relation delivered; artifact/field conflict work remains**
+상태: **Project registry, Phase 3A explicit managed Codex↔GitHub `executes`와
+Phase 3B explicit GitHub artifact `produces` local beta delivered; `related_to`와
+field conflict work remains**
 
 산출물:
 
 - `[완료]` 네 source scope의 explicit project mapping registry
 - `[Phase 3A 완료]` managed run↔explicit GitHub binding native identity resolver
 - `[Phase 3A 완료]` `executes` 관계, binding lifecycle와 project conflict record
-- `produces`, `related_to` 관계 처리
+- `[Phase 3B 완료]` explicit-user commit/PR attribution과 `produces` lineage
+- user-confirmed `related_to` 관계 처리
 - field-level authority resolver
 - conflict record
 
@@ -2812,6 +2825,25 @@ identity와 `github:object:<native id>`만 join하며 title, project, URL 또는
 `/api/work-relations`와 Work Cockpit에서 관찰하지만 Attention에는 연결하지 않는다.
 
 세부 계약은 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
+Phase 3B local beta는 raw GitHub URL을 attach 순간에만 parse하고
+`repositoryNativeId + full 40/64-hex commit OID` 또는
+`repositoryNativeId + PR native object ID`를 local private ledger에 저장한다. 이
+ledger는 retained window 안에서만 append-only이며 최대 1,000 decision과 30일
+cutoff를 적용해 다음 store 접근에서 prune한다. 로컬 앱이 실행되지 않는
+동안의 물리적 삭제는 다음 접근에서 수행한다. GitHub
+disconnect/connection/installation replacement와 Codex disconnect/Work
+Resumption clear는 store를 즉시 purge하고, 동일 state lease로 old GitHub
+snapshot 기반 attach 재생성을 막는다. commit의 실제 존재 여부는 v0.1
+adapter에서 provider-verified가 아니며 사용자의 명시적 attribution으로만
+취급한다. PR 번호는 persisted display/corroboration metadata지만
+stable artifact key와 `artifactId` identity에서는 제외한다. Phase 3A
+run/binding/execution/executes relation exact join을 통과한 attach만 `produces`로
+projection하며 detach/reattach lineage와 unavailable/stale/not-observed/conflict
+관찰 한계를 보존한다. projection은 repository-bearing URL을 내보내지 않고
+Attention과 격리한다.
+
+세부 계약은 `ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
 
 ### Phase 4 — Eligibility, lane, ranking, selection
 
@@ -3213,8 +3245,8 @@ identity와 `github:object:<native id>`만 join하며 title, project, URL 또는
 22. `[Phase 2B]` stable request lifecycle contract 후 escalation gate 작성
 23. `[Phase 3A 완료]` native/explicit-link identity resolver와 managed
     Codex↔GitHub `executes` 관계 작성
-24. `[Phase 3B]` privacy-safe artifact identity와 `produces`, user-confirmed
-    `related_to` 관계 작성
+24. `[Phase 3B 완료]` privacy-safe explicit-user artifact identity와 `produces`
+    lineage 작성. user-confirmed `related_to`는 후속 범위
 25. claim authority resolver 작성
 26. full cross-source hard eligibility와 lane classifier 작성
 27. user-answer-required clarification route 작성

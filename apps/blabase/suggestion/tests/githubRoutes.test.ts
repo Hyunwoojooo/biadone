@@ -34,6 +34,25 @@ vi.mock("../src/connectors/github/oauth", async (importOriginal) => {
   };
 });
 
+vi.mock("../src/artifacts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/artifacts")>();
+  return {
+    ...actual,
+    clearWorkArtifactAttributionStore: vi.fn(async () => undefined)
+  };
+});
+
+vi.mock("../src/resumption", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/resumption")>();
+  return {
+    ...actual,
+    withWorkResumptionStateLease: vi.fn(
+      async (_cwd: string, operation: () => Promise<unknown>) =>
+        operation()
+    )
+  };
+});
+
 vi.mock("../src/sync/runtime", () => ({
   noteRuntimeSourceDisconnected: vi.fn(async () => undefined),
   supersedeRuntimeSourceConnection: vi.fn(async () => undefined),
@@ -45,6 +64,7 @@ import { GET as connect } from "../app/api/connectors/github/connect/route";
 import { POST as disconnect } from "../app/api/connectors/github/disconnect/route";
 import { GET as installed } from "../app/api/connectors/github/installed/route";
 import { GET as status } from "../app/api/connectors/github/status/route";
+import { clearWorkArtifactAttributionStore } from "../src/artifacts";
 import {
   deleteStoredGitHubConnection,
   readStoredGitHubSnapshot,
@@ -61,6 +81,7 @@ import type {
   GitHubSnapshot,
   StoredGitHubTokens
 } from "../src/connectors/github/types";
+import { withWorkResumptionStateLease } from "../src/resumption";
 import {
   noteRuntimeSourceDisconnected,
   supersedeRuntimeSourceConnection,
@@ -148,6 +169,8 @@ describe("GitHub connector routes", () => {
     );
 
     expect(replaceStoredGitHubConnection).toHaveBeenCalledWith(tokens);
+    expect(clearWorkArtifactAttributionStore).toHaveBeenCalledOnce();
+    expect(withWorkResumptionStateLease).toHaveBeenCalledOnce();
     expect(syncRuntimeSources).toHaveBeenCalledWith({
       sources: ["github"]
     });
@@ -156,6 +179,20 @@ describe("GitHub connector routes", () => {
     );
     expect(
       vi.mocked(supersedeRuntimeSourceConnection).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(withWorkResumptionStateLease).mock
+        .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(withWorkResumptionStateLease).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(clearWorkArtifactAttributionStore).mock
+        .invocationCallOrder[0]!
+    );
+    expect(
+      vi.mocked(clearWorkArtifactAttributionStore).mock
         .invocationCallOrder[0]
     ).toBeLessThan(
       vi.mocked(replaceStoredGitHubConnection).mock
@@ -266,6 +303,8 @@ describe("GitHub connector routes", () => {
     expect(replaceStoredGitHubConnection).toHaveBeenCalledWith(
       storedTokens()
     );
+    expect(clearWorkArtifactAttributionStore).toHaveBeenCalledOnce();
+    expect(withWorkResumptionStateLease).toHaveBeenCalledOnce();
     expect(syncRuntimeSources).toHaveBeenCalledWith({
       sources: ["github"]
     });
@@ -330,6 +369,8 @@ describe("GitHub connector routes", () => {
       "new-access-token"
     );
     expect(deleteStoredGitHubConnection).toHaveBeenCalledOnce();
+    expect(clearWorkArtifactAttributionStore).toHaveBeenCalledOnce();
+    expect(withWorkResumptionStateLease).toHaveBeenCalledOnce();
     await expect(response.json()).resolves.toEqual({
       status: "disconnected",
       remoteRevocationFailed: false
@@ -362,11 +403,19 @@ describe("GitHub connector routes", () => {
 
     await vi.waitFor(() => {
       expect(deleteStoredGitHubConnection).toHaveBeenCalledOnce();
+      expect(clearWorkArtifactAttributionStore).toHaveBeenCalledOnce();
       expect(noteRuntimeSourceDisconnected).toHaveBeenCalledWith(
         "github"
       );
       expect(revokeGitHubAuthorization).toHaveBeenCalledOnce();
     });
+    expect(
+      vi.mocked(clearWorkArtifactAttributionStore).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      vi.mocked(deleteStoredGitHubConnection).mock
+        .invocationCallOrder[0]!
+    );
     expect(
       vi.mocked(deleteStoredGitHubConnection).mock
         .invocationCallOrder[0]

@@ -104,6 +104,14 @@ Terminal launch와 result write까지 Work Resumption execution lease를 유지�
 lease를 획득한다. 이 구분은 중첩 lock deadlock을 피하면서 stale binding 실행도
 막기 위한 계약이다.
 
+shared execution/state lease는 5초마다 갱신하며 token, device, inode와 owner
+PID를 확인한다. 살아 있는 owner PID의 lease는 stale takeover하지 않고 stale
+삭제 직전 두 번 ownership을 재확인하며 lease 종료 시 current owner를 검증한다.
+ownership loss는 fail closed한다. 이 보장은 single local filesystem beta에
+한정되며 distributed 또는 device 간 fencing을 제공하지 않는다. artifact
+mutation의 동일 경계와 상세 제약은
+`ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
 - endpoint는 `ws://127.0.0.1:<1..65535>`만 허용한다. wildcard interface,
   LAN host, TLS termination 또는 remote server는 이 beta 범위가 아니다.
 - binary와 cwd는 absolute local path로 검증하며 child process는
@@ -314,13 +322,19 @@ Phase 3A에서 추가된 관찰 전용 relation 범위:
 
 정확한 의미와 평가 경계는 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
 
+Phase 3B에서는 explicit-user commit/PR attribution 기반 `produces`가 별도
+local-only projection으로 추가됐다. raw URL은 저장하지 않고 metadata는 최대
+1,000 decision, 30일 cutoff로 보존하고 다음 attribution store read에서 prune하며
+Attention에는 연결하지 않는다. 정확한 경계는
+`ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
 다음은 후속 Phase 2B/Phase 3 semantic change다.
 
 - artifact/outcome evidence를 사용한 meaningful progress와 verified stall
 - stable approval/input request lifecycle와 escalation threshold
 - failed execution intervention
 - configured workflow 기반 completion follow-through
-- privacy-safe artifact identity 기반 `produces`와 user-confirmed `related_to`
+- user-confirmed `related_to`와 artifact materiality/claim authority
 - scope drift detector
 - production multi-process/device ownership, pairing과 durable background service
 

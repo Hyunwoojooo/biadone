@@ -8,11 +8,13 @@ import {
   deleteStoredGitHubConnection,
   readStoredGitHubTokens
 } from "../../../../../src/connectors/github/localStore";
+import { clearWorkArtifactAttributionStore } from "../../../../../src/artifacts";
 import {
   refreshGitHubAccessToken,
   revokeGitHubAuthorization
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import { withWorkResumptionStateLease } from "../../../../../src/resumption";
 import { noteRuntimeSourceDisconnected } from "../../../../../src/sync/runtime";
 
 export const runtime = "nodejs";
@@ -31,7 +33,13 @@ export async function POST(request: Request) {
   loadSharedLocalEnv();
   const configResult = loadGitHubConfig();
   const tokens = await readStoredGitHubTokens();
-  await deleteStoredGitHubConnection();
+  await withWorkResumptionStateLease(process.cwd(), async () => {
+    // Purge attribution metadata before making the source unavailable. If
+    // connection deletion fails, losing the derived local relation is safer
+    // than retaining old-account native IDs after a successful disconnect.
+    await clearWorkArtifactAttributionStore();
+    await deleteStoredGitHubConnection();
+  });
   try {
     await noteRuntimeSourceDisconnected("github");
   } catch {

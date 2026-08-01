@@ -123,6 +123,12 @@ requested
 - queue launch가 같은 lease 안에서 managed manager를 호출할 때는
   `callerHoldsOwnershipLease` 경로를 사용해 동일 filesystem lease를 중첩
   획득하지 않는다. lease 밖의 manager 호출은 ownership lease를 직접 획득한다.
+- execution/state lease는 5초마다 갱신하고 token, device, inode와 owner PID가
+  최초 소유자와 같은지 확인한다. 살아 있는 owner PID의 lease는 오래되어
+  보이더라도 takeover하지 않으며, stale 삭제 직전 두 번 ownership을
+  재확인한다. 갱신 또는 종료 시 소유권 변경을 발견하면 fail closed한다. 이 보장은 하나의
+  local filesystem을 공유하는 beta 범위에 한정하며 distributed/device 간
+  fencing을 제공하지 않는다. artifact mutation에도 같은 경계를 적용한다.
 - Companion이 Terminal 실행 결과를 기록하기 전에 비정상 종료하면 자동
   재실행하지 않고 `LAUNCH_OUTCOME_UNKNOWN` terminal failure로 닫는다. 사용자는
   Terminal을 확인한 뒤에만 새 명시적 실행을 만들 수 있다.

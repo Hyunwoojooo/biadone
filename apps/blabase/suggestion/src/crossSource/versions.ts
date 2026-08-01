@@ -55,6 +55,21 @@ export const MANAGED_CODEX_WORK_RELATION_RESOLVER_VERSION =
 export const WORK_RELATION_EVIDENCE_POLICY_VERSION =
   "explicit-binding-native-id-evidence-v0.1" as const;
 
+export const MANAGED_CODEX_ARTIFACT_RELATION_PROJECTION_CONTRACT =
+  "managed-codex-artifact-relation-projection-v0.1" as const;
+
+export const ARTIFACT_RELATION_SCHEMA_VERSION =
+  "artifact-relation-schema-v0.1" as const;
+
+export const MANAGED_CODEX_ARTIFACT_RELATION_RESOLVER_VERSION =
+  "managed-codex-explicit-artifact-resolver-v0.1" as const;
+
+export const ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION =
+  "explicit-user-native-artifact-evidence-v0.1" as const;
+
+export const GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION =
+  "github-native-artifact-id-v0.1" as const;
+
 export const SNAPSHOT_VALIDITY_POLICY_VERSION =
   "snapshot-validity-policy-v0.2" as const;
 

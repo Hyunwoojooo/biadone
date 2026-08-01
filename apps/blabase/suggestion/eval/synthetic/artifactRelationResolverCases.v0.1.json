@@ -1,0 +1,258 @@
+{
+  "contract": "artifact-relation-resolver-evaluation-dataset-v0.1",
+  "schemaVersion": "artifact-relation-resolver-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-artifact-relation-dev-v0.1",
+  "datasetRevision": 1,
+  "datasetClass": "dev_candidate",
+  "inputBoundary": "explicit_artifact_attribution_inputs",
+  "dataOrigin": "synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-01T08:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "resolverConfig": {
+    "immutableRef": "eval/synthetic/artifactRelationResolverConfig.v0.1.json",
+    "version": "managed-codex-artifact-relation-resolver-config-v0.1",
+    "sha256": "04427b788d092601159be4991ed33981940078d1a66ca8e0fe4bd30487897006"
+  },
+  "expectedInvariants": {
+    "relationType": "produces",
+    "authority": "user_configured",
+    "decisionSource": "explicit_user",
+    "rawUrlPersisted": false,
+    "metadataStorage": "local_only",
+    "metadataRetentionDays": 30,
+    "attentionDisposition": "not_connected",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "cases": [
+    {
+      "caseId": "AREL-DEV-001",
+      "title": "explicit commit attachment with a full 40-hex OID",
+      "scenario": "explicit_commit_40",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "commit", "explicit_user", "exact_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-002",
+      "title": "explicit commit attachment with a full 64-hex OID",
+      "scenario": "explicit_commit_64",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "commit", "explicit_user", "exact_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-003",
+      "title": "explicit pull request attachment uses native object identity",
+      "scenario": "explicit_pull_request_native_id",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "pull_request", "explicit_user", "exact_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-004",
+      "title": "duplicate exact commit attachments deduplicate the current relation",
+      "scenario": "duplicate_exact_commit",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "commit", "dedupe", "exact_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-005",
+      "title": "duplicate exact pull request attachments deduplicate the current relation",
+      "scenario": "duplicate_exact_pull_request",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "pull_request", "dedupe", "exact_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-006",
+      "title": "one managed run can explicitly attach multiple artifacts",
+      "scenario": "one_run_multiple_artifacts",
+      "expected": { "operation": "accepted", "relationCount": 2 },
+      "labels": ["positive", "multi_artifact", "explicit_user"]
+    },
+    {
+      "caseId": "AREL-DEV-007",
+      "title": "multiple managed runs preserve independent artifact identities",
+      "scenario": "multiple_runs_independent_artifacts",
+      "expected": { "operation": "accepted", "relationCount": 2 },
+      "labels": ["positive", "multi_run", "identity_isolation"]
+    },
+    {
+      "caseId": "AREL-DEV-008",
+      "title": "detaching a commit removes the current relation and preserves lineage",
+      "scenario": "detach_commit_lineage",
+      "expected": { "operation": "detached", "relationCount": 1 },
+      "labels": ["positive", "commit", "detach", "lineage"]
+    },
+    {
+      "caseId": "AREL-DEV-009",
+      "title": "reattaching a detached commit creates a new current lineage decision",
+      "scenario": "reattach_commit_lineage",
+      "expected": { "operation": "accepted", "relationCount": 2 },
+      "labels": ["positive", "commit", "reattach", "lineage"]
+    },
+    {
+      "caseId": "AREL-DEV-010",
+      "title": "detaching a pull request removes current use and preserves lineage",
+      "scenario": "detach_pull_request_lineage",
+      "expected": { "operation": "detached", "relationCount": 1 },
+      "labels": ["positive", "pull_request", "detach", "lineage"]
+    },
+    {
+      "caseId": "AREL-DEV-011",
+      "title": "turn completion alone cannot create a produces relation",
+      "scenario": "turn_completed_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "implicit_signal", "turn_completed"]
+    },
+    {
+      "caseId": "AREL-DEV-012",
+      "title": "file change activity alone cannot create a produces relation",
+      "scenario": "file_change_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "implicit_signal", "file_change"]
+    },
+    {
+      "caseId": "AREL-DEV-013",
+      "title": "title similarity cannot create an artifact relation",
+      "scenario": "title_similarity_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "similarity", "title"]
+    },
+    {
+      "caseId": "AREL-DEV-014",
+      "title": "branch similarity cannot create an artifact relation",
+      "scenario": "branch_similarity_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "similarity", "branch"]
+    },
+    {
+      "caseId": "AREL-DEV-015",
+      "title": "project alignment cannot create an artifact relation",
+      "scenario": "project_alignment_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "similarity", "project"]
+    },
+    {
+      "caseId": "AREL-DEV-016",
+      "title": "time proximity cannot create an artifact relation",
+      "scenario": "time_proximity_only",
+      "expected": { "operation": "no_decision", "relationCount": 0 },
+      "labels": ["hard_negative", "similarity", "time"]
+    },
+    {
+      "caseId": "AREL-DEV-017",
+      "title": "short commit SHA is rejected as ambiguous",
+      "scenario": "short_commit_sha",
+      "expected": { "operation": "rejected", "relationCount": 0 },
+      "labels": ["hard_negative", "commit", "invalid_identity", "short_sha"]
+    },
+    {
+      "caseId": "AREL-DEV-018",
+      "title": "non-hex commit OID is rejected",
+      "scenario": "invalid_commit_oid",
+      "expected": { "operation": "rejected", "relationCount": 0 },
+      "labels": ["hard_negative", "commit", "invalid_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-019",
+      "title": "an attribution for a missing managed run cannot resolve",
+      "scenario": "missing_managed_run",
+      "expected": { "operation": "accepted", "relationCount": 0 },
+      "labels": ["hard_negative", "missing_run", "run_integrity"]
+    },
+    {
+      "caseId": "AREL-DEV-020",
+      "title": "an attribution without a resolved executes relation cannot resolve",
+      "scenario": "work_relation_not_resolved",
+      "expected": { "operation": "accepted", "relationCount": 0 },
+      "labels": ["hard_negative", "missing_binding", "run_integrity"]
+    },
+    {
+      "caseId": "AREL-DEV-021",
+      "title": "binding identity mismatch cannot resolve",
+      "scenario": "binding_id_mismatch",
+      "expected": { "operation": "accepted", "relationCount": 0 },
+      "labels": ["hard_negative", "binding_mismatch", "run_integrity"]
+    },
+    {
+      "caseId": "AREL-DEV-022",
+      "title": "execution identity mismatch cannot resolve",
+      "scenario": "execution_id_mismatch",
+      "expected": { "operation": "accepted", "relationCount": 0 },
+      "labels": ["hard_negative", "execution_mismatch", "run_integrity"]
+    },
+    {
+      "caseId": "AREL-DEV-023",
+      "title": "a commit URL with ambiguous repository native identity is rejected",
+      "scenario": "repository_identity_ambiguous",
+      "expected": { "operation": "rejected", "relationCount": 0 },
+      "labels": ["hard_negative", "repository_ambiguity", "invalid_identity"]
+    },
+    {
+      "caseId": "AREL-DEV-024",
+      "title": "the same PR number in different repositories remains distinct",
+      "scenario": "same_pr_number_different_repositories",
+      "expected": { "operation": "accepted", "relationCount": 2 },
+      "labels": ["positive", "pull_request", "repository_isolation", "native_id"]
+    },
+    {
+      "caseId": "AREL-DEV-025",
+      "title": "a changed corroborating PR number conflicts with an existing native identity",
+      "scenario": "same_pr_native_id_number_conflict",
+      "expected": { "operation": "rejected", "relationCount": 1 },
+      "labels": ["hard_negative", "pull_request", "native_id", "corroboration_conflict"]
+    },
+    {
+      "caseId": "AREL-DEV-026",
+      "title": "a previously attached PR preserves unavailable source state without a current claim",
+      "scenario": "pull_request_snapshot_unavailable",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["hard_negative", "pull_request", "unavailable", "observation_gate"]
+    },
+    {
+      "caseId": "AREL-DEV-027",
+      "title": "a previously attached PR preserves stale observation state without a current claim",
+      "scenario": "pull_request_snapshot_stale",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["hard_negative", "pull_request", "stale", "observation_gate"]
+    },
+    {
+      "caseId": "AREL-DEV-028",
+      "title": "a previously attached PR absent from a current snapshot remains not observed",
+      "scenario": "pull_request_not_observed",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["hard_negative", "pull_request", "not_observed", "observation_gate"]
+    },
+    {
+      "caseId": "AREL-DEV-029",
+      "title": "a previously attached PR preserves conflicting native observations without a current claim",
+      "scenario": "pull_request_native_id_conflict",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["hard_negative", "pull_request", "conflict", "observation_gate"]
+    },
+    {
+      "caseId": "AREL-DEV-030",
+      "title": "raw URL and private sentinels are transient and absent from projection",
+      "scenario": "raw_url_privacy_boundary",
+      "expected": { "operation": "accepted", "relationCount": 1 },
+      "labels": ["positive", "privacy", "raw_url_transient"]
+    },
+    {
+      "caseId": "AREL-DEV-031",
+      "title": "reversing independent decision input preserves canonical output",
+      "scenario": "reversed_decision_order",
+      "expected": { "operation": "accepted", "relationCount": 2 },
+      "labels": ["positive", "determinism", "permutation", "multi_artifact"]
+    },
+    {
+      "caseId": "AREL-DEV-032",
+      "title": "tampered attribution-store integrity is rejected",
+      "scenario": "tampered_store_integrity",
+      "expected": { "operation": "integrity_rejected", "relationCount": 0 },
+      "labels": ["hard_negative", "tamper", "integrity"]
+    }
+  ]
+}

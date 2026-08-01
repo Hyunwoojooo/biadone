@@ -16,6 +16,20 @@ import {
 } from "../src/managedCodex";
 import { observeCodexManagedNotification } from "../src/connectors/codex/observationContract";
 import {
+  createGitHubArtifactId,
+  createManagedCodexArtifactRelationId,
+  createWorkArtifactAttributionId,
+  sealManagedCodexArtifactRelationProjection,
+  type GitHubArtifactIdentity,
+  type ManagedCodexArtifactRelation,
+  type ManagedCodexArtifactRelationProjection
+} from "../src/artifacts";
+import {
+  ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION,
+  ARTIFACT_RELATION_SCHEMA_VERSION,
+  GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION,
+  MANAGED_CODEX_ARTIFACT_RELATION_PROJECTION_CONTRACT,
+  MANAGED_CODEX_ARTIFACT_RELATION_RESOLVER_VERSION,
   MANAGED_CODEX_WORK_RELATION_PROJECTION_CONTRACT,
   MANAGED_CODEX_WORK_RELATION_RESOLVER_VERSION,
   WORK_RELATION_EVIDENCE_POLICY_VERSION,
@@ -375,6 +389,223 @@ test("does not attach an older relation to a newer run sharing the binding", asy
   );
 });
 
+test("fails closed when a resolved relation has a different execution identity", async ({
+  page
+}) => {
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const relationPayload = workRelationProjection(run);
+  const relation = relationPayload.relations[0];
+  if (!relation) throw new Error("Synthetic work relation is missing.");
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...relationPayload,
+        relations: [
+          {
+            ...relation,
+            from: {
+              ...relation.from,
+              subjectId: `codex:execution:${"0".repeat(24)}`
+            }
+          }
+        ]
+      })
+    });
+  });
+
+  await page.goto("/");
+
+  const progress = page.locator(
+    'section[aria-labelledby="managed-codex-progress-title"]'
+  );
+  await expect(progress.locator(".managedCodexRelation")).toHaveCount(0);
+  await expect(progress).toContainText(
+    "이 실행의 연결 근거를 현재 projection에서 확인하지 못했습니다."
+  );
+});
+
+test("shows only exact active commit and PR results without exposing repository names", async ({
+  page
+}) => {
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const workRelations = workRelationProjection(run);
+  const executesRelation = workRelations.relations[0];
+  if (!executesRelation) {
+    throw new Error("Synthetic executes relation is missing.");
+  }
+  const artifacts = artifactRelationProjection({
+    run,
+    executesRelation,
+    workRelationProjectionSha256: workRelations.projectionSha256,
+    entries: [
+      {
+        artifact: {
+          kind: "github_pull_request",
+          repositoryId: 101,
+          objectId: 4_242,
+          number: 17
+        }
+      },
+      {
+        artifact: {
+          kind: "github_commit",
+          repositoryId: 101,
+          oid: "0123456789abcdef0123456789abcdef01234567"
+        }
+      },
+      {
+        artifact: {
+          kind: "github_pull_request",
+          repositoryId: 101,
+          objectId: 9_999,
+          number: 99
+        },
+        executesRelationId: `relation_${"f".repeat(32)}`
+      }
+    ]
+  });
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...workRelations, artifacts })
+    });
+  });
+
+  await page.goto("/");
+
+  const results = page.locator(".managedCodexArtifacts");
+  await expect(results.getByText("생성된 결과", { exact: true })).toBeVisible();
+  await expect(results).toContainText(
+    "사용자가 직접 연결 · 추천에는 아직 사용하지 않음"
+  );
+  await expect(results).toContainText("GitHub PR #17");
+  await expect(results).toContainText("GitHub commit 01234567");
+  await expect(results).not.toContainText("GitHub PR #99");
+  await expect(results).not.toContainText("biadone/blabase");
+  await expect(results).toContainText("GitHub 데이터 최신");
+  await expect(results).toContainText("최신 데이터에서 미확인");
+});
+
+test("attaches and detaches an exact artifact with an immediate relation refresh", async ({
+  page
+}) => {
+  const managed = projection();
+  const run = managed.runs[0];
+  if (!run) throw new Error("Synthetic managed run is missing.");
+  const workRelations = workRelationProjection(run);
+  const executesRelation = workRelations.relations[0];
+  if (!executesRelation) {
+    throw new Error("Synthetic executes relation is missing.");
+  }
+  const attachedProjection = artifactRelationProjection({
+    run,
+    executesRelation,
+    workRelationProjectionSha256: workRelations.projectionSha256,
+    entries: [
+      {
+        artifact: {
+          kind: "github_pull_request",
+          repositoryId: 101,
+          objectId: 4_242,
+          number: 17
+        }
+      }
+    ]
+  });
+  const attributionId = attachedProjection.relations[0]?.attributionId;
+  if (!attributionId) {
+    throw new Error("Synthetic artifact attribution is missing.");
+  }
+  let artifacts = emptyArtifactRelationProjection(
+    workRelations.projectionSha256
+  );
+  const mutationBodies: unknown[] = [];
+  await page.route("**/api/managed-codex-runs", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(managed)
+    });
+  });
+  await page.route("**/api/work-relations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...workRelations, artifacts })
+    });
+  });
+  await page.route("**/api/work-artifacts", async (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    mutationBodies.push(body);
+    artifacts =
+      body.action === "attach"
+        ? attachedProjection
+        : emptyArtifactRelationProjection(workRelations.projectionSha256);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "ready",
+        ...(body.action === "attach" ? { attributionId } : {})
+      })
+    });
+  });
+
+  await page.goto("/");
+
+  const results = page.locator(".managedCodexArtifacts");
+  const input = results.getByLabel("정확한 GitHub commit 또는 PR URL");
+  const artifactUrl =
+    "https://github.com/biadone/blabase/pull/17";
+  await input.fill(artifactUrl);
+  await results.getByRole("button", { name: "결과 연결" }).click();
+
+  await expect(input).toHaveValue("");
+  await expect(results).toContainText("GitHub PR #17");
+  expect(mutationBodies[0]).toEqual({
+    action: "attach",
+    managedRunId: run.managedRunId,
+    bindingId: run.bindingId,
+    executionId: run.executionId,
+    artifactUrl,
+    explicitUserConfirmation: true
+  });
+
+  await results
+    .getByRole("button", { name: "GitHub PR #17 연결 해제" })
+    .click();
+
+  await expect(results).toContainText(
+    "이 실행에 직접 연결된 GitHub 결과가 없습니다."
+  );
+  expect(mutationBodies[1]).toEqual({
+    action: "detach",
+    attributionId,
+    explicitUserConfirmation: true
+  });
+});
+
 function projection(
   override: Partial<ManagedCodexPublicRun> = {}
 ): ManagedCodexRunsReadyResponse {
@@ -493,7 +724,13 @@ function workRelationProjection(
     attentionDisposition: "not_connected",
     forbiddenAsAttentionCandidate: true
   });
-  return { status: "ready", ...projection };
+  return {
+    status: "ready",
+    ...projection,
+    artifacts: emptyArtifactRelationProjection(
+      projection.projectionSha256
+    )
+  };
 }
 
 function emptyWorkRelationProjection(): WorkRelationsReadyResponse {
@@ -518,7 +755,134 @@ function emptyWorkRelationProjection(): WorkRelationsReadyResponse {
     attentionDisposition: "not_connected",
     forbiddenAsAttentionCandidate: true
   });
-  return { status: "ready", ...projection };
+  return {
+    status: "ready",
+    ...projection,
+    artifacts: emptyArtifactRelationProjection(
+      projection.projectionSha256
+    )
+  };
+}
+
+function emptyArtifactRelationProjection(
+  workRelationProjectionSha256: string
+): ManagedCodexArtifactRelationProjection {
+  return sealManagedCodexArtifactRelationProjection({
+    contract: MANAGED_CODEX_ARTIFACT_RELATION_PROJECTION_CONTRACT,
+    schemaVersion: ARTIFACT_RELATION_SCHEMA_VERSION,
+    resolverVersion: MANAGED_CODEX_ARTIFACT_RELATION_RESOLVER_VERSION,
+    evidencePolicyVersion: ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION,
+    identityPolicyVersion: GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION,
+    asOf: OBSERVED_AT,
+    workRelationProjectionSha256,
+    attributionStoreRevision: 0,
+    attributionStoreSha256: "b".repeat(64),
+    githubBatchSha256: null,
+    githubSourceSnapshotSha256: null,
+    totalAttachDecisionCount: 0,
+    unresolvedAttributionCount: 0,
+    relations: [],
+    inputSha256: "c".repeat(64),
+    attentionDisposition: "not_connected",
+    forbiddenAsAttentionCandidate: true
+  });
+}
+
+function artifactRelationProjection(input: {
+  run: ManagedCodexPublicRun;
+  executesRelation: ManagedCodexWorkRelation;
+  workRelationProjectionSha256: string;
+  entries: Array<{
+    artifact: GitHubArtifactIdentity;
+    executesRelationId?: string;
+  }>;
+}): ManagedCodexArtifactRelationProjection {
+  const relations = input.entries.map(
+    ({ artifact, executesRelationId }, index): ManagedCodexArtifactRelation => {
+      const relationId =
+        executesRelationId ?? input.executesRelation.relationId;
+      const attributionCore = {
+        action: "attach" as const,
+        managedRunId: input.run.managedRunId,
+        bindingId: input.run.bindingId,
+        executionId: input.run.executionId,
+        executesRelationId: relationId,
+        artifact,
+        decidedAt: OBSERVED_AT,
+        decisionSource: "explicit_user" as const,
+        supersedesAttributionId: null
+      };
+      const attributionId =
+        createWorkArtifactAttributionId(attributionCore);
+      const artifactId = createGitHubArtifactId(artifact);
+      return {
+        relationId: createManagedCodexArtifactRelationId({
+          attributionId,
+          executionId: input.run.executionId,
+          artifactId
+        }),
+        managedRunId: input.run.managedRunId,
+        bindingId: input.run.bindingId,
+        executionId: input.run.executionId,
+        executesRelationId: relationId,
+        attributionId,
+        type: "produces",
+        authority: "user_configured",
+        artifactId,
+        artifact,
+        attributionEvidence: {
+          decidedAt: attributionCore.decidedAt,
+          decisionSource: "explicit_user",
+          identityPolicyVersion: GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION
+        },
+        attributionLifecycle: {
+          state: "active",
+          supersededByAttributionId: null
+        },
+        githubObservation:
+          artifact.kind === "github_pull_request"
+            ? {
+                status: "current",
+                sourceSnapshotSha256: "d".repeat(64),
+                signalIds: [
+                  `sig_${(index + 1).toString(16).repeat(32).slice(0, 32)}`
+                ],
+                destinationUrl: null,
+                sourceUpdatedAt: attributionCore.decidedAt,
+                completeness: "complete"
+              }
+            : {
+                status: "not_observed",
+                sourceSnapshotSha256: "d".repeat(64),
+                signalIds: [],
+                destinationUrl: null,
+                sourceUpdatedAt: null,
+                completeness: "complete"
+              },
+        attentionDisposition: "not_connected",
+        forbiddenAsAttentionCandidate: true
+      };
+    }
+  );
+  return sealManagedCodexArtifactRelationProjection({
+    contract: MANAGED_CODEX_ARTIFACT_RELATION_PROJECTION_CONTRACT,
+    schemaVersion: ARTIFACT_RELATION_SCHEMA_VERSION,
+    resolverVersion: MANAGED_CODEX_ARTIFACT_RELATION_RESOLVER_VERSION,
+    evidencePolicyVersion: ARTIFACT_RELATION_EVIDENCE_POLICY_VERSION,
+    identityPolicyVersion: GITHUB_ARTIFACT_IDENTITY_POLICY_VERSION,
+    asOf: OBSERVED_AT,
+    workRelationProjectionSha256: input.workRelationProjectionSha256,
+    attributionStoreRevision: relations.length,
+    attributionStoreSha256: "e".repeat(64),
+    githubBatchSha256: "f".repeat(64),
+    githubSourceSnapshotSha256: "d".repeat(64),
+    totalAttachDecisionCount: relations.length,
+    unresolvedAttributionCount: 0,
+    relations,
+    inputSha256: "a".repeat(64),
+    attentionDisposition: "not_connected",
+    forbiddenAsAttentionCandidate: true
+  });
 }
 
 function emptySemanticProjection(

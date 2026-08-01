@@ -1732,3 +1732,220 @@
   - relation + materiality를 요구하는 Codex failure intervention gate
   - configured project workflow 기반 completion follow-through
   - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-08-01 Phase 3B explicit managed Codex→GitHub artifact `produces`
+
+- Date: 2026-08-01
+- Owner: Codex with human direction
+- Goal:
+  - 사용자가 명시적으로 확인한 managed Codex run과 exact GitHub commit/PR
+    artifact 사이의 `produces` lineage를 privacy-safe identity로 설명
+  - attach/detach/reattach 결정을 retained window 안에서 append-only인 local
+    ledger로 보존하고 Phase 3A `executes` relation의 run/binding/execution
+    identity를 exact join
+  - artifact 결과를 Work Cockpit에서 확인하되 Attention 추천에는 연결하지 않음
+- Affected pipeline stages:
+  - transient exact GitHub artifact URL validation과 source-native identity 생성
+  - local private attribution decision store, 30일 prune와 disconnect clear
+  - Phase 3A work relation + attribution ledger + normalized GitHub batch의
+    deterministic artifact relation projection
+  - loopback local-only mutation/read API, client와 Work Cockpit artifact UI
+  - 별도 mutable synthetic Phase 3B Dev Candidate loader/evaluator/baseline runner
+  - Attention input/router/replay/monitor/filtering/ordering/candidate/ranking/selection은
+    변경하지 않음
+- Behavior before:
+  - Phase 3A는 explicit managed run↔GitHub work item `executes`만 설명하고 commit/PR
+    artifact attribution은 생성하지 않음
+  - Codex `turn_completed`, `file_change` 또는 사용자의 기억에만 의존해 어떤
+    artifact를 만들었는지 추적해야 했음
+  - raw GitHub artifact URL을 transient parse하고 native identity만 남기는 계약,
+    detach/reattach lineage와 retention이 없음
+- Behavior after:
+  - relation authority `user_configured`, attribution decision source
+    `explicit_user`만 허용
+  - commit identity는 exact repository native ID + full lowercase 40/64-hex OID
+  - v0.1 adapter는 commit object existence를 provider에서 확인하지 않으므로 commit
+    attribution은 explicit-user assertion이며 GitHub current observation으로
+    승격하지 않음
+  - PR identity는 exact repository native ID + PR native object/database ID이며 PR
+    number는 persisted display/corroboration metadata지만 stable artifact
+    key/`artifactId`에서는 제외
+  - PR attach는 로컬에 저장된 snapshot에서 exact native match를 요구하지만
+    freshness/completeness를 요구하지 않음. stale/truncated는 explicit relation과
+    source limitation으로 보존
+  - raw URL과 repository 이름은 validation 뒤 폐기하고 attribution store,
+    projection과 evaluation record에 저장하지 않음
+  - Phase 3A `managedRunId`, `bindingId`, `executionId`, `executesRelationId` exact
+    join을 통과한 attach만 `produces` relation으로 projection
+  - v0.1은 per-attribution resolution enum/conflict code를 만들지 않고 join 실패를
+    `unresolvedAttributionCount`로 집계
+  - exact active duplicate는 no-op, detach는 과거 attach를
+    `superseded_by_detach`, reattach는 새 active lineage로 보존
+  - retained-window append-only ledger는 artifact마다 current producer 하나만
+    허용하고 최대 1,000 decision/30일 cutoff 뒤에는 content 대신 lifetime
+    revision/pruned count만 보존
+  - unavailable/stale/not-observed/conflict를 서로 다른 observation status로
+    보존하고 artifact projection의 `destinationUrl`은 항상 `null`
+  - 모든 projection/relation에 `attentionDisposition=not_connected`와
+    `forbiddenAsAttentionCandidate=true`
+- Versions before:
+  - managed Codex artifact relation projection/schema/resolver/evidence/identity
+    policy와 attribution store: 없음
+  - Phase 3A work relation projection/schema/resolver/evidence policy: v0.1 유지
+  - Cross-source Attention: v0.3 input/result, v0.2 policy/rules 유지
+- Versions after:
+  - projection: `managed-codex-artifact-relation-projection-v0.1`
+  - relation schema: `artifact-relation-schema-v0.1`
+  - resolver: `managed-codex-explicit-artifact-resolver-v0.1`
+  - evidence policy: `explicit-user-native-artifact-evidence-v0.1`
+  - identity policy: `github-native-artifact-id-v0.1`
+  - attribution store: `work-artifact-attribution-store-v0.1`
+  - attribution schema: `work-artifact-attribution-schema-v0.1`
+  - retention policy: `work-artifact-attribution-retention-30d-v0.1`
+  - evaluation case: `artifact-relation-resolver-evaluation-case-v0.1`
+  - evaluation run: `artifact-relation-resolver-evaluation-run-v0.1`
+  - 기존 Phase 3A, managed Codex와 Attention semantic versions: 변경 없음
+- Code commit:
+  - base commit: `c15c82ef78fb9c84c05e1e9af7b5b6968130d2f4`
+  - candidate run code state: `dirty_worktree`
+  - candidate run fingerprint:
+    `78040ab5b4f297692c94e0968e0dd33f78a108b30e90c1616849797f9fd0aa62`
+  - 이 fingerprint는 아래 candidate run 직전의 전체 `suggestion/` 변경과 ECR
+    draft를 나타낸다. run 뒤의 ECR run/hash 치환과 관련 contract/gate 문서
+    정합성 수정은 documentation-only이며 semantic code/dataset/materialized
+    input/output을 변경하지 않음
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-artifact-relation-dev-v0.1`
+  - revision: `1`
+  - class/lifecycle: mutable synthetic Dev Candidate
+  - data origin/production data: `synthetic` / `false`
+  - input boundary: `explicit_artifact_attribution_inputs`
+  - case count: `32`
+  - canonical SHA-256:
+    `fdc9112a5164c63619489304ec8af398cae498597631303ffe6e3cda51f8a2c8`
+  - materialized input SHA-256:
+    `9c67f337ddbc379e66e4295ddd6cfd1468dd7a78ec61b36db54cfe7852432bf5`
+  - resolver config: `eval/synthetic/artifactRelationResolverConfig.v0.1.json`
+  - resolver config SHA-256:
+    `04427b788d092601159be4991ed33981940078d1a66ca8e0fe4bd30487897006`
+  - 기존 Phase 3A `suggestion-work-relation-dev-v0.1` revision `1`, `28` cases의
+    canonical SHA-256
+    `b12660720c657123fe6e94b0e4ba6dcf29704f72b90cd5b630ecd8331091b002`
+    는 변경하지 않음
+  - 기존 Cross-source/managed detector dataset도 변경하지 않음
+- Candidate run ID:
+  `artifact_relation_run_4f88b0aad069ee7e0ba51545fea32eae`
+- Comparison run ID: 없음 — 최초 Phase 3B artifact relation targeted Dev Candidate
+  baseline
+- Commands executed:
+  - `npx vitest run tests/githubArtifactTarget.test.ts tests/workArtifactAttributions.test.ts tests/managedCodexArtifactRelations.test.ts tests/workArtifactMutationService.test.ts tests/workArtifactsRoute.test.ts tests/workArtifactsClient.test.ts tests/artifactRelationEvaluation.test.ts tests/workRelationEvaluation.test.ts tests/workRelationsRoute.test.ts tests/workRelationsClient.test.ts tests/workResumptionStore.test.ts tests/githubRoutes.test.ts tests/managedCodexRunsRoute.test.ts`
+  - `npm run artifact-relation:baseline`
+  - `npm run work-relation:baseline`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npx playwright test e2e/managed-codex-progress.spec.ts --project=chromium`
+  - Cross-source Dev Candidate canonical dataset hash 확인
+  - `git diff --check`
+- Metrics changed:
+  - artifact relation exact case match: `32/32` (`1.0`)
+  - expected/observed `produces` relation: `23/23`
+  - relation precision/recall: `1.0/1.0`
+  - false positive/false negative relation: `0/0`
+  - hard-negative/invalid-identity/run-identity leakage: `0/0/0`
+  - source-limitation current-claim leakage: `0`
+  - unsupported authority emission: `0`
+  - Attention leakage: `0`
+  - privacy sentinel/stored raw URL leakage: `0/0`
+  - permutation determinism failure/tampered-store acceptance: `0/0`
+  - Phase 3A dataset hash mismatch: `0`
+  - deterministic output SHA-256:
+    `c93da98c113dfe8d9187ba363b43f6c3027c6150396d039480079cab8b3c7d04`
+  - focused Vitest: `13` files/`112` tests 통과
+  - full Vitest: `65` files/`542` tests 통과
+  - Playwright Chromium E2E: `14/14` tests 통과
+  - typecheck, lint, production build와 diff check 통과
+  - Phase 3A regression run ID:
+    `relation_run_134aea62b2acbb2d0072aaa2fe08d583`
+  - Phase 3A materialized input/output SHA-256:
+    `7d43dd080f3730cf45557448ba57728632def4fabf30683c8729caf314d8424f` /
+    `bbf9d6a97090b44a464d362fee24cceb97b89b7a265baa2d8be30c454b1776a4`
+  - Phase 3A exact case/relation match: `28/28`, `24/24`
+  - Cross-source Dev Candidate: v0.1 revision `2`, `30` cases, canonical SHA-256
+    `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+- Regressions or accepted exceptions:
+  - `turn_completed`, `file_change`, title, branch, project와 time similarity는
+    `produces` authority가 아님
+  - short/non-hex commit OID, ambiguous repository, PR corroboration conflict를 거부
+  - exact run/binding/execution/executes relation mismatch는 ledger를 삭제하지 않고
+    unresolved로 유지하며 relation을 생성하지 않음
+  - unavailable/stale/not-observed/conflict는 기존 explicit attribution을 지우지
+    않지만 current evidence 또는 Attention eligibility를 주장하지 않음
+  - Codex execution/artifact relation은 task/project 완료를 의미하지 않음
+  - user-confirmed `related_to`, field authority, materiality와 failure/stall
+    intervention은 현재 범위 밖
+  - managed repository HEAD transition은 hard `produces` 근거가 아니며, 향후
+    허용 여부는 사용자 결정으로 남김
+  - synthetic dataset은 human-reviewed Golden이나 제품 추천 품질 증명이 아님
+- Privacy or retention impact:
+  - raw GitHub URL은 request validation에서만 transient parse하고 persistence 전에
+    폐기
+  - local private store에는 repository/object native ID, full commit OID와 bounded
+    attribution lineage만 30일 cutoff로 저장하고 다음 store 접근에서 prune.
+    앱이 실행되지 않는 동안의 물리적 삭제는 다음 접근에서 수행
+  - artifact projection/API의 destination URL은 항상 `null`; repository-bearing
+    URL과 name을 출력하지 않음
+  - raw prompt/answer/reasoning, command/output, diff/file path, tool payload,
+    native Codex thread/turn/item ID를 store/projection/dataset에 포함하지 않음
+  - GitHub disconnect/connection/installation replacement와 Codex
+    disconnect/Work Resumption clear가 attribution file을 함께 제거하고 private
+    permission/atomic write 경계를 사용. strict-name crash temporary file도 다음
+    read/write와 source lifecycle purge에서 제거하고 다른 sibling file은 보존
+  - attach의 GitHub snapshot read/URL validation과 GitHub connection mutation을
+    같은 shared state lease 순서로 직렬화해 old snapshot 기반 ledger 재생성을 차단
+  - invalid attribution store는 fail closed하고 file mtime이 30일 cutoff를 넘은
+    경우 해당 실패 read에서 삭제
+  - shared state lease를 획득한 뒤 동일 read/decision 시각을 생성해 잠금 대기 중
+    stale time 판정을 막음. Phase 3B lease 내부는 bounded local 작업만 수행하고
+    provider/network 요청을 포함하지 않음
+  - shared filesystem lease는 5초 renewal과 token/device/inode/owner-PID 확인,
+    stale 삭제 전 재검증, 종료 current-owner 검증을 적용. ownership loss는 fail
+    closed하며 이 경계는 single local filesystem beta용이고 distributed/device 간
+    fencing은 범위 밖
+  - decision-time regression과 future-asOf evidence를 거부하고 empty ledger는 stable
+    epoch를 사용. artifact store는 shared state lease 안에서 별도 nested lock 없이
+    read/prune/write
+  - dataset은 synthetic sanitized metadata만 포함하고 production conversation,
+    production attribution 또는 implicit feedback을 사용하지 않음
+  - production relation과 LLM judge score는 Gold가 아니며 자동으로
+    Golden/Regression dataset에 승격하지 않음
+- Release decision:
+  - Phase 3B local beta explicit-user observational artifact relation slice로 허용
+  - Work Cockpit의 attach/detach와 lineage 가시성에만 사용하고 Attention
+    input/result/filtering/ordering, replay/monitor hash, candidate/ranking/selection에는
+    연결하지 않음
+  - formal Golden baseline은 실행하지 않음. 기존 frozen/Phase 3A dataset을
+    변경하지 않고 별도 mutable synthetic targeted baseline으로 gate했기 때문
+  - artifact evidence 기반 failure/stall/follow-through 추천의 production release가
+    아님
+  - in-app browser runtime에서는 viewport session을 열 수 없었지만 실제 Next.js
+    server를 사용하는 Playwright Chromium E2E `14/14`로 Work Cockpit UI와
+    attach/detach 즉시 갱신을 검증함
+- Rollback method:
+  - Work Cockpit artifact UI/client, `/api/work-artifacts` mutation surface와
+    `/api/work-relations`의 nested artifact read projection 제거
+  - `src/artifacts`, attribution store integration, Phase 3B dataset/evaluator/runner를
+    제거하고 Phase 3A `executes` projection과 WorkSessionBinding ledger는 유지
+  - local `.local/work-resumption/artifact-attributions.json`을 clear/disconnect
+    경로로 제거; 별도 production migration 없음
+  - Attention versions/dataset은 변경되지 않아 별도 Attention rollback 불필요
+- Follow-up work:
+  - managed repository HEAD transition을 hard `produces` evidence로 인정할지 사용자
+    결정
+  - user-confirmed work-to-work `related_to`
+  - GitHub/Notion field-level claim authority와 conflict record
+  - relation + materiality를 요구하는 Codex failure/stall intervention gate
+  - configured project workflow 기반 completion follow-through
+  - reviewed/adjudicated Cross-source Golden freeze와 formal baseline

@@ -35,13 +35,12 @@ export async function GET(request: Request) {
     );
   }
 
-  const now = new Date();
   const cwd = process.cwd();
   try {
     const observability = await withManagedCodexAuthorityLease(
       cwd,
-      now,
-      async (authority) => {
+      () => new Date(),
+      async (authority, now) => {
         const read = await readManagedCodexObservability(
           { ...authority, now },
           cwd

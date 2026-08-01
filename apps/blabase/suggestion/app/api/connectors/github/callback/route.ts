@@ -8,12 +8,14 @@ import {
   readStoredGitHubSnapshot,
   replaceStoredGitHubConnection
 } from "../../../../../src/connectors/github/localStore";
+import { clearWorkArtifactAttributionStore } from "../../../../../src/artifacts";
 import {
   exchangeGitHubAuthorizationCode,
   githubOAuthStatesMatch,
   GITHUB_STATE_COOKIE
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import { withWorkResumptionStateLease } from "../../../../../src/resumption";
 import {
   supersedeRuntimeSourceConnection,
   syncRuntimeSources
@@ -61,7 +63,10 @@ export async function GET(request: NextRequest) {
     // credentials become visible. If the durable reset fails, the old
     // connection remains intact and no cross-account generation is exposed.
     await supersedeRuntimeSourceConnection("github");
-    await replaceStoredGitHubConnection(tokens);
+    await withWorkResumptionStateLease(process.cwd(), async () => {
+      await clearWorkArtifactAttributionStore();
+      await replaceStoredGitHubConnection(tokens);
+    });
 
     let snapshotInstallationCount: number | null = null;
     try {

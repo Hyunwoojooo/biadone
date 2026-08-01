@@ -826,6 +826,12 @@ Phase 3A는 managed run과 GitHub work item 사이의 첫 explicit relation bran
 
 정확한 계약은 `WORK_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
 
+Phase 3B explicit-user commit/PR `produces` projection도 구현됐지만 관찰 전용이며
+Attention input/result, candidate와 ranking에는 연결되지 않는다. raw URL과
+repository-bearing destination은 projection에 없고, local attribution metadata는
+최대 1,000 decision, 30일 cutoff를 적용해 다음 attribution store read에서
+prune한다. `ARTIFACT_RELATION_RESOLUTION_CONTRACT.md`를 따른다.
+
 다음 richer connector evidence와 candidate behavior는 아직 구현하지 않는다.
 
 - confirmed non-draft review
@@ -835,7 +841,7 @@ Phase 3A는 managed run과 GitHub work item 사이의 첫 explicit relation bran
 - completed execution의 configured follow-through
 - relation/materiality를 통과한 semantic Codex exception candidate와 safe
   destination
-- privacy-safe artifact identity 기반 `produces`와 user-confirmed `related_to`
+- user-confirmed `related_to`와 artifact materiality/claim authority
 - GitHub checks, requested changes, merge conflict
 - managed event를 Attention 후보로 승격하는 versioned rule
 

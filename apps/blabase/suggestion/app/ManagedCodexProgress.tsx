@@ -13,6 +13,7 @@ import {
   type ManagedCodexSourceEvent,
   type ManagedCodexStreamState
 } from "./managedCodexRunsClient";
+import { ManagedCodexArtifacts } from "./ManagedCodexArtifacts";
 import {
   useSyncInvalidation,
   useVisiblePolling
@@ -173,12 +174,17 @@ export function ManagedCodexProgress() {
                 const relation = resolution?.relationId
                   ? relationById.get(resolution.relationId)
                   : undefined;
+                const exactRelation = exactManagedRunRelation(
+                  run,
+                  resolution,
+                  relation
+                );
                 return (
                   <ManagedCodexRunItem
                     key={run.managedRunId}
                     run={run}
                     semantic={payload.semantics.runs[run.managedRunId]}
-                    relation={relation}
+                    relation={exactRelation}
                     relationResolution={resolution}
                     relationReadState={
                       relationPayload
@@ -188,6 +194,8 @@ export function ManagedCodexProgress() {
                           : "unavailable"
                     }
                     relationNotice={relationNotice}
+                    artifactProjection={relationPayload?.artifacts}
+                    onArtifactChanged={loadRelations}
                   />
                 );
               })}
@@ -214,13 +222,38 @@ export function ManagedCodexProgress() {
   );
 }
 
+function exactManagedRunRelation(
+  run: ManagedCodexPublicRun,
+  resolution: ManagedCodexWorkRelationRunResolution | undefined,
+  relation: ManagedCodexWorkRelation | undefined
+): ManagedCodexWorkRelation | undefined {
+  if (
+    resolution?.status !== "resolved" ||
+    resolution.managedRunId !== run.managedRunId ||
+    resolution.bindingId !== run.bindingId ||
+    resolution.executionId !== run.executionId ||
+    resolution.relationId === null ||
+    relation?.relationId !== resolution.relationId ||
+    relation.bindingId !== run.bindingId ||
+    relation.from.kind !== "execution" ||
+    relation.from.source !== "codex" ||
+    relation.from.subjectId !== run.executionId ||
+    !relation.managedRunIds.includes(run.managedRunId)
+  ) {
+    return undefined;
+  }
+  return relation;
+}
+
 function ManagedCodexRunItem({
   run,
   semantic,
   relation,
   relationResolution,
   relationReadState,
-  relationNotice
+  relationNotice,
+  artifactProjection,
+  onArtifactChanged
 }: {
   run: ManagedCodexPublicRun;
   semantic: ManagedCodexSemanticRunResult | undefined;
@@ -230,6 +263,8 @@ function ManagedCodexRunItem({
     | undefined;
   relationReadState: "loading" | "ready" | "unavailable";
   relationNotice: string | null;
+  artifactProjection: WorkRelationsReadyResponse["artifacts"] | undefined;
+  onArtifactChanged: () => Promise<void>;
 }) {
   const tone = managedRunTone(run);
   const currentWaitingState =
@@ -283,6 +318,14 @@ function ManagedCodexRunItem({
         readState={relationReadState}
         notice={relationNotice}
       />
+      {relation && artifactProjection ? (
+        <ManagedCodexArtifacts
+          run={run}
+          executesRelation={relation}
+          projection={artifactProjection}
+          onChanged={onArtifactChanged}
+        />
+      ) : null}
       {semantic ? (
         <ManagedCodexSemanticSummary semantic={semantic} />
       ) : (

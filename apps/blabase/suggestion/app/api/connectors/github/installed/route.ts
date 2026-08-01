@@ -9,11 +9,13 @@ import {
   readStoredGitHubTokens,
   replaceStoredGitHubConnection
 } from "../../../../../src/connectors/github/localStore";
+import { clearWorkArtifactAttributionStore } from "../../../../../src/artifacts";
 import {
   githubOAuthStatesMatch,
   GITHUB_STATE_COOKIE
 } from "../../../../../src/connectors/github/oauth";
 import { loadSharedLocalEnv } from "../../../../../src/localEnv";
+import { withWorkResumptionStateLease } from "../../../../../src/resumption";
 import {
   supersedeRuntimeSourceConnection,
   syncRuntimeSources
@@ -46,7 +48,10 @@ export async function GET(request: NextRequest) {
 
   try {
     await supersedeRuntimeSourceConnection("github");
-    await replaceStoredGitHubConnection(tokens);
+    await withWorkResumptionStateLease(process.cwd(), async () => {
+      await clearWorkArtifactAttributionStore();
+      await replaceStoredGitHubConnection(tokens);
+    });
     const sync = await syncRuntimeSources({
       sources: ["github"]
     });
