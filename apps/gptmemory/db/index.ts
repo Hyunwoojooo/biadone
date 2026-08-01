@@ -14,6 +14,7 @@ const CREATE_NOTES_TABLE_SQL = `
     source_url TEXT,
     source_title TEXT,
     source_message_count INTEGER,
+    generation_metadata_json TEXT,
     favorite INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     deleted_at TEXT,
@@ -67,13 +68,7 @@ async function ensureNotesSchema(database: NotesDatabase): Promise<void> {
     return;
   }
 
-  const initialization = database
-    .batch([
-      database.prepare(CREATE_NOTES_TABLE_SQL),
-      database.prepare(CREATE_NOTES_OWNER_VIEW_INDEX_SQL),
-      database.prepare(CREATE_NOTES_OWNER_SOURCE_INDEX_SQL),
-    ])
-    .then(() => undefined)
+  const initialization = initializeNotesSchema(database)
     .catch((error: unknown) => {
       initializationByDatabase.delete(databaseKey);
       throw error;
@@ -81,4 +76,38 @@ async function ensureNotesSchema(database: NotesDatabase): Promise<void> {
 
   initializationByDatabase.set(databaseKey, initialization);
   await initialization;
+}
+
+async function initializeNotesSchema(database: NotesDatabase): Promise<void> {
+  await database.prepare(CREATE_NOTES_TABLE_SQL).run();
+
+  const columns = await database
+    .prepare("PRAGMA table_info(notes)")
+    .all<{ name: string }>();
+  if (!columns.results.some((column) => column.name === "generation_metadata_json")) {
+    try {
+      await database
+        .prepare("ALTER TABLE notes ADD COLUMN generation_metadata_json TEXT")
+        .run();
+    } catch (error) {
+      // Two fresh isolates can observe the old schema at the same time. A
+      // concurrent successful additive migration is safe to accept.
+      if (!isDuplicateColumnError(error, "generation_metadata_json")) {
+        throw error;
+      }
+    }
+  }
+
+  await database.batch([
+    database.prepare(CREATE_NOTES_OWNER_VIEW_INDEX_SQL),
+    database.prepare(CREATE_NOTES_OWNER_SOURCE_INDEX_SQL),
+  ]);
+}
+
+function isDuplicateColumnError(error: unknown, column: string): boolean {
+  return (
+    error instanceof Error &&
+    error.message.toLocaleLowerCase().includes("duplicate column") &&
+    error.message.includes(column)
+  );
 }

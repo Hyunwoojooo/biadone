@@ -13,7 +13,15 @@ const CREATE_FIELDS = new Set([
   "favorite",
   "archived",
 ]);
-const PATCH_FIELDS = new Set([...CREATE_FIELDS, "deletedAt"]);
+const PATCH_FIELDS = new Set([
+  "title",
+  "overview",
+  "sections",
+  "tags",
+  "favorite",
+  "archived",
+  "deletedAt",
+]);
 
 export type NoteView = (typeof NOTE_VIEWS)[number];
 export type JsonObject = Record<string, unknown>;
@@ -46,7 +54,12 @@ export type CreateNoteInput = {
   archived: boolean;
 };
 
-export type PatchNoteInput = Partial<CreateNoteInput> & {
+export type PatchNoteInput = Partial<
+  Pick<
+    CreateNoteInput,
+    "title" | "overview" | "sections" | "tags" | "favorite" | "archived"
+  >
+> & {
   deletedAt?: null;
 };
 
@@ -149,22 +162,6 @@ export function parsePatchNoteInput(value: unknown): PatchNoteInput {
   }
   if ("tags" in body) {
     patch.tags = validateTags(body.tags);
-  }
-  if ("sourceUrl" in body) {
-    patch.sourceUrl = nullableUrl(body.sourceUrl, "sourceUrl");
-  }
-  if ("sourceTitle" in body) {
-    patch.sourceTitle = nullableTrimmedString(
-      body.sourceTitle,
-      "sourceTitle",
-      500,
-    );
-  }
-  if ("sourceMessageCount" in body) {
-    patch.sourceMessageCount = nullableCount(
-      body.sourceMessageCount,
-      "sourceMessageCount",
-    );
   }
   if ("favorite" in body) {
     patch.favorite = requiredBoolean(body.favorite, "favorite");

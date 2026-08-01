@@ -1,11 +1,35 @@
 import { getNotesDatabase } from "@/db";
-
 import type {
-  CreateNoteInput,
-  ListNotesInput,
-  PatchNoteInput,
-  PublicNote,
+  ImportedNoteCreateResult,
+  ImportedNoteWrite,
+  NoteImportGenerationMetadata,
+} from "@/lib/note-import";
+
+import {
+  parseCreateNoteInput,
+  type CreateNoteInput,
+  type ListNotesInput,
+  type PatchNoteInput,
+  type PublicNote,
 } from "./_shared";
+
+/*
+ * Imported notes bypass the public create route, so the repository reuses the
+ * same size and shape validation before any D1 write.
+ */
+function validateImportedNoteWrite(input: ImportedNoteWrite): CreateNoteInput {
+  return parseCreateNoteInput({
+    title: input.title,
+    overview: input.overview,
+    sections: input.sections,
+    tags: input.tags,
+    sourceUrl: input.sourceUrl,
+    sourceTitle: input.sourceTitle,
+    sourceMessageCount: input.sourceMessageCount,
+    favorite: false,
+    archived: false,
+  });
+}
 
 type NoteDbRow = {
   id: string;
@@ -100,67 +124,119 @@ export async function listNotes(
 export async function createNote(
   ownerKey: string,
   input: CreateNoteInput,
-): Promise<PublicNote> {
-  const database = await getNotesDatabase();
-  if (input.sourceUrl) {
-    const existing = await database
-      .prepare(
-        `
-          SELECT ${PUBLIC_NOTE_COLUMNS}
-          FROM notes
-          WHERE owner_key = ? AND source_url = ?
-          LIMIT 1
-        `,
-      )
-      .bind(ownerKey, input.sourceUrl)
-      .first<NoteDbRow>();
-    if (existing) return toPublicNote(existing);
-  }
+): Promise<ImportedNoteCreateResult<PublicNote>> {
+  return insertNote(ownerKey, input, null);
+}
 
-  const id = crypto.randomUUID();
-  const now = new Date().toISOString();
+export async function findNoteBySourceUrl(
+  ownerKey: string,
+  normalizedUrl: string,
+): Promise<PublicNote | null> {
+  const database = await getNotesDatabase();
   const note = await database
     .prepare(
       `
-        INSERT INTO notes (
-          id,
-          owner_key,
-          title,
-          overview,
-          sections_json,
-          tags_json,
-          source_url,
-          source_title,
-          source_message_count,
-          favorite,
-          archived,
-          deleted_at,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        SELECT ${PUBLIC_NOTE_COLUMNS}
+        FROM notes
+        WHERE owner_key = ? AND source_url = ?
+        LIMIT 1
+      `,
+    )
+    .bind(ownerKey, normalizedUrl)
+    .first<NoteDbRow>();
+
+  return note ? toPublicNote(note) : null;
+}
+
+export async function hasReplacementCandidate(input: {
+  ownerKey: string;
+  noteId: string;
+  normalizedUrl: string;
+  expectedUpdatedAt: string;
+}): Promise<boolean> {
+  const database = await getNotesDatabase();
+  const match = await database
+    .prepare(
+      `
+        SELECT 1 AS matches
+        FROM notes
+        WHERE id = ?
+          AND owner_key = ?
+          AND source_url = ?
+          AND updated_at = ?
+        LIMIT 1
+      `,
+    )
+    .bind(
+      input.noteId,
+      input.ownerKey,
+      input.normalizedUrl,
+      input.expectedUpdatedAt,
+    )
+    .first<{ matches: number }>();
+
+  return Boolean(match?.matches);
+}
+
+export async function createImportedNote(
+  ownerKey: string,
+  input: ImportedNoteWrite,
+): Promise<ImportedNoteCreateResult<PublicNote>> {
+  return insertNote(
+    ownerKey,
+    validateImportedNoteWrite(input),
+    input.generationMetadata,
+  );
+}
+
+export async function replaceImportedNote(input: {
+  ownerKey: string;
+  noteId: string;
+  normalizedUrl: string;
+  expectedUpdatedAt: string;
+  note: ImportedNoteWrite;
+}): Promise<PublicNote | null> {
+  const database = await getNotesDatabase();
+  const noteInput = validateImportedNoteWrite(input.note);
+  const updatedAt = nextUpdatedAt(input.expectedUpdatedAt);
+  const note = await database
+    .prepare(
+      `
+        UPDATE notes
+        SET title = ?,
+            overview = ?,
+            sections_json = ?,
+            tags_json = ?,
+            source_url = ?,
+            source_title = ?,
+            source_message_count = ?,
+            generation_metadata_json = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND owner_key = ?
+          AND source_url = ?
+          AND updated_at = ?
         RETURNING ${PUBLIC_NOTE_COLUMNS}
       `,
     )
     .bind(
-      id,
-      ownerKey,
-      input.title,
-      input.overview,
-      JSON.stringify(input.sections),
-      JSON.stringify(input.tags),
-      input.sourceUrl,
-      input.sourceTitle,
-      input.sourceMessageCount,
-      input.favorite ? 1 : 0,
-      input.archived ? 1 : 0,
-      now,
-      now,
+      noteInput.title,
+      noteInput.overview,
+      JSON.stringify(noteInput.sections),
+      JSON.stringify(noteInput.tags),
+      noteInput.sourceUrl,
+      noteInput.sourceTitle,
+      noteInput.sourceMessageCount,
+      JSON.stringify(input.note.generationMetadata),
+      updatedAt,
+      input.noteId,
+      input.ownerKey,
+      input.normalizedUrl,
+      input.expectedUpdatedAt,
     )
     .first<NoteDbRow>();
 
-  if (!note) throw new Error("D1 did not return the created note.");
-  return toPublicNote(note);
+  return note ? toPublicNote(note) : null;
 }
 
 export async function getNote(
@@ -206,18 +282,6 @@ export async function patchNote(
   if (patch.tags !== undefined) {
     assignments.push("tags_json = ?");
     bindings.push(JSON.stringify(patch.tags));
-  }
-  if (patch.sourceUrl !== undefined) {
-    assignments.push("source_url = ?");
-    bindings.push(patch.sourceUrl);
-  }
-  if (patch.sourceTitle !== undefined) {
-    assignments.push("source_title = ?");
-    bindings.push(patch.sourceTitle);
-  }
-  if (patch.sourceMessageCount !== undefined) {
-    assignments.push("source_message_count = ?");
-    bindings.push(patch.sourceMessageCount);
   }
   if (patch.favorite !== undefined) {
     assignments.push("favorite = ?");
@@ -288,6 +352,81 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function insertNote(
+  ownerKey: string,
+  input: CreateNoteInput,
+  generationMetadata: NoteImportGenerationMetadata | null,
+): Promise<ImportedNoteCreateResult<PublicNote>> {
+  const database = await getNotesDatabase();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const note = await database
+    .prepare(
+      `
+        INSERT INTO notes (
+          id,
+          owner_key,
+          title,
+          overview,
+          sections_json,
+          tags_json,
+          source_url,
+          source_title,
+          source_message_count,
+          generation_metadata_json,
+          favorite,
+          archived,
+          deleted_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(owner_key, source_url)
+          WHERE source_url IS NOT NULL
+          DO NOTHING
+        RETURNING ${PUBLIC_NOTE_COLUMNS}
+      `,
+    )
+    .bind(
+      id,
+      ownerKey,
+      input.title,
+      input.overview,
+      JSON.stringify(input.sections),
+      JSON.stringify(input.tags),
+      input.sourceUrl,
+      input.sourceTitle,
+      input.sourceMessageCount,
+      generationMetadata ? JSON.stringify(generationMetadata) : null,
+      input.favorite ? 1 : 0,
+      input.archived ? 1 : 0,
+      now,
+      now,
+    )
+    .first<NoteDbRow>();
+
+  if (note) {
+    return { note: toPublicNote(note), disposition: "created" };
+  }
+
+  if (input.sourceUrl) {
+    const existing = await findNoteBySourceUrl(ownerKey, input.sourceUrl);
+    if (existing) {
+      return { note: existing, disposition: "existing" };
+    }
+  }
+
+  throw new Error("D1 did not return the created note.");
+}
+
+function nextUpdatedAt(expectedUpdatedAt: string): string {
+  const now = Date.now();
+  const expected = Date.parse(expectedUpdatedAt);
+  return new Date(
+    Number.isFinite(expected) ? Math.max(now, expected + 1) : now,
+  ).toISOString();
 }
 
 function parseObjectArray(value: string): Record<string, unknown>[] {

@@ -110,7 +110,7 @@ GPTMemory는 ChatGPT 공유 링크의 대화를 가져와, 대화의 시간적 �
 → 링크 검증
 → 대화 복원
 → 노트 작성
-→ IndexedDB 저장
+→ D1 저장
 → 생성된 노트 상세 화면
 ```
 
@@ -128,8 +128,10 @@ All Notes
 
 - 정규화된 공유 URL 또는 share ID로 기존 노트를 찾는다.
 - 조용히 중복 노트를 만들지 않는다.
-- 기존 노트를 보여주고 `다시 생성` 또는 `취소`를 선택하게 한다.
+- 기존 노트를 보여주고 `기존 노트 열기`, `다시 생성`, `취소`를 선택하게 한다.
 - 다시 생성에 실패해도 기존 사용자 편집본을 보존한다.
+- 다시 생성은 사용자가 확인한 `noteId + updatedAt`과 현재 D1 상태가 일치할
+  때만 조건부 갱신한다.
 
 ## 4. blabase 재사용 경계
 
@@ -517,44 +519,70 @@ Reducer 책임:
 ```text
 POST /api/notes/import
 Content-Type: application/json
+X-GPTMemory-Owner: <browser owner key>
 
 {
   "shareUrl": "https://chatgpt.com/share/..."
 }
 ```
 
-서버 책임:
+확인된 다시 생성 요청:
 
-1. 요청 크기와 URL을 검증한다.
-2. 공유 대화를 가져와 복원한다.
-3. 노트용 메시지를 선별한다.
-4. 구간 요약과 최종 reduce를 실행한다.
-5. 구조화된 note draft와 source snapshot을 반환한다.
-6. 대화 또는 노트를 서버에 영구 저장하지 않는다.
-
-성공 응답:
-
-```ts
-type ImportNoteResponse = {
-  status: "completed";
-  draft: ConversationNoteDraft;
-  source: NoteRecordV1["source"];
-  sourceSnapshot: NoteRecordV1["sourceSnapshot"];
-  generation: NoteRecordV1["generation"];
-  warnings: Array<{
-    code: string;
-    message: string;
-  }>;
-};
+```json
+{
+  "shareUrl": "https://chatgpt.com/share/...",
+  "replace": {
+    "noteId": "existing note UUID",
+    "expectedUpdatedAt": "confirmed ISO timestamp"
+  }
+}
 ```
 
-클라이언트가 응답을 `NoteRecordV1`로 완성하고 IndexedDB에 저장한다.
+`replace`는 사용자가 중복 안내에서 `다시 생성`을 명시적으로 선택한 요청에만
+포함한다.
+
+서버 책임:
+
+1. 외부 fetch보다 먼저 owner header와 요청 크기를 검증한다.
+2. 공유 URL을 정규화하고 owner 범위에서 기존 노트를 조회한다.
+3. 중복이면 외부 fetch나 쓰기 없이 최소 기존 노트 요약을 반환한다.
+4. 신규 요청이면 공유 대화를 복원하고 결정적 노트 엔진 결과를 D1에 저장한다.
+5. 확인된 다시 생성이면 새 결과를 메모리에서 완성한 뒤 `noteId`, owner,
+   normalized URL, `expectedUpdatedAt`이 모두 일치하는 행만 한 번 갱신한다.
+6. 응답에는 저장된 노트만 반환하고 복원된 원문 대화나 중간 draft를 반환하지
+   않는다.
+
+응답 계약:
+
+```ts
+type ImportNoteResponse =
+  | { status: "created"; note: PublicNote } // HTTP 201
+  | { status: "replaced"; note: PublicNote } // HTTP 200
+  | {
+      status: "already_exists";
+      existing: {
+        id: string;
+        title: string;
+        updatedAt: string;
+        archived: boolean;
+        deletedAt: string | null;
+        sourceMessageCount: number | null;
+      };
+    }; // HTTP 409
+```
+
+확인 뒤 노트가 바뀌었거나 조건부 갱신 경쟁에서 진 경우에는 HTTP 409와
+`NOTE_CHANGED_SINCE_CONFIRMATION`을 반환하고 기존 노트를 변경하지 않는다.
+생성 provenance는 원문 본문 대신 workflow·adapter·note engine·schema 버전,
+share ID, canonical source SHA-256, fetch/generation 시각만 저장한다.
 
 ### 8.2 오류 코드
 
 초기 오류 코드는 사용자 조치 가능성을 기준으로 구분한다.
 
 ```text
+OWNER_KEY_REQUIRED
+INVALID_OWNER_KEY
 INVALID_REQUEST
 INVALID_SHARE_URL
 SHARE_LINK_NOT_ACCESSIBLE
@@ -562,10 +590,10 @@ SHARE_LINK_DELETED
 CHATGPT_PAYLOAD_CHANGED
 CONVERSATION_NOT_FOUND
 NO_VISIBLE_MESSAGES
-NOTE_GENERATION_TIMEOUT
-NOTE_GENERATION_FAILED
-NOTE_OUTPUT_INVALID
+NOTE_CHANGED_SINCE_CONFIRMATION
+IMPORTED_SOURCE_MISMATCH
 RATE_LIMITED
+IMPORT_FAILED
 ```
 
 외부 Fetcher 설정 실패나 LLM provider 장애를 모두 HTTP 400으로 감추지 않는다.

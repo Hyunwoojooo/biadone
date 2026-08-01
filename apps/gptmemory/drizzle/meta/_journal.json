@@ -8,6 +8,13 @@
       "when": 1785405268456,
       "tag": "0000_amazing_the_fallen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785675600000,
+      "tag": "0001_add_note_generation_metadata",
+      "breakpoints": true
     }
   ]
 }

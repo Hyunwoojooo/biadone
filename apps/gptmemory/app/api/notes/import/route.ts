@@ -2,82 +2,103 @@ import {
   ChatGPTImportError,
   importChatGPTShareUrl,
   type ChatGPTImportErrorCode,
+  validateShareUrl,
 } from "@/lib/chatgpt";
-import { createConversationNote, NoteEngineError } from "@/lib/note-engine";
+import {
+  createNoteImportService,
+  NoteImportWorkflowError,
+  sha256Hex,
+  type NoteImportCommand,
+  type NoteImportReplacement,
+} from "@/lib/note-import";
+import {
+  createConversationNote,
+  NOTE_ENGINE_VERSION,
+  NoteEngineError,
+} from "@/lib/note-engine";
+
+import {
+  createImportedNote,
+  findNoteBySourceUrl,
+  hasReplacementCandidate,
+  replaceImportedNote,
+} from "../_repository";
+import {
+  ApiRequestError,
+  noteErrorResponse,
+  requireOwnerKey,
+  type PublicNote,
+} from "../_shared";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024;
+const NOTE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(request: Request): Promise<Response> {
-  try {
-    const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
-    if (!contentType.includes("application/json")) {
-      throw new ChatGPTImportError(
-        "INVALID_REQUEST",
-        "JSON 요청만 지원합니다.",
-        415,
-      );
-    }
-
-    const rawBody = await readRequestBody(request, MAX_REQUEST_BODY_BYTES);
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      throw new ChatGPTImportError(
-        "INVALID_REQUEST",
-        "요청 JSON을 확인해 주세요.",
-        400,
-      );
-    }
-
-    const shareUrl =
-      body && typeof body === "object" && !Array.isArray(body)
-        ? (body as Record<string, unknown>).shareUrl
-        : undefined;
-    if (typeof shareUrl !== "string") {
-      throw new ChatGPTImportError(
-        "INVALID_REQUEST",
-        "shareUrl 문자열이 필요합니다.",
-        400,
-      );
-    }
-
-    const imported = await importChatGPTShareUrl({ url: shareUrl });
-    const draft = createConversationNote({
+const importService = createNoteImportService<PublicNote>({
+  repository: {
+    findBySourceUrl: findNoteBySourceUrl,
+    hasReplacementCandidate,
+    createImportedNote,
+    replaceImportedNote,
+  },
+  importShareUrl: (normalizedUrl) =>
+    importChatGPTShareUrl({ url: normalizedUrl }),
+  createDraft: (imported) =>
+    createConversationNote({
       title: imported.conversation.title,
-      messages: imported.conversation.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        text: message.text,
-        createdAt: message.createdAt,
-      })),
+      messages: imported.conversation.messages,
       source: {
         type: "chatgpt_share_link",
-        originalUrl: imported.source.originalUrl,
+        originalUrl: imported.source.normalizedUrl,
         normalizedUrl: imported.source.normalizedUrl,
         shareId: imported.source.shareId,
       },
-    });
+    }),
+  noteEngineVersion: NOTE_ENGINE_VERSION,
+  now: () => new Date().toISOString(),
+  randomUUID: () => crypto.randomUUID(),
+  sha256Hex,
+});
 
-    return jsonResponse(
-      {
-        status: "completed",
-        draft,
-        conversation: imported.conversation,
-        source: {
-          originalUrl: imported.source.originalUrl,
-          normalizedUrl: imported.source.normalizedUrl,
-          shareId: imported.source.shareId,
-        },
-        warnings: imported.warnings,
-        diagnostics: imported.diagnostics,
-      },
-      200,
-    );
+export async function POST(request: Request): Promise<Response> {
+  try {
+    // Ownership is required before duplicate lookup or any share-link fetch.
+    const ownerKey = requireOwnerKey(request);
+    const command = await parseImportCommand(request, ownerKey);
+    const result = await importService.execute(command);
+
+    switch (result.status) {
+      case "already_exists":
+        return jsonResponse(result, 409);
+      case "created":
+        return jsonResponse(result, 201);
+      case "replaced":
+        return jsonResponse(result, 200);
+    }
   } catch (error) {
+    if (error instanceof ApiRequestError) {
+      return noteErrorResponse(error);
+    }
+    if (
+      error instanceof Error &&
+      error.name === "NotesDatabaseUnavailableError"
+    ) {
+      return noteErrorResponse(error);
+    }
+    if (error instanceof NoteImportWorkflowError) {
+      const message = workflowErrorMessage(error.code);
+      return jsonResponse(
+        {
+          status: "error",
+          message,
+          error: { code: error.code, message },
+        },
+        error.httpStatus,
+      );
+    }
+
     const normalized = normalizeRouteError(error);
     const message = publicErrorMessage(normalized.code);
-
     return jsonResponse(
       {
         status: "error",
@@ -92,7 +113,111 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-async function readRequestBody(request: Request, maxBytes: number): Promise<string> {
+async function parseImportCommand(
+  request: Request,
+  ownerKey: string,
+): Promise<NoteImportCommand> {
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new ChatGPTImportError(
+      "INVALID_REQUEST",
+      "JSON 요청만 지원합니다.",
+      415,
+    );
+  }
+
+  const rawBody = await readRequestBody(request, MAX_REQUEST_BODY_BYTES);
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    throw new ChatGPTImportError(
+      "INVALID_REQUEST",
+      "요청 JSON을 확인해 주세요.",
+      400,
+    );
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw invalidImportRequest("요청 본문은 JSON 객체여야 합니다.");
+  }
+  const record = body as Record<string, unknown>;
+  const unknownFields = Object.keys(record).filter(
+    (field) => field !== "shareUrl" && field !== "replace",
+  );
+  if (unknownFields.length > 0) {
+    throw invalidImportRequest("지원하지 않는 요청 필드가 있습니다.");
+  }
+  if (typeof record.shareUrl !== "string") {
+    throw invalidImportRequest("shareUrl 문자열이 필요합니다.");
+  }
+
+  const source = validateShareUrl(record.shareUrl);
+  if (!source.valid) {
+    throw new ChatGPTImportError(
+      "INVALID_SHARE_URL",
+      "A supported ChatGPT share URL is required.",
+      400,
+    );
+  }
+
+  const replace = parseReplacement(record.replace);
+  return {
+    ownerKey,
+    normalizedUrl: source.normalizedUrl,
+    shareId: source.shareId,
+    ...(replace ? { replace } : {}),
+  };
+}
+
+function parseReplacement(value: unknown): NoteImportReplacement | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidImportRequest("replace 형식을 확인해 주세요.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const unknownFields = Object.keys(record).filter(
+    (field) => field !== "noteId" && field !== "expectedUpdatedAt",
+  );
+  if (unknownFields.length > 0) {
+    throw invalidImportRequest("replace에 지원하지 않는 필드가 있습니다.");
+  }
+  if (
+    typeof record.noteId !== "string" ||
+    !NOTE_ID_PATTERN.test(record.noteId)
+  ) {
+    throw invalidImportRequest("replace.noteId가 올바르지 않습니다.");
+  }
+  if (
+    typeof record.expectedUpdatedAt !== "string" ||
+    !isCanonicalIsoTimestamp(record.expectedUpdatedAt)
+  ) {
+    throw invalidImportRequest(
+      "replace.expectedUpdatedAt이 올바르지 않습니다.",
+    );
+  }
+
+  return {
+    noteId: record.noteId,
+    expectedUpdatedAt: record.expectedUpdatedAt,
+  };
+}
+
+function isCanonicalIsoTimestamp(value: string): boolean {
+  if (value.length > 64) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function invalidImportRequest(message: string): ChatGPTImportError {
+  return new ChatGPTImportError("INVALID_REQUEST", message, 400);
+}
+
+async function readRequestBody(
+  request: Request,
+  maxBytes: number,
+): Promise<string> {
   const declaredLength = Number.parseInt(
     request.headers.get("content-length") ?? "",
     10,
@@ -179,6 +304,15 @@ function publicErrorMessage(code: ChatGPTImportErrorCode): string {
     case "SHARE_FETCH_MISCONFIGURED":
     case "IMPORT_FAILED":
       return "대화를 가져오지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
+  }
+}
+
+function workflowErrorMessage(code: NoteImportWorkflowError["code"]): string {
+  switch (code) {
+    case "NOTE_CHANGED_SINCE_CONFIRMATION":
+      return "확인 후 기존 노트가 변경되었습니다. 최신 노트를 확인한 뒤 다시 시도해 주세요.";
+    case "IMPORTED_SOURCE_MISMATCH":
+      return "가져온 대화의 출처를 확인하지 못했습니다. 다시 시도해 주세요.";
   }
 }
 

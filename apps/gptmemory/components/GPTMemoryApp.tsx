@@ -41,30 +41,18 @@ type NoteDraft = Pick<
   "title" | "overview" | "sections" | "tags"
 >;
 
-type ImportPayload = {
-  draft?: {
-    title?: string;
-    overview?: string;
-    sections?: Array<{
-      id?: string;
-      heading?: string;
-      body?: string;
-      narrative?: string;
-      sourceMessageIds?: string[];
-    }>;
-    tags?: string[];
-    suggestedTags?: string[];
-    closingState?: string;
-  };
-  conversation?: {
-    title?: string | null;
-    messages?: Array<{ id: string; role: string; text: string }>;
-  };
-  source?: {
-    originalUrl?: string;
-    normalizedUrl?: string;
-    shareId?: string;
-  };
+type ExistingNoteSummary = Pick<
+  NoteRecord,
+  "id" | "title" | "updatedAt" | "archived"
+> & {
+  deletedAt?: string | null;
+  sourceMessageCount?: number | null;
+};
+
+type ImportResponsePayload = {
+  status?: "created" | "replaced" | "already_exists";
+  note?: Partial<NoteRecord>;
+  existing?: ExistingNoteSummary;
   error?:
     | string
     | {
@@ -178,6 +166,7 @@ export function GPTMemoryApp() {
   const [loadError, setLoadError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [mobilePane, setMobilePane] = useState<MobilePane>("list");
+  const [detailResetToken, setDetailResetToken] = useState(0);
   const queryTimer = useRef<number | null>(null);
   const [ownerKey, setOwnerKey] = useState("");
 
@@ -491,7 +480,7 @@ export function GPTMemoryApp() {
       <section className="detail-pane" aria-label="선택한 노트">
         {selectedNote ? (
           <NoteDetail
-            key={selectedNote.id}
+            key={`${selectedNote.id}:${detailResetToken}`}
             note={selectedNote}
             ownerKey={ownerKey}
             view={view}
@@ -512,13 +501,19 @@ export function GPTMemoryApp() {
           ownerKey={ownerKey}
           onClose={() => setImportOpen(false)}
           onImported={(note) => {
-            setView("all");
+            if (queryTimer.current) window.clearTimeout(queryTimer.current);
+            setQueryInput("");
+            setQuery("");
             setActiveTag(null);
+            setView(
+              note.deletedAt ? "trash" : note.archived ? "archive" : "all",
+            );
             setNotes((current) => [
               note,
               ...current.filter((item) => item.id !== note.id),
             ]);
             setSelectedId(note.id);
+            setDetailResetToken((current) => current + 1);
             setMobilePane("detail");
             setImportOpen(false);
           }}
@@ -955,6 +950,7 @@ function ImportDialog({
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [existing, setExisting] = useState<ExistingNoteSummary | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -966,88 +962,94 @@ function ImportDialog({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClose, submitting]);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const requestImport = async (replace?: ExistingNoteSummary) => {
     if (!shareUrl.trim() || submitting) return;
     setSubmitting(true);
     setError("");
-    setStatus("공개 대화를 불러와 흐름을 읽는 중입니다…");
+    setStatus(
+      replace
+        ? "기존 노트를 보존한 채 새 결과를 준비하는 중입니다…"
+        : "공개 대화를 불러와 노트로 정리하는 중입니다…",
+    );
     try {
-      const importResponse = await fetch("/api/notes/import", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-gptmemory-owner": ownerKey,
-        },
-        body: JSON.stringify({ shareUrl: shareUrl.trim() }),
-      });
-      const imported = (await importResponse.json()) as ImportPayload;
-      if (!importResponse.ok || !imported.draft) {
-        throw new Error(
-          parseError(imported, "이 대화를 노트로 바꾸지 못했습니다."),
-        );
-      }
-
-      const sections: NoteSection[] = (imported.draft.sections ?? []).map(
-        (section, index) => ({
-          id: section.id || `section-${index + 1}`,
-          heading: section.heading?.trim() || `맥락 ${index + 1}`,
-          body: (section.body ?? section.narrative ?? "").trim(),
-          sourceMessageIds: section.sourceMessageIds ?? [],
-        }),
-      );
-      if (imported.draft.closingState?.trim()) {
-        sections.push({
-          id: "closing-state",
-          heading: "대화가 도달한 지점",
-          body: imported.draft.closingState.trim(),
-          sourceMessageIds: [],
-        });
-      }
-      const tags = (
-        imported.draft.tags ??
-        imported.draft.suggestedTags ??
-        []
-      )
-        .map((tag) => tag.trim().replace(/^#/, ""))
-        .filter(Boolean)
-        .slice(0, 8);
-
-      setStatus("완성된 노트를 안전하게 저장하는 중입니다…");
-      const saveResponse = await fetch("/api/notes", {
+      const response = await fetch("/api/notes/import", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-gptmemory-owner": ownerKey,
         },
         body: JSON.stringify({
-          title:
-            imported.draft.title?.trim() ||
-            imported.conversation?.title?.trim() ||
-            "ChatGPT 대화 노트",
-          overview: imported.draft.overview?.trim() ?? "",
-          sections,
-          tags,
-          sourceUrl:
-            imported.source?.normalizedUrl ??
-            imported.source?.originalUrl ??
-            shareUrl.trim(),
-          sourceTitle: imported.conversation?.title ?? null,
-          sourceMessageCount: imported.conversation?.messages?.length ?? null,
+          shareUrl: shareUrl.trim(),
+          ...(replace
+            ? {
+                replace: {
+                  noteId: replace.id,
+                  expectedUpdatedAt: replace.updatedAt,
+                },
+              }
+            : {}),
         }),
       });
-      const saved = (await saveResponse.json()) as {
-        note?: Partial<NoteRecord>;
-      };
-      if (!saveResponse.ok || !saved.note) {
-        throw new Error(parseError(saved, "노트를 저장하지 못했습니다."));
+      const payload = (await response.json()) as ImportResponsePayload;
+
+      if (
+        response.status === 409 &&
+        payload.status === "already_exists" &&
+        payload.existing
+      ) {
+        setExisting(payload.existing);
+        setStatus("");
+        return;
       }
-      onImported(normalizeNote(saved.note));
+      if (!response.ok || !payload.note) {
+        throw new Error(
+          parseError(payload, "이 대화를 노트로 만들지 못했습니다."),
+        );
+      }
+      onImported(normalizeNote(payload.note));
     } catch (caught) {
       setError(
         caught instanceof Error
           ? caught.message
           : "가져오기를 완료하지 못했습니다.",
+      );
+      setStatus("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (existing) return;
+    await requestImport();
+  };
+
+  const openExisting = async () => {
+    if (!existing || submitting) return;
+    setSubmitting(true);
+    setError("");
+    setStatus("기존 노트를 여는 중입니다…");
+    try {
+      const response = await fetch(
+        `/api/notes/${encodeURIComponent(existing.id)}`,
+        {
+          headers: { "x-gptmemory-owner": ownerKey },
+          cache: "no-store",
+        },
+      );
+      const payload = (await response.json()) as {
+        note?: Partial<NoteRecord>;
+      };
+      if (!response.ok || !payload.note) {
+        throw new Error(parseError(payload, "기존 노트를 열지 못했습니다."));
+      }
+      onImported(normalizeNote(payload.note));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "기존 노트를 열지 못했습니다.",
       );
       setStatus("");
     } finally {
@@ -1097,7 +1099,7 @@ function ImportDialog({
                 onChange={(event) => setShareUrl(event.target.value)}
                 placeholder="https://chatgpt.com/share/..."
                 required
-                disabled={submitting}
+                disabled={submitting || Boolean(existing)}
               />
             </div>
           </label>
@@ -1108,6 +1110,32 @@ function ImportDialog({
               대화는 이 노트를 만드는 데만 사용합니다.
             </p>
           </div>
+          {existing ? (
+            <div className="existing-note-card" role="status">
+              <span className="existing-note-symbol" aria-hidden="true">
+                ↺
+              </span>
+              <div>
+                <p className="existing-note-label">이미 가져온 대화입니다</p>
+                <h3>{existing.title}</h3>
+                <p className="existing-note-meta">
+                  {formatDate(existing.updatedAt)} 수정
+                  {existing.deletedAt
+                    ? " · 휴지통"
+                    : existing.archived
+                      ? " · 보관됨"
+                      : ""}
+                  {existing.sourceMessageCount
+                    ? ` · ${existing.sourceMessageCount}개 메시지`
+                    : ""}
+                </p>
+                <p className="existing-note-warning">
+                  다시 생성하면 직접 편집한 내용을 포함한 현재 노트가 새 결과로
+                  교체됩니다. 생성에 실패하면 기존 노트는 그대로 유지됩니다.
+                </p>
+              </div>
+            </div>
+          ) : null}
           {status ? (
             <div className="import-status" role="status">
               <span className="status-spinner" aria-hidden="true" />
@@ -1119,19 +1147,43 @@ function ImportDialog({
               {error}
             </p>
           ) : null}
-          <div className="dialog-actions">
-            <button type="button" onClick={onClose} disabled={submitting}>
-              취소
-            </button>
-            <button
-              className="primary-action"
-              type="submit"
-              disabled={submitting || !shareUrl.trim()}
-            >
-              {submitting ? "정리하는 중…" : "노트 만들기"}
-              {!submitting ? <span aria-hidden="true">→</span> : null}
-            </button>
-          </div>
+          {existing ? (
+            <div className="dialog-actions duplicate-actions">
+              <button type="button" onClick={onClose} disabled={submitting}>
+                취소
+              </button>
+              <button
+                className="existing-open-action"
+                type="button"
+                onClick={() => void openExisting()}
+                disabled={submitting}
+              >
+                기존 노트 열기
+              </button>
+              <button
+                className="primary-action replace-action"
+                type="button"
+                onClick={() => void requestImport(existing)}
+                disabled={submitting}
+              >
+                {submitting ? "처리하는 중…" : "다시 생성"}
+              </button>
+            </div>
+          ) : (
+            <div className="dialog-actions">
+              <button type="button" onClick={onClose} disabled={submitting}>
+                취소
+              </button>
+              <button
+                className="primary-action"
+                type="submit"
+                disabled={submitting || !shareUrl.trim()}
+              >
+                {submitting ? "정리하는 중…" : "노트 만들기"}
+                {!submitting ? <span aria-hidden="true">→</span> : null}
+              </button>
+            </div>
+          )}
         </form>
       </section>
     </div>

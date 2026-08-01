@@ -64,6 +64,17 @@ test("normalizes a valid create payload without accepting owner data", () => {
     (error: unknown) =>
       error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
   );
+  assert.throws(
+    () =>
+      parseCreateNoteInput({
+        title: "client-forged-generation",
+        generationMetadata: {
+          workflowVersion: "gptmemory-note-import.v2",
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
+  );
 });
 
 test("validates list views and patch restore semantics", () => {
@@ -89,4 +100,20 @@ test("validates list views and patch restore semantics", () => {
     (error: unknown) =>
       error instanceof ApiRequestError && error.code === "EMPTY_PATCH",
   );
+  for (const serverManagedPatch of [
+    { sourceUrl: "https://chatgpt.com/share/other" },
+    { sourceTitle: "forged source" },
+    { sourceMessageCount: 999 },
+    {
+      generationMetadata: {
+        workflowVersion: "gptmemory-note-import.v2",
+      },
+    },
+  ]) {
+    assert.throws(
+      () => parsePatchNoteInput(serverManagedPatch),
+      (error: unknown) =>
+        error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
+    );
+  }
 });

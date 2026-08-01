@@ -117,7 +117,8 @@ button:disabled {
 .editor-footer,
 .dialog-actions,
 .import-assurance,
-.import-status {
+.import-status,
+.existing-note-card {
   display: flex;
   align-items: center;
 }
@@ -1143,6 +1144,69 @@ button:disabled {
   line-height: 1.6;
 }
 
+.existing-note-card {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px;
+  margin-top: 14px;
+  background: #fff8f0;
+  border: 1px solid #ead9c8;
+  border-radius: 11px;
+}
+
+.existing-note-symbol {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #9a674f;
+  background: #f2dfd0;
+  border-radius: 9px;
+  font-size: 15px;
+}
+
+.existing-note-card > div {
+  min-width: 0;
+}
+
+.existing-note-label,
+.existing-note-meta,
+.existing-note-warning {
+  margin: 0;
+}
+
+.existing-note-label {
+  color: #9a674f;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.existing-note-card h3 {
+  margin: 4px 0 3px;
+  overflow: hidden;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.existing-note-meta {
+  color: #81766b;
+  font-size: 9px;
+}
+
+.existing-note-warning {
+  margin-top: 10px;
+  color: #6f665d;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
 .import-status {
   gap: 9px;
   padding: 11px 12px;
@@ -1185,6 +1249,22 @@ button:disabled {
   background: transparent;
   border: 0;
   font-size: 10px;
+}
+
+.dialog-actions > .existing-open-action:not(.primary-action) {
+  background: #f5f0e9;
+  border: 1px solid #e3d9ce;
+  border-radius: 10px;
+  color: #514a43;
+  font-weight: 700;
+}
+
+.dialog-actions > .existing-open-action:not(.primary-action):hover {
+  background: #eee7de;
+}
+
+.dialog-actions > button:disabled {
+  opacity: 0.62;
 }
 
 @keyframes fade-in {

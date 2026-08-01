@@ -26,8 +26,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const ownerKey = requireOwnerKey(request);
     const input = parseCreateNoteInput(await readJsonBody(request));
-    const note = await createNote(ownerKey, input);
-    return noteApiResponse({ note }, { status: 201 });
+    const result = await createNote(ownerKey, input);
+    return noteApiResponse(result, {
+      status: result.disposition === "created" ? 201 : 200,
+    });
   } catch (error) {
     return noteErrorResponse(error);
   }

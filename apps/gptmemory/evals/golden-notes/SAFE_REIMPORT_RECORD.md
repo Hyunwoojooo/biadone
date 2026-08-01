@@ -1,0 +1,63 @@
+# Duplicate-safe ChatGPT Reimport — Engine Change Record
+
+- Date: 2026-08-02 (Asia/Seoul)
+- Owner: Codex; local MVP behavior requested by project owner
+- Goal: 같은 ChatGPT 공유 링크를 다시 입력했을 때 기존 노트를 조용히 중복 생성하거나 덮어쓰지 않고, 기존 노트 열기·취소·명시적 다시 생성을 선택할 수 있게 한다.
+- Affected pipeline stages: note import orchestration, owner-scoped duplicate lookup, D1 note persistence, import provenance metadata, import dialog state and response contract
+- Behavior before:
+  - 브라우저가 공유 대화를 먼저 가져와 노트를 만든 뒤 별도 `POST /api/notes`로 저장했다.
+  - 같은 `ownerKey + sourceUrl`이 이미 있으면 저장소가 기존 노트를 반환했지만 응답에 생성 여부가 없어 UI가 중복 상황을 구분하지 못했다.
+  - 기존 노트 교체 확인, optimistic concurrency, import 실행 provenance가 없었다.
+- Behavior after:
+  - `POST /api/notes/import`가 소유자 확인, URL 정규화, 중복 조회, import, note generation, 저장을 하나의 서버 workflow로 조정한다.
+  - 동일 소유자의 동일 normalized URL은 외부 fetch나 쓰기 전에 `409 already_exists`와 최소 기존 노트 요약을 반환한다.
+  - UI는 `기존 노트 열기`, `다시 생성`, `취소`를 명시적으로 제공한다.
+  - 다시 생성은 `noteId + expectedUpdatedAt`을 먼저 검증하고 새 결과를 완성한 뒤 조건부 `UPDATE`한다. 생성 실패 또는 stale write에는 기존 노트를 변경하지 않는다.
+  - 성공한 교체는 생성 필드만 갱신하고 `id`, `createdAt`, favorite, archive, trash 상태를 보존한다.
+  - 신규 생성과 교체는 run, workflow, adapter, note engine, note schema, source share ID, canonical source SHA-256, fetch/generation 시각을 `generation_metadata_json`에 저장한다.
+  - 일반 `POST /api/notes`도 `created | existing` disposition을 반환하며 insert race를 중복 노트로 만들지 않는다.
+  - 현재 배포 구성에는 별도 D1 migration runner가 없으므로 `db/index.ts`의 idempotent additive runtime migration을 단일 schema mutation authority로 사용한다. Drizzle `0001`은 snapshot lineage만 전진하는 no-op reconciliation entry다.
+- Versions before:
+  - import workflow: unversioned client-orchestrated import + save
+  - generation metadata: 없음
+  - `gptmemory-chatgpt-share.v4`
+  - `gptmemory-note-engine.v1`
+  - `gptmemory.note-draft.v1`
+- Versions after:
+  - `gptmemory-note-import.v2`
+  - generation metadata schema: `NoteImportGenerationMetadata` in `gptmemory-note-import.v2`
+  - unchanged: `gptmemory-chatgpt-share.v4`, `gptmemory-note-engine.v1`, `gptmemory.note-draft.v1`
+- Code commit: human-approved commit 대기; base revision `4d98216083b33633bfad778ed87cf47555619e60`
+- Evaluation dataset version and SHA-256: unchanged `gptmemory-golden-notes-dev-v1`, `3975c01140f1354a776292c64e6abe6d3e2943b403aed539deab631d1a8ee849`
+- Candidate run ID: N/A — import orchestration/storage/UI reliability change이며 note output 후보를 새로 생성하지 않음
+- Comparison run ID: N/A — semantic candidate comparison이 아님
+- Commands executed with the project-owned checksum-pinned Node runtime:
+  - `node --experimental-strip-types --test tests/note-import-service.test.ts`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - localhost dev server에서 합성 owner/source를 사용한 notes/import API smoke test
+- Metrics changed:
+  - full automated suite: `50 passed / 0 failed`
+  - new safe-reimport service scenarios: `9 passed / 0 failed`
+  - covered: query/fragment URL normalization, pre-fetch duplicate short circuit, owner isolation, exact generation versions and digest, import failure preservation, stale precheck, conditional-write race, successful state-preserving replacement, insert-race fallback
+  - localhost D1/API smoke: 신규 생성 `201 created`; query/fragment variant 중복 `409 already_exists`; owner header 누락 `401`; 동시 생성 `201 created + 200 existing`; stale replace `409 NOTE_CHANGED_SINCE_CONFIRMATION`; stale 요청 전후 기존 노트 본문·`updatedAt` 유지
+  - Golden semantic metrics: unchanged and not rerun
+- Regressions or accepted exceptions:
+  - 다시 생성을 명시적으로 확인하면 사용자가 편집한 title, overview, sections, tags는 새 생성 결과로 교체된다. 경고 문구로 이를 알리며 favorite/archive/trash 상태는 보존한다.
+  - 기존 D1 행은 generation metadata가 없을 수 있다. additive nullable column으로 하위 호환하며 자동 backfill하지 않는다.
+  - Drizzle `0001`만 별도로 실행해도 column을 추가하지 않는다. 애플리케이션 API가 시작되면 runtime bootstrap이 신규·기존 D1 모두에 column을 보장한다.
+  - duplicate 응답은 외부 fetch를 막지만 insert 직전 race에서는 이미 fetch/generation이 끝난 뒤 `already_exists`가 반환될 수 있다. 저장소 unique constraint가 중복 행은 차단한다.
+  - 이 변경은 localhost/local MVP 범위이며 네트워크 배포를 포함하지 않는다.
+- Privacy or retention impact:
+  - owner header 검증을 duplicate lookup과 외부 fetch보다 먼저 수행한다.
+  - duplicate lookup은 `owner_key + normalized source_url` 범위이고 응답은 기존 노트의 최소 요약만 포함한다.
+  - generation metadata는 버전, ID, 시각, 원문 파생 SHA-256만 서버 내부 D1 column에 저장하고 public note 응답에는 반환하지 않는다. 복원된 대화 본문도 별도 저장하지 않는다.
+  - 새 raw conversation, 공유 URL, private output을 Git에 추가하지 않았다.
+- Release decision: 자동 테스트·typecheck·lint·build를 통과한 local MVP 후보로 유지한다. adapter와 deterministic note engine의 입력·정규화·출력은 바뀌지 않았으므로 Golden baseline rerun은 필요하지 않다. 배포·push는 이 기록의 범위가 아니다.
+- Rollback method: import route를 이전 client import + note save 흐름으로 되돌리고 workflow/UI/repository 연결을 제거한다. nullable `generation_metadata_json`은 데이터 손실 위험을 피하기 위해 즉시 삭제하지 않고 미사용 상태로 남길 수 있다.
+- Follow-up work:
+  - localhost D1/API의 신규 생성, 정규화 중복 차단, owner gate, 동시 insert race, stale 교체 보존은 확인했다. 인앱 브라우저가 연결되지 않아 `기존 노트 열기`, `취소`, 성공 교체의 화면 전환은 사용자 브라우저에서 수동 확인한다.
+  - 지인 공개 전에는 사용자 편집본의 revision/history 또는 교체 전 백업 정책을 별도 결정한다.
+  - URL과 derived digest의 보존 기간 및 삭제 시 metadata 처리 정책을 제품 개인정보 문서에 연결한다.
