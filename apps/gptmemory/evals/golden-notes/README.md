@@ -29,6 +29,13 @@ URL에서 대화를 복원하되, 반드시 cutoff 이후의 Teacher 요청과 �
 프롬프트와 Teacher 답변이 포함된 마지막 메시지를 입력에 넣으면 해당 사례는
 평가 데이터로 사용할 수 없다.
 
+ChatGPT adapter v2의 `message.sourceIndex`는 내부 메시지를 정제하기 전 v1의
+user/assistant 비어 있지 않은 메시지 번호를 보존한다. 평가 입력은 정제된 메시지
+중 `sourceIndex <= lastIncludedMessageIndex`인 항목만 사용한다. 이미지·파일
+이벤트는 바로 앞의 source index를 이어받으므로 같은 규칙을 적용한다. 정제 후의
+연속 번호인 `message.index`로 cutoff를 적용하면 Teacher turn이 섞일 수 있으므로
+사용하지 않는다.
+
 ## 현재 사례
 
 사례 목록은 [manifest.json](./manifest.json)에서 관리한다.

@@ -38,6 +38,11 @@ npm run build
 `https://chatgpt.com/share/<id>` 형태의 공개 링크만 지원합니다. 서버는 fetch
 timeout, response 크기, content type, 최종 redirect URL을 검증합니다.
 
+가져오기 adapter는 사용자에게 보이지 않는 tool call, 검색 JSON, reasoning 및
+실행 로그를 노트 입력에서 제외합니다. 실제 생성 결과가 확인된 이미지·파일은
+내부 URI나 저장 경로 대신 짧은 이벤트로 남깁니다. 응답의 `diagnostics`에는 정제
+전후 메시지 수만 기록하며 원본 tool 내용은 포함하지 않습니다.
+
 Cloudflare에서 ChatGPT 직접 fetch가 차단되는 환경에서는 선택적으로 아래
 환경변수를 사용해 기존 fetcher를 연결할 수 있습니다.
 

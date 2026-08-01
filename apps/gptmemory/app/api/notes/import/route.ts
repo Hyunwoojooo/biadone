@@ -70,6 +70,7 @@ export async function POST(request: Request): Promise<Response> {
           shareId: imported.source.shareId,
         },
         warnings: imported.warnings,
+        diagnostics: imported.diagnostics,
       },
       200,
     );

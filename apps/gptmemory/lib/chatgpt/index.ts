@@ -1,4 +1,4 @@
-export const CHATGPT_SHARE_ADAPTER_VERSION = "gptmemory-chatgpt-share.v1";
+export const CHATGPT_SHARE_ADAPTER_VERSION = "gptmemory-chatgpt-share.v2";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 12 * 1024 * 1024;
@@ -58,7 +58,10 @@ export type ShareUrlValidationResult =
 export type ChatGPTMessage = {
   id: string;
   index: number;
+  sourceIndex: number | null;
   role: "user" | "assistant";
+  kind: "text" | "event";
+  eventType?: "image_generated" | "file_created";
   text: string;
   createdAt: string | null;
 };
@@ -86,6 +89,12 @@ export type ChatGPTShareImportResult = {
   }>;
   diagnostics: {
     payloadCount: number;
+    sourceMessageCount: number;
+    noteMessageCount: number;
+    omittedInternalCount: number;
+    preservedEventCount: number;
+    unsupportedContentCount: number;
+    titleSource: "payload" | "html" | "first_user_message" | "none";
   };
 };
 
@@ -122,8 +131,33 @@ type RawChatGPTMessage = {
   id?: string;
   role?: string;
   authorRole?: string;
+  authorName?: string;
+  recipient?: string;
+  channel?: string;
+  isVisuallyHidden?: boolean;
+  metadata?: Record<string, unknown>;
   content?: unknown;
+  contentType?: string;
   createTime?: number | null;
+};
+
+type NormalizedMessageResult = {
+  messages: ChatGPTMessage[];
+  sourceMessageCount: number;
+  omittedInternalCount: number;
+  preservedEventCount: number;
+  unsupportedContentCount: number;
+};
+
+type ArtifactEvent = {
+  type: "image_generated" | "file_created";
+  key: string;
+  text: string;
+};
+
+type TitleExtractionResult = {
+  title: string | null;
+  source: "payload" | "html" | "first_user_message" | "none";
 };
 
 type ReactFlightRow = {
@@ -154,17 +188,35 @@ const MATERIALIZED_TOP_LEVEL_KEYS = new Set([
   "conversation_title",
 ]);
 const MATERIALIZED_OBJECT_KEYS = new Set([
+  "linear_conversation",
   "id",
   "message",
   "parent",
   "children",
   "author",
+  "name",
   "role",
+  "recipient",
+  "channel",
   "metadata",
+  "message_type",
+  "is_visually_hidden_from_conversation",
+  "image_gen_title",
+  "tool_calls",
+  "tool_call_id",
+  "attachments",
   "content",
   "content_type",
   "parts",
   "text",
+  "asset_pointer",
+  "image_url",
+  "file_id",
+  "file_name",
+  "filename",
+  "sandbox_path",
+  "download_url",
+  "mime_type",
   "create_time",
   "createTime",
   "update_time",
@@ -172,6 +224,25 @@ const MATERIALIZED_OBJECT_KEYS = new Set([
   "title",
   "conversation_title",
 ]);
+const VISIBLE_ASSISTANT_RECIPIENTS = new Set(["all"]);
+const INTERNAL_CONTENT_TYPES = new Set([
+  "computer_initialize_state",
+  "computer_output",
+  "execution_output",
+  "model_editable_context",
+  "reasoning_recap",
+  "thoughts",
+  "tool_result",
+]);
+const TITLE_SCHEMA_TOKENS = new Set(
+  [
+    ...MATERIALIZED_TOP_LEVEL_KEYS,
+    ...MATERIALIZED_OBJECT_KEYS,
+    "current_node",
+    "mapping",
+    "conversation_id",
+  ].map((key) => key.toLowerCase()),
+);
 
 export function validateShareUrl(input: string): ShareUrlValidationResult {
   if (typeof input !== "string" || input.trim().length === 0 || input.length > 2_048) {
@@ -283,7 +354,8 @@ export async function importChatGPTShareUrl(
     const expanded = expandReactFlightPayloads(decodedRoot);
     const dereferenced = dereference(expanded);
     const rawMessages = restoreConversation(dereferenced);
-    const messages = normalizeMessages(rawMessages);
+    const normalized = normalizeMessages(rawMessages);
+    const messages = normalized.messages;
 
     if (messages.length === 0) {
       throw importError(
@@ -292,9 +364,12 @@ export async function importChatGPTShareUrl(
       );
     }
 
+    const title = extractConversationTitle(dereferenced, html, messages);
+    const warnings = buildImportWarnings(normalized, title);
+
     return {
       conversation: {
-        title: extractConversationTitle(dereferenced, html, messages),
+        title: title.title,
         messages,
       },
       source: {
@@ -305,9 +380,15 @@ export async function importChatGPTShareUrl(
         fetchedAt,
         adapterVersion: CHATGPT_SHARE_ADAPTER_VERSION,
       },
-      warnings: [],
+      warnings,
       diagnostics: {
         payloadCount: payloads.length,
+        sourceMessageCount: normalized.sourceMessageCount,
+        noteMessageCount: messages.length,
+        omittedInternalCount: normalized.omittedInternalCount,
+        preservedEventCount: normalized.preservedEventCount,
+        unsupportedContentCount: normalized.unsupportedContentCount,
+        titleSource: title.source,
       },
     };
   } catch (error) {
@@ -803,6 +884,25 @@ function collectReactFlightTables(root: unknown): unknown[] {
 }
 
 function materializeFlightTable(table: unknown[]): unknown {
+  for (const candidate of table) {
+    if (!hasIndexedMaterializedKey(candidate, table, "linear_conversation")) {
+      continue;
+    }
+
+    const materialized = materializeFlightValue(candidate, {
+      table,
+      visiting: new Set(),
+      visited: 0,
+    });
+    const record = asRecord(materialized);
+    if (record && Array.isArray(record.linear_conversation)) {
+      return record;
+    }
+  }
+
+  // Older fixtures expose top-level key/value pairs directly. Keep this as a
+  // compatibility fallback, but prefer the indexed conversation object above:
+  // live Flight tables may place the schema key after a real title value.
   const output: Record<string, unknown> = {};
 
   for (let index = 0; index < table.length - 1; index += 1) {
@@ -818,6 +918,22 @@ function materializeFlightTable(table: unknown[]): unknown {
   }
 
   return output;
+}
+
+function hasIndexedMaterializedKey(
+  value: unknown,
+  table: unknown[],
+  targetKey: string,
+): boolean {
+  const record = asRecord(value);
+  if (!record) return false;
+
+  return Object.keys(record).some((rawKey) => {
+    const match = /^_(\d+)$/.exec(rawKey);
+    if (!match) return rawKey === targetKey;
+    const keyIndex = Number.parseInt(match[1] ?? "", 10);
+    return table[keyIndex] === targetKey;
+  });
 }
 
 function materializeFlightValue(
@@ -1014,6 +1130,8 @@ function toRawMessage(value: unknown): RawChatGPTMessage | null {
   if (!message) return null;
 
   const author = asRecord(message.author);
+  const metadata = asRecord(message.metadata);
+  const content = asRecord(message.content);
   return {
     id: nonEmptyString(message.id),
     role:
@@ -1021,32 +1139,281 @@ function toRawMessage(value: unknown): RawChatGPTMessage | null {
       nonEmptyString(author?.role) ??
       nonEmptyString(message.authorRole),
     authorRole: nonEmptyString(author?.role),
+    authorName: nonEmptyString(author?.name),
+    recipient: nonEmptyString(message.recipient),
+    channel: nonEmptyString(message.channel),
+    isVisuallyHidden:
+      message.is_visually_hidden_from_conversation === true ||
+      metadata?.is_visually_hidden_from_conversation === true,
+    metadata: metadata ?? undefined,
     content: message.content,
+    contentType: nonEmptyString(content?.content_type),
     createTime: finiteNumberOrNull(message.create_time ?? message.createTime),
   };
 }
 
-function normalizeMessages(rawMessages: RawChatGPTMessage[]): ChatGPTMessage[] {
+function normalizeMessages(rawMessages: RawChatGPTMessage[]): NormalizedMessageResult {
   const messages: ChatGPTMessage[] = [];
+  const emittedArtifacts = new Set<string>();
+  let sourceMessageCount = 0;
+  let omittedInternalCount = 0;
+  let preservedEventCount = 0;
+  let unsupportedContentCount = 0;
 
-  for (const rawMessage of rawMessages) {
+  for (const [rawIndex, rawMessage] of rawMessages.entries()) {
     const role = rawMessage.role ?? rawMessage.authorRole;
-    if (role !== "user" && role !== "assistant") continue;
     const text = extractContentText(rawMessage.content)
       .replace(/\r\n?/g, "\n")
       .trim();
-    if (!text) continue;
+    let sourceIndex: number | null = null;
+    const internalAssistantMessage =
+      role === "assistant" && isInternalAssistantMessage(rawMessage);
+    let internalMessageOmitted = false;
 
-    messages.push({
-      id: rawMessage.id ?? `message-${messages.length + 1}`,
-      index: messages.length + 1,
-      role,
-      text,
-      createdAt: epochSecondsToIso(rawMessage.createTime),
-    });
+    // sourceIndex intentionally matches the v1 adapter's user/assistant +
+    // nonblank index space. Golden cutoffs can therefore be applied before
+    // semantic sanitization without being invalidated by omitted tool calls.
+    if ((role === "user" || role === "assistant") && text) {
+      sourceMessageCount += 1;
+      sourceIndex = sourceMessageCount;
+
+      if (internalAssistantMessage) {
+        omittedInternalCount += 1;
+        internalMessageOmitted = true;
+      } else {
+        messages.push({
+          id: rawMessage.id ?? `message-${sourceIndex}`,
+          index: messages.length + 1,
+          sourceIndex,
+          role,
+          kind: "text",
+          text,
+          createdAt: epochSecondsToIso(rawMessage.createTime),
+        });
+      }
+    } else if (internalAssistantMessage) {
+      omittedInternalCount += 1;
+      internalMessageOmitted = true;
+    } else if (text && role !== "user") {
+      omittedInternalCount += 1;
+    }
+
+    const artifactEvents =
+      (role === "assistant" || role === "tool") &&
+      !rawMessage.isVisuallyHidden
+        ? extractConfirmedArtifactEvents(rawMessage)
+        : [];
+    let eventOrdinal = 0;
+    for (const event of artifactEvents) {
+      if (emittedArtifacts.has(event.key)) continue;
+      emittedArtifacts.add(event.key);
+      eventOrdinal += 1;
+      messages.push({
+        id:
+          `${rawMessage.id ?? "message"}-${rawIndex + 1}-` +
+          `${event.type}-${eventOrdinal}`,
+        index: messages.length + 1,
+        sourceIndex: sourceMessageCount > 0 ? sourceMessageCount : null,
+        role: "assistant",
+        kind: "event",
+        eventType: event.type,
+        text: event.text,
+        createdAt: epochSecondsToIso(rawMessage.createTime),
+      });
+      preservedEventCount += 1;
+    }
+
+    const unsupportedVisibleContent =
+      (role === "user" || role === "assistant") &&
+      !internalMessageOmitted &&
+      ((!text && hasNonTextContent(rawMessage.content)) ||
+        hasArtifactPointer(rawMessage.content));
+    const unsupportedToolArtifact =
+      role === "tool" &&
+      !rawMessage.isVisuallyHidden &&
+      hasArtifactPointer(rawMessage.content);
+    if (
+      artifactEvents.length === 0 &&
+      (unsupportedVisibleContent || unsupportedToolArtifact)
+    ) {
+      unsupportedContentCount += 1;
+    }
   }
 
-  return messages;
+  return {
+    messages,
+    sourceMessageCount,
+    omittedInternalCount,
+    preservedEventCount,
+    unsupportedContentCount,
+  };
+}
+
+function isInternalAssistantMessage(message: RawChatGPTMessage): boolean {
+  if (message.isVisuallyHidden) return true;
+
+  const recipient = message.recipient?.trim().toLowerCase();
+  if (recipient && !VISIBLE_ASSISTANT_RECIPIENTS.has(recipient)) return true;
+
+  const contentType = message.contentType?.trim().toLowerCase();
+  if (contentType && INTERNAL_CONTENT_TYPES.has(contentType)) return true;
+
+  const metadata = message.metadata;
+  if (
+    metadata &&
+    (hasMeaningfulValue(metadata.tool_calls) ||
+      hasMeaningfulValue(metadata.tool_call_id))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === false) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function extractConfirmedArtifactEvents(
+  message: RawChatGPTMessage,
+): ArtifactEvent[] {
+  const events: ArtifactEvent[] = [];
+  const messageRole = message.role ?? message.authorRole;
+  const imageTitle = cleanTitle(message.metadata?.image_gen_title);
+  const queue: unknown[] = [message.content, message.metadata];
+  const seen = new WeakSet<object>();
+  let visited = 0;
+
+  while (queue.length > 0 && visited < 512) {
+    const value = queue.shift();
+    visited += 1;
+    if (!value || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      queue.push(...value);
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const contentType = nonEmptyString(record.content_type)?.toLowerCase();
+    const mimeType = nonEmptyString(record.mime_type)?.toLowerCase();
+    const assetPointer = nonEmptyString(record.asset_pointer);
+    const isImage =
+      contentType === "image_asset_pointer" ||
+      mimeType?.startsWith("image/") === true;
+
+    if (assetPointer && isImage && imageTitle) {
+      events.push({
+        type: "image_generated",
+        key: `image:${assetPointer}`,
+        text: `[생성된 이미지: ${imageTitle}]`,
+      });
+    } else {
+      const fileKey =
+        nonEmptyString(record.file_id) ??
+        nonEmptyString(record.download_url) ??
+        nonEmptyString(record.sandbox_path) ??
+        (assetPointer && !isImage ? assetPointer : undefined);
+      const isFile =
+        messageRole === "tool" &&
+        (contentType === "file" ||
+          contentType === "file_asset_pointer" ||
+          contentType === "tether_file");
+
+      if (fileKey && isFile) {
+        const fileName = safeFileName(record.file_name ?? record.filename);
+        events.push({
+          type: "file_created",
+          key: `file:${fileKey}`,
+          text: fileName
+            ? `[생성된 파일: ${fileName}]`
+            : "[생성된 파일이 대화에 포함됨]",
+        });
+      }
+    }
+
+    queue.push(...Object.values(record));
+  }
+
+  return events;
+}
+
+function safeFileName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const baseName = value.split(/[\\/]/).at(-1) ?? "";
+  const normalized = baseName
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .trim();
+  if (!normalized) return null;
+  return Array.from(normalized).slice(0, 120).join("");
+}
+
+function hasNonTextContent(content: unknown): boolean {
+  const queue: unknown[] = [content];
+  const seen = new WeakSet<object>();
+  let visited = 0;
+
+  while (queue.length > 0 && visited < 256) {
+    const value = queue.shift();
+    visited += 1;
+    if (!value || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      queue.push(...value);
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    const contentType = nonEmptyString(record.content_type)?.toLowerCase();
+    if (
+      (contentType && contentType !== "text" && contentType !== "multimodal_text") ||
+      typeof record.asset_pointer === "string" ||
+      typeof record.file_id === "string"
+    ) {
+      return true;
+    }
+    queue.push(...Object.values(record));
+  }
+
+  return false;
+}
+
+function hasArtifactPointer(content: unknown): boolean {
+  const queue: unknown[] = [content];
+  const seen = new WeakSet<object>();
+  let visited = 0;
+
+  while (queue.length > 0 && visited < 256) {
+    const value = queue.shift();
+    visited += 1;
+    if (!value || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      queue.push(...value);
+      continue;
+    }
+
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.asset_pointer === "string" ||
+      typeof record.file_id === "string"
+    ) {
+      return true;
+    }
+    queue.push(...Object.values(record));
+  }
+
+  return false;
 }
 
 function extractContentText(content: unknown): string {
@@ -1078,19 +1445,28 @@ function extractConversationTitle(
   root: unknown,
   html: string,
   messages: ChatGPTMessage[],
-): string | null {
+): TitleExtractionResult {
   const payloadTitle = findTitleInPayload(root);
-  if (payloadTitle) return payloadTitle;
+  if (payloadTitle) return { title: payloadTitle, source: "payload" };
 
   const htmlTitleMatch = /<title(?:\s[^>]*)?>([\s\S]*?)<\/title>/i.exec(html);
-  const htmlTitle = cleanTitle(htmlTitleMatch?.[1] ?? "");
-  if (htmlTitle && !isGenericTitle(htmlTitle)) return htmlTitle;
+  const htmlTitle = cleanHtmlDocumentTitle(htmlTitleMatch?.[1] ?? "");
+  if (htmlTitle && !isGenericTitle(htmlTitle)) {
+    return { title: htmlTitle, source: "html" };
+  }
 
   const firstUserMessage = messages.find((message) => message.role === "user");
-  return cleanTitle(firstUserMessage?.text.split("\n")[0] ?? "");
+  const firstUserTitle = cleanTitle(firstUserMessage?.text.split("\n")[0] ?? "");
+  return firstUserTitle
+    ? { title: firstUserTitle, source: "first_user_message" }
+    : { title: null, source: "none" };
 }
 
 function findTitleInPayload(root: unknown): string | null {
+  return findTitleInConversationRecord(root);
+}
+
+function findTitleInConversationRecord(root: unknown): string | null {
   const queue: unknown[] = [root];
   const seen = new WeakSet<object>();
   let visited = 0;
@@ -1103,9 +1479,18 @@ function findTitleInPayload(root: unknown): string | null {
 
     if (!Array.isArray(value)) {
       const record = value as Record<string, unknown>;
-      for (const key of ["conversation_title", "title"]) {
-        const title = cleanTitle(record[key]);
-        if (title && !isGenericTitle(title)) return title;
+      const ownsConversation = Array.isArray(record.linear_conversation);
+      const wrapsConversation = Object.values(record).some((child) => {
+        const childRecord = asRecord(child);
+        return Boolean(
+          childRecord && Array.isArray(childRecord.linear_conversation),
+        );
+      });
+      if (ownsConversation || wrapsConversation) {
+        for (const key of ["conversation_title", "title"]) {
+          const title = cleanTitle(record[key]);
+          if (title && !isGenericTitle(title)) return title;
+        }
       }
     }
 
@@ -1129,10 +1514,54 @@ function cleanTitle(value: unknown): string | null {
     : normalized;
 }
 
+function cleanHtmlDocumentTitle(value: unknown): string | null {
+  const title = cleanTitle(value);
+  if (!title) return null;
+  return cleanTitle(title.replace(/^ChatGPT\s*[-|:]\s*/i, ""));
+}
+
 function isGenericTitle(title: string): boolean {
-  return /^(chatgpt|chatgpt shared link|shared chat|openai|new chat)$/i.test(
-    title.trim(),
+  const normalized = title.trim().toLowerCase();
+  return (
+    /^(chatgpt|chatgpt shared link|shared chat|openai|new chat)$/i.test(
+      normalized,
+    ) ||
+    TITLE_SCHEMA_TOKENS.has(normalized)
   );
+}
+
+function buildImportWarnings(
+  normalized: NormalizedMessageResult,
+  title: TitleExtractionResult,
+): ChatGPTShareImportResult["warnings"] {
+  const warnings: ChatGPTShareImportResult["warnings"] = [];
+
+  if (normalized.omittedInternalCount > 0) {
+    warnings.push({
+      code: "INTERNAL_MESSAGES_OMITTED",
+      message: `${normalized.omittedInternalCount}개의 내부 도구·실행 메시지를 노트 입력에서 제외했습니다.`,
+    });
+  }
+  if (normalized.preservedEventCount > 0) {
+    warnings.push({
+      code: "NON_TEXT_EVENTS_PRESERVED",
+      message: `${normalized.preservedEventCount}개의 확인된 이미지·파일 결과를 간단한 이벤트로 보존했습니다.`,
+    });
+  }
+  if (normalized.unsupportedContentCount > 0) {
+    warnings.push({
+      code: "UNSUPPORTED_CONTENT_OMITTED",
+      message: `${normalized.unsupportedContentCount}개의 지원하지 않는 비텍스트 내용을 제외했습니다.`,
+    });
+  }
+  if (title.source !== "payload") {
+    warnings.push({
+      code: "TITLE_FALLBACK_USED",
+      message: "공유 payload의 제목을 사용할 수 없어 안전한 대체 제목을 사용했습니다.",
+    });
+  }
+
+  return warnings;
 }
 
 function decodeBasicHtmlEntities(value: string): string {
