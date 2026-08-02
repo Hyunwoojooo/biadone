@@ -10,7 +10,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.11 |
+| 문서 상태 | Phase 4A eligibility shadow implemented, Draft v0.12 |
 | 기준일 | 2026-08-02 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | `suggestion-engine-v0.3` |
@@ -22,8 +22,9 @@
 | Managed semantic 계약 | `suggestion/docs/CODEX_MANAGED_SEMANTIC_TIMELINE_CONTRACT.md` |
 | Work relation 계약 | `suggestion/docs/WORK_RELATION_RESOLUTION_CONTRACT.md` |
 | Claim authority 계약 | `suggestion/docs/CLAIM_AUTHORITY_RESOLUTION_CONTRACT.md` |
+| Eligibility shadow 계약 | `suggestion/docs/ATTENTION_ELIGIBILITY_SHADOW_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C observation-only claim authority/conflict local beta final gate 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C claim authority/conflict 완료, Phase 4A GitHub eligibility current-only shadow 구현 |
 
 ---
 
@@ -2888,9 +2889,15 @@ correction UX와 Attention gate는 이번 release에 포함하지 않는다.
 
 ### Phase 4 — Eligibility, lane, ranking, selection
 
+상태: **Phase 4A GitHub eligibility current-only shadow 구현. Phase 4B active
+Codex candidate/lane/selection 미구현**
+
 산출물:
 
-- hard eligibility gate
+- `[Phase 4A 구현]` exact GitHub candidate hard eligibility shadow
+- `[Phase 4A 구현]` relevant conflict만 차단하는 user-review/source-refresh route
+- `[Phase 4A 구현]` current-only local API와 Attention Lab diagnostics
+- `[Phase 4B 후속]` managed Codex failure/configured follow-through candidate gate
 - attention lane classifier
 - versioned within-lane policy
 - clarification/no-action selection
@@ -3291,7 +3298,8 @@ correction UX와 Attention gate는 이번 release에 포함하지 않는다.
 25. `[Phase 3C 완료]` observation-only claim authority/conflict resolver,
     exact dependency/semantic evidence, strict API/client graph validation과
     final candidate baseline fingerprint/run ID 기록
-26. full cross-source hard eligibility와 lane classifier 작성
+26. `[Phase 4A 구현]` GitHub direct-work hard eligibility shadow와 exact
+    conflict route 작성. managed Codex candidate와 active lane/selection은 후속
 27. user-answer-required clarification route 작성
 28. Calendar free-block과 first-step 작성
 29. Notion task property mapping 작성

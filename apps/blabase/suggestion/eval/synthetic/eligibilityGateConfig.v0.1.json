@@ -1,0 +1,30 @@
+{
+  "version": "attention-eligibility-gate-config-v0.1",
+  "purpose": "targeted_synthetic_phase4a_shadow_evaluation_only",
+  "inputBoundary": "exact_phase3_evidence_graph",
+  "candidateUniverse": "github_work_items_only",
+  "routing": {
+    "criticalUserConflict": "user_review",
+    "staleOrRefreshableEvidence": "refresh_sources",
+    "unrelatedConflictBlocksCandidate": false,
+    "missingMaterialClaimFailsClosed": true
+  },
+  "attention": {
+    "mode": "shadow",
+    "selectionEffect": "none",
+    "forbiddenAsAttentionCandidate": true
+  },
+  "integrity": {
+    "exactEvidenceGraphRequired": true,
+    "verifiedGitHubBatchRequired": true,
+    "canonicalAssessmentOrderingRequired": true,
+    "exactProjectionHashRequired": true
+  },
+  "privacy": {
+    "containsProductionData": false,
+    "publicRawTitles": false,
+    "publicRepositoryNames": false,
+    "publicRawUrls": false,
+    "publicPromptAnswerCommandOrPath": false
+  }
+}

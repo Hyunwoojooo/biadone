@@ -2898,6 +2898,39 @@ summary {
   white-space: nowrap;
 }
 
+.labEligibilityPanel {
+  margin-bottom: 18px;
+  padding: 22px;
+  border: 1px solid rgb(39 103 73 / 22%);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgb(247 251 247 / 96%), #fff);
+  box-shadow: 0 15px 45px rgb(35 45 37 / 4%);
+}
+
+.labEligibilityBoundary,
+.labEligibilityCoverage {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.labEligibilityFunnel {
+  margin: 14px 0;
+}
+
+.labEligibilityList {
+  margin-top: 14px;
+}
+
+.labEligibilityList code {
+  text-align: right;
+}
+
+.labEligibilityCoverage {
+  margin-top: 12px;
+}
+
 .labWorkspace {
   display: grid;
   grid-template-columns: minmax(250px, 0.34fr) minmax(0, 0.66fr);

@@ -14,10 +14,15 @@ import type {
   AttentionHistoryEntry,
   AttentionHistoryResponse
 } from "../../src/attention/monitoringSchema";
+import type {
+  AttentionEligibilityApiResponse,
+  AttentionEligibilityAssessment
+} from "../../src/eligibility/contracts";
 import {
   fetchAttention,
   fetchAttentionHistory
 } from "../attentionClient";
+import { fetchAttentionEligibility } from "../eligibilityClient";
 import { syncInvalidationBus } from "../sync/invalidationBus";
 import {
   useSourceSyncRuntime,
@@ -32,6 +37,8 @@ export function AttentionLab() {
   );
   const [history, setHistory] =
     useState<AttentionHistoryResponse | null>(null);
+  const [eligibility, setEligibility] =
+    useState<AttentionEligibilityApiResponse | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     null
   );
@@ -51,13 +58,15 @@ export function AttentionLab() {
       setLoadError(null);
     }
     try {
-      const [nextCurrent, nextHistory] = await Promise.all([
+      const [nextCurrent, nextHistory, nextEligibility] = await Promise.all([
         fetchAttention(false),
-        fetchAttentionHistory()
+        fetchAttentionHistory(),
+        fetchAttentionEligibility()
       ]);
       if (sequence !== sequenceRef.current) return;
       setCurrent(nextCurrent);
       setHistory(nextHistory);
+      setEligibility(nextEligibility);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -97,9 +106,13 @@ export function AttentionLab() {
       if (sequence !== sequenceRef.current) return false;
       setCurrent(attention);
 
-      const nextHistory = await fetchAttentionHistory();
+      const [nextHistory, nextEligibility] = await Promise.all([
+        fetchAttentionHistory(),
+        fetchAttentionEligibility()
+      ]);
       if (sequence !== sequenceRef.current) return false;
       setHistory(nextHistory);
+      setEligibility(nextEligibility);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -215,6 +228,8 @@ export function AttentionLab() {
         <div className="labNotice">{history.message}</div>
       ) : null}
 
+      <EligibilityShadowPanel response={eligibility} />
+
       {history?.status === "ready" ? (
         <>
           <LabSummary history={history} current={current} />
@@ -234,6 +249,106 @@ export function AttentionLab() {
         </>
       ) : null}
     </main>
+  );
+}
+
+function EligibilityShadowPanel({
+  response
+}: {
+  response: AttentionEligibilityApiResponse | null;
+}) {
+  if (response === null) return null;
+  if (response.status !== "ready") {
+    return (
+      <section className="labEligibilityPanel" aria-label="Eligibility shadow">
+        <div className="labPanelHeader">
+          <div>
+            <p className="eyebrow">Phase 4A · Shadow</p>
+            <h2>후보 안전성 판정</h2>
+          </div>
+          <span>확인 불가</span>
+        </div>
+        <p className="labEmpty">{response.message}</p>
+      </section>
+    );
+  }
+  const { projection } = response;
+  return (
+    <section
+      className="labEligibilityPanel"
+      aria-labelledby="eligibility-shadow-title"
+    >
+      <div className="labPanelHeader">
+        <div>
+          <p className="eyebrow">Phase 4A · Shadow</p>
+          <h2 id="eligibility-shadow-title">후보 안전성 판정</h2>
+        </div>
+        <span>현재 추천에는 미반영</span>
+      </div>
+      <p className="labEligibilityBoundary">
+        같은 근거 그래프에서 후보별 통과·검토·제외 사유만 관찰합니다.
+        Work Cockpit의 현재 추천과 순서는 바꾸지 않습니다.
+      </p>
+      <div className="labFunnel labEligibilityFunnel">
+        <div>
+          <strong>{projection.counts.eligible}</strong>
+          <span>통과</span>
+        </div>
+        <div>
+          <strong>{projection.counts.reviewRequired}</strong>
+          <span>검토 필요</span>
+        </div>
+        <div>
+          <strong>{projection.counts.ineligible}</strong>
+          <span>제외</span>
+        </div>
+      </div>
+      {projection.assessments.length > 0 ? (
+        <ul className="labAssessmentList labEligibilityList">
+          {projection.assessments.slice(0, 12).map((item) => (
+            <li key={item.assessmentId}>
+              <div>
+                <strong>{eligibilityTaskLabel(item)}</strong>
+                <span>{eligibilityStatusLabel(item.status)}</span>
+              </div>
+              <div>
+                <small>{eligibilityRouteLabel(item)}</small>
+                <code>{item.reasonCodes.join(" · ")}</code>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="labEmpty">
+          현재 평가 범위에서 GitHub 작업 후보가 없습니다.
+        </p>
+      )}
+      <p className="labEligibilityCoverage">
+        GitHub 후보 범위 {projection.coverage.githubCandidateCoverage} ·
+        Codex managed eligibility는 Phase 4B에서 연결 · 관련 없는 미해결
+        충돌 {projection.coverage.unrelatedUnresolvedCriticalConflictCount}건은
+        후보를 막지 않음
+      </p>
+      <details className="labTechnical">
+        <summary>Shadow 버전과 integrity 정보</summary>
+        <dl>
+          <TechnicalValue label="As of" value={projection.asOf} />
+          <TechnicalValue label="Policy" value={projection.policyVersion} />
+          <TechnicalValue
+            label="Resolver"
+            value={projection.resolverVersion}
+          />
+          <TechnicalValue
+            label="Claim projection"
+            value={projection.dependencies.claimAuthorityProjectionSha256}
+          />
+          <TechnicalValue
+            label="Projection SHA-256"
+            value={projection.projectionSha256}
+          />
+        </dl>
+      </details>
+    </section>
   );
 }
 
@@ -650,6 +765,47 @@ function feedbackLabel(
       return "내 일이 아님";
     case "insufficient_context":
       return "근거 부족";
+  }
+}
+
+function eligibilityTaskLabel(
+  assessment: AttentionEligibilityAssessment
+): string {
+  switch (assessment.taskKind) {
+    case "assigned_issue":
+      return "GitHub 할당 이슈";
+    case "review_requested_pull_request":
+      return "GitHub 리뷰 상태 확인";
+    case "authored_pull_request":
+      return "내가 작성한 GitHub PR";
+  }
+}
+
+function eligibilityStatusLabel(
+  status: AttentionEligibilityAssessment["status"]
+): string {
+  switch (status) {
+    case "eligible":
+      return "통과";
+    case "review_required":
+      return "검토 필요";
+    case "ineligible":
+      return "제외";
+  }
+}
+
+function eligibilityRouteLabel(
+  assessment: AttentionEligibilityAssessment
+): string {
+  switch (assessment.reviewRoute) {
+    case "user_review":
+      return "사용자 판단이 있어야 다시 후보가 됩니다.";
+    case "refresh_sources":
+      return "소스를 갱신한 뒤 자동으로 다시 평가합니다.";
+    case "none":
+      return assessment.status === "eligible"
+        ? "안전성 gate를 통과했습니다."
+        : "현재 후보 범위에서 제외합니다.";
   }
 }
 

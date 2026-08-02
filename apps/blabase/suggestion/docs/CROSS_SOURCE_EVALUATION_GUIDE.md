@@ -447,7 +447,8 @@ hard failure가 하나라도 있으면 top ranking이 우연히 맞아도 전체
 | truncation이나 stale source가 candidate set을 바꿀 수 있음 | `insufficient_evidence` |
 | complete candidate-capable coverage이며 열린 개입 없음 | `no_action` |
 | 평가 범위와 독립적인 source만 실패했고, 선언한 범위에는 열린 개입 없음 | scoped `no_action` |
-| fresh complete source 사이의 critical conflict가 해결되지 않음 | `insufficient_evidence` |
+| fresh complete source 사이의 relevant critical conflict를 사용자만 해결 가능 | `needs_clarification` |
+| stale/history/source refresh로 해결해야 하는 relevant critical conflict | `insufficient_evidence` |
 
 ### 6.1 `no_action` 필수 조건
 
@@ -500,14 +501,31 @@ status = suggested
 ### 6.3 Complete source conflict
 
 두 source가 모두 fresh이고 candidate set도 complete하더라도 owner, state,
-identity, deadline 같은 critical claim이 충돌하면 coverage는 충분하지 않다.
+identity, deadline 같은 critical claim이 충돌하면 해당 후보는 ranking에서
+제외한다. 전체 unresolved conflict count가 아니라 후보의 exact target 또는
+relation에 연결된 conflict만 material하다.
 
 ```text
 coverage = insufficient
 uncertaintyBasis = critical_conflict
 materialUncertaintySources = [충돌 source]
-status = insufficient_evidence
+candidate = review_required
 ```
+
+후속 route는 conflict의 해결 주체에 따라 나눈다.
+
+```text
+nextAction = user_review
+→ eligible 후보가 없을 때 needs_clarification
+
+nextAction = refresh_sources 또는 history_gap
+→ insufficient_evidence
+```
+
+다른 exact target의 unresolved conflict는 정상 후보를 막지 않는다. authority나
+freshness로 이미 해결된 conflict도 hard block이 아니다. terminal 후보는 다른
+field conflict가 있더라도 불필요한 clarification을 만들지 않고 `ineligible`이
+우선한다.
 
 ### 6.4 Clarification과 refresh
 

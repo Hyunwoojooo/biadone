@@ -2164,3 +2164,187 @@
   - explicit feedback/correction ledger와 conflict resolution UX
   - Phase 4 `NoCriticalConflict` hard eligibility와 materiality gate
   - reviewed/adjudicated Cross-source Golden freeze와 formal baseline
+
+## 2026-08-02 Phase 4A current-only attention eligibility shadow
+
+- Date: 2026-08-02
+- Owner: Codex with human direction
+- Goal:
+  - GitHub direct-work 후보가 current authoritative evidence와 exact conflict
+    boundary를 통과하는지 ranking 전에 결정론적으로 판정
+  - 사용자만 해결할 수 있는 conflict와 source refresh가 해결해야 하는
+    uncertainty를 서로 다른 route로 보존
+  - 결과를 Attention Lab에서 관찰하되 현재 Work Cockpit 추천, lane, ordering,
+    selection, replay와 monitor hash에는 반영하지 않음
+- Affected pipeline stages:
+  - current GitHub work-item signal의 opaque candidate seed derivation
+  - Phase 3A work relation, Phase 3B artifact relation, Phase 3C claim/conflict의
+    exact dependency graph 검증
+  - hard eligibility status와 deterministic reason/review route projection
+  - local-only current projection API, strict browser client guard와 Attention Lab
+    shadow diagnostics
+  - 별도 mutable synthetic Phase 4A Dev Candidate evaluator/baseline runner
+  - 기존 Phase 2 Attention input/result/router/history는 변경하지 않음
+- Behavior before:
+  - Phase 2 GitHub candidate gate는 source freshness, context-only status와 native
+    destination만 사용했고 Phase 3C claim/conflict와 격리돼 있었음
+  - Phase 3C unresolved conflict를 Work Cockpit에서 볼 수는 있었지만 어떤 후보를
+    막는지, 사용자 판단과 source refresh 중 무엇이 필요한지 계산하지 않음
+  - 전체 conflict count를 잘못 사용하면 다른 project/target의 안전한 후보까지
+    차단할 위험이 있었음
+- Behavior after:
+  - current GitHub assigned issue와 review-status inspection을 opaque exact target으로
+    seed하고 `eligible | review_required | ineligible`로 판정
+  - state, user relationship, direct signal completeness와 native destination을
+    material evidence로 검사하고 terminal state는 불필요한 clarification보다 먼저
+    제외
+  - candidate target 또는 candidate exact relation ref와 연결된 conflict만 material
+    conflict로 취급
+  - unresolved `nextAction=user_review`는 `review_required/user_review`, stale 또는
+    refreshable evidence는 `review_required/refresh_sources`로 분리
+  - unrelated unresolved conflict와 authority/freshness로 해결된 conflict는 safe
+    candidate의 hard block이 아님
+  - partial candidate coverage에서도 candidate 자체의 material evidence가 독립적으로
+    완결되면 limited-coverage reason을 붙여 eligible을 허용
+  - projection/API/UI는 title, repository, native URL/ID와 Codex raw content를 포함하지
+    않고 current request에서만 계산
+  - `attentionSelectionEffect=none`, `attentionDisposition=shadow_only`,
+    `forbiddenAsAttentionCandidate=true`를 계약으로 강제
+- Versions before:
+  - eligibility projection/candidate seed/policy/evidence/resolver/ID policy: 없음
+  - Phase 3A/3B/3C: v0.1
+  - Cross-source Attention: v0.3 input/result, v0.2 policy/rules
+- Versions after:
+  - projection: `attention-eligibility-shadow-projection-v0.1`
+  - candidate seed: `attention-candidate-seed-v0.1`
+  - policy: `hard-attention-eligibility-policy-v0.1`
+  - evidence: `attention-eligibility-evidence-v0.1`
+  - resolver: `attention-eligibility-resolver-v0.1`
+  - ID policy: `attention-eligibility-id-v0.1`
+  - evaluation dataset/case/run:
+    `attention-eligibility-gate-evaluation-dataset-v0.1` /
+    `attention-eligibility-gate-evaluation-case-v0.1` /
+    `attention-eligibility-gate-evaluation-run-v0.1`
+  - Phase 3A/3B/3C와 Attention input/result/policy/rules: 변경 없음
+- Code commit:
+  - repository base commit: `e06325a0e274b384c4b66d314a4daa540ac6463d`
+  - suggestion semantic base commit: `a2707d9`
+  - candidate run code state: `dirty_worktree`
+  - final candidate fingerprint:
+    `08d1e993d642d63b7b3d7adaae04cf8125e1986935561806fc7e7cfaf0d3e7e0`
+  - 이 fingerprint는 final baseline 직전의 semantic code, dataset, UI, docs와 이
+    ECR placeholder를 나타낸다. 아래 값 치환은 documentation-only이고 evaluator
+    input/output을 변경하지 않음
+  - final release commit: 생성하지 않음 — 이 작업에서는 아직 commit 승인을 받지 않음
+- Evaluation dataset version and SHA-256:
+  - family/version: `suggestion-attention-eligibility-dev-v0.1`
+  - revision: `1`
+  - class/lifecycle: mutable synthetic Dev Candidate
+  - data origin/production data: `synthetic` / `false`
+  - input boundary: `exact_phase3_evidence_graph`
+  - case count: `26`; expected/observed assessment target: `24/24`
+  - computed canonical SHA-256:
+    `8bc76248801595e30df40e575180e1aa18e1e454ca61a6cd3624c8b8629667bb`
+  - materialized input SHA-256:
+    `f1739a4f066c11075127e8216b3ea1d887589e1e0f37e6f2efb8ddd27518cbfa`
+  - resolver config: `eval/synthetic/eligibilityGateConfig.v0.1.json`
+  - resolver config SHA-256:
+    `33c2719e45d6d3715053c44e87f5d5e36317f0457e3ee939ca76aa36c53a2e57`
+  - 이 dataset은 frozen Golden이 아니며 production data나 implicit feedback을
+    포함하지 않음
+- Candidate run ID:
+  `attention_eligibility_run_686eb8f8f2d3d0a7e7fc6da1deea1b56`
+- Comparison run ID: 없음 — 최초 Phase 4A targeted Dev Candidate baseline
+- Commands executed:
+  - `npm test -- --run tests/eligibilityGateEvaluation.test.ts tests/attentionEligibilityResolver.test.ts tests/attentionEligibilityRoute.test.ts tests/eligibilityClient.test.ts`
+  - `npm run attention-eligibility:baseline`
+  - `npm run claim-authority:baseline`
+  - `npm run work-relation:baseline`
+  - `npm run artifact-relation:baseline`
+  - `npm run cross-source:dev-hash`
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - local HTTP checks for `/api/attention/eligibility` and `/attention-lab`
+  - `git diff --check -- apps/blabase/suggestion`
+- Metrics changed:
+  - targeted exact case: `26/26`; assessment precision/recall `1.0/1.0`
+  - unsafe eligible, wrong review route, user-conflict auto eligibility,
+    refresh-conflict user misroute, unrelated-conflict false block, absence candidate,
+    dependency/batch fail-open, Attention selection/candidate leakage, privacy/raw-field
+    leakage, canonical ordering/determinism/config failure: 모두 `0`
+  - deterministic output SHA-256:
+    `f3cf74ee441b86ae9571db09063ede1cd139f2b8a959dedadc4201e03ee063a8`
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+  - final persisted baseline latency: `99ms`
+  - record artifact:
+    `.local/evaluations/attention-eligibility/attention_eligibility_run_686eb8f8f2d3d0a7e7fc6da1deea1b56.json`
+  - record artifact SHA-256:
+    `3a460156205a3f62477269485958408277e9e892fc0b9619a8a4b1ac869fd2b1`
+  - full regression: `72/72` test files, `613/613` tests passed
+  - compatibility baselines:
+    - Phase 3A work relation:
+      `relation_run_488170b9e7198c298233447f09a6c53c` (`28/28` cases,
+      `24/24` expected relations)
+    - Phase 3B artifact relation:
+      `artifact_relation_run_9273e8416e27a09df2b2a0bfcc5c6f65`
+      (`32/32` cases, `23/23` expected relations)
+    - Phase 3C claim authority:
+      `claim_authority_run_131879d8aee95341369447072c25df8b`
+      (`40/40` cases, `42/42` resolutions, `9/9` conflicts)
+    - cross-source Dev Candidate revision `2`: `30` cases, canonical SHA-256
+      `d02a0ca30eb3697b735af34c071c05422e39e97d06c786c5393bde360e53b3df`
+  - `npm run typecheck`, `npm run lint`, `npm run build`: passed
+  - `git diff --check -- .`: passed
+- Regressions or accepted exceptions:
+  - Phase 4A candidate universe는 GitHub work item만 포함. managed Codex current
+    failure, verified stall/scope drift와 configured completion follow-through는 Phase
+    4B에서 exact managed run identity와 workflow evidence를 추가한 뒤 평가
+  - GitHub review request는 native draft state가 없어 실제 review가 아니라
+    `actionKind=inspect` 상태 확인만 eligible
+  - current-only shadow는 Attention history에 persistence/replay되지 않음
+  - synthetic Dev Candidate는 human-reviewed Golden/holdout이 아니므로 active
+    recommendation filter의 일반화 품질을 증명하지 않음
+  - Phase 4A는 전체 decision status, lane, ranking 또는 top selection을 만들지 않음
+- Privacy or retention impact:
+  - 새 production store나 retention window를 만들지 않고 기존 request-time evidence
+    graph에서 current projection을 계산
+  - API는 local-only, safe-origin, no-store이고 내부 오류를 sanitized code로 제한
+  - projection/UI는 opaque candidate/claim/relation/conflict refs, bounded task kind,
+    status, route와 reason code만 노출
+  - repository name, title, URL/native object ID, Codex prompt/answer/reasoning,
+    command/output/diff/path/tool payload와 credential을 저장하거나 반환하지 않음
+  - baseline artifact는 synthetic sanitized metadata만 `.local/evaluations/
+    attention-eligibility/`에 `0700` directory/`0600` exclusive file로 기록
+  - production conversation과 implicit feedback을 Golden/Regression으로 자동 승격하지
+    않음
+- Compatibility:
+  - `GET /api/work-relations` orchestration을 shared server function으로 추출했지만
+    기존 response contract는 유지
+  - 신규 `GET /api/attention/eligibility`는 local-only additive endpoint
+  - Attention v0.3 input/result, v0.2 policy/rules, current decision, replay/monitor hash와
+    기존 dataset은 변경 없음
+  - exact dependency mismatch 또는 invalid projection은 거짓 ready response 대신
+    sanitized fail-closed error
+- Release decision:
+  - Phase 4A current-only shadow candidate: 검증 통과, Attention Lab 관찰용으로
+    허용
+  - active Work Cockpit filtering/ordering 적용: 보류. Phase 4B candidate/lane/
+    selection 계약과 별도 평가를 통과한 뒤 결정
+  - formal Golden baseline은 실행하지 않음. frozen dataset을 수정하지 않고 별도
+    mutable synthetic targeted baseline으로 shadow gate를 검증하기 때문
+- Rollback method:
+  - Attention Lab eligibility panel/client와 `/api/attention/eligibility`를 제거
+  - `src/eligibility`, synthetic evaluator/config/cases와 baseline runner를 제거
+  - shared current evidence function의 내용을 기존 `/api/work-relations` route로 되돌림
+  - 신규 store/migration이 없어 data migration, purge 또는 backfill이 필요 없음
+  - Attention semantic contract를 변경하지 않아 Attention rollback은 필요 없음
+- Follow-up work:
+  - Phase 4B managed Codex current failure/recovery와 configured follow-through candidate
+  - eligible set의 lane classifier, deterministic within-lane ranking과 selection
+  - user-review → `needs_clarification`, refresh → `insufficient_evidence`, scoped
+    `no_action` decision route
+  - same server-side graph에서 active Attention result/replay version integration
+  - human-reviewed frozen Golden/holdout와 explicit local rollout approval
+  - Phase 4C local supervisor와 Raycast shortcut launcher

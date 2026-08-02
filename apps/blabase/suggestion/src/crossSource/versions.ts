@@ -88,6 +88,24 @@ export const FIELD_CLAIM_AUTHORITY_POLICY_VERSION =
 export const CLAIM_EVIDENCE_POLICY_VERSION =
   "direct-source-claim-evidence-v0.1" as const;
 
+export const ATTENTION_ELIGIBILITY_SHADOW_PROJECTION_CONTRACT =
+  "attention-eligibility-shadow-projection-v0.1" as const;
+
+export const ATTENTION_CANDIDATE_SEED_SCHEMA_VERSION =
+  "attention-candidate-seed-v0.1" as const;
+
+export const ATTENTION_ELIGIBILITY_POLICY_VERSION =
+  "hard-attention-eligibility-policy-v0.1" as const;
+
+export const ATTENTION_ELIGIBILITY_EVIDENCE_POLICY_VERSION =
+  "attention-eligibility-evidence-v0.1" as const;
+
+export const ATTENTION_ELIGIBILITY_RESOLVER_VERSION =
+  "attention-eligibility-resolver-v0.1" as const;
+
+export const ATTENTION_ELIGIBILITY_ID_POLICY_VERSION =
+  "attention-eligibility-id-v0.1" as const;
+
 export const SNAPSHOT_VALIDITY_POLICY_VERSION =
   "snapshot-validity-policy-v0.2" as const;
 
