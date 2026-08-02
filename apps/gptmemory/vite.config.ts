@@ -5,15 +5,37 @@ import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
+const DEV_FETCHER_BINDINGS_ENV = "GPTMEMORY_DEV_FETCHER_BINDINGS";
+const FETCHER_URL_ENV = "CHATGPT_SHARE_FETCHER_URL";
+const FETCHER_SECRET_ENV = "CHATGPT_SHARE_FETCHER_SECRET";
 
 const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+function getDevFetcherSecrets(): { required: string[] } | undefined {
+  if (process.env[DEV_FETCHER_BINDINGS_ENV] !== "1") return undefined;
+
+  const fetcherUrl = process.env[FETCHER_URL_ENV];
+  const fetcherSecret = process.env[FETCHER_SECRET_ENV];
+  if (!fetcherUrl || !fetcherSecret) {
+    throw new Error(
+      "GPTMemory dev fetcher bindings require both URL and secret.",
+    );
+  }
+
+  return {
+    required: [FETCHER_URL_ENV, FETCHER_SECRET_ENV],
+  };
+}
+
+const devFetcherSecrets = getDevFetcherSecrets();
+
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  ...(devFetcherSecrets ? { secrets: devFetcherSecrets } : {}),
   d1_databases: d1
     ? [
         {

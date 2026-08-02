@@ -16,6 +16,15 @@ npm install
 npm run dev
 ```
 
+`npm run dev`는 loopback(`127.0.0.1`)에 일회성 ChatGPT fetch bridge를 열고
+vinext 개발 서버를 함께 실행합니다. bridge 인증 secret은 실행할 때마다 무작위로
+생성되며 vinext 자식 프로세스에만 전달되고 출력되지 않습니다. 개발 서버를
+종료하면 bridge도 함께 닫힙니다. vinext 옵션은 그대로 전달할 수 있습니다.
+
+```bash
+npm run dev -- --hostname 127.0.0.1 --port 3101
+```
+
 주요 검증 명령:
 
 ```bash
@@ -64,13 +73,18 @@ timeout, response 크기, content type, 최종 redirect URL을 검증합니다.
 내부 URI나 저장 경로 대신 짧은 이벤트로 남깁니다. 응답의 `diagnostics`에는 정제
 전후 메시지 수만 기록하며 원본 tool 내용은 포함하지 않습니다.
 
-Cloudflare에서 ChatGPT 직접 fetch가 차단되는 환경에서는 선택적으로 아래
-환경변수를 사용해 기존 fetcher를 연결할 수 있습니다.
+로컬 개발에서는 별도 fetcher 설정이 필요하지 않습니다. 배포 환경처럼 외부
+fetcher를 사용해야 할 때는 아래 두 환경변수를 **항상 함께** 설정합니다. 두 값이
+이미 있으면 개발 실행기도 로컬 bridge를 시작하지 않고 해당 fetcher를 그대로
+사용하며, 둘 중 하나만 있으면 잘못된 구성으로 보고 즉시 중단합니다.
 
 ```text
 CHATGPT_SHARE_FETCHER_URL
 CHATGPT_SHARE_FETCHER_SECRET
 ```
+
+자동으로 실행되는 loopback bridge는 로컬 개발 전용입니다. 프로덕션에서는 외부에
+배포한 fetcher URL과 secret을 런타임 환경변수로 관리해야 합니다.
 
 자세한 제품·구현 결정은 [implementation_plan.md](./implementation_plan.md)에
 기록합니다.
