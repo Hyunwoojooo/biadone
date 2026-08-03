@@ -25,6 +25,61 @@ type SummaryEvidenceText = {
   sourceMessageIds: string[];
 };
 
+type StateEvidenceSnippet = {
+  sourceMessageId: string;
+  quote: string;
+};
+
+type StateEvidenceText = SummaryEvidenceText & {
+  evidenceSnippets?: StateEvidenceSnippet[];
+};
+
+type StateDecisionItem = StateEvidenceText & {
+  basis?: "conversation_explicit" | "post_import_user_confirmation";
+};
+
+type StateCompletedResult = StateEvidenceText & {
+  kind?: string;
+  completionBasis?: string;
+  artifact?: { kind?: string; label: string; locator?: string };
+};
+
+type StateOpenAction = StateEvidenceText & {
+  status: "open" | "in_progress" | "blocked" | "deferred";
+  owner?: string;
+  dueAt?: string;
+};
+
+type StateUnresolvedItem = StateEvidenceText & {
+  kind?: "question" | "decision_needed" | "missing_information" | "blocker";
+};
+
+type StateProposalItem = StateEvidenceText & {
+  proposedBy?: "user" | "assistant";
+  status?: "active_proposal" | "deferred";
+};
+
+type StateChangeItem = StateEvidenceText & {
+  kind?: string;
+  from?: string | null;
+  to?: string;
+  reason?: string;
+};
+
+type NoteStateV3 = {
+  title: StateEvidenceText;
+  primaryGoal: StateEvidenceText | null;
+  currentState: StateEvidenceText;
+  confirmedDecisions: StateDecisionItem[];
+  completedResults: StateCompletedResult[];
+  openActions: StateOpenAction[];
+  unresolvedQuestions: StateUnresolvedItem[];
+  activeConstraints: StateEvidenceText[];
+  activeProposals: StateProposalItem[];
+  keyInsights: StateEvidenceText[];
+  stateChanges: StateChangeItem[];
+};
+
 type SummaryOutcome = SummaryEvidenceText & {
   kind: "conclusion" | "decision" | "proposal" | "unresolved";
 };
@@ -55,6 +110,7 @@ type NoteRecord = {
   sourceMessageCount: number | null;
   summarySchemaVersion: string | null;
   summary: NoteSummaryV2 | null;
+  stateNote: NoteStateV3 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt: string | null;
@@ -90,6 +146,7 @@ type ImportResponsePayload = {
 
 const OWNER_KEY_STORAGE = "gptmemory.owner-key.v1";
 const SUMMARY_SCHEMA_VERSION = "gptmemory.summary.v2";
+const STATE_NOTE_SCHEMA_VERSION = "gptmemory.state-note.v3";
 const OUTCOME_LABELS: Record<SummaryOutcome["kind"], string> = {
   conclusion: "결론",
   decision: "확정된 결정",
@@ -149,6 +206,10 @@ function normalizeNote(input: Partial<NoteRecord>): NoteRecord {
       summarySchemaVersion === SUMMARY_SCHEMA_VERSION
         ? normalizeSummary(input.summary)
         : null,
+    stateNote:
+      summarySchemaVersion === STATE_NOTE_SCHEMA_VERSION
+        ? normalizeStateNote(input.stateNote)
+        : null,
     favorite: Boolean(input.favorite),
     archived: Boolean(input.archived),
     deletedAt: input.deletedAt ?? null,
@@ -171,6 +232,7 @@ function formatDate(value: string) {
 
 function notePreview(note: NoteRecord) {
   return (
+    note.stateNote?.currentState.text ||
     note.summary?.oneLineSummary.text ||
     note.overview ||
     note.sections.find((section) => section.body.trim())?.body ||
@@ -181,10 +243,11 @@ function notePreview(note: NoteRecord) {
 }
 
 function noteTitle(note: NoteRecord) {
-  return note.summary?.title.text || note.title;
+  return note.stateNote?.title.text || note.summary?.title.text || note.title;
 }
 
 function noteHasDecision(note: NoteRecord) {
+  if (note.stateNote) return note.stateNote.confirmedDecisions.length > 0;
   return (
     note.summary?.outcomes.some((outcome) => outcome.kind === "decision") ??
     false
@@ -192,7 +255,12 @@ function noteHasDecision(note: NoteRecord) {
 }
 
 function noteHasActionItems(note: NoteRecord) {
+  if (note.stateNote) return note.stateNote.openActions.length > 0;
   return Boolean(note.summary?.actionItems.length);
+}
+
+function noteHasUnresolved(note: NoteRecord) {
+  return Boolean(note.stateNote?.unresolvedQuestions.length);
 }
 
 function normalizeSummary(value: unknown): NoteSummaryV2 | null {
@@ -249,6 +317,196 @@ function normalizeSummary(value: unknown): NoteSummaryV2 | null {
     outcomes,
     actionItems,
     necessaryContext,
+  };
+}
+
+function normalizeStateNote(value: unknown): NoteStateV3 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const title = normalizeStateEvidenceText(record.title);
+  const primaryGoal =
+    record.primaryGoal === null
+      ? null
+      : normalizeStateEvidenceText(record.primaryGoal);
+  const currentState = normalizeStateEvidenceText(record.currentState);
+  if (!title || record.primaryGoal === undefined || !currentState) return null;
+
+  const confirmedDecisions = normalizeStateEvidenceArray(
+    record.confirmedDecisions,
+  );
+  const completedResults = normalizeStateEvidenceArray(record.completedResults);
+  const openActions = normalizeStateEvidenceArray(record.openActions);
+  const unresolvedQuestions = normalizeStateEvidenceArray(
+    record.unresolvedQuestions,
+  );
+  const activeConstraints = normalizeStateEvidenceArray(record.activeConstraints);
+  const activeProposals = normalizeStateEvidenceArray(record.activeProposals);
+  const keyInsights = normalizeStateEvidenceArray(record.keyInsights);
+  const stateChanges = normalizeStateEvidenceArray(record.stateChanges);
+  if (
+    !confirmedDecisions ||
+    !completedResults ||
+    !openActions ||
+    !unresolvedQuestions ||
+    !activeConstraints ||
+    !activeProposals ||
+    !keyInsights ||
+    !stateChanges
+  ) {
+    return null;
+  }
+
+  return {
+    title,
+    primaryGoal,
+    currentState,
+    confirmedDecisions: confirmedDecisions.map((item, index) => {
+      const raw = (record.confirmedDecisions as unknown[])[index];
+      const detail = raw as Record<string, unknown>;
+      return {
+        ...item,
+        ...(detail.basis === "conversation_explicit" ||
+        detail.basis === "post_import_user_confirmation"
+          ? { basis: detail.basis }
+          : {}),
+      };
+    }),
+    completedResults: completedResults.map((item, index) => {
+      const raw = (record.completedResults as unknown[])[index];
+      const detail = raw as Record<string, unknown>;
+      const artifact = normalizeStateArtifact(detail.artifact);
+      return {
+        ...item,
+        ...(typeof detail.kind === "string" ? { kind: detail.kind } : {}),
+        ...(typeof detail.completionBasis === "string"
+          ? { completionBasis: detail.completionBasis }
+          : {}),
+        ...(artifact ? { artifact } : {}),
+      };
+    }),
+    openActions: openActions.map((item, index) => {
+      const raw = (record.openActions as unknown[])[index];
+      const detail = raw as Record<string, unknown>;
+      const status =
+        detail.status === "in_progress" ||
+        detail.status === "blocked" ||
+        detail.status === "deferred"
+          ? detail.status
+          : "open";
+      return {
+        ...item,
+        status,
+        ...(typeof detail.owner === "string" && detail.owner.trim()
+          ? { owner: detail.owner.trim() }
+          : {}),
+        ...(typeof detail.dueAt === "string" && detail.dueAt.trim()
+          ? { dueAt: detail.dueAt.trim() }
+          : {}),
+      };
+    }),
+    unresolvedQuestions: unresolvedQuestions.map((item, index) => {
+      const raw = (record.unresolvedQuestions as unknown[])[index];
+      const kind = (raw as Record<string, unknown>).kind;
+      return {
+        ...item,
+        ...(kind === "question" ||
+        kind === "decision_needed" ||
+        kind === "missing_information" ||
+        kind === "blocker"
+          ? { kind }
+          : {}),
+      };
+    }),
+    activeConstraints,
+    activeProposals: activeProposals.map((item, index) => {
+      const raw = (record.activeProposals as unknown[])[index];
+      const detail = raw as Record<string, unknown>;
+      return {
+        ...item,
+        ...(detail.proposedBy === "user" || detail.proposedBy === "assistant"
+          ? { proposedBy: detail.proposedBy }
+          : {}),
+        ...(detail.status === "active_proposal" || detail.status === "deferred"
+          ? { status: detail.status }
+          : {}),
+      };
+    }),
+    keyInsights,
+    stateChanges: stateChanges.map((item, index) => {
+      const raw = (record.stateChanges as unknown[])[index];
+      const detail = raw as Record<string, unknown>;
+      return {
+        ...item,
+        ...(typeof detail.kind === "string" ? { kind: detail.kind } : {}),
+        ...(typeof detail.from === "string" || detail.from === null
+          ? { from: detail.from }
+          : {}),
+        ...(typeof detail.to === "string" ? { to: detail.to } : {}),
+        ...(typeof detail.reason === "string" ? { reason: detail.reason } : {}),
+      };
+    }),
+  };
+}
+
+function normalizeStateArtifact(
+  value: unknown,
+): StateCompletedResult["artifact"] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.label !== "string" || !record.label.trim()) return null;
+  return {
+    label: record.label.trim(),
+    ...(typeof record.kind === "string" ? { kind: record.kind } : {}),
+    ...(typeof record.locator === "string" && record.locator.trim()
+      ? { locator: record.locator.trim() }
+      : {}),
+  };
+}
+
+function normalizeStateEvidenceArray(
+  value: unknown,
+): StateEvidenceText[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: StateEvidenceText[] = [];
+  for (const item of value) {
+    const evidence = normalizeStateEvidenceText(item);
+    if (!evidence) return null;
+    result.push(evidence);
+  }
+  return result;
+}
+
+function normalizeStateEvidenceText(value: unknown): StateEvidenceText | null {
+  const base = normalizeEvidenceText(value);
+  if (!base || !value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const rawSnippets = Array.isArray(record.evidenceSnippets)
+    ? record.evidenceSnippets
+    : Array.isArray(record.evidence)
+      ? record.evidence
+      : [];
+  const evidenceSnippets: StateEvidenceSnippet[] = [];
+  for (const raw of rawSnippets) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const snippet = raw as Record<string, unknown>;
+    if (
+      typeof snippet.sourceMessageId !== "string" ||
+      !snippet.sourceMessageId.trim() ||
+      typeof snippet.quote !== "string" ||
+      !snippet.quote.trim()
+    ) {
+      continue;
+    }
+    evidenceSnippets.push({
+      sourceMessageId: snippet.sourceMessageId.trim(),
+      quote: snippet.quote.trim(),
+    });
+  }
+  return {
+    ...base,
+    ...(evidenceSnippets.length ? { evidenceSnippets } : {}),
   };
 }
 
@@ -508,7 +766,7 @@ export function GPTMemoryApp() {
           <p>
             공개 공유 링크만 가져옵니다.
             <br />
-            정제된 대화는 요약 생성을 위해 Google Gemini API로
+            정제된 대화는 상태 노트 생성을 위해 Google Gemini API로
             전송됩니다. 원본 공유 HTML과 복원된 전체 메시지 배열은
             GPTMemory에 저장하지 않습니다.
           </p>
@@ -594,7 +852,16 @@ export function GPTMemoryApp() {
                     </span>
                   ) : null}
                   {noteHasActionItems(note) ? (
-                    <span className="note-card-signal action">할 일 있음</span>
+                    <span className="note-card-signal action">
+                      {note.stateNote
+                        ? `열린 작업 ${note.stateNote.openActions.length}`
+                        : "할 일 있음"}
+                    </span>
+                  ) : null}
+                  {noteHasUnresolved(note) ? (
+                    <span className="note-card-signal unresolved">
+                      미해결 {note.stateNote?.unresolvedQuestions.length}
+                    </span>
                   ) : null}
                   <time dateTime={note.updatedAt}>
                     {formatDate(note.updatedAt)}
@@ -619,7 +886,7 @@ export function GPTMemoryApp() {
                   ? "다른 검색어나 태그를 사용해보세요."
                   : view === "trash"
                     ? "삭제한 노트가 없거나 모두 영구 삭제되었습니다."
-                    : "ChatGPT 공유 링크 하나면 핵심과 결정, 할 일을 10초 안에 확인할 수 있습니다."}
+                    : "ChatGPT 공유 링크 하나면 대화가 도달한 상태와 다음 판단을 10초 안에 복원할 수 있습니다."}
               </p>
               {!queryInput && !activeTag && view === "all" ? (
                 <button type="button" onClick={() => setImportOpen(true)}>
@@ -712,10 +979,10 @@ function EmptyDetail({
         <span>“</span>
       </div>
       <p className="detail-eyebrow">A clear view of every conversation</p>
-      <h2>10초 안에 핵심을<br />판단할 수 있도록.</h2>
+      <h2>10초 안에 현재 상태를<br />다시 이어갈 수 있도록.</h2>
       <p>
-        공개 ChatGPT 공유 링크를 붙여 넣으면 핵심 내용과 결론, 확정된 결정,
-        할 일, 중요한 맥락만 강하게 압축해 보여줍니다.
+        공개 ChatGPT 공유 링크를 붙여 넣으면 현재 상태, 확정된 결정,
+        완료된 결과와 남은 판단을 재개 가능한 노트로 보여줍니다.
       </p>
       <button className="primary-action" type="button" onClick={onImport}>
         첫 대화 가져오기 <span aria-hidden="true">→</span>
@@ -946,7 +1213,9 @@ function NoteDetail({
   };
 
   return (
-    <article className="note-detail">
+    <article
+      className={`note-detail ${note.stateNote ? "state-note-detail" : ""}`}
+    >
       <header className="detail-toolbar">
         <button
           className="detail-back-button"
@@ -1028,11 +1297,15 @@ function NoteDetail({
       <div className="note-paper">
         <div className="note-meta-row">
           <span>
-            {note.sourceMessageCount
-              ? `${note.sourceMessageCount}개의 메시지에서 정리`
-              : note.summary
-                ? "대화 압축 요약"
-                : "대화 흐름 노트"}
+            {note.stateNote
+              ? note.sourceMessageCount
+                ? `${note.sourceMessageCount}개의 메시지 · 현재 상태 노트`
+                : "대화 현재 상태 노트"
+              : note.sourceMessageCount
+                ? `${note.sourceMessageCount}개의 메시지에서 정리`
+                : note.summary
+                  ? "대화 압축 요약"
+                  : "대화 흐름 노트"}
           </span>
           <span aria-hidden="true">·</span>
           <time dateTime={note.updatedAt}>{formatDate(note.updatedAt)} 수정</time>
@@ -1047,7 +1320,7 @@ function NoteDetail({
           </span>
         </div>
 
-        {editing && !note.summary ? (
+        {editing && !note.summary && !note.stateNote ? (
           <div className="note-editor">
             <label>
               <span>Title</span>
@@ -1134,7 +1407,13 @@ function NoteDetail({
         ) : (
           <>
             <h1>{displayTitle}</h1>
-            {note.summary ? (
+            {note.stateNote ? (
+              <V3StateNote
+                stateNote={note.stateNote}
+                overview={note.overview}
+                sections={note.sections}
+              />
+            ) : note.summary ? (
               <V2Summary
                 summary={note.summary}
                 overview={note.overview}
@@ -1146,7 +1425,7 @@ function NoteDetail({
                 sections={note.sections}
               />
             )}
-            {!note.summary && note.tags.length ? (
+            {!note.summary && !note.stateNote && note.tags.length ? (
               <div className="note-tags" aria-label="노트 태그">
                 {note.tags.map((tag) => (
                   <span key={tag}>#{tag}</span>
@@ -1158,7 +1437,7 @@ function NoteDetail({
         )}
       </div>
 
-      {!note.summary && !editing && view !== "trash" ? (
+      {!note.summary && !note.stateNote && !editing && view !== "trash" ? (
         <button
           className="edit-note-button"
           type="button"
@@ -1241,6 +1520,214 @@ function NoteDetail({
       ) : null}
     </article>
   );
+}
+
+function V3StateNote({
+  stateNote,
+  overview,
+  sections,
+}: {
+  stateNote: NoteStateV3;
+  overview: string;
+  sections: NoteSection[];
+}) {
+  return (
+    <div className="state-note">
+      <section className="state-current-card" aria-labelledby="current-state-title">
+        <p className="state-kicker" id="current-state-title">
+          현재 상태
+        </p>
+        <p className="state-current-text">{stateNote.currentState.text}</p>
+        <EvidenceDetails item={stateNote.currentState} />
+        <div className="state-counts" aria-label="현재 상태 항목 수">
+          <span className={stateNote.confirmedDecisions.length ? "has-items" : ""}>
+            {stateNote.confirmedDecisions.length
+              ? `확정 결정 ${stateNote.confirmedDecisions.length}`
+              : "확인된 결정 없음"}
+          </span>
+          <span className={stateNote.openActions.length ? "has-items action" : ""}>
+            {stateNote.openActions.length
+              ? `열린 작업 ${stateNote.openActions.length}`
+              : "확인된 남은 작업 없음"}
+          </span>
+          <span
+            className={stateNote.unresolvedQuestions.length ? "has-items unresolved" : ""}
+          >
+            {stateNote.unresolvedQuestions.length
+              ? `미해결 ${stateNote.unresolvedQuestions.length}`
+              : "확인된 미해결 없음"}
+          </span>
+        </div>
+      </section>
+
+      {stateNote.primaryGoal ? (
+        <section className="state-goal" aria-labelledby="primary-goal-title">
+          <h2 id="primary-goal-title">핵심 문제</h2>
+          <p>{stateNote.primaryGoal.text}</p>
+          <EvidenceDetails item={stateNote.primaryGoal} />
+        </section>
+      ) : null}
+
+      <StateItemSection
+        title="확정된 결정"
+        className="state-decisions"
+        items={stateNote.confirmedDecisions}
+      />
+
+      <StateItemSection
+        title="다음에 할 일"
+        className="state-actions"
+        items={stateNote.openActions}
+        renderMeta={(item) => {
+          const action = item as StateOpenAction;
+          return [
+            `상태: ${stateActionLabel(action.status)}`,
+            action.owner ? `담당자: ${action.owner}` : "",
+            action.dueAt ? `기한: ${action.dueAt}` : "",
+          ].filter(Boolean);
+        }}
+      />
+
+      <StateItemSection
+        title="미해결 질문"
+        className="state-unresolved"
+        items={stateNote.unresolvedQuestions}
+      />
+
+      {stateNote.completedResults.length ? (
+        <section className="state-section state-completed">
+          <h2>완료된 결과와 산출물</h2>
+          <ul className="state-item-list">
+            {stateNote.completedResults.map((item, index) => (
+              <li key={`completed-${index}`}>
+                <p>{item.text}</p>
+                {item.artifact ? (
+                  <small className="state-item-meta">
+                    산출물: {item.artifact.label}
+                  </small>
+                ) : null}
+                <EvidenceDetails item={item} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <StateItemSection
+        title="현재 유효한 제약"
+        className="state-constraints"
+        items={stateNote.activeConstraints}
+      />
+      <StateItemSection
+        title="핵심 인사이트"
+        className="state-insights"
+        items={stateNote.keyInsights}
+      />
+      <StateItemSection
+        title="검토 중인 제안"
+        className="state-proposals"
+        items={stateNote.activeProposals}
+        renderMeta={(item) => {
+          const proposal = item as StateProposalItem;
+          return proposal.proposedBy
+            ? [`제안자: ${proposal.proposedBy === "assistant" ? "Assistant" : "사용자"}`]
+            : [];
+        }}
+      />
+
+      {stateNote.stateChanges.length ? (
+        <details className="state-history-details">
+          <summary>변경·보류·대체된 방향</summary>
+          <ul className="state-item-list state-change-list">
+            {stateNote.stateChanges.map((item, index) => (
+              <li key={`state-change-${index}`}>
+                <p>{item.text}</p>
+                {item.from !== undefined || item.to ? (
+                  <small className="state-item-meta">
+                    {item.from ? `${item.from} → ` : ""}
+                    {item.to ?? ""}
+                  </small>
+                ) : null}
+                <EvidenceDetails item={item} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {overview || sections.length ? (
+        <details className="conversation-flow-details">
+          <summary>대화 흐름 상세 보기</summary>
+          <div className="conversation-flow-body">
+            <LegacyNoteBody overview={overview} sections={sections} />
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function StateItemSection({
+  title,
+  className,
+  items,
+  renderMeta,
+}: {
+  title: string;
+  className: string;
+  items: StateEvidenceText[];
+  renderMeta?: (item: StateEvidenceText) => string[];
+}) {
+  if (!items.length) return null;
+  return (
+    <section className={`state-section ${className}`}>
+      <h2>{title}</h2>
+      <ul className="state-item-list">
+        {items.map((item, index) => {
+          const metadata = renderMeta?.(item) ?? [];
+          return (
+            <li key={`${className}-${index}`}>
+              <p>{item.text}</p>
+              {metadata.length ? (
+                <small className="state-item-meta">{metadata.join(" · ")}</small>
+              ) : null}
+              <EvidenceDetails item={item} />
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function EvidenceDetails({ item }: { item: StateEvidenceText }) {
+  if (!item.evidenceSnippets?.length) return null;
+  return (
+    <details className="state-evidence">
+      <summary>근거 보기</summary>
+      <ul>
+        {item.evidenceSnippets.map((snippet, index) => (
+          <li key={`${snippet.sourceMessageId}-${index}`}>
+            <span>{snippet.sourceMessageId}</span>
+            <q>{snippet.quote}</q>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function stateActionLabel(status: StateOpenAction["status"]): string {
+  switch (status) {
+    case "in_progress":
+      return "진행 중";
+    case "blocked":
+      return "막힘";
+    case "deferred":
+      return "보류";
+    default:
+      return "열림";
+  }
 }
 
 function V2Summary({
@@ -1405,8 +1892,8 @@ function ImportDialog({
     setError("");
     setStatus(
       replace
-        ? "기존 노트를 보존한 채 새 요약을 생성하는 중입니다…"
-        : "공개 대화를 불러와 핵심 요약을 생성하는 중입니다…",
+        ? "기존 노트를 보존한 채 새 상태 노트를 생성하는 중입니다…"
+        : "공개 대화를 불러와 현재 상태를 정리하는 중입니다…",
     );
     try {
       const response = await fetch("/api/notes/import", {
@@ -1521,8 +2008,8 @@ function ImportDialog({
         <span className="dialog-kicker">New conversation note</span>
         <h2 id="import-title">대화를 노트로 가져오기</h2>
         <p className="dialog-intro" id="import-description">
-          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 핵심 내용과 결과, 할 일,
-          꼭 필요한 맥락만 빠르게 판단할 수 있는 요약으로 만듭니다.
+          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 현재 상태와 확정된 결정,
+          완료된 결과, 남은 작업과 미해결 문제를 재개 가능한 노트로 만듭니다.
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
@@ -1545,9 +2032,10 @@ function ImportDialog({
             <span aria-hidden="true">◉</span>
             <p>
               공개 공유 링크만 지원합니다. tool·reasoning 등 내부 정보를 제거한
-              정제된 대화가 요약 생성을 위해 Google Gemini API로 전송됩니다.
-              원본 공유 HTML과 복원된 전체 메시지 배열은 GPTMemory에 저장하지
-              않습니다.
+                  정제된 대화가 상태 노트 생성을 위해 Google Gemini API로 전송됩니다.
+                  원본 공유 HTML과 복원된 전체 메시지 배열은 GPTMemory에 저장하지
+                  않습니다. 근거 확인에 선택된 짧은 문장만 메시지 ID와 함께 노트에
+                  저장됩니다.
             </p>
           </div>
           {existing ? (
@@ -1570,7 +2058,7 @@ function ImportDialog({
                     : ""}
                 </p>
                 <p className="existing-note-warning">
-                  새 v2 요약만 갱신되고 기존 편집 본문은 보존됩니다. 생성에
+                  새 상태 노트만 갱신되고 기존 편집 본문은 보존됩니다. 생성에
                   실패하면 기존 노트는 그대로 유지됩니다.
                 </p>
               </div>
@@ -1606,7 +2094,7 @@ function ImportDialog({
                 onClick={() => void requestImport(existing)}
                 disabled={submitting}
               >
-                {submitting ? "처리하는 중…" : "새 요약으로 재생성"}
+                {submitting ? "처리하는 중…" : "새 상태 노트로 재생성"}
               </button>
             </div>
           ) : (
@@ -1619,7 +2107,7 @@ function ImportDialog({
                 type="submit"
                 disabled={submitting || !shareUrl.trim()}
               >
-                {submitting ? "요약하는 중…" : "요약 노트 만들기"}
+                    {submitting ? "상태 정리 중…" : "상태 노트 만들기"}
                 {!submitting ? <span aria-hidden="true">→</span> : null}
               </button>
             </div>

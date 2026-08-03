@@ -3,6 +3,11 @@ import {
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
 } from "../../../lib/note-summary/index.ts";
+import {
+  parseConversationStateNoteV3,
+  STATE_NOTE_SCHEMA_VERSION,
+  type ConversationStateNoteV3,
+} from "../../../lib/note-state/index.ts";
 
 export const OWNER_HEADER = "x-gptmemory-owner";
 
@@ -41,8 +46,12 @@ export type PublicNote = {
   sourceUrl?: string;
   sourceTitle?: string;
   sourceMessageCount?: number;
-  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION | null;
+  summarySchemaVersion:
+    | typeof SUMMARY_SCHEMA_VERSION
+    | typeof STATE_NOTE_SCHEMA_VERSION
+    | null;
   summary: ConversationSummaryV2 | null;
+  stateNote: ConversationStateNoteV3 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt?: string;
@@ -281,6 +290,19 @@ export function parseStoredConversationSummary(
   } catch {
     // Generated summary corruption must not make its preserved v1 note
     // unreadable. All new writes are validated before persistence.
+    return null;
+  }
+}
+
+export function parseStoredConversationStateNote(
+  schemaVersion: string | null,
+  summaryJson: string | null,
+): ConversationStateNoteV3 | null {
+  if (schemaVersion !== STATE_NOTE_SCHEMA_VERSION || !summaryJson) return null;
+  try {
+    return parseConversationStateNoteV3(JSON.parse(summaryJson));
+  } catch {
+    // Corrupt generated state must never make the preserved v1 note unreadable.
     return null;
   }
 }

@@ -559,6 +559,11 @@ button:disabled {
   background: #e9efe6;
 }
 
+.note-card-signal.unresolved {
+  color: #866935;
+  background: #f2e9d1;
+}
+
 .list-message {
   display: grid;
   min-height: 360px;
@@ -771,6 +776,12 @@ button:disabled {
   letter-spacing: -0.045em;
 }
 
+.state-note-detail .note-paper > h1 {
+  max-width: 620px;
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.08;
+}
+
 .note-overview {
   max-width: 650px;
   margin: 22px 0 0;
@@ -782,6 +793,202 @@ button:disabled {
 
 .compressed-summary {
   max-width: 650px;
+}
+
+.state-note {
+  max-width: 650px;
+}
+
+.state-current-card {
+  padding: 22px 23px 18px;
+  margin-top: 25px;
+  background: linear-gradient(145deg, #fff9f5, #f8f3ed);
+  border: 1px solid #ead7cd;
+  border-radius: 16px;
+  box-shadow: 0 14px 34px rgb(73 56 44 / 6%);
+}
+
+.state-kicker,
+.state-section h2,
+.state-goal h2 {
+  margin: 0 0 10px;
+  color: #8f766d;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.state-current-text {
+  margin: 0;
+  color: #3e3833;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  line-height: 1.62;
+}
+
+.state-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 15px;
+  margin-top: 16px;
+  border-top: 1px solid #eadfd6;
+}
+
+.state-counts span {
+  padding: 5px 8px;
+  color: #9a9289;
+  background: #f2eee8;
+  border-radius: 99px;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.state-counts span.has-items {
+  color: #8b4d3e;
+  background: #f4ddd5;
+}
+
+.state-counts span.has-items.action {
+  color: #546c50;
+  background: #e4ede0;
+}
+
+.state-counts span.has-items.unresolved {
+  color: #806430;
+  background: #f2e8cc;
+}
+
+.state-goal {
+  padding: 15px 17px;
+  margin-top: 20px;
+  background: #f7f4ee;
+  border-radius: 11px;
+}
+
+.state-goal p {
+  margin: 0;
+  color: #514c46;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.state-section {
+  margin-top: 30px;
+}
+
+.state-item-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.state-item-list > li {
+  padding: 12px 13px;
+  background: #faf7f1;
+  border: 1px solid #eee7dc;
+  border-radius: 10px;
+}
+
+.state-item-list p {
+  margin: 0;
+  color: #4d4842;
+  font-size: 12px;
+  line-height: 1.68;
+}
+
+.state-decisions .state-item-list > li {
+  background: #fff8f5;
+  border-color: #edd8cf;
+}
+
+.state-actions .state-item-list > li {
+  background: #f6faf4;
+  border-color: #dfe9da;
+}
+
+.state-unresolved .state-item-list > li {
+  background: #fcf8ed;
+  border-color: #eee1bd;
+}
+
+.state-completed .state-item-list > li {
+  background: #f4f8f2;
+  border-color: #dfe8dc;
+}
+
+.state-proposals .state-item-list > li {
+  background: #f4f7f9;
+  border-color: #dfe8ed;
+}
+
+.state-item-meta {
+  display: block;
+  margin-top: 5px;
+  color: #928a81;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.state-evidence {
+  margin-top: 8px;
+}
+
+.state-evidence > summary {
+  width: fit-content;
+  color: #947063;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.state-evidence ul {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0 0;
+  margin: 0;
+  list-style: none;
+}
+
+.state-evidence li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  color: #706860;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.state-evidence li span {
+  max-width: 120px;
+  color: #aaa197;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  overflow-wrap: anywhere;
+}
+
+.state-evidence q {
+  quotes: "“" "”";
+  overflow-wrap: anywhere;
+}
+
+.state-history-details {
+  margin-top: 32px;
+  border-top: 1px solid var(--line);
+}
+
+.state-history-details > summary {
+  padding: 16px 0;
+  color: #746c64;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.state-history-details .state-item-list {
+  padding-bottom: 10px;
 }
 
 .summary-lede {

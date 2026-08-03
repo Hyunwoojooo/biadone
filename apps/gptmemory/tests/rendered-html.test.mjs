@@ -14,7 +14,7 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   ]);
 
   assert.match(page, /<GPTMemoryApp \/>/);
-  assert.match(page, /대화의 핵심을 10초 안에/);
+  assert.match(page, /대화가 도달한 상태를 10초 안에/);
   assert.match(layout, /lang="ko"/);
   assert.match(layout, /GPTMemory/);
   assert.match(component, /All Notes/);
@@ -28,6 +28,7 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
     component,
     /원본 공유 HTML과 복원된 전체 메시지 배열은[\s\S]{0,50}GPTMemory에 저장하지 않습니다/,
   );
+  assert.match(component, /선택된 짧은 문장만 메시지 ID와 함께 노트에/);
   assert.doesNotMatch(
     component,
     /외부 AI를 호출하지|외부 AI로 전송하지 않습니다/,
@@ -37,14 +38,18 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   assert.match(component, /expectedUpdatedAt/);
   assert.match(component, /이미 가져온 대화입니다/);
   assert.match(component, /기존 노트 열기/);
-  assert.match(component, /새 요약으로 재생성/);
-  assert.match(component, /새 v2 요약만 갱신되고 기존 편집 본문은 보존됩니다/);
+  assert.match(component, /새 상태 노트로 재생성/);
+  assert.match(component, /새 상태 노트만 갱신되고 기존 편집 본문은 보존됩니다/);
   assert.match(
     component,
     /생성에\s+실패하면 기존 노트는 그대로 유지됩니다/,
   );
   assert.match(component, /summarySchemaVersion/);
+  assert.match(component, /note\.stateNote\?\.title\.text/);
   assert.match(component, /note\.summary\?\.title\.text/);
+  assert.match(component, /note\.stateNote\.confirmedDecisions\.length/);
+  assert.match(component, /note\.stateNote\.openActions\.length/);
+  assert.match(component, /note\.stateNote\?\.unresolvedQuestions\.length/);
   assert.match(
     component,
     /outcomes\.some\(\(outcome\) => outcome\.kind === "decision"\)/,
@@ -61,9 +66,13 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
     /<details className="conversation-flow-details"[^>]*\sopen(?:=|\s|>)/,
   );
   assert.match(component, /<summary>대화 흐름 상세 보기<\/summary>/);
+  assert.match(component, /stateNote \? \(/);
   assert.match(component, /note\.summary \? \(/);
   assert.match(component, /<LegacyNoteBody/);
-  assert.match(component, /!note\.summary && !editing && view !== "trash"/);
+  assert.match(
+    component,
+    /!note\.summary && !note\.stateNote && !editing && view !== "trash"/,
+  );
   assert.match(component, /aria-describedby="import-description gemini-transfer-notice"/);
   const cardStart = component.indexOf('className={`note-card');
   const cardEnd = component.indexOf("</button>", cardStart);
@@ -78,6 +87,8 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   assert.match(styles, /note-card-signal\.decision/);
   assert.match(styles, /note-card-signal\.action/);
   assert.match(styles, /compressed-summary/);
+  assert.match(styles, /state-current-card/);
+  assert.match(styles, /state-evidence/);
   assert.match(styles, /outcome-kind\.decision/);
   assert.match(styles, /conversation-flow-details/);
   assert.match(styles, /@media \(max-width:\s*900px\)/);
@@ -92,7 +103,11 @@ test("declares durable D1 storage and keeps R2 disabled", async () => {
   const hosting = JSON.parse(
     await readFile(new URL(".openai/hosting.json", root), "utf8"),
   );
-  assert.deepEqual(hosting, { d1: "DB", r2: null });
+  assert.equal(hosting.d1, "DB");
+  assert.equal(hosting.r2, null);
+  if (hosting.project_id !== undefined) {
+    assert.match(hosting.project_id, /^appgprj_[a-z0-9]+$/);
+  }
 });
 
 test("offers an accessible two-step permanent delete only from Trash", async () => {

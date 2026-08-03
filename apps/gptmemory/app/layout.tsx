@@ -21,15 +21,15 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase: new URL(origin),
     title: {
-      default: "GPTMemory — 대화의 핵심을 10초 안에",
+      default: "GPTMemory — 대화가 도달한 상태를 10초 안에",
       template: "%s · GPTMemory",
     },
     description:
-      "ChatGPT 공유 대화의 핵심, 결정, 제안과 할 일을 근거가 연결된 개인 노트로 압축합니다.",
+      "ChatGPT 공유 대화의 현재 상태, 확정된 결정, 완료된 결과와 남은 판단을 근거가 연결된 노트로 복원합니다.",
     openGraph: {
-      title: "GPTMemory — 대화의 핵심을 10초 안에",
+      title: "GPTMemory — 대화가 도달한 상태를 10초 안에",
       description:
-        "긴 대화에서 핵심, 확정된 결정과 명시된 할 일을 빠르게 파악하는 대화 노트.",
+        "긴 대화가 도달한 현재 상태와 다음 판단을 빠르게 복원하는 상태 노트.",
       type: "website",
       locale: "ko_KR",
       images: [
@@ -43,9 +43,9 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: {
       card: "summary_large_image",
-      title: "GPTMemory — 대화의 핵심을 10초 안에",
+      title: "GPTMemory — 대화가 도달한 상태를 10초 안에",
       description:
-        "긴 대화에서 핵심, 확정된 결정과 명시된 할 일을 빠르게 파악하는 대화 노트.",
+        "긴 대화가 도달한 현재 상태와 다음 판단을 빠르게 복원하는 상태 노트.",
       images: [socialImage],
     },
   };

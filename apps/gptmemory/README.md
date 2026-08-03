@@ -1,13 +1,13 @@
 # GPTMemory
 
-GPTMemory는 공개 ChatGPT 공유 링크를 가져와 세션의 핵심, 확정된 결정, 제안,
-미해결 사항과 명시된 할 일을 10초 안에 판단할 수 있는 개인 노트로 바꾸는
-앱입니다.
+GPTMemory는 공개 ChatGPT 공유 링크를 가져와 대화가 끝난 시점의 현재 상태,
+확정된 결정, 완료된 결과, 남은 작업과 미해결 문제를 10초 안에 복원할 수 있는
+개인 상태 노트로 바꾸는 앱입니다.
 
-엔티티 그래프나 지식 그래프를 만들지 않습니다. 신규 import는 Google Gemini의
-구조화 출력을 결정적 evidence 검증과 결합해 강하게 압축한 v2 요약을 만들며,
-기존 규칙 기반 v1 엔진은 과거 노트 호환과 접힌 `대화 흐름 상세 보기`를 위해
-유지합니다.
+엔티티 그래프나 지식 그래프를 만들지 않습니다. 신규 import는 Google Gemini가
+제안한 요청·완료·결정·제안·변경 사건을 서버가 근거와 시간순으로 검증하고 fold한
+v3 상태 노트를 만듭니다. 기존 v2 압축 요약과 규칙 기반 v1 엔진은 과거 노트 호환과
+접힌 `대화 흐름 상세 보기`를 위해 유지합니다.
 
 Vite 설정은 Git에 없는 로컬 `build/sites-vite-plugin` 사본 대신
 `@openai/sites-vite-plugin@0.1.0`을 개발 의존성으로 고정합니다. 따라서 새 clone과
@@ -22,7 +22,7 @@ npm install
 npm run dev
 ```
 
-요약 생성에는 서버 전용 `GEMINI_API_KEY`가 필요합니다. 기본 모델은
+상태 노트 생성에는 서버 전용 `GEMINI_API_KEY`가 필요합니다. 기본 모델은
 `gemini-3.1-flash-lite`이며 `GEMINI_MODEL`로 변경할 수 있습니다. GPTMemory의
 개발 실행기는 현재 저장소의 Blabase가 참조하는 비공개 env 포인터를 찾을 수 있으면
 Gemini 설정 세 개만 allowlist로 읽어 재사용합니다. 비밀값을 이 프로젝트에 복사하지
@@ -56,12 +56,15 @@ npm run build
 - 계정 없는 MVP에서는 브라우저가 생성한 owner key로 모든 쿼리를 분리합니다.
 - 브라우저 저장소에는 owner key 같은 비권위적 장치 설정만 남고 note payload는
   중복 저장하지 않습니다.
-- D1에는 기존 v1 `overview`·`sections_json`을 유지하면서 v2 요약을 nullable
-  `summary_schema_version`·`summary_json`에 별도로 저장합니다. 기존 v1 노트는
-  자동 변환하지 않습니다.
-- 결정과 할 일은 Gemini의 재서술을 그대로 저장하지 않습니다. 서버가 확인한 완전한
-  사용자 문장 또는 불릿 조항만 공개 텍스트로 남기며, 질문·조건·부정·부분 인용은
-  제거합니다.
+- D1에는 기존 v1 `overview`·`sections_json`을 유지하면서 버전이 있는 v2 요약 또는
+  v3 상태 노트를 nullable `summary_schema_version`·`summary_json`에 저장합니다.
+  기존 v1·v2 노트는 자동 변환하지 않습니다.
+- Gemini는 최종 상태를 직접 확정하지 않고 원자적인 상태 사건 후보만 제안합니다.
+  서버가 실제 근거 ID, 메시지 역할, 발생 순서와 허용된 생명주기 전이를 검증한 뒤
+  현재 상태를 계산합니다.
+- 완료된 요청은 열린 작업에서 제거하고, Assistant 제안은 사용자의 명시적 수락 전에는
+  결정으로 승격하지 않습니다. 나중의 사용자 수정은 이전 방향을 대체한 이력으로
+  남깁니다.
 - 서버가 원문 조항별 근거 카탈로그와 요청 전용 숫자 인덱스를 만들고, Gemini는
   Structured Output의 허용 범위 안에서 인덱스만 선택합니다. 서버는 이를 다시 실제
   메시지 ID와 정확한 조항으로 변환해 검증하므로 모델이 근거 ID나 인용문을 만들 수
@@ -71,7 +74,8 @@ npm run build
   model 버전, share ID, canonical conversation SHA-256과 fetch/generation 시각이
   포함되며 public note 응답에는 노출하지 않습니다.
 - 가져온 ChatGPT 원본 HTML과 복원된 전체 대화 메시지는 저장하거나 로그로 남기지
-  않습니다. 별도 `sourceSnapshot`도 만들지 않습니다.
+  않습니다. 별도 `sourceSnapshot`도 만들지 않습니다. v3는 근거 확인에 필요한
+  선택된 짧은 조항만 메시지 ID와 함께 저장합니다.
 - 요약 생성 시 tool·reasoning·private URI 등을 제거한 사용자·assistant 메시지는
   Google Gemini API로 전송됩니다. API key와 provider 원문 응답은 브라우저,
   D1, 로그에 남기지 않습니다.
@@ -93,9 +97,9 @@ npm run build
 timeout, response 크기, content type, 최종 redirect URL을 검증합니다.
 
 같은 owner가 동일한 normalized 공유 URL을 다시 입력하면 외부 fetch 전에 기존
-노트를 찾습니다. UI는 `기존 노트 열기`, `새 요약으로 재생성`, `취소`를 제공하며,
-재생성은 사용자가 확인한 `noteId + updatedAt`이 현재 상태와 일치할 때만 v2 요약을
-갱신합니다. 기존 v1 본문과 사용자 편집본은 유지되고, provider 실패나 stale
+노트를 찾습니다. UI는 `기존 노트 열기`, `새 상태 노트로 재생성`, `취소`를 제공하며,
+재생성은 사용자가 확인한 `noteId + updatedAt`이 현재 상태와 일치할 때만 v3 상태
+노트를 갱신합니다. 기존 v1 본문과 사용자 편집본은 유지되고, provider 실패나 stale
 write에서는 기존 row를 변경하지 않습니다.
 
 가져오기 adapter는 사용자에게 보이지 않는 tool call, 검색 JSON, reasoning 및
@@ -119,8 +123,20 @@ CHATGPT_SHARE_FETCHER_SECRET
 자세한 제품·구현 결정은 [implementation_plan.md](./implementation_plan.md)에
 기록합니다.
 
+대화 정리의 사용자 가치와 제품 원칙은
+[GPT 대화 정리의 근본 가치](./docs/conversation-organization-first-principles.md)에
+정리합니다.
+
+상태 노트의 공개 스키마, 사건 원장과 생명주기 규칙은
+[GPTMemory State Note v3](./docs/state-note-v3-spec.md)에 정리합니다. 긴급 롤백이
+필요하면 서버 환경변수 `GPTMEMORY_GENERATION_MODE=summary-v2`로 신규 import만 기존
+v2 생성기로 되돌릴 수 있습니다.
+
 ## 평가 데이터
 
 강한 모델의 Teacher draft, 입력 cutoff, 사람 검수 상태는
 [`evals/golden-notes/`](./evals/golden-notes/)에서 관리합니다. Teacher 요청과
 답변은 저비용 모델의 평가 입력에서 항상 제외합니다.
+
+v3의 구현 범위, 검증 결과와 아직 필요한 사람 평가는
+[State Note v3 구현 기록](./evals/golden-notes/STATE_NOTE_V3_RECORD.md)에 기록합니다.

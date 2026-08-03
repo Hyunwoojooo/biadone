@@ -6,6 +6,7 @@ import {
   parseCreateNoteInput,
   parseListNotesInput,
   parsePatchNoteInput,
+  parseStoredConversationStateNote,
   parseStoredConversationSummary,
   requireOwnerKey,
 } from "../app/api/notes/_shared.ts";
@@ -164,5 +165,48 @@ test("restores a valid v2 summary from its versioned JSON column", () => {
       JSON.stringify(summary),
     ),
     summary,
+  );
+});
+
+test("restores valid v3 state notes and fails back to the preserved legacy note", () => {
+  const evidence = (text: string, sourceMessageId = "u1") => ({
+    text,
+    sourceMessageIds: [sourceMessageId],
+    evidenceSnippets: [{ sourceMessageId, quote: text }],
+  });
+  const stateNote = {
+    schemaVersion: "gptmemory.state-note.v3",
+    title: evidence("상태 노트"),
+    primaryGoal: evidence("대화를 다시 이어갈 현재 상태를 만든다."),
+    currentState: evidence("구조 변경이 확정됐고 열린 작업은 없다."),
+    confirmedDecisions: [
+      { ...evidence("상태 노트 구조를 사용한다."), basis: "conversation_explicit" },
+    ],
+    completedResults: [],
+    openActions: [],
+    unresolvedQuestions: [],
+    activeConstraints: [],
+    activeProposals: [],
+    keyInsights: [],
+    stateChanges: [],
+  };
+
+  assert.deepEqual(
+    parseStoredConversationStateNote(
+      "gptmemory.state-note.v3",
+      JSON.stringify(stateNote),
+    ),
+    stateNote,
+  );
+  assert.equal(
+    parseStoredConversationStateNote("gptmemory.state-note.v3", "{}"),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationStateNote(
+      "gptmemory.summary.v2",
+      JSON.stringify(stateNote),
+    ),
+    null,
   );
 });

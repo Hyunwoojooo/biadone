@@ -279,6 +279,7 @@ test("stores exact generation versions and a stable source digest", async () => 
     summarySchemaVersion: "gptmemory.summary.v2",
     summaryProvider: "gemini",
     summaryModel: "gemini-test-model",
+    summaryEngineVersion: "gptmemory-note-summary.v2",
     summaryPromptVersion: "gptmemory-summary-prompt.v2",
     sourceShareId: SHARE_ID,
     sourceContentSha256:
@@ -291,6 +292,36 @@ test("stores exact generation versions and a stable source digest", async () => 
     /^[a-f0-9]{64}$/,
   );
   assert.equal(harness.calls.digest, 1);
+});
+
+test("stores a versioned v3 state note through the same atomic import path", async () => {
+  const harness = createHarness({
+    dependencies: {
+      async createDraft() {
+        return generatedStateDraft();
+      },
+    },
+  });
+
+  const result = await harness.service.execute(importCommand());
+
+  assert.equal(result.status, "created");
+  assert.equal(
+    harness.getLastCreate()?.summarySchemaVersion,
+    "gptmemory.state-note.v3",
+  );
+  assert.equal(
+    harness.getLastCreate()?.generationMetadata.summaryPromptVersion,
+    "gptmemory-state-prompt.v3",
+  );
+  assert.equal(
+    harness.getLastCreate()?.generationMetadata.summaryEngineVersion,
+    "gptmemory-note-state.v3",
+  );
+  assert.equal(
+    harness.getLastCreate()?.summary.schemaVersion,
+    "gptmemory.state-note.v3",
+  );
 });
 
 test("keeps the existing note byte-for-byte unchanged when import fails", async () => {
@@ -565,7 +596,46 @@ function generatedDraft(): GeneratedImportDraft {
     summaryProvider: {
       provider: "gemini",
       model: "gemini-test-model",
+      engineVersion: "gptmemory-note-summary.v2",
       promptVersion: "gptmemory-summary-prompt.v2",
+    },
+  };
+}
+
+function generatedStateDraft(): GeneratedImportDraft {
+  const legacyDraft = generatedDraft().legacyDraft;
+  const evidence = (text: string, sourceMessageId: string) => ({
+    text,
+    sourceMessageIds: [sourceMessageId],
+    evidenceSnippets: [{ sourceMessageId, quote: text }],
+  });
+  return {
+    legacyDraft,
+    summary: {
+      schemaVersion: "gptmemory.state-note.v3",
+      title: evidence("새 상태 노트", "u1"),
+      primaryGoal: evidence("질문에 답한다.", "u1"),
+      currentState: evidence("답변이 제공됐고 열린 작업은 없다.", "a1"),
+      confirmedDecisions: [],
+      completedResults: [
+        {
+          ...evidence("질문에 대한 답변이 제공됐다.", "a1"),
+          kind: "answer",
+          completionBasis: "conversation_output",
+        },
+      ],
+      openActions: [],
+      unresolvedQuestions: [],
+      activeConstraints: [],
+      activeProposals: [],
+      keyInsights: [],
+      stateChanges: [],
+    },
+    summaryProvider: {
+      provider: "gemini",
+      model: "gemini-test-model",
+      engineVersion: "gptmemory-note-state.v3",
+      promptVersion: "gptmemory-state-prompt.v3",
     },
   };
 }

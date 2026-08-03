@@ -19,9 +19,17 @@ import {
 import {
   createGeminiConversationSummary,
   DEFAULT_GEMINI_MODEL,
+  SUMMARY_ENGINE_VERSION,
   SUMMARY_PROMPT_VERSION,
   SummaryGenerationError,
 } from "@/lib/note-summary";
+import {
+  createGeminiConversationStateNote,
+  DEFAULT_GEMINI_STATE_MODEL,
+  STATE_NOTE_ENGINE_VERSION,
+  STATE_NOTE_PROMPT_VERSION,
+  StateNoteGenerationError,
+} from "@/lib/note-state";
 
 import {
   createImportedNote,
@@ -60,24 +68,43 @@ const importService = createNoteImportService<PublicNote>({
         shareId: imported.source.shareId,
       },
     });
-    const model =
-      process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
-      process.env.GEMINI_MODEL?.trim() ||
-      DEFAULT_GEMINI_MODEL;
-    const summary = await createGeminiConversationSummary(
-      {
-        title: imported.conversation.title,
-        messages: imported.conversation.messages,
-      },
-      { model },
-    );
+    const useLegacySummary =
+      process.env.GPTMEMORY_GENERATION_MODE?.trim() === "summary-v2";
+    const model = useLegacySummary
+      ? process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
+        process.env.GEMINI_MODEL?.trim() ||
+        DEFAULT_GEMINI_MODEL
+      : process.env.GPTMEMORY_STATE_MODEL?.trim() ||
+        process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
+        process.env.GEMINI_MODEL?.trim() ||
+        DEFAULT_GEMINI_STATE_MODEL;
+    const summary = useLegacySummary
+      ? await createGeminiConversationSummary(
+          {
+            title: imported.conversation.title,
+            messages: imported.conversation.messages,
+          },
+          { model },
+        )
+      : await createGeminiConversationStateNote(
+          {
+            title: imported.conversation.title,
+            messages: imported.conversation.messages,
+          },
+          { model },
+        );
     return {
       legacyDraft,
       summary,
       summaryProvider: {
         provider: "gemini",
         model,
-        promptVersion: SUMMARY_PROMPT_VERSION,
+        engineVersion: useLegacySummary
+          ? SUMMARY_ENGINE_VERSION
+          : STATE_NOTE_ENGINE_VERSION,
+        promptVersion: useLegacySummary
+          ? SUMMARY_PROMPT_VERSION
+          : STATE_NOTE_PROMPT_VERSION,
       },
     };
   },
@@ -125,6 +152,17 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (error instanceof SummaryGenerationError) {
       const message = summaryGenerationErrorMessage(error);
+      return jsonResponse(
+        {
+          status: "error",
+          message,
+          error: { code: error.code, message },
+        },
+        error.httpStatus,
+      );
+    }
+    if (error instanceof StateNoteGenerationError) {
+      const message = stateNoteGenerationErrorMessage(error);
       return jsonResponse(
         {
           status: "error",
@@ -368,6 +406,24 @@ function summaryGenerationErrorMessage(error: SummaryGenerationError): string {
     return "요약 서비스를 사용할 수 없습니다. Gemini 연결 설정을 확인해 주세요.";
   }
   return "대화를 요약하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+function stateNoteGenerationErrorMessage(
+  error: StateNoteGenerationError,
+): string {
+  if (error.httpStatus === 429) {
+    return "상태 노트 요청이 많습니다. 잠시 후 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 408 || error.httpStatus === 504) {
+    return "대화의 현재 상태를 정리하는 데 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 422) {
+    return "상태 노트의 근거와 흐름을 안전하게 검증하지 못했습니다. 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 503) {
+    return "상태 노트 서비스를 사용할 수 없습니다. Gemini 연결 설정을 확인해 주세요.";
+  }
+  return "상태 노트를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
 function jsonResponse(body: unknown, status: number): Response {

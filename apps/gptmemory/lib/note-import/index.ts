@@ -2,8 +2,19 @@ import {
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
 } from "../note-summary/index.ts";
+import {
+  STATE_NOTE_SCHEMA_VERSION,
+  type ConversationStateNoteV3,
+} from "../note-state/index.ts";
 
-export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v3";
+export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v4";
+
+export type GeneratedConversationNote =
+  | ConversationSummaryV2
+  | ConversationStateNoteV3;
+export type GeneratedConversationNoteSchemaVersion =
+  | typeof SUMMARY_SCHEMA_VERSION
+  | typeof STATE_NOTE_SCHEMA_VERSION;
 
 export type NoteImportReplacement = {
   noteId: string;
@@ -23,9 +34,10 @@ export type NoteImportGenerationMetadata = {
   adapterVersion: string;
   noteEngineVersion: string;
   noteSchemaVersion: string;
-  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+  summarySchemaVersion: GeneratedConversationNoteSchemaVersion;
   summaryProvider: "gemini";
   summaryModel: string;
+  summaryEngineVersion: string;
   summaryPromptVersion: string;
   sourceShareId: string;
   sourceContentSha256: string;
@@ -69,10 +81,11 @@ export type GeneratedNoteDraft = {
 
 export type GeneratedImportDraft = {
   legacyDraft: GeneratedNoteDraft;
-  summary: ConversationSummaryV2;
+  summary: GeneratedConversationNote;
   summaryProvider: {
     provider: "gemini";
     model: string;
+    engineVersion: string;
     promptVersion: string;
   };
 };
@@ -86,8 +99,8 @@ export type ImportedNoteWrite = {
   sourceTitle: string | null;
   sourceMessageCount: number;
   generationMetadata: NoteImportGenerationMetadata;
-  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION;
-  summary: ConversationSummaryV2;
+  summarySchemaVersion: GeneratedConversationNoteSchemaVersion;
+  summary: GeneratedConversationNote;
 };
 
 export type ImportStoredNote = {
@@ -220,9 +233,10 @@ export function createNoteImportService<TNote extends ImportStoredNote>(
         adapterVersion: imported.source.adapterVersion,
         noteEngineVersion: dependencies.noteEngineVersion,
         noteSchemaVersion: draft.legacyDraft.schemaVersion,
-        summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+        summarySchemaVersion: draft.summary.schemaVersion,
         summaryProvider: draft.summaryProvider.provider,
         summaryModel: draft.summaryProvider.model,
+        summaryEngineVersion: draft.summaryProvider.engineVersion,
         summaryPromptVersion: draft.summaryProvider.promptVersion,
         sourceShareId: command.shareId,
         sourceContentSha256: await dependencies.sha256Hex(
@@ -321,7 +335,7 @@ function buildImportedNoteWrite(
     sourceTitle: imported.conversation.title?.trim() || null,
     sourceMessageCount: imported.conversation.messages.length,
     generationMetadata,
-    summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+    summarySchemaVersion: draft.summary.schemaVersion,
     summary: draft.summary,
   };
 }

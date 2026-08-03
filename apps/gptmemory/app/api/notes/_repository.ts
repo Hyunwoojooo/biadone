@@ -9,9 +9,15 @@ import {
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
 } from "@/lib/note-summary";
+import {
+  parseConversationStateNoteV3,
+  STATE_NOTE_SCHEMA_VERSION,
+  type ConversationStateNoteV3,
+} from "@/lib/note-state";
 
 import {
   parseCreateNoteInput,
+  parseStoredConversationStateNote,
   parseStoredConversationSummary,
   type CreateNoteInput,
   type ListNotesInput,
@@ -38,17 +44,31 @@ function validateImportedNoteWrite(input: ImportedNoteWrite): CreateNoteInput {
   });
 }
 
-function validateImportedSummary(input: ImportedNoteWrite): ConversationSummaryV2 {
-  if (input.summarySchemaVersion !== SUMMARY_SCHEMA_VERSION) {
-    throw new Error("Imported note summary version is unsupported.");
-  }
-  return parseConversationSummaryV2(input.summary);
-}
+type StoredSummaryWrite =
+  | {
+      schemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+      summary: ConversationSummaryV2;
+    }
+  | {
+      schemaVersion: typeof STATE_NOTE_SCHEMA_VERSION;
+      summary: ConversationStateNoteV3;
+    };
 
-type StoredSummaryWrite = {
-  schemaVersion: typeof SUMMARY_SCHEMA_VERSION;
-  summary: ConversationSummaryV2;
-};
+function validateImportedSummary(input: ImportedNoteWrite): StoredSummaryWrite {
+  if (input.summarySchemaVersion === SUMMARY_SCHEMA_VERSION) {
+    return {
+      schemaVersion: SUMMARY_SCHEMA_VERSION,
+      summary: parseConversationSummaryV2(input.summary),
+    };
+  }
+  if (input.summarySchemaVersion === STATE_NOTE_SCHEMA_VERSION) {
+    return {
+      schemaVersion: STATE_NOTE_SCHEMA_VERSION,
+      summary: parseConversationStateNoteV3(input.summary),
+    };
+  }
+  throw new Error("Imported generated-note version is unsupported.");
+}
 
 type NoteDbRow = {
   id: string;
@@ -210,10 +230,7 @@ export async function createImportedNote(
     ownerKey,
     validateImportedNoteWrite(input),
     input.generationMetadata,
-    {
-      schemaVersion: SUMMARY_SCHEMA_VERSION,
-      summary: validateImportedSummary(input),
-    },
+    validateImportedSummary(input),
   );
 }
 
@@ -226,7 +243,7 @@ export async function replaceImportedNote(input: {
 }): Promise<PublicNote | null> {
   const database = await getNotesDatabase();
   const noteInput = validateImportedNoteWrite(input.note);
-  const summary = validateImportedSummary(input.note);
+  const generatedSummary = validateImportedSummary(input.note);
   const updatedAt = nextUpdatedAt(input.expectedUpdatedAt);
   const note = await database
     .prepare(
@@ -249,8 +266,8 @@ export async function replaceImportedNote(input: {
       noteInput.sourceTitle,
       noteInput.sourceMessageCount,
       JSON.stringify(input.note.generationMetadata),
-      SUMMARY_SCHEMA_VERSION,
-      JSON.stringify(summary),
+      generatedSummary.schemaVersion,
+      JSON.stringify(generatedSummary.summary),
       updatedAt,
       input.noteId,
       input.ownerKey,
@@ -375,6 +392,10 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     row.summary_schema_version,
     row.summary_json,
   );
+  const stateNote = parseStoredConversationStateNote(
+    row.summary_schema_version,
+    row.summary_json,
+  );
   return {
     id: row.id,
     title: row.title,
@@ -386,8 +407,13 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     ...(row.source_message_count !== null
       ? { sourceMessageCount: row.source_message_count }
       : {}),
-    summarySchemaVersion: summary ? SUMMARY_SCHEMA_VERSION : null,
+    summarySchemaVersion: stateNote
+      ? STATE_NOTE_SCHEMA_VERSION
+      : summary
+        ? SUMMARY_SCHEMA_VERSION
+        : null,
     summary,
+    stateNote,
     favorite: Boolean(row.favorite),
     archived: Boolean(row.archived),
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
