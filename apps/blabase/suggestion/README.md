@@ -40,6 +40,29 @@ npm run dev
 OAuth callback 주소와 쿠키 기준 주소가 일치해야 하므로 연결 중에는
 `127.0.0.1` 대신 `localhost`를 사용합니다.
 
+## macOS 메뉴바 launcher beta
+
+Phase 4C launcher는 Work Cockpit과 별도인 native 메뉴바 앱이다. `⇧ Space`를
+누르면 기존 Active Attention이 고른 “지금 개입할 한 가지”만 표시하고,
+대시보드는 별도 URL로 연다. 추천을 다시 만들거나 임의 prompt/command를 Codex에
+보내지 않는다.
+
+개발용 `.app`과 DMG는 Node runtime과 Local Agent를 함께 포함한다.
+
+```bash
+cd suggestion
+BLABASE_NODE_BINARY=/absolute/path/to/node npm run launcher:package
+```
+
+산출물은 Git에서 제외된 `.local/build/macos/` 아래 생성된다. ad-hoc 서명된 local
+development beta이므로 외부 배포 전에는 Developer ID 서명과 Apple notarization이
+필요하다. 기존 `suggestion/.local` 연결 데이터를 사용해 확인할 때는 앱 시작 전에
+`BLABASE_LAUNCHER_DATA_ROOT`를 `suggestion/`의 절대 경로로 지정한다. 이 override는
+자동으로 source read-only mode가 되므로 기존 웹 coordinator가 동기화한 snapshot을
+표시하되 같은 store를 동시에 갱신하지 않는다. 설치, 검증, 데이터 경계와 release
+명령은 `desktop/macos/README.md`, IPC와 실행 안전 경계는
+`docs/LOCAL_LAUNCHER_CONTRACT.md`를 따른다.
+
 ## Google Calendar 로컬 연결 — 운영자 설정
 
 Calendar 연결은 로컬 개발 서버에서만 활성화되며, 기본 캘린더를 읽기 전용으로

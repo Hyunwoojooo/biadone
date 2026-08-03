@@ -10,7 +10,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 4B active Attention implemented, Draft v0.13 |
+| 문서 상태 | Phase 4C macOS local launcher beta implemented, Draft v0.14 |
 | 기준일 | 2026-08-03 |
 | 대상 프로토타입 | `suggestion/` |
 | 현재 엔진 | Cross-source active Attention v0.4; legacy conversation engine `suggestion-engine-v0.3` |
@@ -24,8 +24,9 @@
 | Claim authority 계약 | `suggestion/docs/CLAIM_AUTHORITY_RESOLUTION_CONTRACT.md` |
 | Eligibility shadow 계약 | `suggestion/docs/ATTENTION_ELIGIBILITY_SHADOW_CONTRACT.md` |
 | Project workflow 계약 | `suggestion/docs/PROJECT_WORKFLOW_FOLLOW_THROUGH_CONTRACT.md` |
+| Local launcher 계약 | `suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C claim authority/conflict, Phase 4A eligibility shadow, Phase 4B active candidate/lane/ranking/selection 구현 |
+| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C claim authority/conflict, Phase 4A eligibility shadow, Phase 4B active candidate/lane/ranking/selection, Phase 4C macOS native launcher local beta 구현 |
 
 ---
 
@@ -2961,6 +2962,41 @@ exact하게 검증했다. final run
 leakage를 포함한 모든 guardrail `0`을 기록했다. 이 결과는 human-reviewed
 Golden이나 production 유용성 주장이 아니라 local development contract다.
 
+### Phase 4C — macOS native launcher와 Local Agent
+
+상태: **설치형 local development beta vertical slice 구현**
+
+산출물:
+
+- `[구현]` AppKit 메뉴바 앱, `⇧ Space` 전역 단축키와 중앙 floating panel
+- `[구현]` Phase 4B top suggestion 한 개, 근거, 첫 단계와 source 평가 범위 표시
+- `[구현]` 별도 URL의 Work Cockpit 대시보드 열기
+- `[구현]` shell을 통하지 않는 Swift child-process supervisor와 versioned JSONL IPC
+- `[구현]` 현재 result/candidate/binding/execution을 다시 확인하는 명시적
+  `focus_or_resume` 실행 경계
+- `[구현]` 고정 Node runtime과 bundle된 Local Agent를 포함한 `.app`/DMG build,
+  검증, ad-hoc 서명 script
+- `[구현]` `/Applications` 설치본의 `SMAppService` 로그인 시 자동 실행과 메뉴
+  토글
+- `[후속]` Developer ID 서명·Apple notarization credential로 external beta 생성
+- `[후속]` 기존 pre-audit local monitor/failure record migration 또는 안전한
+  invalidation
+- `[후속]` 설치 앱의 first-run connector/data migration UX와 server-authoritative
+  추천 전환
+
+런처는 추천을 별도로 계산하거나 정렬하지 않는다. 기존 Active Attention 결과를
+`blabase-launcher-attention-v1`로 축소해 표시하며 raw prompt/answer, command/output,
+diff, native thread ID와 project 경로는 IPC에 포함하지 않는다. GitHub 이동은 정확한
+HTTPS destination만 허용하고 Codex 이어가기는 현재 연결 identity가 같을 때만
+기존 Work Resumption queue에 넣는다. 임의 prompt, shell command, 승인 응답과 외부
+source write는 지원하지 않는다.
+
+현재 beta는 macOS native host 안에 고정 Node Local Agent를 포함하는 hybrid
+구조다. 대시보드는 별도 웹 URL로 유지한다. 향후 추천 계산을 서버 권위로 옮겨도
+로컬 Agent는 Codex 관찰, Terminal focus/resume와 OS integration 경계를 담당한다.
+세부 계약과 build/release 절차는 `LOCAL_LAUNCHER_CONTRACT.md`와
+`desktop/macos/README.md`를 따른다.
+
 ### Phase 5 — Calendar fit과 Notion task mapping
 
 상태: **Context-only adapters delivered; candidate/fit work remains**
@@ -3353,12 +3389,17 @@ Golden이나 production 유용성 주장이 아니라 local development contract
     lane/ranking/selection, active Work Cockpit/Lab, monitor v0.4와 replay v2 작성
 28. `[Phase 4B 완료]` user-review clarification, source-refresh
     insufficient-evidence, scoped no-action와 exact Work Resumption open gate 작성
-29. `[Phase 4C 후속]` pre-audit resolver v0.2 monitor/failure record의 versioned
-    migration 또는 안전한 invalidation 뒤 local supervisor와 단축키 launcher 작성
-30. Calendar free-block과 first-step 작성
-31. Notion task property mapping 작성
-32. formal feedback evaluation runner 작성
-33. frozen baseline 후에만 ranking policy 보정
+29. `[Phase 4C local beta 완료]` macOS 메뉴바 host, `⇧ Space` launcher,
+    bundled Node Local Agent, versioned JSONL projection/실행 계약과 개발용 DMG 작성.
+    runtime provenance/Agent hash, 64 KiB bounded framing, 5분 실행 TTL, physical
+    data-root 검증과 root별 single source-writer/read-only override까지 고정
+30. `[Phase 4C 후속]` pre-audit resolver v0.2 monitor/failure record의 versioned
+    migration 또는 안전한 invalidation, first-run data 이동 UX와 external beta
+    Developer ID/notarization 완료
+31. Calendar free-block과 first-step 작성
+32. Notion task property mapping 작성
+33. formal feedback evaluation runner 작성
+34. frozen baseline 후에만 ranking policy 보정
 
 ---
 
@@ -3484,10 +3525,12 @@ Golden이나 production 유용성 주장이 아니라 local development contract
 
 ## 28. 남은 제품 결정
 
-Phase 4B local beta 구현과 검증에는 사용자가 추가로 판단할 항목이 없다.
+Phase 4B와 Phase 4C local development beta 구현·검증에는 사용자가 추가로 판단할
+항목이 없다. macOS native 메뉴바 앱, 기본 `⇧ Space`, 별도 웹 대시보드, bundled
+Local Agent와 향후 server-authoritative 추천이라는 방향을 적용했다.
 프로젝트 workflow의 unknown 기본값과 네 action, 적극 추천 정책, exact
 GitHub–Codex 연결, LLM 원문 분석 opt-in은 이미 확정한 방향을 적용했다.
-다음 질문은 Phase 4C 단축키 실행을 막지 않는 후속 제품·정책 결정이다.
+다음 질문은 external beta와 Phase 5 이후를 막지 않는 후속 제품·정책 결정이다.
 
 1. Calendar는 free/busy만 사용할 것인가, title linking을 opt-in으로 제공할 것인가?
 2. Notion task DB property mapping UX를 어디까지 지원할 것인가?

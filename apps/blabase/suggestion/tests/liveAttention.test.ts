@@ -17,6 +17,7 @@ import {
   evaluateAttentionSnapshots,
   LIVE_ATTENTION_FRESHNESS_POLICY
 } from "../src/attention/liveAttention";
+import { resolveAttentionCodeProvenance } from "../src/attention/codeProvenance";
 import { verifyActiveAttentionResultIntegrity } from "../src/attentionDecision";
 import { verifyPhase2AttentionResultIntegrity } from "../src/crossSource/runAttentionRouter";
 
@@ -345,6 +346,22 @@ describe("live Attention orchestration", () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it("accepts a packaged launcher fingerprint as declared provenance", async () => {
+    const fingerprint = "b".repeat(64);
+
+    await expect(
+      resolveAttentionCodeProvenance("/private/tmp", {
+        NODE_ENV: "test",
+        BLABASE_CODE_FINGERPRINT_SHA256: fingerprint,
+        GITHUB_SHA: "c".repeat(40)
+      })
+    ).resolves.toEqual({
+      codeCommitSha: null,
+      codeState: "dirty_worktree",
+      codeFingerprintSha256: fingerprint
+    });
   });
 
   it("records supporting-source and work-context provenance without raw titles", () => {

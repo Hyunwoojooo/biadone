@@ -4,7 +4,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 4B active decision baseline recorded, Draft v0.5 |
+| 문서 상태 | Phase 4C launcher compatibility checks recorded, Draft v0.6 |
 | 기준일 | 2026-08-03 |
 | 평가 schema | `cross-source-evaluation-case-v0.1` |
 | reason code | `cross-source-reason-codes-v0.1` |
@@ -31,6 +31,10 @@
 - `suggestion/eval/synthetic/activeAttentionDecisionCases.v0.1.json`
 - `suggestion/eval/synthetic/activeAttentionDecisionConfig.v0.2.json`
 - `suggestion/tools/run-active-attention-baseline.ts`
+- `suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md`
+- `suggestion/tests/launcherProjection.test.ts`
+- `suggestion/tests/launcherService.test.ts`
+- `suggestion/tests/launcherJsonl.test.ts`
 - `docs/ENGINE_DEVELOPMENT_RECORDS.md`
 
 ---
@@ -999,10 +1003,14 @@ managed direct-fact history
 → active candidate / lane / ranking / decision
 → replay v2 / monitor v0.4
 
-[다음: Phase 4C]
+[Phase 4C local beta 완료 범위]
 local supervisor
 → 단축키 launcher
 → Work Cockpit 즉시 실행/관찰
+
+[다음]
+external beta 서명/notarization과 first-run data 이동 UX
+→ Calendar fit / Notion task mapping
 ```
 
 처음부터 ranking weight를 세밀하게 튜닝하지 않는다. 30개 Dev Case에서 hard
@@ -1112,3 +1120,46 @@ newer ordering을 증명하지 못하므로 오래된 failure supersession이 �
 record는 현재 v0.3 semantic replay와 직접 동등하지 않다. 현재 local monitor
 store에는 해당 record가 없지만 formal release 전 versioned migration 또는 안전한
 invalidation 계약을 추가해야 한다.
+
+---
+
+## 17. Phase 4C launcher compatibility 검증
+
+Phase 4C는 Active Attention의 input, candidate, eligibility, lane, ranking,
+selection과 explanation을 변경하지 않는다. 기존 Phase 4B 결과를
+`blabase-launcher-attention-v1` public projection으로 축소하고 명시적
+`focus_or_resume`를 기존 Work Resumption queue에 전달하는 transport/OS integration
+변경이다. 따라서 frozen Golden이나 active decision baseline은 재실행하지 않았다.
+
+자동 검증 결과:
+
+- launcher/provenance TypeScript targeted regression: `5` files, `41/41` tests
+- 전체 Vitest regression: `83` files, `702/702` tests
+- TypeScript typecheck, ESLint와 Next.js production build 통과
+- Swift debug와 release executable build 통과
+- XCTest 비의존 Swift model smoke 통과: request ID, projection invariant, exact URL
+  allowlist, child environment injection 제거, runtime provenance와 bounded supervisor
+  restart
+- bundled Node/Agent JSONL process smoke와 종료 후 Companion heartbeat 정리 통과
+- split oversized JSONL frame의 64 KiB bounded recovery, data-root physical symlink
+  검증, 5분 recommendation TTL과 read-only shared-root source writer gate 통과
+- `.app` nested ad-hoc signature, build source provenance, 실제 bundled Agent SHA-256,
+  runtime manifest, Node/Agent syntax, license/notice와 private artifact 부재 검증 통과
+- DMG SHA-256 sidecar, ad-hoc signature, read-only mount, mounted `.app` 재검증과
+  `/Applications` shortcut 통과. exact checksum은 Git 밖의 생성된
+  `Blabase-dev-beta.dmg.sha256`에 기록
+
+실제 앱을 기존 local data root로 실행한 수동 UI 검증에서는 메뉴바 host와 Local
+Agent child가 함께 실행됐고, 당시 기본값인 `⌥ Space` 등록 성공 상태가 footer에
+표시됐다. 이후 기본 단축키를 `⇧ Space`로 변경했으며 Swift build와 model smoke로
+등록 상수·표시값 일치를 검증했다. 현재 평가 결과의 `insufficient_evidence`, scope
+statement와 `미평가: GitHub`가 손실 없이
+렌더링됐으며 source refresh 완료와 `Esc` panel close를 확인했다. 추천 실행 버튼은
+실제 외부 동작을 만들지 않기 위해 수동 검증에서 누르지 않았고, stale/current
+identity와 중복 실행 방지는 unit regression으로 검증했다.
+
+현재 Command Line Tools 설치에는 XCTest module과 full Xcode가 없어 authored Swift
+XCTest suite는 이 머신에서 실행하지 못했다. 동일 source의 debug/release build와
+독립 model smoke, 실제 app integration으로 보완했지만 external beta CI에서는 full
+Xcode로 `swift test`를 추가 실행해야 한다. 현재 DMG는 ad-hoc 서명된 local
+development beta이며 Developer ID notarized release나 production 품질 주장이 아니다.

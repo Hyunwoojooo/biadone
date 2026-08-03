@@ -26,8 +26,28 @@ export async function resolveAttentionCodeProvenance(
   cwd: string,
   env: NodeJS.ProcessEnv
 ): Promise<AttentionCodeProvenance> {
+  const explicitCommit =
+    env.BLABASE_CODE_COMMIT_SHA?.trim().toLowerCase();
+  if (explicitCommit && /^[a-f0-9]{40}$/.test(explicitCommit)) {
+    return {
+      codeCommitSha: explicitCommit,
+      codeState: "declared_commit",
+      codeFingerprintSha256: null
+    };
+  }
+  const declaredFingerprint =
+    env.BLABASE_CODE_FINGERPRINT_SHA256?.trim().toLowerCase();
+  if (
+    declaredFingerprint &&
+    /^[a-f0-9]{64}$/.test(declaredFingerprint)
+  ) {
+    return {
+      codeCommitSha: null,
+      codeState: "dirty_worktree",
+      codeFingerprintSha256: declaredFingerprint
+    };
+  }
   for (const value of [
-    env.BLABASE_CODE_COMMIT_SHA,
     env.CF_PAGES_COMMIT_SHA,
     env.VERCEL_GIT_COMMIT_SHA,
     env.GITHUB_SHA

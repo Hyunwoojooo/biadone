@@ -2640,3 +2640,155 @@
   - Notion task property mapping과 Calendar free-block/first-step
   - explicit feedback/correction ledger, independent human review/adjudication,
     Cross-source Golden과 locked holdout
+
+## 2026-08-03 Phase 4C macOS native launcher and bundled Local Agent
+
+- Date: 2026-08-03
+- Owner: Codex with human direction
+- Goal:
+  - 별도 웹 Work Cockpit을 유지하면서 macOS 메뉴바에 상주하는 native launcher를
+    제공
+  - `⇧ Space`로 Phase 4B가 선택한 현재 제안 한 개, 근거, 첫 단계와 평가하지 못한
+    source를 즉시 표시
+  - 사용자가 명시적으로 실행할 때만 exact current identity를 재검증해 기존 Codex
+    작업을 focus/resume
+  - source checkout이나 사용자 설치 Node에 의존하지 않는 `.app`과 개발용 DMG 생성
+- This record supersedes:
+  - 위 Phase 4B record의 `Phase 4C local supervisor와 단축키/Raycast launcher`
+    follow-up. Phase 4B engine/baseline 기록과 값은 변경하지 않는다.
+- Affected pipeline stages:
+  - Active Attention result의 public launcher projection
+  - Local Agent JSONL request/response transport와 child-process lifecycle
+  - explicit Work Resumption execution의 stale/current identity 및 중복 요청 gate
+  - macOS menu bar, global hotkey, floating panel, login item과 URL open boundary
+  - bundled Node/Agent build, app signing, DMG packaging과 local verification
+- Behavior before:
+  - 현재 제안은 Work Cockpit/Attention Lab 웹 UI에서만 확인 가능
+  - Work Resumption Companion을 별도 terminal process로 실행해야 함
+  - 설치형 macOS host, global shortcut, login-start와 fixed Local Agent runtime이 없음
+- Behavior after:
+  - AppKit accessory app이 메뉴바에 상주하고 Carbon `⇧ Space`를 등록해 SwiftUI
+    floating panel을 현재 Space 중앙에 표시
+  - launcher는 자체 candidate/ranking을 만들지 않고 현재 Active Attention top
+    suggestion만 `blabase-launcher-attention-v1`로 투영
+  - `suggested`, `needs_clarification`, `no_action`, `insufficient_evidence`와
+    unavailable source를 모두 정상 화면 상태로 표시
+  - GitHub action은 exact `https://github.com/{owner}/{repo}/issues|pull/{number}`만
+    열고 query/fragment/userinfo/port와 다른 host/path는 거부
+  - Codex action은 cached result/candidate와 current top, binding/execution identity,
+    Companion liveness를 실행 직전에 다시 확인
+  - 같은 process의 동일 `resultId + candidateId` 반복 실행은 새 command를 만들지
+    않고 최초 command 상태를 반환하며 UI도 처리 중 Enter/버튼을 비활성화
+  - Agent stdin write는 serial queue에서 수행하고 Task 취소 시 pending continuation과
+    timeout을 즉시 정리. malformed/oversized response는 fail closed하고 bounded
+    restart 적용
+  - JSONL input은 64 KiB 고정 byte buffer로 처리해 split oversized frame 전체를
+    메모리에 보관하지 않고 다음 delimiter 뒤 정상 request부터 복구
+  - 표시된 recommendation은 `asOf` 뒤 5분이 지나면 실행 전에 stale로 거부
+  - 기본 Application Support root는 bundle Agent가 유일한 `managed` source sync
+    writer이고, 명시적 data-root override는 자동 `read_only`가 되어 scheduler,
+    source sync와 monitor history write를 수행하지 않음
+  - release build는 bundle의 고정 Node/Agent만 실행하고 data-root symlink의 `/`와
+    HOME 우회, standalone CLI의 symlink/미존재 leaf 우회, `NODE_OPTIONS`,
+    `NODE_PATH`, `DYLD_*`, `LD_PRELOAD` 주입을 거부
+  - build 시 commit 또는 dirty-worktree fingerprint와 bundled Agent SHA-256을
+    runtime manifest에 기록하고, 설치 host는 ambient provenance를 제거한 뒤 검증된
+    manifest provenance만 Agent에 전달
+  - `/Applications` 또는 user Applications 설치본만 `SMAppService` 자동 등록을
+    시도하고 requires-approval이면 System Settings로 안내
+  - notarized release script는 Node JIT 예외와 Node/host Apple Events entitlement를
+    모두 확인하지 못하면 중단
+  - 앱 종료 시 scheduler, Companion과 child Agent가 함께 종료
+- Versions before:
+  - launcher IPC/projection/execution/runtime manifest: 없음
+  - Active Attention/Work Resumption: Phase 4B versions 유지
+- Versions after:
+  - IPC: `blabase-launcher-ipc-v1`
+  - attention projection: `blabase-launcher-attention-v1`
+  - execution projection: `blabase-launcher-execution-v1`
+  - bundled runtime manifest: `blabase-launcher-runtime-manifest-v1`
+  - Active Attention input/result/policy/ranking/resolver: 변경 없음
+  - Work Resumption storage/queue contract: 변경 없음
+- Code commit:
+  - suggestion subtree base commit:
+    `54d3f174fa83cf1a05096d6aa485cb1c03f3eac0`
+  - base subject: `feat(suggestion): complete phase 4b active attention`
+  - implementation state: `dirty_worktree`
+  - final release commit: 생성하지 않음 — 이 작업에서는 commit 요청을 받지 않음
+- Evaluation dataset and run:
+  - 새 dataset/run 없음
+  - engine input, candidate, eligibility, lane, ordering, selection과 explanation을
+    변경하지 않아 frozen Golden과 Phase 4B baseline 재실행 대상이 아님
+  - production conversation, implicit feedback 또는 실제 launcher 표시 결과를
+    Gold로 승격하지 않음
+- Commands executed:
+  - launcher/provenance focused Vitest (`5` files, `41` tests)
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - Swift debug/release build with local SDK compatibility override
+  - `npm run launcher:swift:smoke`
+  - bundled Agent esbuild/JSONL process smoke
+  - `.app` build, `codesign` verification, DMG create/checksum/read-only mount verification
+  - actual app launch with existing local data root, refresh, accessibility inspection와
+    `Esc` close
+  - `git diff --check`
+- Metrics and verification:
+  - full Vitest: `83/83` files, `702/702` tests passed
+  - launcher/provenance focused: `41/41` passed
+  - typecheck, lint, Next.js production build: passed
+  - Swift debug/release build and XCTest-independent model smoke: passed
+  - authored Swift XCTest: 이 머신의 Command Line Tools에 XCTest module과 full
+    Xcode가 없어 미실행; external beta CI에서 필수
+  - actual UI: 당시 기본값 `⌥ Space`의 hotkey registration success, current
+    `insufficient_evidence`, scope와 `미평가: GitHub` rendering, refresh와 Esc close를
+    확인. 이후 기본값 `⇧ Space` 변경은 Swift build/model smoke로 검증
+  - final development DMG: 약 `40 MB`; exact SHA-256은 Git 밖의 생성된
+    `Blabase-dev-beta.dmg.sha256` sidecar에 기록
+  - provider/model/prompt/token usage: `not_applicable`; launcher가 LLM을 호출하지 않음
+- Regressions or accepted exceptions:
+  - Developer ID certificate와 notarization credential이 없어 ad-hoc local beta만 생성
+  - full Xcode가 없어 Swift XCTest execution은 보류했으나 tests는 source에 포함
+  - default `~/Library/Application Support/Blabase`에 기존 prototype connector data를
+    자동 복사하는 first-run migration/settings UX는 아직 없음
+  - server-authoritative recommendation과 multi-device state는 후속이며 현재 beta는
+    local engine/Local Agent가 권위
+  - 실제 Codex/GitHub primary action은 외부 동작을 만들지 않기 위해 수동 UI
+    검증에서 누르지 않았고 unit regression과 exact allowlist로 검증
+- Privacy and retention impact:
+  - IPC projection에는 raw prompt/answer/reasoning, command/output/diff, native thread
+    ID, project cwd, replay input, credential과 token을 포함하지 않음
+  - `.app`/DMG에는 `.local`, `.env*`, credential, token, production record를 포함하지
+    않고 Node license와 bundle dependency notice만 포함
+  - Local Agent는 기존 data-root 아래 store/retention 계약을 재사용하며 새 cloud
+    telemetry나 remote retention을 추가하지 않음
+  - shared data-root override에서는 source sync와 monitor history를 쓰지 않고 저장된
+    snapshot을 읽어 평가; root별 source sync writer를 하나로 제한
+  - stderr는 `~/Library/Logs/Blabase/launcher-agent.log`에 sanitized code만 기록하고
+    mode `0600`, `1 MiB`에서 이전 로그 한 개로 회전
+  - external source mutation, 새 prompt 생성/전송, approval 응답, 자동 retry를
+    추가하지 않음
+- Compatibility:
+  - Phase 4B Active Attention과 Work Resumption public contracts는 변경하지 않음
+  - dashboard는 별도 URL로 유지하고 launcher projection은 향후 server-authoritative
+    transport로 교체 가능한 versioned boundary
+  - Windows는 동일 JSONL/public projection을 재사용하고 native host만 후속 구현 가능
+- Release decision:
+  - 이 Mac의 local development beta `.app`/DMG 사용: 허용
+  - 외부 사용자 배포: Developer ID signing, notarization, full Xcode test와 first-run
+    data/config UX 전까지 보류
+  - production quality 또는 human-approved 유용성 주장: 보류
+- Rollback method:
+  - macOS launcher 앱과 Local Agent process를 종료하고 `.app`/DMG를 제거
+  - `src/launcher`, `tools/launcher-agent.ts`, `desktop/macos`와 package scripts를 제거
+  - 기존 Work Cockpit, Active Attention, source store와 Work Resumption 데이터는
+    launcher와 독립적이므로 migration/backfill 없이 그대로 유지
+- Follow-up work:
+  - full Xcode CI에서 Swift XCTest 실행
+  - 실제 Developer ID hardened-runtime signing, Terminal automation permission E2E와
+    Apple notarization
+  - first-run connector/data-root migration 및 설정 UI
+  - production server-authoritative recommendation transport와 multi-device sync
+  - pre-audit resolver v0.2 monitor/failure record migration 또는 안전한 invalidation
+  - Windows native host
