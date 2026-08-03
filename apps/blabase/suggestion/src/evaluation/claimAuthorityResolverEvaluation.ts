@@ -253,7 +253,7 @@ export const claimAuthorityEvaluationDatasetSchema = z
       CLAIM_AUTHORITY_EVALUATION_CASE_SCHEMA_VERSION
     ),
     datasetVersion: z.literal("suggestion-claim-authority-dev-v0.1"),
-    datasetRevision: z.literal(1),
+    datasetRevision: z.literal(2),
     datasetClass: z.literal("dev_candidate"),
     inputBoundary: z.literal("normalized_claim_resolution_inputs"),
     dataOrigin: z.literal("synthetic"),
@@ -395,7 +395,7 @@ export type ClaimAuthorityEvaluationRecord = {
   latencyMs: number;
   dataset: {
     version: "suggestion-claim-authority-dev-v0.1";
-    revision: 1;
+    revision: 2;
     class: "dev_candidate";
     lifecycle: "mutable";
     inputBoundary: "normalized_claim_resolution_inputs";

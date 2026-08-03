@@ -127,6 +127,8 @@ describe("Attention routes", () => {
     expect(payload).toMatchObject({
       status: "ready",
       result: evaluated.result,
+      baseResult: evaluated.baseResult,
+      eligibilityProjection: evaluated.eligibilityProjection,
       run: {
         ...evaluated.run,
         contract: "attention-monitor-preview-v1",
@@ -158,6 +160,7 @@ describe("Attention routes", () => {
     expect(syncRuntimeSources).toHaveBeenCalledOnce();
     expect(evaluateCurrentAttention).toHaveBeenCalledWith({
       refreshSources: false,
+      startedAt: expect.any(Date),
       executionIds: {
         runId: expect.stringMatching(/^run_[a-f0-9]{32}$/),
         analysisId: expect.stringMatching(
@@ -246,15 +249,17 @@ describe("Attention routes", () => {
       stage: "source_sync",
       errorCode: "SOURCE_SYNC_FAILED",
       retryCount: 0,
-      engineVersion: "attention-live-orchestrator-v0.2",
-      inputSchemaVersion: "cross-source-attention-input-v0.3",
-      resultSchemaVersion: "cross-source-attention-result-v0.3",
-      policyVersion: "aggressive-evidence-bound-attention-policy-v0.2",
-      githubCandidateRuleVersion:
-        "github-project-aware-candidate-rule-v0.2",
-      codexOverviewRuleVersion:
-        "codex-historical-context-overview-rule-v0.3",
-      contract: "attention-monitor-failure-v0.2",
+      engineVersion: "attention-live-orchestrator-v0.4",
+      inputSchemaVersion: "cross-source-active-attention-input-v0.4",
+      resultSchemaVersion: "cross-source-active-attention-result-v0.4",
+      policyVersion: "aggressive-evidence-bound-attention-policy-v0.3",
+      candidateRuleVersion:
+        "github-managed-codex-active-candidate-rule-v0.1",
+      lanePolicyVersion: "active-attention-lane-policy-v0.1",
+      rankingPolicyVersion: "active-attention-ranking-policy-v0.2",
+      resolverVersion: "active-attention-decision-resolver-v0.3",
+      idPolicyVersion: "active-attention-id-v0.1",
+      contract: "attention-monitor-failure-v0.3",
       codeCommitSha: "a".repeat(40),
       codeState: "declared_commit",
       codeFingerprintSha256: null,
@@ -445,6 +450,12 @@ function evaluatedFixture() {
     result: {
       resultId: `res_${"b".repeat(32)}`,
       decision: { status: "insufficient_evidence" }
+    },
+    baseResult: {
+      resultId: `result_${"c".repeat(32)}`
+    },
+    eligibilityProjection: {
+      projectionSha256: "d".repeat(64)
     },
     run: {
       runId: `run_${"a".repeat(32)}`,

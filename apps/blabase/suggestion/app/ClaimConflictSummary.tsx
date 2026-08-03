@@ -89,7 +89,8 @@ export function ClaimConflictSummary({
         </span>
       </div>
       <p className="claimConflictBoundary">
-        관찰 전용 · 추천 판단에는 아직 반영하지 않음
+        claim과 충돌 자체는 후보가 아님 · 관련 작업의 상태 검증과 확인
+        필요 경로에 반영
       </p>
       <p className="claimConflictAsOf">
         마지막 판정{" "}

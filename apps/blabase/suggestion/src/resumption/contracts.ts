@@ -436,11 +436,26 @@ export const workResumptionMutationSchema = z.discriminatedUnion(
       .object({
         action: z.literal("open"),
         taskRef: workResumptionTaskRefSchema,
-        explicitUserAction: z.literal(true)
+        explicitUserAction: z.literal(true),
+        expectedBindingId: bindingIdSchema.optional(),
+        expectedExecutionId:
+          workResumptionExecutionIdSchema.optional()
       })
       .strict()
   ]
-);
+).superRefine((mutation, context) => {
+  if (
+    mutation.action === "open" &&
+    ((mutation.expectedBindingId === undefined) !==
+      (mutation.expectedExecutionId === undefined))
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Expected binding and execution identities must be supplied together."
+    });
+  }
+});
 
 export const completeClaimedCommandInputSchema =
   z.discriminatedUnion("outcome", [

@@ -1,0 +1,693 @@
+{
+  "contract": "active-attention-decision-evaluation-dataset-v0.1",
+  "schemaVersion": "active-attention-decision-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-active-attention-dev-v0.1",
+  "datasetRevision": 2,
+  "datasetClass": "dev_candidate",
+  "inputBoundary": "exact_phase4b_replayable_evidence_envelope",
+  "dataOrigin": "bounded_synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-02T03:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "resolverConfig": {
+    "immutableRef": "eval/synthetic/activeAttentionDecisionConfig.v0.2.json",
+    "version": "active-attention-decision-config-v0.2",
+    "sha256": "f8da1f5c0b8f55aaa6acffbd6885bdf4a1a759ca0c0f3cf61d84dcb35b6df30b"
+  },
+  "expectedInvariants": {
+    "recommendationMode": "aggressive_evidence_bound",
+    "readOnly": true,
+    "upstreamObjectsRemainForbidden": true,
+    "containsRawCodexValues": false,
+    "deterministicReplay": true
+  },
+  "expectedResultSha256ByCase": {
+    "ACTIVE-DEV-001": "0fffd5396e8c18b10bdda8460c0a7aaf939708d545a196a710c748d1f7f6f10d",
+    "ACTIVE-DEV-002": "9fc877dcefb96af98e4fde3ae37a53f19c9c5671b50739a86a56f2c84ae243cd",
+    "ACTIVE-DEV-003": "1e19a7de81a9380a3548d2e5052b697484d1480f96ef877720aff03020b3e3fc",
+    "ACTIVE-DEV-004": "660bfef8b5e58b9c08205271344ead7cf5525ecd04a97f8cb870b723fab0b625",
+    "ACTIVE-DEV-005": "0bf543a01b00b7094c9ab4da697b5f19e7b00943b730808f3df04221eece2ab5",
+    "ACTIVE-DEV-006": "7c045b8abed8fab75c09613b5b9be8e5ee50699b41f24e150ecf7a87e1407f82",
+    "ACTIVE-DEV-007": "d7a592af6abaaec849a2bdc0e5cb3ccf30979e74fca3b3b2ba747f7603d08012",
+    "ACTIVE-DEV-008": "3aa5d45faa3db48598634d351daf5dfd0f411734bd8ff8d19f9fd69fa66023e7",
+    "ACTIVE-DEV-009": "cae097be34091bf95e5949122fcfd5f81029b41ed2e7a437ad29abbd4afdb78d",
+    "ACTIVE-DEV-010": "254a6421fc77480e67b745daccb47221b5043f77cbb874b74557525c8373a2d2",
+    "ACTIVE-DEV-011": "1233a1db019e34771ff14817fcdc516ad2e93bd74d0d01510cf534a1e885e23e",
+    "ACTIVE-DEV-012": "f61e4baad8c6b4d6be57cc1560fff691762b4a6ac9db0632d48c8146cadf9cac",
+    "ACTIVE-DEV-013": "c1d542022251fed6904666446d6d48e995c94423c495d8c8365349f452372389",
+    "ACTIVE-DEV-014": "db02b63b30447c877467d6a8b68f4cea4ba4abb2b7e62f15a247912f18852605",
+    "ACTIVE-DEV-015": "fd0c82621ec6f6b9f4d1f205be25816585a8860e42f0d1f421e6f08e28b873a9",
+    "ACTIVE-DEV-016": "0cbf42fe0617c641ed5269f0778df9f590089d4226d90a54603512f977d5a141",
+    "ACTIVE-DEV-017": "cd9229a37788cc5e8262309dae7a5a177c1abd74d715f4be0a2a5e3f61d8e5e8",
+    "ACTIVE-DEV-018": "b0b439e1c2e05f71ccbd1d28db8a1a6c743609d0345c4e7f5d3c9b821020217c",
+    "ACTIVE-DEV-019": "b4939c9c272176c6946c002adf6b5144c9af11b45df588889dc6200fbdf7e778",
+    "ACTIVE-DEV-020": "281a156796f8394de22299ee8c26eedbe83d64ac75563b9aa7fd62d20385c6a8",
+    "ACTIVE-DEV-021": "17712beb07771ff44bca7accabe348624f792cba158824622a05c6030a658a10",
+    "ACTIVE-DEV-022": "b3d0eabcfa9ce1906fa3e761f5fd12f9fd7117d68273a7078ee04981920dd5cb",
+    "ACTIVE-DEV-023": "0e7e88082d07e7b1d9073cc16e1beb58511f2e6ba363f08eb6c2e660b7b890b1",
+    "ACTIVE-DEV-024": "11f381852103a7b212545f28838504f4465d820a7bfde270de5204fb45a58a83",
+    "ACTIVE-DEV-025": "4de697a747032f97436baea44a545342d89d9e16eb2e71115aebc9a814239816",
+    "ACTIVE-DEV-026": "ecf0c2443652ca8c01eeda2dbdd99fe6999a668402f6ea76c4d9de77a672eb68",
+    "ACTIVE-DEV-027": "28a728b738b5557a7d45997f953222a106d0bca346d039283c676f95fe59e9b9",
+    "ACTIVE-DEV-028": "3e816c3598cac9308a3b976784c9b66d2ad8ac031cc4b8a347137553dfdab0e5",
+    "ACTIVE-DEV-029": "f90d477431be02d5458e6a8ffd2e83aafc34ef82533919285a86f51fbb3a1138",
+    "ACTIVE-DEV-030": null,
+    "ACTIVE-DEV-031": null,
+    "ACTIVE-DEV-032": "e265a8c9da1d66db2153f26f40cfd3ac67ae96d58f987804a89aa21e903d7d2a",
+    "ACTIVE-DEV-033": "3aa5d45faa3db48598634d351daf5dfd0f411734bd8ff8d19f9fd69fa66023e7",
+    "ACTIVE-DEV-034": "834c10dbaf3352a34b4f9e642f2deed0cf309d45d0a87fab446bc0ae8435802f",
+    "ACTIVE-DEV-035": "17c788cc5fc60b90d5763d362f4168f5ee32d5fd44b6551c499298406b4f9271",
+    "ACTIVE-DEV-036": "9fe591b8084105ed81c038e7c044053cabfcdd34cec063739861c405a9ec8544",
+    "ACTIVE-DEV-037": "3fce63f9b603ae85323d5746bdaad1d6bc3d3aea1816a291020d019f864cbbee",
+    "ACTIVE-DEV-038": "41fca6e62a1098fa2e1e42c7cc25dd671a37fc91821baf1b29b335d0c2687e9a",
+    "ACTIVE-DEV-039": "3e9a9c4e5fc8e9f5dcd087a451196917bd225598b6f0a5beee3f0b93b8bffdc1",
+    "ACTIVE-DEV-040": "0694c837c7696ac856cbf1c85295faef2eeb50d75122895d30073c32294eb885",
+    "ACTIVE-DEV-041": "c88b021506a90af0da2f9a21e227f8951dfd9877ef5e7bea7cc04488572d66fc",
+    "ACTIVE-DEV-042": "9fe86daf7b3bdaf8896b352aa7011b28130743de79f72b4b914d51b415aafa46",
+    "ACTIVE-DEV-043": "a8b461b5cbc7442d77dd5a8201342d577965647e56ca809a7c1480bfd8635a32",
+    "ACTIVE-DEV-044": "ab3726556c1bec50ff19d1f78e3a547216dfc66d9309ba204214290633e3d658"
+  },
+  "cases": [
+    {
+      "caseId": "ACTIVE-DEV-001",
+      "title": "open assigned issue becomes a focus suggestion",
+      "scenario": "github_assigned_focus",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "focus", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "github", "focus"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-002",
+      "title": "review request becomes an unblock inspection",
+      "scenario": "github_review_unblock",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:unblock:inspect:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "github", "unblock"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-003",
+      "title": "due-soon issue is promoted to must now",
+      "scenario": "github_due_soon_must_now",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "must_now", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:must_now:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "github", "deadline", "lane_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-004",
+      "title": "overdue issue is promoted to must now",
+      "scenario": "github_overdue_must_now",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "must_now", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:must_now:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "github", "deadline", "lane_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-005",
+      "title": "authored pull request stays outside the active candidate set",
+      "scenario": "github_authored_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "github", "scope_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-006",
+      "title": "complete empty source coverage returns scoped no action",
+      "scenario": "complete_empty_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": []
+      },
+      "labels": ["hard_negative", "absence_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-007",
+      "title": "healthy managed run does not become a suggestion",
+      "scenario": "managed_running_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:ineligible:none:INELIGIBLE_MANAGED_RUN_HEALTHY", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "healthy", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-008",
+      "title": "latest direct turn failure becomes an unblock inspection",
+      "scenario": "managed_turn_failure_unblock",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "managed", "failure"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-009",
+      "title": "direct managed run failure becomes an unblock inspection",
+      "scenario": "managed_run_failure_unblock",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "managed", "failure"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-010",
+      "title": "recovered failure is not recommended",
+      "scenario": "managed_recovered_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:ineligible:none:INELIGIBLE_FAILURE_RECOVERED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "recovery_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-011",
+      "title": "managed observation gap routes to refresh",
+      "scenario": "managed_gap_refresh",
+      "expected": {
+        "error": null,
+        "decisionStatus": "insufficient_evidence",
+        "decisionReasonCodes": ["DECISION_REFRESH_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:review_required:refresh_sources:REVIEW_SOURCE_GAP", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "refresh_route"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-012",
+      "title": "pruned managed history routes to refresh",
+      "scenario": "managed_pruned_refresh",
+      "expected": {
+        "error": null,
+        "decisionStatus": "insufficient_evidence",
+        "decisionReasonCodes": ["DECISION_REFRESH_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:review_required:refresh_sources:REVIEW_SOURCE_HISTORY_PRUNED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "refresh_route"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-013",
+      "title": "managed failure suppresses the generic GitHub loop and keeps native urgency",
+      "scenario": "managed_failure_due_dedupe",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "must_now", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:must_now:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_DUPLICATE_OPEN_LOOP"]
+      },
+      "labels": ["positive", "managed", "dedupe_guard", "lane_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-014",
+      "title": "completed run without workflow creates no follow through",
+      "scenario": "workflow_absent_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_NOT_CONFIGURED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "workflow_absence_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-015",
+      "title": "configured review changes becomes a close-loop candidate",
+      "scenario": "workflow_review_changes",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "configured_follow_through", "lane": "close_loop", "intervention": "close_loop", "workflowActionKind": "review_changes" },
+        "rankedCandidateOrder": ["codex_managed:configured_follow_through:close_loop:close_loop:review_changes"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:eligible:none:ELIGIBLE_CONFIGURED_FOLLOW_THROUGH", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "workflow", "follow_through"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-016",
+      "title": "configured commit changes becomes a close-loop candidate",
+      "scenario": "workflow_commit_changes",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "configured_follow_through", "lane": "close_loop", "intervention": "close_loop", "workflowActionKind": "commit_changes" },
+        "rankedCandidateOrder": ["codex_managed:configured_follow_through:close_loop:close_loop:commit_changes"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:eligible:none:ELIGIBLE_CONFIGURED_FOLLOW_THROUGH", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "workflow", "follow_through"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-017",
+      "title": "create pull request workflow rejects an existing pull request target",
+      "scenario": "workflow_create_pull_request_incompatible_pr",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_WORKFLOW_ACTION_TARGET_INCOMPATIBLE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "workflow_target_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-018",
+      "title": "configured request review becomes a close-loop candidate",
+      "scenario": "workflow_request_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "configured_follow_through", "lane": "close_loop", "intervention": "close_loop", "workflowActionKind": "request_review" },
+        "rankedCandidateOrder": ["codex_managed:configured_follow_through:close_loop:close_loop:request_review"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:eligible:none:ELIGIBLE_CONFIGURED_FOLLOW_THROUGH", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "workflow", "follow_through"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-019",
+      "title": "workflow configured after run start does not apply retroactively",
+      "scenario": "workflow_nonretroactive",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_WORKFLOW_NOT_APPLICABLE_TO_RUN", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "nonretroactive_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-020",
+      "title": "workflow follow through stays quiet during the grace period",
+      "scenario": "workflow_grace_active",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_GRACE_ACTIVE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "grace_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-021",
+      "title": "completed workflow closure suppresses follow through",
+      "scenario": "workflow_completed_closure",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_CLOSED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "closure_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-022",
+      "title": "skipped workflow closure suppresses follow through",
+      "scenario": "workflow_skipped_closure",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_CLOSED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "closure_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-023",
+      "title": "matching commit artifact suppresses commit follow through",
+      "scenario": "workflow_commit_artifact",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_ARTIFACT_EXISTS", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "artifact_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-024",
+      "title": "matching pull request artifact suppresses pull request follow through",
+      "scenario": "workflow_pull_request_artifact",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "focus", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_ARTIFACT_EXISTS", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["hard_negative", "workflow", "artifact_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-025",
+      "title": "configured follow through suppresses its generic GitHub loop",
+      "scenario": "workflow_over_generic_dedupe",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "configured_follow_through", "lane": "close_loop", "intervention": "close_loop", "workflowActionKind": "create_pull_request" },
+        "rankedCandidateOrder": ["codex_managed:configured_follow_through:close_loop:close_loop:create_pull_request"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:eligible:none:ELIGIBLE_CONFIGURED_FOLLOW_THROUGH", "github:github_work_item:ineligible:none:INELIGIBLE_DUPLICATE_OPEN_LOOP"]
+      },
+      "labels": ["positive", "workflow", "dedupe_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-026",
+      "title": "must-now GitHub work ranks above a separate managed failure",
+      "scenario": "rank_due_over_failure",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "must_now", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:must_now:do:none", "codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "ranking_guard", "lane_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-027",
+      "title": "managed failure ranks above a separate review inspection in the same lane",
+      "scenario": "rank_failure_over_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none", "github:github_work_item:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "ranking_guard", "specificity_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-028",
+      "title": "review inspection ranks above a focus issue",
+      "scenario": "rank_review_over_focus",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:unblock:inspect:none", "github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "ranking_guard", "lane_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-029",
+      "title": "refresh route wins before a simultaneous user-review route",
+      "scenario": "refresh_before_user_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "insufficient_evidence",
+        "decisionReasonCodes": ["DECISION_REFRESH_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:review_required:refresh_sources:REVIEW_SOURCE_GAP", "github:github_work_item:review_required:user_review:REVIEW_RELEVANT_CRITICAL_CONFLICT_USER"]
+      },
+      "labels": ["hard_negative", "routing_guard", "refresh_before_user_review"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-030",
+      "title": "tampered active input hash fails closed",
+      "scenario": "tampered_input_hash",
+      "expected": {
+        "error": "INPUT_INTEGRITY_REJECTED",
+        "decisionStatus": null,
+        "decisionReasonCodes": [],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": []
+      },
+      "labels": ["integrity", "input_hash_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-031",
+      "title": "future run-start evidence fails the exact graph boundary",
+      "scenario": "future_run_start",
+      "expected": {
+        "error": "EXACT_EVIDENCE_GRAPH_REJECTED",
+        "decisionStatus": null,
+        "decisionReasonCodes": [],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": []
+      },
+      "labels": ["integrity", "evidence_graph_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-032",
+      "title": "private Codex sentinel never enters the active result or evaluation record",
+      "scenario": "privacy_sentinel",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "privacy_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-033",
+      "title": "identical replay preserves the exact active result",
+      "scenario": "deterministic_repeat",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["positive", "determinism_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-034",
+      "title": "standalone user-review evidence produces bounded clarification",
+      "scenario": "standalone_user_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "needs_clarification",
+        "decisionReasonCodes": ["DECISION_USER_CLARIFICATION_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["github:github_work_item:review_required:user_review:REVIEW_RELEVANT_CRITICAL_CONFLICT_USER"]
+      },
+      "labels": ["hard_negative", "routing_guard", "standalone_user_review"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-035",
+      "title": "safe eligible candidate wins before a separate user-review assessment",
+      "scenario": "eligible_before_user_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "focus", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:review_required:user_review:REVIEW_RELEVANT_CRITICAL_CONFLICT_USER"]
+      },
+      "labels": ["positive", "routing_guard", "eligible_before_user_review"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-036",
+      "title": "unavailable GitHub coverage cannot claim scoped no action",
+      "scenario": "github_unavailable_insufficient",
+      "expected": {
+        "error": null,
+        "decisionStatus": "insufficient_evidence",
+        "decisionReasonCodes": ["DECISION_RELEVANT_COVERAGE_INSUFFICIENT"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": []
+      },
+      "labels": ["hard_negative", "coverage_guard", "unavailable_source"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-037",
+      "title": "unbound managed failure cannot become an active candidate",
+      "scenario": "managed_failure_unbound_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:ineligible:none:INELIGIBLE_LINK_NOT_ACTIVE", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "link_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-038",
+      "title": "managed failure with a missing linked target routes to refresh",
+      "scenario": "managed_failure_missing_target_refresh",
+      "expected": {
+        "error": null,
+        "decisionStatus": "insufficient_evidence",
+        "decisionReasonCodes": ["DECISION_REFRESH_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:review_required:refresh_sources:REVIEW_LINK_TARGET_NOT_CURRENT", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "link_guard", "refresh_route"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-039",
+      "title": "managed failure with a project mapping mismatch asks the user",
+      "scenario": "managed_failure_project_mismatch_user_review",
+      "expected": {
+        "error": null,
+        "decisionStatus": "needs_clarification",
+        "decisionReasonCodes": ["DECISION_USER_CLARIFICATION_REQUIRED"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:managed_failure:review_required:user_review:REVIEW_LINK_PROJECT_MISMATCH", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "managed", "link_guard", "standalone_user_review"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-040",
+      "title": "active ranking preserves all five Phase 2 GitHub candidates",
+      "scenario": "rank_preserves_phase2_four_plus",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "must_now", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:must_now:do:none", "github:github_work_item:must_now:do:none", "github:github_work_item:unblock:inspect:none", "github:github_work_item:unblock:inspect:none", "github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "ranking_guard", "phase2_four_plus_rank_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-041",
+      "title": "weekly outcome match reason survives into the active GitHub suggestion",
+      "scenario": "weekly_focus_reason_preserved",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "focus", "intervention": "do", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:focus:do:none"],
+        "assessmentOutcomes": ["github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["positive", "focus", "weekly_focus_reason_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-042",
+      "title": "older focus-matched managed failure outranks a newer non-match in unblock",
+      "scenario": "rank_managed_focus_over_newer_nonmatch",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "codex_managed", "triggerKind": "managed_failure", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["codex_managed:managed_failure:unblock:inspect:none", "codex_managed:managed_failure:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "codex_managed:managed_failure:eligible:none:ELIGIBLE_MANAGED_LATEST_DIRECT_FAILURE", "github:github_work_item:ineligible:none:INELIGIBLE_DUPLICATE_OPEN_LOOP", "github:github_work_item:ineligible:none:INELIGIBLE_DUPLICATE_OPEN_LOOP"]
+      },
+      "labels": ["positive", "ranking_guard", "managed_focus_priority_guard"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-043",
+      "title": "workflow configured before project archive cannot create follow-through",
+      "scenario": "workflow_archived_project_no_action",
+      "expected": {
+        "error": null,
+        "decisionStatus": "no_action",
+        "decisionReasonCodes": ["DECISION_SCOPED_NO_ACTION"],
+        "topCandidate": null,
+        "rankedCandidateOrder": [],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_FOLLOW_THROUGH_NOT_CONFIGURED", "github:github_work_item:ineligible:none:INELIGIBLE_UPSTREAM_GATE"]
+      },
+      "labels": ["hard_negative", "workflow", "archived_project_guard", "no_action"]
+    },
+    {
+      "caseId": "ACTIVE-DEV-044",
+      "title": "request-review workflow does not target a pull request assigned to the user for review",
+      "scenario": "workflow_request_review_incompatible_review_request",
+      "expected": {
+        "error": null,
+        "decisionStatus": "suggested",
+        "decisionReasonCodes": ["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+        "topCandidate": { "triggerSource": "github", "triggerKind": "github_work_item", "lane": "unblock", "intervention": "inspect", "workflowActionKind": null },
+        "rankedCandidateOrder": ["github:github_work_item:unblock:inspect:none"],
+        "assessmentOutcomes": ["codex_managed:configured_follow_through:ineligible:none:INELIGIBLE_WORKFLOW_ACTION_TARGET_INCOMPATIBLE", "github:github_work_item:eligible:none:ELIGIBLE_GITHUB_DIRECT_WORK"]
+      },
+      "labels": ["workflow", "workflow_target_guard", "review_direction_guard"]
+    }
+  ]
+}

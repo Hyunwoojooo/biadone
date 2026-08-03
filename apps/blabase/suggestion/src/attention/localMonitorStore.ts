@@ -30,14 +30,20 @@ import {
   type StoredAttentionReplayInputArtifact
 } from "./monitoringSchema";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
+import { runPhase2AttentionRouter } from "../crossSource/runAttentionRouter";
+import { resolveActiveAttention } from "../attentionDecision";
 import {
   ATTENTION_FEEDBACK_CONTRACT,
   ATTENTION_MONITOR_MAX_FEEDBACK,
   ATTENTION_MONITOR_MAX_FAILURES,
   ATTENTION_MONITOR_MAX_RUNS,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
   ATTENTION_MONITOR_RUN_CONTRACT,
+  ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_REPLAY_INPUT_CONTRACT,
+  ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_STORE_CONTRACT
 } from "./versions";
 
@@ -300,11 +306,20 @@ function assertReplayArtifactMatchesRun(
   run: AttentionMonitorRun,
   artifact: StoredAttentionReplayInputArtifact
 ): void {
+  const contractGenerationMatches =
+    (run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
+      artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
+    (run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
+      artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT);
   const artifactSha256 = runtimeSha256({
-    domain: "attention-private-replay-artifact-v1",
+    domain:
+      artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT
+        ? "attention-private-replay-artifact-v2"
+        : "attention-private-replay-artifact-v1",
     artifact
   });
   if (
+    !contractGenerationMatches ||
     run.replayArtifactState !== "available" ||
     run.replayArtifactSha256 !== artifactSha256 ||
     run.runId !== artifact.runId ||
@@ -317,6 +332,91 @@ function assertReplayArtifactMatchesRun(
       "REPLAY_ARTIFACT_INVALID"
     );
   }
+  if (
+    run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
+    artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT
+  ) {
+    assertActiveReplayResolutionMatchesRun(run, artifact);
+  }
+}
+
+function assertActiveReplayResolutionMatchesRun(
+  run: AttentionMonitorRun,
+  artifact: AttentionReplayInputArtifact
+): void {
+  const result = resolveActiveAttention(artifact.input);
+  const baseResult = runPhase2AttentionRouter(
+    artifact.input.baseAttentionInput
+  );
+  const expectedCounts = {
+    eligible: result.assessments.filter(
+      (assessment) => assessment.status === "eligible"
+    ).length,
+    reviewRequired: result.assessments.filter(
+      (assessment) => assessment.status === "review_required"
+    ).length,
+    ineligible: result.assessments.filter(
+      (assessment) => assessment.status === "ineligible"
+    ).length
+  };
+  const expectedAssessments = result.assessments.map(
+    (assessment) => ({
+      assessmentId: assessment.assessmentId,
+      candidateId: assessment.candidateId,
+      triggerSource: assessment.triggerSource,
+      triggerKind: assessment.triggerKind,
+      status: assessment.status,
+      reviewRoute: assessment.reviewRoute,
+      reasonCodes: assessment.reasonCodes
+    })
+  );
+  const expectedCoverageDisposition =
+    result.coverage.negativeCandidateCoverageComplete
+      ? "scoped_complete"
+      : result.decision.status === "suggested"
+        ? "limited_but_sufficient"
+        : "insufficient";
+  const expected = {
+    resultId: result.resultId,
+    resultSha256: result.resultSha256,
+    decisionStatus: result.decision.status,
+    certainty: result.decision.certainty,
+    topCandidateId:
+      result.decision.topSuggestion?.candidateId ?? null,
+    alternativeCount: result.decision.alternatives.length,
+    candidateCounts: expectedCounts,
+    candidateAssessmentDetailState: "available",
+    candidateAssessments: expectedAssessments,
+    codexExecutionCount:
+      baseResult.workCockpit.codexExecutions.length,
+    coverageDisposition: expectedCoverageDisposition,
+    decisionReasonCodes: result.decision.reasonCodes,
+    caveatCodes: result.decision.caveatCodes
+  };
+  const recorded = {
+    resultId: run.resultId,
+    resultSha256: run.resultSha256,
+    decisionStatus: run.decisionStatus,
+    certainty: run.certainty,
+    topCandidateId: run.topCandidateId,
+    alternativeCount: run.alternativeCount,
+    candidateCounts: run.candidateCounts,
+    candidateAssessmentDetailState:
+      run.candidateAssessmentDetailState,
+    candidateAssessments: run.candidateAssessments,
+    codexExecutionCount: run.codexExecutionCount,
+    coverageDisposition: run.coverageDisposition,
+    decisionReasonCodes: run.decisionReasonCodes,
+    caveatCodes: run.caveatCodes
+  };
+  if (
+    runtimeSha256({ domain: "active-replay-resolution-v0.2", expected }) !==
+    runtimeSha256({ domain: "active-replay-resolution-v0.2", expected: recorded })
+  ) {
+    throw new AttentionMonitorStoreError(
+      "REPLAY_ARTIFACT_INVALID"
+    );
+  }
 }
 
 async function assertPersistedReplayClaims(
@@ -324,7 +424,12 @@ async function assertPersistedReplayClaims(
   cwd: string
 ): Promise<void> {
   for (const run of store.runs) {
-    if (run.contract !== ATTENTION_MONITOR_RUN_CONTRACT) continue;
+    if (
+      run.contract !== ATTENTION_MONITOR_RUN_CONTRACT &&
+      run.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+    ) {
+      continue;
+    }
     const artifact = await readAttentionReplayInputArtifact(
       run.runId,
       cwd
@@ -534,12 +639,14 @@ async function writeAttentionMonitorStore(
     ...store,
     runs: store.runs.map((run) =>
       run.contract === "attention-monitor-run-v0.1" ||
-      run.contract === "attention-monitor-run-v0.2"
+      run.contract === "attention-monitor-run-v0.2" ||
+      run.contract === "attention-monitor-run-v0.3"
         ? legacyRecords.runs.get(run.runId) ?? run
         : run
     ),
     failures: store.failures.map((failure) =>
-      failure.contract === "attention-monitor-failure-v0.1"
+      failure.contract === "attention-monitor-failure-v0.1" ||
+      failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT
         ? legacyRecords.failures.get(failure.runId) ?? failure
         : failure
     )
@@ -585,7 +692,8 @@ function collectPersistedLegacyRecords(
         isRecord(run) &&
         typeof run.runId === "string" &&
         (run.contract === "attention-monitor-run-v0.1" ||
-          run.contract === "attention-monitor-run-v0.2")
+          run.contract === "attention-monitor-run-v0.2" ||
+          run.contract === "attention-monitor-run-v0.3")
       ) {
         records.runs.set(run.runId, run);
       }
@@ -596,7 +704,8 @@ function collectPersistedLegacyRecords(
       if (
         isRecord(failure) &&
         typeof failure.runId === "string" &&
-        failure.contract === "attention-monitor-failure-v0.1"
+        (failure.contract === "attention-monitor-failure-v0.1" ||
+          failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT)
       ) {
         records.failures.set(failure.runId, failure);
       }

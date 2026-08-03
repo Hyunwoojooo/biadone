@@ -13,6 +13,15 @@ import type {
   DiscoverableSourceScope,
   SourceScopeDiscovery
 } from "../src/context/sourceScopeDiscovery";
+import type {
+  ProjectWorkflowActionKind,
+  ProjectWorkflowProjection
+} from "../src/workflows";
+import {
+  clearProjectWorkflow,
+  configureProjectWorkflow,
+  fetchProjectWorkflows
+} from "./projectWorkflowsClient";
 import { syncInvalidationBus } from "./sync/invalidationBus";
 import { useSyncInvalidation } from "./sync/useSourceSync";
 
@@ -27,6 +36,8 @@ type ProjectContextResponse =
     };
 
 type ScopeDrafts = Record<string, string>;
+type WorkflowSelection = ProjectWorkflowActionKind | "unknown";
+type WorkflowDrafts = Record<string, WorkflowSelection>;
 
 const SOURCE_ORDER = [
   "github",
@@ -43,7 +54,19 @@ export function ProjectMappings() {
   const [isCreating, setIsCreating] = useState(false);
   const [savingScope, setSavingScope] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [workflowProjection, setWorkflowProjection] =
+    useState<ProjectWorkflowProjection | null>(null);
+  const [workflowDrafts, setWorkflowDrafts] =
+    useState<WorkflowDrafts>({});
+  const [isWorkflowLoading, setIsWorkflowLoading] = useState(true);
+  const [savingWorkflowProjectId, setSavingWorkflowProjectId] =
+    useState<string | null>(null);
+  const [workflowMessage, setWorkflowMessage] = useState<string | null>(
+    null
+  );
   const sequenceRef = useRef(0);
+  const workflowSequenceRef = useRef(0);
+  const workflowMutationActiveRef = useRef(false);
 
   const acceptDiscovery = useCallback((next: SourceScopeDiscovery) => {
     setDiscovery(next);
@@ -82,14 +105,52 @@ export function ProjectMappings() {
     [acceptDiscovery]
   );
 
+  const loadProjectWorkflows = useCallback(async (silent = false) => {
+    if (workflowMutationActiveRef.current) return;
+    const sequence = ++workflowSequenceRef.current;
+    if (!silent) setIsWorkflowLoading(true);
+    try {
+      const payload = await fetchProjectWorkflows();
+      if (sequence !== workflowSequenceRef.current) return;
+      if (payload.status !== "ready") {
+        if (!silent) {
+          setWorkflowMessage(
+            payload.status === "error"
+              ? payload.message
+              : "프로젝트 workflow를 로컬에서 확인할 수 없습니다."
+          );
+        }
+        return;
+      }
+      setWorkflowProjection(payload.projection);
+      if (!silent) setWorkflowMessage(null);
+    } catch {
+      if (sequence === workflowSequenceRef.current && !silent) {
+        setWorkflowMessage("프로젝트 workflow를 불러오지 못했습니다.");
+      }
+    } finally {
+      if (sequence === workflowSequenceRef.current && !silent) {
+        setIsWorkflowLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadProjectWorkflows();
+  }, [load, loadProjectWorkflows]);
 
   useSyncInvalidation(
     ["github", "codex", "notion", "google_calendar"],
     () => {
-      if (!isCreating && savingScope === null) void load(true);
+      if (
+        !isCreating &&
+        savingScope === null &&
+        savingWorkflowProjectId === null
+      ) {
+        void load(true);
+        void loadProjectWorkflows(true);
+      }
     }
   );
 
@@ -106,7 +167,14 @@ export function ProjectMappings() {
   }, [discovery]);
 
   async function createProject() {
-    if (isCreating || savingScope !== null || isLoading) return;
+    if (
+      isCreating ||
+      savingScope !== null ||
+      savingWorkflowProjectId !== null ||
+      isLoading
+    ) {
+      return;
+    }
     const sequence = ++sequenceRef.current;
     setIsCreating(true);
     setMessage(null);
@@ -129,7 +197,7 @@ export function ProjectMappings() {
   }
 
   async function applyMapping(scope: DiscoverableSourceScope) {
-    if (savingScope !== null) return;
+    if (savingScope !== null || savingWorkflowProjectId !== null) return;
     const selectedProjectId =
       drafts[scope.scopeFingerprint] ?? "";
     if ((scope.projectId ?? "") === selectedProjectId) return;
@@ -172,6 +240,59 @@ export function ProjectMappings() {
     }
   }
 
+  async function applyWorkflow(project: DiscoverableProject) {
+    if (
+      workflowProjection === null ||
+      savingWorkflowProjectId !== null ||
+      savingScope !== null ||
+      isCreating
+    ) {
+      return;
+    }
+    const selected =
+      workflowDrafts[project.projectId] ??
+      currentWorkflowAction(workflowProjection, project.projectId);
+    const current = currentWorkflowAction(
+      workflowProjection,
+      project.projectId
+    );
+    if (selected === current) return;
+
+    workflowMutationActiveRef.current = true;
+    workflowSequenceRef.current += 1;
+    setSavingWorkflowProjectId(project.projectId);
+    setWorkflowMessage(null);
+    try {
+      const next =
+        selected === "unknown"
+          ? await clearProjectWorkflow({ projectId: project.projectId })
+          : await configureProjectWorkflow({
+              projectId: project.projectId,
+              actionKind: selected
+            });
+      setWorkflowProjection(next);
+      setWorkflowDrafts((drafts) => {
+        const nextDrafts = { ...drafts };
+        delete nextDrafts[project.projectId];
+        return nextDrafts;
+      });
+      setWorkflowMessage(
+        selected === "unknown"
+          ? `${project.label}의 완료 후속 workflow를 해제했습니다.`
+          : `${project.label}의 완료 후속 workflow를 설정했습니다.`
+      );
+      syncInvalidationBus.invalidate({
+        reason: "context_changed",
+        targets: ["attention"]
+      });
+    } catch {
+      setWorkflowMessage("프로젝트 workflow를 변경하지 못했습니다.");
+    } finally {
+      workflowMutationActiveRef.current = false;
+      setSavingWorkflowProjectId(null);
+    }
+  }
+
   const activeProjects =
     discovery?.projects.filter((project) => !project.archived) ?? [];
   const mappedCount =
@@ -202,7 +323,10 @@ export function ProjectMappings() {
             type="button"
             onClick={() => void createProject()}
             disabled={
-              isCreating || savingScope !== null || isLoading
+              isCreating ||
+              savingScope !== null ||
+              savingWorkflowProjectId !== null ||
+              isLoading
             }
           >
             {isCreating
@@ -256,7 +380,9 @@ export function ProjectMappings() {
                           savingScope === scope.scopeFingerprint
                         }
                         isLocked={
-                          savingScope !== null || isCreating
+                          savingScope !== null ||
+                          savingWorkflowProjectId !== null ||
+                          isCreating
                         }
                         onSelect={(projectId) =>
                           setDrafts((current) => ({
@@ -272,6 +398,75 @@ export function ProjectMappings() {
               );
             })
           : null}
+
+        {activeProjects.length > 0 ? (
+          <section
+            className="projectWorkflowSettings"
+            aria-labelledby="project-workflow-settings"
+            aria-busy={isWorkflowLoading}
+          >
+            <div className="projectWorkflowSettingsHeader">
+              <div>
+                <h3 id="project-workflow-settings">완료 후속 workflow</h3>
+                <p>
+                  Codex managed run이 끝난 뒤 어떤 후속 작업을 제안할지
+                  프로젝트별로 정합니다.
+                </p>
+              </div>
+              <span>
+                {isWorkflowLoading
+                  ? "확인 중"
+                  : `${workflowProjection?.activeWorkflows.length ?? 0}개 설정됨`}
+              </span>
+            </div>
+            <ul>
+              {activeProjects.map((project) => {
+                const current = currentWorkflowAction(
+                  workflowProjection,
+                  project.projectId
+                );
+                const selected =
+                  workflowDrafts[project.projectId] ?? current;
+                return (
+                  <ProjectWorkflowRow
+                    key={project.projectId}
+                    project={project}
+                    current={current}
+                    selected={selected}
+                    isSaving={
+                      savingWorkflowProjectId === project.projectId
+                    }
+                    isLocked={
+                      workflowProjection === null ||
+                      isWorkflowLoading ||
+                      savingWorkflowProjectId !== null ||
+                      savingScope !== null ||
+                      isCreating
+                    }
+                    onSelect={(actionKind) =>
+                      setWorkflowDrafts((currentDrafts) => ({
+                        ...currentDrafts,
+                        [project.projectId]: actionKind
+                      }))
+                    }
+                    onApply={() => void applyWorkflow(project)}
+                  />
+                );
+              })}
+            </ul>
+            <p className="projectWorkflowPolicy">
+              기본값은 unknown이며 자동 후속 작업을 만들지 않습니다. 저장한
+              시점 이후 시작한 managed run에만 적용하고, 완료 뒤 2분의
+              유예가 지난 후 평가합니다. 완료 또는 건너뜀은 명시적으로
+              기록됩니다.
+            </p>
+            {workflowMessage ? (
+              <p className="projectMappingsMessage" role="status">
+                {workflowMessage}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
 
         {(discovery?.truncatedSources.length ?? 0) > 0 ? (
           <p className="projectMappingsNotice">
@@ -361,6 +556,67 @@ function ProjectMappingRow({
   );
 }
 
+function ProjectWorkflowRow({
+  project,
+  current,
+  selected,
+  isSaving,
+  isLocked,
+  onSelect,
+  onApply
+}: {
+  project: DiscoverableProject;
+  current: WorkflowSelection;
+  selected: WorkflowSelection;
+  isSaving: boolean;
+  isLocked: boolean;
+  onSelect: (actionKind: WorkflowSelection) => void;
+  onApply: () => void;
+}) {
+  const changed = selected !== current;
+  return (
+    <li>
+      <div className="projectWorkflowProject">
+        <strong>{project.label}</strong>
+        <span>
+          {current === "unknown"
+            ? "현재 unknown · 자동 후속 작업 없음"
+            : `현재 ${workflowActionLabel(current)}`}
+        </span>
+      </div>
+      <label>
+        <span className="srOnly">{project.label} 완료 후속 workflow</span>
+        <select
+          value={selected}
+          disabled={isLocked}
+          onChange={(event) =>
+            onSelect(event.target.value as WorkflowSelection)
+          }
+        >
+          <option value="unknown">설정 안 함 (unknown)</option>
+          <option value="review_changes">변경 검토</option>
+          <option value="commit_changes">커밋</option>
+          <option value="create_pull_request">PR 생성</option>
+          <option value="request_review">리뷰 요청</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        disabled={!changed || isLocked}
+        onClick={onApply}
+      >
+        {isSaving
+          ? "반영 중"
+          : !changed
+            ? "반영됨"
+            : selected === "unknown"
+              ? "설정 해제"
+              : "workflow 설정"}
+      </button>
+    </li>
+  );
+}
+
 function scopeDrafts(
   scopes: DiscoverableSourceScope[],
   projects: DiscoverableProject[],
@@ -378,6 +634,32 @@ function scopeDrafts(
         defaultProjectId
     ])
   );
+}
+
+function currentWorkflowAction(
+  projection: ProjectWorkflowProjection | null,
+  projectId: string
+): WorkflowSelection {
+  return (
+    projection?.activeWorkflows.find(
+      (workflow) => workflow.projectId === projectId
+    )?.actionKind ?? "unknown"
+  );
+}
+
+function workflowActionLabel(
+  actionKind: ProjectWorkflowActionKind
+): string {
+  switch (actionKind) {
+    case "review_changes":
+      return "변경 검토";
+    case "commit_changes":
+      return "커밋";
+    case "create_pull_request":
+      return "PR 생성";
+    case "request_review":
+      return "리뷰 요청";
+  }
 }
 
 function mappingButtonLabel(

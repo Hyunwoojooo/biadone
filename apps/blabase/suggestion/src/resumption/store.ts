@@ -104,6 +104,7 @@ export class WorkResumptionStoreError extends Error {
       | "STORE_READ_FAILED"
       | "STORE_WRITE_FAILED"
       | "BINDING_NOT_FOUND"
+      | "BINDING_IDENTITY_CHANGED"
       | "COMPANION_OFFLINE"
       | "COMMAND_NOT_FOUND"
       | "COMMAND_CLAIM_MISMATCH"
@@ -241,6 +242,8 @@ export async function openWorkSession(
   input: {
     taskRef: WorkResumptionTaskRef;
     explicitUserAction: true;
+    expectedBindingId?: string;
+    expectedExecutionId?: string;
   },
   cwd = process.cwd(),
   now = new Date()
@@ -264,6 +267,16 @@ export async function openWorkSession(
     const binding = lookupStoredWorkSessionBinding(store, taskRef);
     if (!binding) {
       throw new WorkResumptionStoreError("BINDING_NOT_FOUND");
+    }
+    if (
+      (input.expectedBindingId !== undefined ||
+        input.expectedExecutionId !== undefined) &&
+      (binding.bindingId !== input.expectedBindingId ||
+        binding.executionId !== input.expectedExecutionId)
+    ) {
+      throw new WorkResumptionStoreError(
+        "BINDING_IDENTITY_CHANGED"
+      );
     }
 
     const existing = await findNonterminalCommandForBinding(

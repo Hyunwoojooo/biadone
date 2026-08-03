@@ -375,7 +375,7 @@ function isClaimAuthorityProjection(
     value.contract !== "claim-authority-projection-v0.1" ||
     value.schemaVersion !== "work-claim-schema-v0.1" ||
     value.conflictSchemaVersion !== "claim-conflict-schema-v0.1" ||
-    value.resolverVersion !== "cross-source-claim-resolver-v0.1" ||
+    value.resolverVersion !== "cross-source-claim-resolver-v0.2" ||
     value.authorityPolicyVersion !==
       "field-claim-authority-policy-v0.1" ||
     value.evidencePolicyVersion !==

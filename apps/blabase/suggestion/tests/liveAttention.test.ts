@@ -17,6 +17,7 @@ import {
   evaluateAttentionSnapshots,
   LIVE_ATTENTION_FRESHNESS_POLICY
 } from "../src/attention/liveAttention";
+import { verifyActiveAttentionResultIntegrity } from "../src/attentionDecision";
 import { verifyPhase2AttentionResultIntegrity } from "../src/crossSource/runAttentionRouter";
 
 const AS_OF = "2026-07-26T12:00:00.000Z";
@@ -70,14 +71,16 @@ describe("live Attention orchestration", () => {
       decisionStatus: "suggested",
       candidateCounts: {
         eligible: 1,
-        provisional: 0,
+        reviewRequired: 0,
         ineligible: 0
       },
       candidateAssessments: [
         {
-          taskKind: "assigned_issue",
-          disposition: "eligible",
-          gateReasonCodes: []
+          triggerSource: "github",
+          triggerKind: "github_work_item",
+          status: "eligible",
+          reviewRoute: "none",
+          reasonCodes: ["ELIGIBLE_GITHUB_DIRECT_WORK"]
         }
       ],
       latencyMs: 17,
@@ -89,8 +92,18 @@ describe("live Attention orchestration", () => {
         maxFutureClockSkewMs: 60_000
       }
     });
-    expect(verifyPhase2AttentionResultIntegrity(evaluated.result)).toBe(
+    expect(
+      Date.parse(evaluated.run.completedAt) -
+        Date.parse(evaluated.run.startedAt)
+    ).toBe(17);
+    expect(verifyActiveAttentionResultIntegrity(evaluated.result)).toBe(
       true
+    );
+    expect(
+      verifyPhase2AttentionResultIntegrity(evaluated.baseResult)
+    ).toBe(true);
+    expect(evaluated.eligibilityProjection.projectionSha256).toBe(
+      evaluated.result.dependencies.eligibilityProjectionSha256
     );
 
     const serializedRun = JSON.stringify(evaluated.run);
@@ -190,7 +203,7 @@ describe("live Attention orchestration", () => {
     expect(evaluated.result.decision.status).toBe(
       "insufficient_evidence"
     );
-    expect(evaluated.result.workCockpit.codexExecutions).toHaveLength(
+    expect(evaluated.baseResult.workCockpit.codexExecutions).toHaveLength(
       1
     );
     expect(evaluated.run.errors).toEqual([
@@ -219,6 +232,32 @@ describe("live Attention orchestration", () => {
     expect(first.result).toEqual(second.result);
     expect(first.run.resultId).toBe(second.run.resultId);
     expect(first.run.runId).not.toBe(second.run.runId);
+  });
+
+  it("samples completion only after resolving the decision and records an exact interval", () => {
+    let completionClockCalled = false;
+    const evaluated = evaluateAttentionSnapshots({
+      github: {
+        status: "unavailable",
+        reason: "CONNECTOR_DISCONNECTED"
+      },
+      codex: {
+        status: "unavailable",
+        reason: "CONNECTOR_DISCONNECTED"
+      },
+      asOf: AS_OF,
+      startedAt: AS_OF,
+      completionClock: () => {
+        completionClockCalled = true;
+        return Date.parse(AS_OF) + 31;
+      }
+    });
+
+    expect(completionClockCalled).toBe(true);
+    expect(evaluated.run.completedAt).toBe(
+      "2026-07-26T12:00:00.031Z"
+    );
+    expect(evaluated.run.latencyMs).toBe(31);
   });
 
   it("uses execution IDs allocated before source collection for run and replay lineage", () => {

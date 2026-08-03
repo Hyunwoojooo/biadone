@@ -168,6 +168,35 @@ export function runPhase2AttentionRouter(
   });
 }
 
+/**
+ * Returns the complete deterministic GitHub candidate order used by Phase 2.
+ * Phase 4B consumes this instead of the intentionally bounded top-three
+ * decision payload so a gate cannot erase the relative rank of candidate #4+.
+ */
+export function rankAllPhase2GitHubCandidates(
+  input: unknown
+): Phase2Candidate[] {
+  const parsed = phase2AttentionInputSchema.parse(input);
+  assertSourceBatchIntegrity(parsed);
+  return deriveGitHubCandidates(parsed)
+    .rankedCandidates.sort(compareRankedCandidates)
+    .map((item) => item.candidate);
+}
+
+export function phase2GithubSignalMatchesActiveFocus(
+  input: unknown,
+  signal: Extract<
+    RuntimeWorkSignal,
+    { kind: "work_item_observation" }
+  >
+): boolean {
+  const parsed = phase2AttentionInputSchema.parse(input);
+  return matchesActiveFocus(
+    parsed,
+    [signal.facts.title, signal.facts.repositoryFullName].join(" ")
+  );
+}
+
 export function computePhase2AttentionResultSha256(
   result: Omit<Phase2AttentionResult, "resultSha256">
 ): string {

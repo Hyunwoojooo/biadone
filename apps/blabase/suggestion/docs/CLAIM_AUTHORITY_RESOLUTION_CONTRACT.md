@@ -1,6 +1,6 @@
 # Claim Authority & Conflict Resolution Contract
 
-상태: Phase 3C observation-only local beta final gate 통과
+상태: Phase 3C projection + Phase 4B eligibility integration local beta 통과
 
 ## 1. 목적
 
@@ -8,11 +8,12 @@
 각 semantic field에 권위가 있는 source를 판정하며 원본 claim과 충돌을 보존하는
 규칙을 정의한다.
 
-Phase 3C의 결과는 Work Cockpit의 보수적인 관찰 정보다. source가
-직접 증명하는 값보다 넓게 추론하지 않으며 Attention 입력, 후보,
-ranking, selection과 replay/monitor hash에는 연결하지 않는다.
+Phase 3C의 결과는 Work Cockpit의 보수적인 관찰 정보다. source가 직접
+증명하는 값보다 넓게 추론하지 않으며 claim 자체를 Attention 후보나 점수로
+바꾸지 않는다. Phase 4A/4B는 동일 request-time evidence graph의 exact dependency
+hash와 relevant unresolved conflict만 별도 hard eligibility gate로 소비한다.
 
-## 2. v0.1 실제 평가 범위
+## 2. v0.2 실제 평가 범위
 
 현재 live runtime에서 직접 평가할 수 있는 범위는 다음과 같다.
 
@@ -73,7 +74,7 @@ semantic domain을 분리한다.
 이 분리 때문에 `managed_codex_execution_state=completed`와
 `github_work_item_state=open`은 충돌이 아니다.
 
-v0.1의 deduplicate된 projection은 claims, resolutions, conflicts를 각각
+v0.2의 deduplicate된 projection은 claims, resolutions, conflicts를 각각
 최대 `12,000`개까지 보존한다. claim과 conflict의 exact relation reference는
 최대 `100`개다. 이는 managed run 저장 상한 `10,000`개와 Phase 3A relation
 projection 상한 `100`개를 손실 없이 수용하는 계약이다. raw resolver
@@ -148,6 +149,12 @@ lineage 안에서만 이전 값을 supersede할 수 있다. 서로 다른 source
     projection 전체를 거부한다.
 12. 같은 입력, `asOf`와 version에서는 같은 claim/resolution/conflict ID와 hash를
     생성한다.
+13. 같은 native pull request가 authored query와 review-requested query에 동시에
+    나타나는 것은 서로 양립 가능한 사용자 역할이다. source scope, subject,
+    object type, number, destination과 project identity가 모두 같을 때만
+    action-driving direct role인 review request를 단일 relationship claim으로
+    선택한다. native identity가 하나라도 다르면 합치지 않고 기존 fail-closed
+    conflict 경계를 유지한다.
 
 ## 7. Conflict record
 
@@ -168,11 +175,11 @@ resolver가 source를 수정하거나 사용자 대신 충돌을 해결하지 �
 `claim-authority-projection-v0.1`은 기존 local-only
 `GET /api/work-relations` 응답의 `claims` 필드에 중첩한다.
 
-v0.1 버전 세트는 다음과 같다.
+현재 버전 세트는 다음과 같다.
 
 - claim schema: `work-claim-schema-v0.1`
 - conflict schema: `claim-conflict-schema-v0.1`
-- resolver: `cross-source-claim-resolver-v0.1`
+- resolver: `cross-source-claim-resolver-v0.2`
 - field authority policy: `field-claim-authority-policy-v0.1`
 - evidence policy: `direct-source-claim-evidence-v0.1`
 
@@ -213,8 +220,9 @@ Work Cockpit은 다음을 구분한다.
 - resolved conflict
 - unresolved critical conflict
 
-UI에는 고정 문구 `관찰 전용 · 추천 판단에는 아직 반영하지 않음`을 표시한다.
-사용자 correction 저장 계약이 생기기 전에는 conflict 해결 버튼을 제공하지 않는다.
+UI는 `claim과 충돌 자체는 후보가 아님`을 표시하고, relevant conflict가 실제
+후보 eligibility에 미친 영향은 active Attention 결과에서 별도로 설명한다. 사용자
+correction 저장 계약이 생기기 전에는 conflict 해결 버튼을 제공하지 않는다.
 
 ## 10. Attention 격리
 
@@ -223,14 +231,16 @@ projection, resolution과 conflict는 모두 다음을 강제한다.
 - `attentionDisposition = not_connected`
 - `forbiddenAsAttentionCandidate = true`
 
-Phase 3C는 기존 Attention input/result version, candidate filtering, ordering,
-ranking, selection, replay와 monitor hash를 변경하지 않는다. Phase 4에서 별도
-evaluation과 version change를 거친 뒤에만 `NoCriticalConflict` eligibility gate를
-검토한다.
+Phase 3C projection 자체는 candidate filtering, ordering, ranking 또는 selection을
+수행하지 않는다. Phase 4A/4B가 별도 evaluation과 version change를 거쳐
+`NoCriticalConflict` eligibility gate를 구현했다. active input/result v0.4는
+사용한 eligibility projection과 claim dependency hash를 private replay v2 및
+monitor v0.4 provenance에 포함한다. unresolved conflict 전체 개수가 아니라 exact
+candidate target 또는 relation에 relevant한 conflict만 차단한다.
 
 ## 11. 평가와 데이터
 
-평가는 `suggestion-claim-authority-dev-v0.1` revision `1` mutable synthetic
+평가는 `suggestion-claim-authority-dev-v0.1` revision `2` mutable synthetic
 Dev Candidate `40`건을 사용한다. 각 case는 expected semantic summary와 exact
 projection SHA-256를 함께 고정하며 expected rejection case는 `null` projection을
 검증한다.
@@ -250,11 +260,11 @@ projection SHA-256를 함께 고정하며 expected rejection case는 `null` proj
 현재 targeted test의 deterministic record는 resolution `42/42`, conflict `9/9`,
 exact case `40/40`과 모든 zero guardrail 통과를 검증한다. dataset canonical
 SHA-256은
-`65e7b3dea1b197133b3c776970b2bf3342bfb59777cbc2a1a0a01b31ec11606d`,
+`809e459b2e27e26791ce20ba4599450818425b48603ba76cb2a8cad45544fe4d`,
 materialized input SHA-256은
 `12f1eb24d6522170e828bfbf406b324d8d2d600b7a9013016d6c6adf95d5f8f1`,
 deterministic output SHA-256은
-`cb8e60f7a62d35ab87cac554967c370244bf9a252afa74dcc30452c74b3d08bd`다.
+`34e560c4894f1b84c66348779a804fb014fdd01f28d70088c49a9163ce0a654a`다.
 
 평가 dependency는 다음 canonical SHA-256를 고정한다.
 
@@ -269,10 +279,14 @@ deterministic output SHA-256은
 
 synthetic baseline은 실제 cross-source recommendation 품질이나 human-approved Gold를
 뜻하지 않는다. final candidate run은
-`claim_authority_run_f2bc1b560e8e1b298f0c3bf2b5174648`, code fingerprint는
-`0848f74ca1d1557007a24f430ab7cd0c3c3b77f5b49076d9ebd37784fbb17b9b`이며
+`claim_authority_run_0079980ec2ea503ca9718bc48f8846e6`, code fingerprint는
+`6ec1896adacc92f474b9894a903095cf74667dcd680922c4eb542e6dee6cc0d5`이며
 exact case `40/40`, resolution `42/42`, conflict `9/9`과 모든 zero guardrail을
-통과했다. 자세한 artifact SHA와 regression run은 Engine Change Record에 기록한다.
+통과했다. artifact SHA-256은
+`0d2c04922a4746113fea55f33f3fe683466ae8188205c1b08d174f1cef5cf452`다.
+revision 2는 같은 native PR의 compatible multi-role false conflict를 수정한 mutable
+Dev Candidate 변경이다. frozen dataset은 수정하지 않았고 revision 1 run은 기존
+Engine Change Record와 private artifact에 보존한다.
 
 ## 12. Privacy와 retention
 
@@ -290,24 +304,23 @@ exact case `40/40`, resolution `42/42`, conflict `9/9`과 모든 zero guardrail�
 ## 13. Compatibility와 rollback
 
 Phase 3C는 local-only `GET /api/work-relations`에 `claims`를 추가한 additive
-nested contract다. 기존 Phase 3A `executes`, Phase 3B `produces`, source store,
-Attention v0.3 input/result와 v0.2 policy/rule contract를 바꾸지 않는다. 현재
-internal client는 새 ready response를 strict하게 검증하므로 서버와 client를 함께
-배포해야 한다. dependency가 엇갈리는 이전/partial runtime은 거짓 ready를
-보여주지 않고 전체 claim read를 fail closed한다.
+nested contract다. resolver v0.2는 projection schema를 바꾸지 않고 compatible
+same-PR roles의 false conflict만 교정한다. 현재 internal client와 Phase 4B active
+engine은 resolver v0.2를 strict하게 요구하므로 서버, browser client와 active
+Attention을 함께 배포해야 한다. dependency가 엇갈리는 이전/partial runtime은
+거짓 ready나 suggestion을 보여주지 않고 fail closed한다.
 
-rollback은 Work Cockpit의 claim/conflict UI와 client guard, `/api/work-relations`의
-`claims` nested projection, `src/claims` 및 claim evaluation runner/dataset을 제거하고
-Phase 3B API/UI로 복귀한다. 신규 production store나 migration이 없으므로 data
-migration/cleanup은 필요 없다. Attention version/dataset rollback도 필요 없다.
+rollback은 Phase 4B active Attention과 함께 resolver/client expectation을 v0.1로
+복귀하거나, Work Cockpit의 claim/conflict UI와 `/api/work-relations`의 `claims`
+nested projection, `src/claims`를 제거해 Phase 3B API/UI로 복귀한다. 신규
+production store나 migration이 없으므로 data migration/cleanup은 필요 없다.
 
 ## 14. 사용자 판단 필요 여부
 
-현재 Phase 3C local beta를 완료하는 데 추가 사용자 판단은 필요하지 않다.
-이미 확정한 관찰 전용, exact identity, fail-closed, Attention 격리 원칙 안에서
-구현하며 새로운 자동 판정이나 외부 변경을 승인하지 않는다. Notion/
-Calendar의 authoritative adapter, same-work-item equivalence, conflict correction,
-Attention eligibility는 후속 phase의 별도 제품 판단이다.
+현재 Phase 4B local beta를 완료하는 데 추가 사용자 판단은 필요하지 않다.
+이미 확정한 exact identity, relevant conflict fail-closed와 적극 추천 원칙 안에서
+구현했고 외부 source를 수정하지 않는다. Notion/Calendar의 authoritative adapter,
+same-work-item equivalence와 conflict correction은 후속 phase의 별도 제품 판단이다.
 
 ## 15. 후속 범위
 
@@ -316,4 +329,5 @@ Attention eligibility는 후속 phase의 별도 제품 판단이다.
 - user-confirmed same-work-item/equivalent-field relation
 - Calendar event와 work item의 explicit relation
 - explicit feedback/correction ledger
-- Phase 4 hard eligibility의 unresolved-critical-conflict gate
+- human-reviewed Cross-source Golden/locked holdout
+- production distribution에서 compatible-role false conflict와 clarification 품질 검증

@@ -201,6 +201,19 @@ describe("work relations client", () => {
     });
   });
 
+  it("rejects a claim projection from the superseded resolver contract", async () => {
+    const ready = structuredClone(readyProjection());
+    Object.assign(ready.claims, {
+      resolverVersion: "cross-source-claim-resolver-v0.1"
+    });
+    stubJsonResponse(ready);
+
+    await expect(fetchWorkRelations()).resolves.toMatchObject({
+      status: "error",
+      code: "INVALID_CLAIM_AUTHORITY_PROJECTION"
+    });
+  });
+
   it("rejects a malformed managed semantic dependency hash", async () => {
     const ready = structuredClone(readyProjection());
     const inputs = ready.claims.inputs as unknown as Record<string, unknown>;

@@ -399,6 +399,7 @@ export async function readManagedCodexPublicProjection(
 export type ManagedCodexObservability = {
   projection: ManagedCodexPublicProjection;
   semantics: ManagedCodexSemanticProjection;
+  managedRunStartedAtById: Record<string, string>;
 };
 
 export async function readManagedCodexObservability(
@@ -412,7 +413,8 @@ export async function readManagedCodexObservability(
   const read = await readManagedCodexContext(input, cwd);
   return {
     projection: read.projection,
-    semantics: read.semantics
+    semantics: read.semantics,
+    managedRunStartedAtById: read.managedRunStartedAtById
   };
 }
 
@@ -420,6 +422,7 @@ type ManagedCodexReadContext = {
   projection: ManagedCodexPublicProjection;
   histories: ManagedCodexEventHistory[];
   semantics: ManagedCodexSemanticProjection;
+  managedRunStartedAtById: Record<string, string>;
 };
 
 async function readManagedCodexContext(
@@ -570,7 +573,18 @@ async function readManagedCodexContext(
         return { run, history };
       })
     });
-    return { projection, histories, semantics };
+    const managedRunStartedAtById = Object.fromEntries(
+      projection.runs.map((run) => [
+        run.managedRunId,
+        requireRun(registry, run.managedRunId).startedAt
+      ])
+    );
+    return {
+      projection,
+      histories,
+      semantics,
+      managedRunStartedAtById
+    };
   });
 }
 

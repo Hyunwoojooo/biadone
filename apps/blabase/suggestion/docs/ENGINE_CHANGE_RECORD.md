@@ -2348,3 +2348,295 @@
   - same server-side graph에서 active Attention result/replay version integration
   - human-reviewed frozen Golden/holdout와 explicit local rollout approval
   - Phase 4C local supervisor와 Raycast shortcut launcher
+
+## 2026-08-03 Phase 4B active Attention decision and workflow follow-through
+
+- Date: 2026-08-03
+- Owner: Codex with human direction
+- Goal:
+  - Phase 4A current-only eligibility shadow를 Work Cockpit의 실제 한 가지 제안으로
+    승격
+  - GitHub direct-work, Blabase-owned managed Codex direct failure와 사용자가 설정한
+    완료 후속 작업을 하나의 exact evidence-bound decision으로 결합
+  - candidate hard gate 뒤 lane, deterministic ranking, clarification/no-action과
+    explanation을 같은 replayable contract로 기록
+  - managed recommendation을 열 때 계산 당시 binding/execution identity가 여전히
+    current인지 재검증
+- This record supersedes:
+  - 위 Phase 4A record의 `active Work Cockpit filtering/ordering 적용: 보류`와
+    Phase 4B follow-up 항목. Phase 4A 당시의 판단과 baseline 값은 역사적 기록으로
+    그대로 보존한다.
+- Affected pipeline stages:
+  - current GitHub/managed Codex evidence graph assembly와 archived project exclusion
+  - active candidate derivation, eligibility, deduplication, recovery/supersession
+  - `must_now | unblock | close_loop | focus` lane과 within-lane ordering
+  - weekly outcome inheritance, full eligible alternatives와 deterministic explanation
+  - project workflow configure/clear/closure projection과 2분 grace
+  - active Work Cockpit, Attention Lab, `/api/attention`, polling/invalidation
+  - monitor run/failure validation, private replay persistence와 exact local replay
+  - Work Resumption open route/store/client의 expected binding/execution check
+  - GitHub same-native PR compatible-role claim derivation
+  - active/Claim Authority/Eligibility synthetic evaluation
+- Behavior before:
+  - Work Cockpit top result는 Phase 2 GitHub 중심 result였고 Phase 4A eligibility는
+    Attention Lab current-only shadow에만 존재
+  - managed Codex의 direct failure와 completion은 관찰 UI에만 표시되고 실제
+    candidate/lane/selection을 만들지 않음
+  - project별 completion workflow를 저장·적용·닫는 계약이 없음
+  - user-review conflict와 source-refresh uncertainty가 active result로 연결되지 않음
+  - replay v1과 monitor v0.3은 Phase 4A shadow/managed workflow evidence를 exact
+    active input으로 보존하지 않음
+  - managed recommendation open은 현재 binding identity와 계산 당시 identity의
+    차이를 route/store 경계에서 확인하지 않음
+  - 같은 pull request가 authored와 review-requested query에 함께 나타나면
+    compatible role을 critical relationship conflict로 잘못 만들 수 있었음
+- Behavior after:
+  - hard eligibility를 통과한 GitHub direct-work, unrecovered managed direct failure,
+    configured follow-through를 deterministic candidate set으로 생성
+  - 동일 대상의 더 최신 managed attempt/state는 오래된 failure를 supersede하고,
+    failure가 follow-through나 generic candidate보다 우선하도록 deduplicate
+  - normal running/recent completion, inventory/history-only Codex, workflow가 없는
+    completion, inactive link, archived project·archived project workflow와
+    incompatible action/target을 제외
+  - workflow는 기본 `unknown`; explicit configure 시각 이후 시작된 exact managed
+    run에만 적용하고 completion 뒤 `120000ms` grace, closure와 artifact evidence를
+    검사
+  - `create_pull_request`는 issue, `request_review`는 사용자가 작성한 pull request
+    target에서만 허용
+  - relevant unresolved `user_review` conflict만 `needs_clarification`, refresh/history/
+    liveness gap은 `insufficient_evidence`, complete negative coverage는 scoped
+    `no_action`으로 반환
+  - eligible 후보가 있으면 aggressive evidence-bound policy로 한 개를 선택하고
+    나머지 전체 ranking과 caveat를 보존
+  - active result와 그 계산에 사용한 exact eligibility projection을 response,
+    monitor v0.4와 replay v2에 함께 보존하고 local replay 시 전체 output을 비교
+  - source sync, normalization과 resolver를 포함한 production route 전체 latency를
+    run timing으로 기록
+  - Work Resumption open은 expected binding ID와 execution ID를 둘 다 요구하거나
+    둘 다 생략하도록 하고, current identity가 다르면 `409
+    BINDING_IDENTITY_CHANGED`로 fail closed
+  - browser client도 expected identity pair가 한쪽만 존재하면 network mutation 전
+    local fail-closed
+  - same-native PR multi-role은 exact native identity가 모두 같을 때 action-driving
+    review role 하나를 relationship claim으로 선택하고, identity가 다르면 기존
+    conflict 경계를 유지
+  - managed failure 제안에서 세션을 여는 것 자체는 resolution/snooze가 아니며 더
+    최신 direct state/run이 없으면 다시 제안될 수 있음
+- Versions before:
+  - active input/result/candidate/lane/ranking/resolver: 없음
+  - live orchestrator: `attention-live-orchestrator-v0.2`
+  - monitor/replay: `attention-monitor-run-v0.3` /
+    `attention-replay-input-v1`
+  - monitor failure: `attention-monitor-failure-v0.2`
+  - Cross-source Attention: input/result v0.3, policy v0.2
+  - Claim resolver: `cross-source-claim-resolver-v0.1`
+  - project workflow store/schema/policy: 없음
+  - Work Resumption: v1 contract, expected identity field 없음
+- Versions after:
+  - active input/result: `cross-source-active-attention-input-v0.4` /
+    `cross-source-active-attention-result-v0.4`
+  - active policy: `aggressive-evidence-bound-attention-policy-v0.3`
+  - candidate rule: `github-managed-codex-active-candidate-rule-v0.1`
+  - lane/ID: `active-attention-lane-policy-v0.1` /
+    `active-attention-id-v0.1`
+  - ranking/resolver: `active-attention-ranking-policy-v0.2` /
+    `active-attention-decision-resolver-v0.3`
+  - live orchestrator/freshness: `attention-live-orchestrator-v0.4` /
+    `attention-live-freshness-policy-v0.1`
+  - monitor/replay/failure: `attention-monitor-run-v0.4` /
+    `attention-replay-input-v2` / `attention-monitor-failure-v0.3`
+  - workflow store/schema/policy/projection/ID:
+    `project-workflow-store-v0.1` / `project-workflow-schema-v0.1` /
+    `project-workflow-follow-through-policy-v0.1` /
+    `project-workflow-projection-v0.1` / `project-workflow-id-v0.1`
+  - Claim resolver: `cross-source-claim-resolver-v0.2`; claim/projection/authority/
+    evidence schema는 v0.1 유지
+  - Work Resumption: v1 contract 유지, optional expected binding/execution pair를
+    additive하게 추가
+  - Phase 2 input/result v0.3과 policy v0.2는 `baseResult` compatibility용으로 유지
+- Code commit:
+  - suggestion subtree base commit:
+    `6209a07b05d7df77d08c643c04d62bf9f0c55cad`
+  - base subject: `feat(suggestion): add phase 4a eligibility shadow`
+  - candidate run code state: `dirty_worktree`
+  - final active baseline code fingerprint:
+    `71b0319dfc2e53866081c6b9b73f0ed1815c1fb5204a2a3b75edeae7d32e72a3`
+  - pre-audit active candidate code fingerprint:
+    `eb9557c5e7dc28a2009ec81722dae5c396bc9e2c208e30acbed7320fccf58e71`
+  - Claim/Eligibility compatibility baseline code fingerprint:
+    `6ec1896adacc92f474b9894a903095cf74667dcd680922c4eb542e6dee6cc0d5`
+  - 각 fingerprint는 pre-audit active candidate, dependency compatibility run과
+    final safety-audit active baseline의 서로 다른 dirty-worktree 시점을 정직하게
+    보존한다.
+  - final release commit: 생성하지 않음 — 이 작업에서는 commit 요청을 받지 않음
+- Active evaluation dataset version and SHA-256:
+  - family/version: `suggestion-active-attention-dev-v0.1`
+  - revision/class/lifecycle: `2` / mutable synthetic Dev Candidate / mutable
+  - input boundary: `exact_phase4b_replayable_evidence_envelope`
+  - data origin/production data: `bounded_synthetic` / `false`
+  - case count: `44`; expected/observed assessments: `80/80`
+  - canonical SHA-256:
+    `e10bf1fa0415e39003f5d03d760feb75dbe13dac1e606253e78ebb1ab9f0f290`
+  - materialized input SHA-256:
+    `b1b467a42f1de6564e1a2d08a48b3823c74077fe87c9eb8af4318112480e1c58`
+  - config immutable ref: `eval/synthetic/activeAttentionDecisionConfig.v0.2.json`
+  - config SHA-256:
+    `f8da1f5c0b8f55aaa6acffbd6885bdf4a1a759ca0c0f3cf61d84dcb35b6df30b`
+  - deterministic output SHA-256:
+    `1be64deabff76cc625de4e7ac8dd292fe5d403380cbdf9308cb6108dbaa3a276`
+- Candidate run ID:
+  `active_attention_eval_run_1a661f6515069b5721c9bbce775677d2`
+- Comparison run ID:
+  - 없음. revision 1과 revision 2는 dataset/config/resolver가 달라 직접 metric
+    comparison으로 취급하지 않음
+- Historical pre-audit active candidate:
+  - run `active_attention_eval_run_325d24b34e38226344b2adbc11f1648f`
+  - revision `1`, cases `42/42`, assessments `76/76`
+  - dataset SHA-256
+    `3fe00665ca62dd34e65289c6620905776314ac1c759aed849b8b3085e536c9b2`
+  - materialized input SHA-256
+    `081a1ff7f2587ea98bd3bb197bfb553392d1e722169c81d063505261511adcfd`
+  - config `eval/synthetic/activeAttentionDecisionConfig.v0.1.json`, SHA-256
+    `3433e9dcd52f7e8903c158c2993d98e3f7b5ff91e46d039b989478c53c762d16`
+  - deterministic output SHA-256
+    `51f04bc5f06ba13a22b1f340539c193e572b39a731095132fc35bf62b878b880`
+  - canonical payload/file SHA-256
+    `7366de3d5237f4b8af1215eeaaedce3d304f5cd684b73c227cdf859de1c80e77` /
+    `c15a262110f749a0ccbe1a75ebf83f7480ea404ce42a6baade6858bddc1afdbe`
+  - archived-project workflow, authored-PR review gate와 client partial identity
+    audit 전 candidate history이며 final release baseline이 아님
+- Active artifact:
+  - path:
+    `.local/evaluations/active-attention/active_attention_eval_run_1a661f6515069b5721c9bbce775677d2.json`
+  - canonical record payload SHA-256:
+    `f8c9311a46f2893225f0c378cd24ad410877573ad4c5a49daea81efaba6f3f80`
+  - file artifact SHA-256:
+    `c4606ff0d7db7e20dfc7d6b60bda863c8bd619457df0a1a616b468bd7bca80d7`
+  - file mode: `0600`
+- Compatibility evaluation records:
+  - Claim Authority revision `2`:
+    - run `claim_authority_run_0079980ec2ea503ca9718bc48f8846e6`
+    - cases `40/40`, resolutions `42/42`, conflicts `9/9`
+    - dataset SHA-256
+      `809e459b2e27e26791ce20ba4599450818425b48603ba76cb2a8cad45544fe4d`
+    - materialized input SHA-256
+      `12f1eb24d6522170e828bfbf406b324d8d2d600b7a9013016d6c6adf95d5f8f1`
+    - deterministic output SHA-256
+      `34e560c4894f1b84c66348779a804fb014fdd01f28d70088c49a9163ce0a654a`
+    - artifact SHA-256
+      `0d2c04922a4746113fea55f33f3fe683466ae8188205c1b08d174f1cef5cf452`
+  - Attention Eligibility revision `2`:
+    - run `attention_eligibility_run_acaa74c69c3f8fa721eeb253d9916400`
+    - cases `26/26`, assessments `24/24`
+    - dataset SHA-256
+      `7e53abbdf7ccf64ec30152c3fdd0c08161db10f5e2b191286745cbe729bb0343`
+    - materialized input SHA-256
+      `1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034`
+    - deterministic output SHA-256
+      `da6814647c9425fe088940cf8b6407af90a1ed310bd7291d58d84fc3c73fb5a3`
+    - artifact SHA-256
+      `0f288303d126efd0d08eab735f4da4afe7dea0470a19b7b40f73c51edb0a5490`
+  - Claim/Eligibility는 frozen Golden이 아닌 mutable Dev Candidate revision `2`다.
+    이전 revision artifact를 덮어쓰지 않았고 frozen dataset은 변경하지 않음
+- Commands executed:
+  - `npm run active-attention:baseline`
+  - `npm run claim-authority:baseline`
+  - `npm run attention-eligibility:baseline`
+  - active resolver/evaluator, workflow store/API/client, monitor compatibility,
+    managed artifact invalidation와 Work Resumption exact identity focused Vitest
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run test:e2e -- e2e/work-resumption.spec.ts`
+  - `git diff --check`
+- Metrics changed:
+  - active exact cases: `44/44`; assessments `80/80`
+  - assessment precision/recall: `1.0/1.0`
+  - schema/hash/status/review-route/lane/rank, Phase 2 truncation, weekly focus loss,
+    unsafe/recovered/unhealthy candidate leakage, workflowless/archived-project/
+    incompatible/retroactive/grace/closed/artifact leakage, duplicate loop, refresh/user-review,
+    unavailable/inactive-link/scoped-no-action, integrity/evidence graph/upstream,
+    privacy/raw Codex, ordering/determinism/config guardrail: 모두 `0`
+  - full unit/integration regression: Vitest `79/79` files, `670/670` tests passed
+  - 신규 regression: archived-project workflow 제외, review-requested 다른 사용자
+    PR 제외, client partial expected identity local fail-closed와 명시적 빈 identity
+    pair의 server 검증
+  - browser Work Resumption E2E final rerun: Chromium `3/3` passed (`7.8s`)
+  - `npm run typecheck`, `npm run lint`, production `npm run build`: passed
+  - final active baseline latency: `609ms`
+  - provider/model/prompt/token usage: `not_applicable`; deterministic rule-only
+- Regressions or accepted exceptions:
+  - mutable synthetic Dev Candidate는 human-reviewed Gold가 아니며 production
+    distribution이나 실제 사용자 유용성을 추정하지 않음
+  - managed candidate 범위는 direct failure와 configured follow-through. verified
+    stall, scope drift, meaningful progress와 approval/input escalation은 후속
+  - Notion과 Calendar는 context-only이며 candidate/fit을 만들지 않음
+  - native draft state가 없는 GitHub review는 실제 review action이 아닌 현재
+    bounded inspection 경계를 유지
+  - 실패 suggestion을 여는 것은 resolution/snooze가 아니므로 direct state가
+    바뀌기 전 반복 노출될 수 있음
+  - 동일 target의 managed run이 같은 millisecond `startedAt`을 가지면 현재 evidence로
+    authoritative newer ordering을 증명할 수 없어 오래된 failure supersession이
+    지연될 수 있음. 임의 ID tie-break를 최신성 근거로 사용하지 않으며 후속
+    monotonic run-start sequence 계약이 필요
+  - pre-audit 기간에 `monitor v0.4` 또는 failure v0.3을 resolver v0.2로 저장한
+    local record가 있다면 current v0.3 replay reader가 semantic 재현을 보장할 수
+    없어 store read가 fail closed할 수 있음. 현재 local monitor store에는 해당
+    record가 없음을 확인했으며, formal release 전 versioned migration 또는 안전한
+    invalidation 계약이 필요
+  - workflow local file mutation serialization은 단일 Node process만 보장하며
+    multi-process production 전 durable transactional store/lock이 필요
+- Privacy and retention impact:
+  - active input/monitor/API/UI에는 raw prompt, answer, reasoning, command/output,
+    diff/path/thread, repository title/name/URL을 새로 노출하지 않음
+  - project workflow store는 `.local/context/project-workflows.json` mode `0600`에
+    opaque project/run/binding/execution ID, enum과 timestamp만 append-only 저장;
+    decision `10,000`, closure `50,000` 상한
+  - private replay v2는 기존 최대 `30일` retention을 유지하고 제품 API와 Git에
+    노출하지 않음. monitor metadata도 기존 최대 `30일` 정책 유지
+  - evaluation artifact는 synthetic sanitized metadata만 포함하고 mode `0600`
+  - production conversation, raw Codex content, implicit feedback을 Golden/Regression
+    dataset으로 승격하지 않음
+  - external GitHub/Notion/Calendar mutation, prompt 전송, approval 응답 또는
+    Codex retry를 자동 실행하지 않음
+- Compatibility:
+  - Phase 2 base result를 `baseResult`로 보존하고 monitor/replay v1 및 monitor
+    v0.1/v0.2/v0.3 read compatibility 유지
+  - active v0.4 route/client/monitor는 exact version/dependency mismatch를 fail closed
+  - Claim resolver v0.2와 Eligibility revision 2 baseline으로 same-PR multi-role
+    교정이 Phase 3C/4A behavior를 깨지 않음을 확인
+  - Work Resumption callers가 expected identity를 보내지 않는 기존 수동 open은
+    v1 compatibility를 유지하고, active managed recommendation 경로만 exact pair를
+    요구
+  - browser client는 partial identity를 local에서 거부하고, 명시적으로 전달된 빈
+    identity pair를 truthy 검사로 생략하지 않아 server schema 검증이 fail closed
+- Release decision:
+  - Phase 4B local beta active Work Cockpit/Lab 사용: 허용
+  - formal production release 또는 human-approved quality claim: 보류
+  - frozen Golden baseline: 실행하지 않음. mutable synthetic Dev Candidate와
+    targeted compatibility baseline만 사용
+  - 외부 source write/자동 Codex 제어 확대: 허용하지 않음
+- Rollback method:
+  - `/api/attention`과 `liveAttention`에서 active result를 제거하고 Phase 2
+    `baseResult` presentation으로 복귀
+  - Work Cockpit/Lab active panels와 workflow UI/API/client/store consumer를 제거
+  - monitor v0.4/replay v2 writer를 제거하되 이전 reader compatibility는 유지
+  - Work Resumption active-open expected identity 전달을 제거하고 기존 v1 manual
+    open 경로로 복귀
+  - active 기능은 Phase 2 `baseResult`로 비활성화한다. v0.2/config v0.1/revision 1은
+    알려진 safety-audit gap이 있는 historical artifact로만 보존하고 재활성화하지 않음
+  - Claim resolver/client expectation과 Claim/Eligibility mutable dataset을 v0.1/
+    revision 1 behavior로 함께 복귀
+  - 신규 database migration이나 external write가 없어 backfill/remote cleanup은
+    필요 없음. local workflow file은 inert audit artifact로 보존 가능
+- Follow-up work:
+  - Phase 4C local supervisor와 단축키/Raycast launcher
+  - formal release 전 pre-audit resolver v0.2 monitor/failure record migration 또는
+    안전한 invalidation
+  - managed failure explicit acknowledgement/snooze와 재노출 정책
+  - verified meaningful progress, stall, scope drift와 stable request escalation
+  - native GitHub closed/merged/draft coverage 강화
+  - Notion task property mapping과 Calendar free-block/first-step
+  - explicit feedback/correction ledger, independent human review/adjudication,
+    Cross-source Golden과 locked holdout

@@ -48,11 +48,12 @@ describe("Attention local monitor store", () => {
     const cwd = await temporaryDirectory();
     const current = evaluatedAt("2026-07-26T12:00:00.000Z");
     const legacyInput = {
-      ...current.replayArtifact.input,
+      ...current.replayArtifact.input.baseAttentionInput,
       contract: "cross-source-attention-input-v0.2"
     };
     const legacyArtifact = {
       ...current.replayArtifact,
+      contract: "attention-replay-input-v1" as const,
       inputSha256: runtimeSha256({
         domain: "blabase-cross-source-attention-input-v0.2",
         input: legacyInput
@@ -76,9 +77,9 @@ describe("Attention local monitor store", () => {
   });
 
   it("reads v0.1 run metadata with conservative provenance defaults", () => {
-    const current = evaluatedAt(
+    const current = legacyRunFieldsAt(
       "2026-07-26T12:00:00.000Z"
-    ).run;
+    );
     const {
       supportingSources: _supportingSources,
       workContext: _workContext,
@@ -127,9 +128,9 @@ describe("Attention local monitor store", () => {
   });
 
   it("reads v0.2 run metadata without inventing replay or code provenance", () => {
-    const current = evaluatedAt(
+    const current = legacyRunFieldsAt(
       "2026-07-26T12:00:00.000Z"
-    ).run;
+    );
     const {
       analysisId: _analysisId,
       sessionId: _sessionId,
@@ -191,11 +192,11 @@ describe("Attention local monitor store", () => {
     const historical = evaluatedAt("2026-07-26T12:00:00.000Z");
     const originalCodeCommitSha = "a".repeat(40);
     const historicalRawRun = historicalRunFixture(
-      historical.run,
+      historical,
       contract,
       originalCodeCommitSha
     );
-    const legacyFailure = createAttentionFailureRecord({
+    const currentFailureForLegacy = createAttentionFailureRecord({
       executionIds: {
         runId: `run_${"4".repeat(32)}`,
         analysisId: `analysis_${"5".repeat(32)}`,
@@ -206,6 +207,9 @@ describe("Attention local monitor store", () => {
       stage: "source_sync",
       codeProvenance: unavailableCodeProvenanceFixture()
     });
+    const legacyFailure = legacyFailureFixture(
+      currentFailureForLegacy
+    );
     const {
       codeCommitSha: _failureCodeCommitSha,
       codeState: _failureCodeState,
@@ -304,7 +308,7 @@ describe("Attention local monitor store", () => {
         (run) => run.runId === currentRun.run.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-run-v0.3",
+      contract: "attention-monitor-run-v0.4",
       replayArtifactState: "available"
     });
     expect(persisted.feedback).toHaveLength(1);
@@ -318,7 +322,7 @@ describe("Attention local monitor store", () => {
         (failure) => failure.runId === currentFailure.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-failure-v0.2",
+      contract: "attention-monitor-failure-v0.3",
       codeState: "unavailable"
     });
   });
@@ -442,7 +446,7 @@ describe("Attention local monitor store", () => {
           status: "failed",
           errorCode: "ATTENTION_RESOLUTION_FAILED",
           latencyMs: 1_250,
-          contract: "attention-monitor-failure-v0.2",
+          contract: "attention-monitor-failure-v0.3",
           codeCommitSha: "a".repeat(40),
           codeState: "declared_commit",
           codeFingerprintSha256: null
@@ -723,7 +727,26 @@ describe("Attention local monitor store", () => {
     });
   });
 
-  it("fails closed when a v0.3 replay artifact is missing or schema-invalid", async () => {
+  it("rejects active monitor result metadata that the exact replay input cannot reproduce", async () => {
+    const cwd = await temporaryDirectory();
+    const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
+
+    await expect(
+      recordAttentionRun(
+        {
+          ...evaluated.run,
+          resultSha256: "f".repeat(64)
+        },
+        evaluated.replayArtifact,
+        cwd,
+        new Date(evaluated.run.asOf)
+      )
+    ).rejects.toMatchObject({
+      code: "REPLAY_ARTIFACT_INVALID"
+    });
+  });
+
+  it("fails closed when a v0.4 replay artifact is missing or schema-invalid", async () => {
     for (const corruption of ["missing", "invalid_schema"] as const) {
       const cwd = await temporaryDirectory();
       const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
@@ -754,7 +777,7 @@ describe("Attention local monitor store", () => {
     }
   });
 
-  it("fails closed when a v0.3 replay hash claim is not the artifact hash", async () => {
+  it("fails closed when a v0.4 replay hash claim is not the artifact hash", async () => {
     const cwd = await temporaryDirectory();
     const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
     await recordAttentionRun(
@@ -813,7 +836,7 @@ describe("Attention local monitor store", () => {
       runs: Array<{ replayArtifactSha256: string }>;
     };
     store.runs[0].replayArtifactSha256 = runtimeSha256({
-      domain: "attention-private-replay-artifact-v1",
+      domain: "attention-private-replay-artifact-v2",
       artifact: relinkedArtifact
     });
     await writeFile(storePath, `${JSON.stringify(store)}\n`, "utf8");
@@ -898,12 +921,13 @@ function evaluatedAt(asOf: string) {
 }
 
 function historicalRunFixture(
-  run: ReturnType<typeof evaluatedAt>["run"],
+  evaluated: ReturnType<typeof evaluatedAt>,
   contract:
     | "attention-monitor-run-v0.1"
     | "attention-monitor-run-v0.2",
   codeCommitSha: string
 ): Record<string, unknown> & { runId: string } {
+  const run = legacyRunFieldsFromEvaluation(evaluated);
   const {
     analysisId: _analysisId,
     sessionId: _sessionId,
@@ -929,6 +953,104 @@ function historicalRunFixture(
     ...v01Fields,
     contract,
     codeCommitSha
+  };
+}
+
+function legacyRunFieldsAt(asOf: string) {
+  return legacyRunFieldsFromEvaluation(evaluatedAt(asOf));
+}
+
+function legacyRunFieldsFromEvaluation(
+  evaluated: ReturnType<typeof evaluatedAt>
+) {
+  const result = evaluated.baseResult;
+  const candidateCounts = {
+    eligible: 0,
+    provisional: 0,
+    ineligible: 0
+  };
+  for (const assessment of result.candidateAssessments) {
+    candidateCounts[assessment.disposition] += 1;
+  }
+  return {
+    contract: "attention-monitor-run-v0.3" as const,
+    runId: evaluated.run.runId,
+    analysisId: evaluated.run.analysisId,
+    sessionId: evaluated.run.sessionId,
+    resultId: result.resultId,
+    status: "completed" as const,
+    asOf: result.asOf,
+    startedAt: evaluated.run.startedAt,
+    completedAt: evaluated.run.completedAt,
+    codeCommitSha: evaluated.run.codeCommitSha,
+    codeState: evaluated.run.codeState,
+    codeFingerprintSha256: evaluated.run.codeFingerprintSha256,
+    inputSha256: result.inputSha256,
+    resultSha256: result.resultSha256,
+    replayArtifactState: "available" as const,
+    replayArtifactSha256: evaluated.run.replayArtifactSha256,
+    orchestratorVersion: "attention-live-orchestrator-v0.2" as const,
+    freshnessPolicyVersion:
+      evaluated.run.freshnessPolicyVersion,
+    freshnessPolicy: evaluated.run.freshnessPolicy,
+    resultContract: result.contract,
+    policyVersion: result.policyVersion,
+    githubCandidateRuleVersion: result.githubCandidateRuleVersion,
+    codexOverviewRuleVersion: result.codexOverviewRuleVersion,
+    decisionStatus: result.decision.status,
+    certainty: result.decision.certainty,
+    topCandidateId:
+      result.decision.topSuggestion?.candidateId ?? null,
+    alternativeCount: result.decision.alternatives.length,
+    candidateCounts,
+    candidateAssessmentDetailState: "available" as const,
+    candidateAssessments: result.candidateAssessments.map(
+      (assessment) => ({
+        assessmentId: assessment.assessmentId,
+        taskKind: assessment.taskKind,
+        disposition: assessment.disposition,
+        candidateId: assessment.candidateId,
+        gateReasonCodes: assessment.gateReasonCodes
+      })
+    ),
+    codexExecutionCount: result.workCockpit.codexExecutions.length,
+    coverageDisposition: result.coverage.disposition,
+    decisionReasonCodes: result.decision.reasonCodes,
+    caveatCodes: result.decision.caveatCodes,
+    sources: evaluated.run.sources,
+    supportingSources: evaluated.run.supportingSources,
+    workContext: evaluated.run.workContext,
+    latencyMs: evaluated.run.latencyMs,
+    errors: evaluated.run.errors
+  };
+}
+
+function legacyFailureFixture(
+  current: ReturnType<typeof createAttentionFailureRecord>
+) {
+  if (current.contract !== "attention-monitor-failure-v0.3") {
+    throw new TypeError("Expected a current failure fixture.");
+  }
+  const {
+    candidateRuleVersion: _candidateRuleVersion,
+    lanePolicyVersion: _lanePolicyVersion,
+    rankingPolicyVersion: _rankingPolicyVersion,
+    resolverVersion: _resolverVersion,
+    idPolicyVersion: _idPolicyVersion,
+    ...common
+  } = current;
+  return {
+    ...common,
+    contract: "attention-monitor-failure-v0.2" as const,
+    engineVersion: "attention-live-orchestrator-v0.2" as const,
+    inputSchemaVersion: "cross-source-attention-input-v0.3" as const,
+    resultSchemaVersion: "cross-source-attention-result-v0.3" as const,
+    policyVersion:
+      "aggressive-evidence-bound-attention-policy-v0.2" as const,
+    githubCandidateRuleVersion:
+      "github-project-aware-candidate-rule-v0.2" as const,
+    codexOverviewRuleVersion:
+      "codex-historical-context-overview-rule-v0.3" as const
   };
 }
 

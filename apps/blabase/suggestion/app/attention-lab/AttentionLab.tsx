@@ -15,14 +15,13 @@ import type {
   AttentionHistoryResponse
 } from "../../src/attention/monitoringSchema";
 import type {
-  AttentionEligibilityApiResponse,
-  AttentionEligibilityAssessment
+  AttentionEligibilityAssessment,
+  AttentionEligibilityShadowProjection
 } from "../../src/eligibility/contracts";
 import {
   fetchAttention,
   fetchAttentionHistory
 } from "../attentionClient";
-import { fetchAttentionEligibility } from "../eligibilityClient";
 import { syncInvalidationBus } from "../sync/invalidationBus";
 import {
   useSourceSyncRuntime,
@@ -37,8 +36,6 @@ export function AttentionLab() {
   );
   const [history, setHistory] =
     useState<AttentionHistoryResponse | null>(null);
-  const [eligibility, setEligibility] =
-    useState<AttentionEligibilityApiResponse | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     null
   );
@@ -58,15 +55,13 @@ export function AttentionLab() {
       setLoadError(null);
     }
     try {
-      const [nextCurrent, nextHistory, nextEligibility] = await Promise.all([
+      const [nextCurrent, nextHistory] = await Promise.all([
         fetchAttention(false),
-        fetchAttentionHistory(),
-        fetchAttentionEligibility()
+        fetchAttentionHistory()
       ]);
       if (sequence !== sequenceRef.current) return;
       setCurrent(nextCurrent);
       setHistory(nextHistory);
-      setEligibility(nextEligibility);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -106,13 +101,9 @@ export function AttentionLab() {
       if (sequence !== sequenceRef.current) return false;
       setCurrent(attention);
 
-      const [nextHistory, nextEligibility] = await Promise.all([
-        fetchAttentionHistory(),
-        fetchAttentionEligibility()
-      ]);
+      const nextHistory = await fetchAttentionHistory();
       if (sequence !== sequenceRef.current) return false;
       setHistory(nextHistory);
-      setEligibility(nextEligibility);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -228,7 +219,14 @@ export function AttentionLab() {
         <div className="labNotice">{history.message}</div>
       ) : null}
 
-      <EligibilityShadowPanel response={eligibility} />
+      <EligibilityShadowPanel
+        projection={
+          current?.status === "ready"
+            ? current.eligibilityProjection
+            : null
+        }
+      />
+      <ActiveDecisionPanel response={current} />
 
       {history?.status === "ready" ? (
         <>
@@ -252,27 +250,98 @@ export function AttentionLab() {
   );
 }
 
-function EligibilityShadowPanel({
+function ActiveDecisionPanel({
   response
 }: {
-  response: AttentionEligibilityApiResponse | null;
+  response: AttentionApiResponse | null;
 }) {
-  if (response === null) return null;
-  if (response.status !== "ready") {
-    return (
-      <section className="labEligibilityPanel" aria-label="Eligibility shadow">
-        <div className="labPanelHeader">
-          <div>
-            <p className="eyebrow">Phase 4A · Shadow</p>
-            <h2>후보 안전성 판정</h2>
-          </div>
-          <span>확인 불가</span>
+  if (response?.status !== "ready") return null;
+  const { result } = response;
+  return (
+    <section
+      className="labEligibilityPanel labActiveDecisionPanel"
+      aria-labelledby="active-decision-title"
+    >
+      <div className="labPanelHeader">
+        <div>
+          <p className="eyebrow">Phase 4B · Active</p>
+          <h2 id="active-decision-title">실제 추천 결정</h2>
         </div>
-        <p className="labEmpty">{response.message}</p>
-      </section>
-    );
-  }
-  const { projection } = response;
+        <span>{decisionLabel(result.decision.status)}</span>
+      </div>
+      <p className="labEligibilityBoundary">
+        GitHub 작업과 Blabase가 직접 관찰한 managed Codex 실패·설정된 완료
+        후속 작업을 같은 순위표에서 평가합니다.
+      </p>
+      <div className="labFunnel labEligibilityFunnel">
+        <div>
+          <strong>{result.counts.eligible}</strong>
+          <span>추천 가능</span>
+        </div>
+        <div>
+          <strong>{result.counts.reviewRequired}</strong>
+          <span>검토 필요</span>
+        </div>
+        <div>
+          <strong>{result.counts.ineligible}</strong>
+          <span>제외</span>
+        </div>
+      </div>
+      {result.rankedCandidates.length > 0 ? (
+        <ol className="labActiveRanking">
+          {result.rankedCandidates.slice(0, 8).map((candidate, index) => (
+            <li key={candidate.candidateId}>
+              <span>#{index + 1}</span>
+              <div>
+                <strong>{candidate.title}</strong>
+                <small>
+                  {activeTriggerLabel(candidate.triggerKind)} · {candidate.lane}
+                </small>
+              </div>
+              <code>{candidate.candidateId}</code>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="labEmpty">현재 순위표에 들어온 후보가 없습니다.</p>
+      )}
+      <p className="labEligibilityCoverage">
+        GitHub {result.coverage.githubCandidateCoverage} · managed Codex{" "}
+        {result.coverage.managedCodexCoverage} · negative coverage{" "}
+        {result.coverage.negativeCandidateCoverageComplete
+          ? "complete"
+          : "limited"}
+      </p>
+      <details className="labTechnical">
+        <summary>Active 버전과 integrity 정보</summary>
+        <dl>
+          <TechnicalValue label="Result" value={result.resultId} />
+          <TechnicalValue label="Policy" value={result.policyVersion} />
+          <TechnicalValue label="Resolver" value={result.resolverVersion} />
+          <TechnicalValue
+            label="Eligibility projection"
+            value={result.dependencies.eligibilityProjectionSha256}
+          />
+          <TechnicalValue
+            label="Managed projection"
+            value={result.dependencies.managedPublicProjectionSha256}
+          />
+          <TechnicalValue
+            label="Workflow projection"
+            value={result.dependencies.workflowProjectionSha256}
+          />
+        </dl>
+      </details>
+    </section>
+  );
+}
+
+function EligibilityShadowPanel({
+  projection
+}: {
+  projection: AttentionEligibilityShadowProjection | null;
+}) {
+  if (projection === null) return null;
   return (
     <section
       className="labEligibilityPanel"
@@ -283,11 +352,11 @@ function EligibilityShadowPanel({
           <p className="eyebrow">Phase 4A · Shadow</p>
           <h2 id="eligibility-shadow-title">후보 안전성 판정</h2>
         </div>
-        <span>현재 추천에는 미반영</span>
+        <span>단독 선택 없음 · Phase 4B 입력</span>
       </div>
       <p className="labEligibilityBoundary">
-        같은 근거 그래프에서 후보별 통과·검토·제외 사유만 관찰합니다.
-        Work Cockpit의 현재 추천과 순서는 바꾸지 않습니다.
+        이 projection 자체는 후보를 선택하지 않습니다. Phase 4B가 같은
+        근거와 이 gate 결과를 입력으로 받아 실제 추천 순서를 만듭니다.
       </p>
       <div className="labFunnel labEligibilityFunnel">
         <div>
@@ -325,9 +394,10 @@ function EligibilityShadowPanel({
       )}
       <p className="labEligibilityCoverage">
         GitHub 후보 범위 {projection.coverage.githubCandidateCoverage} ·
-        Codex managed eligibility는 Phase 4B에서 연결 · 관련 없는 미해결
-        충돌 {projection.coverage.unrelatedUnresolvedCriticalConflictCount}건은
-        후보를 막지 않음
+        Codex managed 후보는 아래 Phase 4B active panel에서 별도 평가 · 관련
+        없는 미해결 충돌{" "}
+        {projection.coverage.unrelatedUnresolvedCriticalConflictCount}건은 후보를
+        막지 않음
       </p>
       <details className="labTechnical">
         <summary>Shadow 버전과 integrity 정보</summary>
@@ -454,8 +524,13 @@ function RecentRuns({
         </p>
       ) : (
         <ol>
-          {entries.map((entry) => (
-            <li key={entry.runId}>
+          {entries.map((entry) => {
+            const reviewCount =
+              "reviewRequired" in entry.candidateCounts
+                ? entry.candidateCounts.reviewRequired
+                : entry.candidateCounts.provisional;
+            return (
+              <li key={entry.runId}>
               <button
                 type="button"
                 className={
@@ -472,17 +547,16 @@ function RecentRuns({
                 </span>
                 <strong>{formatTimestamp(entry.asOf)}</strong>
                 <small>
-                  후보{" "}
-                  {entry.candidateCounts.eligible +
-                    entry.candidateCounts.provisional}
-                  개 · {entry.latencyMs.toLocaleString("ko-KR")}ms
+                  통과 {entry.candidateCounts.eligible} · 검토 {reviewCount} ·{" "}
+                  {entry.latencyMs.toLocaleString("ko-KR")}ms
                 </small>
                 {entry.feedback.length > 0 ? (
                   <em>피드백 {entry.feedback.length}</em>
                 ) : null}
               </button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       )}
     </aside>
@@ -544,8 +618,16 @@ function RunInspector({
             <span>확정</span>
           </div>
           <div>
-            <strong>{entry.candidateCounts.provisional}</strong>
-            <span>임시</span>
+            <strong>
+              {"reviewRequired" in entry.candidateCounts
+                ? entry.candidateCounts.reviewRequired
+                : entry.candidateCounts.provisional}
+            </strong>
+            <span>
+              {"reviewRequired" in entry.candidateCounts
+                ? "검토 필요"
+                : "임시"}
+            </span>
           </div>
           <div>
             <strong>{entry.candidateCounts.ineligible}</strong>
@@ -567,22 +649,34 @@ function RunInspector({
           </p>
         ) : entry.candidateAssessments.length > 0 ? (
           <ul className="labAssessmentList">
-            {entry.candidateAssessments.map((assessment) => (
-              <li key={assessment.assessmentId}>
-                <div>
-                  <strong>{assessment.taskKind}</strong>
-                  <span>{assessment.disposition}</span>
-                </div>
-                <div>
-                  <code>{assessment.candidateId ?? "candidate 없음"}</code>
-                  <small>
-                    {assessment.gateReasonCodes.length > 0
-                      ? assessment.gateReasonCodes.join(" · ")
-                      : "gate 통과"}
-                  </small>
-                </div>
-              </li>
-            ))}
+            {entry.candidateAssessments.map((assessment) => {
+              const active = "triggerKind" in assessment;
+              const label = active
+                ? activeTriggerLabel(assessment.triggerKind)
+                : assessment.taskKind;
+              const status = active
+                ? assessment.status
+                : assessment.disposition;
+              const reasons = active
+                ? assessment.reasonCodes
+                : assessment.gateReasonCodes;
+              return (
+                <li key={assessment.assessmentId}>
+                  <div>
+                    <strong>{label}</strong>
+                    <span>{status}</span>
+                  </div>
+                  <div>
+                    <code>{assessment.candidateId ?? "candidate 없음"}</code>
+                    <small>
+                      {reasons.length > 0
+                        ? reasons.join(" · ")
+                        : "gate 통과"}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="labEmpty">평가된 GitHub 후보가 없습니다.</p>
@@ -662,12 +756,24 @@ function RunInspector({
           />
           <TechnicalValue label="Policy" value={entry.policyVersion} />
           <TechnicalValue
-            label="GitHub rule"
-            value={entry.githubCandidateRuleVersion}
+            label={
+              entry.candidateRuleVersion
+                ? "Active candidate rule"
+                : "GitHub rule"
+            }
+            value={
+              entry.candidateRuleVersion ??
+              entry.githubCandidateRuleVersion ??
+              "not-recorded"
+            }
           />
           <TechnicalValue
-            label="Codex rule"
-            value={entry.codexOverviewRuleVersion}
+            label={entry.resolverVersion ? "Active resolver" : "Codex rule"}
+            value={
+              entry.resolverVersion ??
+              entry.codexOverviewRuleVersion ??
+              "not-recorded"
+            }
           />
           <TechnicalValue
             label="Base commit"
@@ -748,6 +854,22 @@ function decisionLabel(
       return "개입 없음";
     case "insufficient_evidence":
       return "근거 부족";
+  }
+}
+
+function activeTriggerLabel(
+  trigger:
+    | "github_work_item"
+    | "managed_failure"
+    | "configured_follow_through"
+): string {
+  switch (trigger) {
+    case "github_work_item":
+      return "GitHub 작업";
+    case "managed_failure":
+      return "Codex 실행 실패";
+    case "configured_follow_through":
+      return "설정된 완료 후속 작업";
   }
 }
 

@@ -157,6 +157,33 @@ describe("work context registry", () => {
     };
     expect(() => workContextRegistrySchema.parse(tampered)).toThrow();
   });
+
+  it("does not resolve a preserved mapping after its project is archived", () => {
+    const mapped = confirmProjectMapping(registryWithProjects(), {
+      scope: scopes.github,
+      projectId: PROJECT_A,
+      confirmedAt: T2,
+      explicitUserConfirmation: true
+    }).registry;
+    const { registrySha256: _registrySha256, ...content } = mapped;
+    const archivedContent = {
+      ...content,
+      updatedAt: T3,
+      projects: content.projects.map((project) =>
+        project.projectId === PROJECT_A
+          ? { ...project, archivedAt: T3 }
+          : project
+      )
+    };
+    const archived = workContextRegistrySchema.parse({
+      ...archivedContent,
+      registrySha256:
+        hashWorkContextRegistryContent(archivedContent)
+    });
+
+    expect(lookupProjectId(archived, scopes.github)).toBeNull();
+    expect(archived.mappingDecisions).toEqual(mapped.mappingDecisions);
+  });
 });
 
 describe("weekly outcome contract", () => {

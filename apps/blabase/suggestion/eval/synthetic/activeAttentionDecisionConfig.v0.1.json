@@ -1,0 +1,68 @@
+{
+  "version": "active-attention-decision-config-v0.1",
+  "purpose": "targeted_synthetic_phase4b_active_decision_evaluation_only",
+  "inputBoundary": "exact_phase4b_replayable_evidence_envelope",
+  "candidateUniverse": "github_and_managed_codex",
+  "routing": {
+    "eligibleCandidateWins": true,
+    "refreshBeforeUserReview": true,
+    "userReviewBeforeScopedNoAction": true,
+    "scopedNoActionRequiresCompleteNegativeCoverage": true,
+    "incompleteCoverageCannotClaimNoAction": true,
+    "inactiveOrConflictingLinkCannotBecomeCandidate": true
+  },
+  "ranking": {
+    "laneOrder": ["must_now", "unblock", "close_loop", "focus"],
+    "nativeDeadlineMayPromoteToMustNow": true,
+    "preservesCompletePhase2GitHubRankContext": true,
+    "weeklyOutcomeFocusReasonPreserved": true,
+    "managedFocusMatchMayOutrankNewerNonMatchWithinLane": true,
+    "deterministicTieBreakRequired": true
+  },
+  "deduplication": {
+    "sameTargetSpecificityOrder": [
+      "managed_failure",
+      "configured_follow_through",
+      "github_work_item"
+    ],
+    "duplicateOpenLoopMayNotRemainEligible": true
+  },
+  "managedFailure": {
+    "latestDirectFailureOnly": true,
+    "continuousMonotonicHistoryRequired": true,
+    "exactActiveGitHubRelationRequired": true,
+    "recoveredFailureExcluded": true,
+    "gapOrPrunedHistoryRoutesToRefresh": true
+  },
+  "workflow": {
+    "explicitProjectWorkflowRequired": true,
+    "nonRetroactive": true,
+    "gracePeriodMs": 120000,
+    "actionTargetCompatibilityRequired": true,
+    "createPullRequestRequiresIssueTarget": true,
+    "requestReviewRequiresPullRequestTarget": true,
+    "explicitClosureSuppressesCandidate": true,
+    "matchingCommitOrPullRequestArtifactSuppressesCandidate": true
+  },
+  "integrity": {
+    "sealedInputRequired": true,
+    "exactEvidenceGraphRequired": true,
+    "exactResultHashRequired": true,
+    "canonicalOrderingRequired": true,
+    "deterministicReplayRequired": true
+  },
+  "privacy": {
+    "containsProductionData": false,
+    "syntheticFixturesOnly": true,
+    "rawCodexPromptAnswerCommandOutputPathOrThreadIdAllowed": false,
+    "sanitizedSyntheticGitHubRoutingMetadataAllowed": true,
+    "evaluationRecordStoresRawCandidatePayload": false,
+    "privacySentinelMustExistAtResolverInput": true
+  },
+  "recordkeeping": {
+    "canonicalPayloadHashRequired": true,
+    "artifactPathRequired": true,
+    "automaticAndHumanReviewStatusSeparated": true,
+    "limitationsRecorded": true
+  }
+}

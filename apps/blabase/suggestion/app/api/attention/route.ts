@@ -83,6 +83,7 @@ async function runAttention(
     stage = "attention_resolution";
     const evaluated = await evaluateCurrentAttention({
       refreshSources: false,
+      ...(persistRun ? { startedAt } : {}),
       ...(executionIds
         ? { executionIds, codeProvenance }
         : {})
@@ -112,6 +113,8 @@ async function runAttention(
     return noStoreJson({
       status: "ready",
       result: evaluated.result,
+      baseResult: evaluated.baseResult,
+      eligibilityProjection: evaluated.eligibilityProjection,
       run: publicRun,
       monitoring
     } satisfies AttentionReadyResponse);

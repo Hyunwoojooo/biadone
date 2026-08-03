@@ -125,7 +125,13 @@ export async function POST(request: Request) {
 
     const acceptedCommand = await openWorkSession({
       taskRef: input.taskRef,
-      explicitUserAction: input.explicitUserAction
+      explicitUserAction: input.explicitUserAction,
+      ...(input.expectedBindingId
+        ? {
+            expectedBindingId: input.expectedBindingId,
+            expectedExecutionId: input.expectedExecutionId
+          }
+        : {})
     });
     const snapshot = await readWorkResumptionStatus();
     return noStoreJson(
@@ -178,6 +184,13 @@ export async function POST(request: Request) {
           "BINDING_NOT_FOUND",
           "이 작업에 연결된 Codex 세션이 없습니다.",
           404
+        );
+      }
+      if (error.code === "BINDING_IDENTITY_CHANGED") {
+        return errorResponse(
+          "BINDING_IDENTITY_CHANGED",
+          "추천에 사용된 Codex 세션 연결이 변경되었습니다. 작업 제안을 다시 평가해주세요.",
+          409
         );
       }
       if (error.code === "COMPANION_OFFLINE") {

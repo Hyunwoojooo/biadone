@@ -129,6 +129,74 @@ describe("work resumption client", () => {
       message: "Local companion is offline."
     });
   });
+
+  it("sends the exact managed binding identity when opening a recommendation", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(readyMutationResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const expectedBindingId = `binding_${"b".repeat(32)}`;
+    const expectedExecutionId =
+      `codex:execution:${"c".repeat(24)}`;
+
+    await openWorkSession({
+      taskRef,
+      expectedBindingId,
+      expectedExecutionId
+    });
+
+    expectMutation(fetchMock, {
+      action: "open",
+      taskRef,
+      explicitUserAction: true,
+      expectedBindingId,
+      expectedExecutionId
+    });
+  });
+
+  it("rejects a partial expected identity before making a request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      openWorkSession({
+        taskRef,
+        expectedBindingId: `binding_${"b".repeat(32)}`
+      })
+    ).rejects.toThrow(
+      "Expected binding and execution identity must be provided together."
+    );
+    await expect(
+      openWorkSession({
+        taskRef,
+        expectedExecutionId: `codex:execution:${"c".repeat(24)}`
+      })
+    ).rejects.toThrow(
+      "Expected binding and execution identity must be provided together."
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not silently omit a complete identity pair that the server must validate", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(readyMutationResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await openWorkSession({
+      taskRef,
+      expectedBindingId: "",
+      expectedExecutionId: ""
+    });
+
+    expectMutation(fetchMock, {
+      action: "open",
+      taskRef,
+      explicitUserAction: true,
+      expectedBindingId: "",
+      expectedExecutionId: ""
+    });
+  });
 });
 
 function readyMutationResponse(): Response {

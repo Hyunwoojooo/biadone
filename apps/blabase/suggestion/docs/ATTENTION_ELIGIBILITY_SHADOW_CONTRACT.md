@@ -1,6 +1,6 @@
 # Attention Eligibility Shadow Contract
 
-상태: Phase 4A current-only shadow candidate
+상태: Phase 4A current-only projection, Phase 4B active resolver integration 완료
 
 ## 1. 목적
 
@@ -10,9 +10,10 @@ Phase 4A는 후보를 ranking에 넣기 전에 다음 질문에 결정론적으�
 이 후보는 현재 근거만으로 사용자에게 보여도 되는가?
 ```
 
-결과는 후보별 `eligible`, `review_required`, `ineligible` 중 하나다. 이
-projection은 현재 Work Cockpit의 Phase 2 추천, lane, ordering, selection,
-replay 또는 monitor hash를 변경하지 않는다.
+결과는 후보별 `eligible`, `review_required`, `ineligible` 중 하나다. projection
+자체는 candidate, lane, ordering 또는 selection을 만들지 않는다. Phase 4B active
+resolver가 같은 server-side evidence graph에서 이 exact projection을 입력으로
+소비하고 사용한 hash를 replay v2와 monitor v0.4에 기록한다.
 
 ```text
 attentionSelectionEffect = none
@@ -28,9 +29,10 @@ Phase 4A의 candidate universe는 normalized GitHub work item이다.
 - 사용자에게 review가 요청된 열린 PR의 상태 확인
 - authored PR은 context-only negative로 관찰
 
-Codex managed failure, verified stall, scope drift와 configured completion
-follow-through는 Phase 4B에서 별도 candidate seed로 추가한다. 현재
-projection은 이를 평가했다고 주장하지 않는다.
+Codex managed failure와 configured completion follow-through는 Phase 4B active
+resolver가 별도 exact candidate seed로 추가한다. verified stall과 scope drift는
+아직 active 범위가 아니다. 이 GitHub-only projection은 managed 후보를 평가했다고
+주장하지 않는다.
 
 ```text
 candidateUniverse = github_work_items_only
@@ -151,9 +153,11 @@ local-only `GET /api/attention/eligibility`가 current projection을 제공한�
 - browser에서 strict field/count/version guard 적용
 - 내부 오류는 sanitized code만 반환
 
-Attention Lab은 `Shadow · 현재 추천에는 미반영`을 표시하고 후보별 통과, 검토
-필요, 제외와 reason code를 보여준다. current-only projection은 Attention history에
-저장하지 않는다.
+Attention Lab은 `Phase 4A · Shadow` 진단 영역에서 후보별 통과, 검토 필요,
+제외와 reason code를 보여주고, 별도 Phase 4B active result 영역에서 실제
+selection effect를 보여준다. standalone eligibility route의 current-only read는
+Attention history에 저장하지 않지만 formal active run은 response에 포함된 exact
+projection을 private replay v2와 monitor v0.4 provenance로 보존한다.
 
 ## 10. Privacy와 retention
 
@@ -169,14 +173,38 @@ Attention Lab은 `Shadow · 현재 추천에는 미반영`을 표시하고 후�
 않는다. explicit production feedback도 human review 없이 Golden label로 승격하지
 않는다.
 
-## 11. Phase 4B 활성화 전 조건
+### 10.1 Current targeted evaluation
+
+현재 mutable synthetic Dev Candidate는
+`suggestion-attention-eligibility-dev-v0.1` revision `2`, `26` cases다. revision
+2는 Claim resolver v0.2와 exact dependency hash를 반영한 mutable development
+update이며 frozen dataset을 수정하지 않았다.
+
+- dataset canonical SHA-256:
+  `7e53abbdf7ccf64ec30152c3fdd0c08161db10f5e2b191286745cbe729bb0343`
+- materialized input SHA-256:
+  `1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034`
+- deterministic output SHA-256:
+  `da6814647c9425fe088940cf8b6407af90a1ed310bd7291d58d84fc3c73fb5a3`
+- run ID:
+  `attention_eligibility_run_acaa74c69c3f8fa721eeb253d9916400`
+- artifact SHA-256:
+  `0f288303d126efd0d08eab735f4da4afe7dea0470a19b7b40f73c51edb0a5490`
+- result: cases `26/26`, assessments `24/24`, 모든 guardrail `0`
+
+이 결과는 human-approved Golden이나 production quality claim이 아니다.
+
+## 11. Phase 4B 활성화 결과
 
 Phase 4A shadow가 보인다는 사실만으로 active recommendation gate를 release하지
-않는다. 다음이 별도로 필요하다.
+않는다는 원칙은 유지했다. Phase 4B에서 다음 조건을 별도로 구현·검증했다.
 
-- managed Codex current failure와 recovery를 exact run identity로 평가
-- configured follow-through workflow store
-- eligibility를 lane/selection과 한 server-side evidence graph에서 결합
-- `needs_clarification`, `insufficient_evidence`, scoped `no_action` decision route
-- human-reviewed Golden/holdout 또는 명시적으로 승인된 local-only rollout gate
-- 기존 Phase 2 result/replay compatibility와 rollback 검증
+- `[완료]` managed Codex current failure와 recovery를 exact run identity로 평가
+- `[완료]` configured follow-through workflow store
+- `[완료]` eligibility를 lane/selection과 한 server-side evidence graph에서 결합
+- `[완료]` `needs_clarification`, `insufficient_evidence`, scoped `no_action` route
+- `[완료]` 명시적인 local-only rollout gate와 Engine Change Record
+- `[완료]` 기존 Phase 2 result, replay v1 read compatibility와 rollback 검증
+
+human-reviewed Golden/locked holdout은 formal production quality claim 전 후속
+gate로 남는다.

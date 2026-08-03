@@ -1405,6 +1405,103 @@ summary {
   padding: 0 27px 0 9px;
 }
 
+.projectWorkflowSettings {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(39 103 73 / 14%);
+}
+
+.projectWorkflowSettingsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 9px;
+}
+
+.projectWorkflowSettingsHeader h3,
+.projectWorkflowSettingsHeader p {
+  margin: 0;
+}
+
+.projectWorkflowSettingsHeader h3 {
+  color: #264d38;
+  font-size: 12px;
+}
+
+.projectWorkflowSettingsHeader p,
+.projectWorkflowPolicy {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.projectWorkflowSettingsHeader p {
+  margin-top: 3px;
+}
+
+.projectWorkflowSettingsHeader > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.projectWorkflowSettings ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projectWorkflowSettings li {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(170px, 0.55fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 9px;
+  background: rgb(240 246 242 / 68%);
+}
+
+.projectWorkflowProject,
+.projectWorkflowSettings label,
+.projectWorkflowSettings select {
+  min-width: 0;
+}
+
+.projectWorkflowProject strong,
+.projectWorkflowProject span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectWorkflowProject strong {
+  color: #2b4033;
+  font-size: 12px;
+}
+
+.projectWorkflowProject span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.projectWorkflowSettings label,
+.projectWorkflowSettings select {
+  width: 100%;
+}
+
+.projectWorkflowSettings select {
+  padding: 0 27px 0 9px;
+}
+
+.projectWorkflowPolicy {
+  margin: 9px 0 0;
+}
+
 .projectMappingsEmpty {
   padding: 12px;
   border-radius: 9px;
@@ -1623,6 +1720,25 @@ summary {
   border-top: 1px solid var(--line);
 }
 
+.attentionClarification {
+  display: grid;
+  gap: 5px;
+  margin-top: 16px;
+  padding: 13px 14px;
+  border: 1px solid #e2cfae;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.attentionClarification strong {
+  font-size: 14px;
+}
+
+.attentionClarification span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .workResumption {
   margin-top: 12px;
   padding: 18px;
@@ -1829,6 +1945,60 @@ summary {
 .workResumptionCommand.isError {
   background: var(--error-soft);
   color: var(--error);
+}
+
+.workflowFollowThrough {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 18px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 16px 18px;
+  border: 1px solid rgb(39 103 73 / 18%);
+  border-radius: 14px;
+  background: var(--soft);
+}
+
+.workflowFollowThrough h3,
+.workflowFollowThrough p {
+  margin: 0;
+}
+
+.workflowFollowThrough h3 {
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+
+.workflowFollowThrough > div > p:last-child,
+.workflowFollowThrough > p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.workflowFollowThrough > p {
+  grid-column: 1 / -1;
+}
+
+.workflowFollowThroughActions {
+  display: flex;
+  gap: 7px;
+}
+
+.workflowFollowThrough button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgb(39 103 73 / 22%);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.workflowFollowThrough button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .managedCodexProgress {
@@ -2931,6 +3101,62 @@ summary {
   margin-top: 12px;
 }
 
+.labActiveDecisionPanel {
+  border-color: rgb(39 103 73 / 32%);
+  background: linear-gradient(145deg, rgb(237 246 240 / 98%), #fff);
+}
+
+.labActiveRanking {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.labActiveRanking li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 82%);
+}
+
+.labActiveRanking li > span {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.labActiveRanking li > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.labActiveRanking strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labActiveRanking small,
+.labActiveRanking code {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.labActiveRanking code {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .labWorkspace {
   display: grid;
   grid-template-columns: minmax(250px, 0.34fr) minmax(0, 0.66fr);
@@ -3322,7 +3548,17 @@ summary {
     grid-template-columns: 1fr;
   }
 
-  .projectMappingGroup li > button {
+  .projectWorkflowSettingsHeader {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .projectWorkflowSettings li {
+    grid-template-columns: 1fr;
+  }
+
+  .projectMappingGroup li > button,
+  .projectWorkflowSettings li > button {
     min-height: 38px;
   }
 
@@ -3345,6 +3581,20 @@ summary {
   .workResumptionBinder > div {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .workflowFollowThrough {
+    grid-template-columns: 1fr;
+  }
+
+  .workflowFollowThroughActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .workflowFollowThrough button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .workResumptionActions button,
@@ -3446,6 +3696,15 @@ summary {
     align-items: flex-start;
     flex-direction: column;
     gap: 7px;
+  }
+
+  .labActiveRanking li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .labActiveRanking code {
+    grid-column: 2;
+    max-width: 100%;
   }
 
   .labAssessmentList li > div:last-child,

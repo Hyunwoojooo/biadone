@@ -19,6 +19,7 @@ import {
   useSyncInvalidation,
   useVisiblePolling
 } from "./sync/useSourceSync";
+import { syncInvalidationBus } from "./sync/invalidationBus";
 import {
   fetchWorkRelations,
   type WorkRelationsReadyResponse
@@ -85,8 +86,11 @@ export function ManagedCodexProgress() {
         return;
       }
       const nextClaimInputKey = managedClaimRefreshKey(response);
+      // The panel mounts after the first Attention response. Treat its first
+      // authoritative managed snapshot as a change as well, so a transition
+      // between that response and this poll cannot leave the recommendation
+      // behind the progress panel.
       const shouldRefreshRelations =
-        managedClaimInputKey.current !== null &&
         managedClaimInputKey.current !== nextClaimInputKey;
       managedClaimInputKey.current = nextClaimInputKey;
       // Liveness can degrade while the persisted event revision stays the
@@ -96,6 +100,10 @@ export function ManagedCodexProgress() {
       setNotice(null);
       if (shouldRefreshRelations) {
         void loadRelations().catch(() => undefined);
+        syncInvalidationBus.invalidate({
+          reason: "snapshot_revision_changed",
+          targets: ["attention"]
+        });
       }
     } catch (error) {
       setNotice(
@@ -153,7 +161,7 @@ export function ManagedCodexProgress() {
       </div>
 
       <p className="managedCodexBoundary">
-        관찰 전용 · 추천 우선순위에 반영하지 않음
+        정상 실행은 관찰 전용 · 검증된 실패와 설정된 후속 작업만 추천 후보
       </p>
 
       <ClaimConflictSummary
@@ -505,8 +513,8 @@ function relationPresentation(relation: ManagedCodexWorkRelation): {
         className: "",
         detail:
           relation.projectAlignment.status === "aligned"
-            ? "GitHub native ID와 명시적 프로젝트 연결이 확인되었습니다. 관찰 전용이며 추천에는 아직 사용하지 않습니다."
-            : "GitHub native ID가 확인되었습니다. 프로젝트 연결은 아직 모두 확인되지 않았으며 추천에는 사용하지 않습니다.",
+            ? "GitHub native ID와 명시적 프로젝트 연결이 확인되었습니다. 검증된 실행 실패 또는 설정된 후속 작업에만 이 관계를 사용합니다."
+            : "GitHub native ID가 확인되었습니다. 검증된 실행 실패에는 사용할 수 있지만 프로젝트 workflow 후속 작업은 만들지 않습니다.",
         detailClassName: ""
       };
     case "stale":
@@ -614,7 +622,8 @@ function ManagedCodexSemanticSummary({
         semantic.window.continuity === "continuous"
           ? "보존된 이벤트 순서가 연속 검증되었습니다."
           : "보존 이력이나 연속 근거가 부족해 현재 상태를 단정하지 않습니다."}{" "}
-        이 해석은 관찰 전용이며 Attention 추천 입력이 아닙니다.
+        이 해석 객체 자체는 후보가 아니지만, 검증된 실패·완료 상태는
+        Attention gate의 근거로 사용됩니다.
       </p>
       <details className="managedCodexTimeline">
         <summary>

@@ -439,6 +439,39 @@ describe("private work resumption store", () => {
     });
   });
 
+  it("fails closed when a recommendation names a superseded binding", async () => {
+    const cwd = await testDirectory();
+    await bindFixture(cwd);
+    const original = (await readWorkResumptionStatus(cwd, T0))
+      .bindings[0];
+    if (!original) throw new Error("Expected the original binding.");
+    await bindWorkSession(
+      {
+        taskRef,
+        executionId: EXECUTION_2,
+        explicitUserConfirmation: true
+      },
+      cwd,
+      plusMs(T0, 1_000)
+    );
+    await writeCompanionHeartbeat(cwd, plusMs(T0, 1_000), INSTANCE_1);
+
+    await expect(
+      openWorkSession(
+        {
+          taskRef,
+          explicitUserAction: true,
+          expectedBindingId: original.bindingId,
+          expectedExecutionId: original.executionId
+        },
+        cwd,
+        plusMs(T0, 1_000)
+      )
+    ).rejects.toMatchObject({
+      code: "BINDING_IDENTITY_CHANGED"
+    });
+  });
+
   it("expires pending and claimed commands without launching them", async () => {
     const pendingCwd = await testDirectory();
     await bindFixture(pendingCwd);

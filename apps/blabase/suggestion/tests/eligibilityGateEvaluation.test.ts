@@ -17,7 +17,7 @@ describe("Phase 4A attention eligibility targeted evaluation", () => {
   it("loads a separate mutable 26-case synthetic Dev Candidate", () => {
     expect(attentionEligibilityEvaluationDataset).toMatchObject({
       datasetVersion: "suggestion-attention-eligibility-dev-v0.1",
-      datasetRevision: 1,
+      datasetRevision: 2,
       datasetClass: "dev_candidate",
       inputBoundary: "exact_phase3_evidence_graph",
       dataOrigin: "synthetic",
@@ -61,7 +61,7 @@ describe("Phase 4A attention eligibility targeted evaluation", () => {
       "33c2719e45d6d3715053c44e87f5d5e36317f0457e3ee939ca76aa36c53a2e57"
     );
     expect(ATTENTION_ELIGIBILITY_DATASET_SHA256).toBe(
-      "8bc76248801595e30df40e575180e1aa18e1e454ca61a6cd3624c8b8629667bb"
+      "7e53abbdf7ccf64ec30152c3fdd0c08161db10f5e2b191286745cbe729bb0343"
     );
   });
 
@@ -101,10 +101,10 @@ describe("Phase 4A attention eligibility targeted evaluation", () => {
     expect(record.cases.every((item) => item.passed)).toBe(true);
     expect(record.errors).toEqual([]);
     expect(record.dataset.materializedInputSha256).toBe(
-      "f1739a4f066c11075127e8216b3ea1d887589e1e0f37e6f2efb8ddd27518cbfa"
+      "1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034"
     );
     expect(record.deterministicOutputSha256).toBe(
-      "f3cf74ee441b86ae9571db09063ede1cd139f2b8a959dedadc4201e03ee063a8"
+      "da6814647c9425fe088940cf8b6407af90a1ed310bd7291d58d84fc3c73fb5a3"
     );
     expect(record.attentionDisposition).toBe("shadow_only");
     expect(record.inference).toEqual({

@@ -15,16 +15,15 @@ import type {
   AttentionReadyResponse,
   AttentionSourceMonitor
 } from "../src/attention/monitoringSchema";
-import type {
-  Phase2Candidate,
-  Phase2CodexOverviewItem
-} from "../src/crossSource/attentionSchema";
+import type { ActiveAttentionCandidate } from "../src/attentionDecision";
+import type { Phase2CodexOverviewItem } from "../src/crossSource/attentionSchema";
 import {
   fetchAttention,
   submitAttentionFeedback
 } from "./attentionClient";
 import { ManagedCodexProgress } from "./ManagedCodexProgress";
 import { ProjectMappings } from "./ProjectMappings";
+import { recordProjectWorkflowClosure } from "./projectWorkflowsClient";
 import { syncInvalidationBus } from "./sync/invalidationBus";
 import {
   useSourceSyncRuntime,
@@ -253,7 +252,7 @@ function CockpitResult({
   isFeedbackSubmitting: boolean;
   onFeedback: (value: AttentionFeedbackType) => void;
 }) {
-  const { result, run } = payload;
+  const { result, baseResult, run } = payload;
   const feedbackEnabled = payload.monitoring.state === "recorded";
   return (
     <>
@@ -268,15 +267,25 @@ function CockpitResult({
         status={result.decision.status}
         suggestion={result.decision.topSuggestion}
         alternatives={result.decision.alternatives}
+        clarification={result.decision.clarification}
         scopeStatement={result.decision.scopeStatement}
         certainty={result.decision.certainty}
       />
+
+      <AttentionReviewDisclosure assessments={result.assessments} />
 
       {result.decision.status === "suggested" &&
       result.decision.topSuggestion ? (
         <WorkResumption
           suggestion={result.decision.topSuggestion}
-          codexItems={result.workCockpit.codexExecutions}
+          codexItems={baseResult.workCockpit.codexExecutions}
+        />
+      ) : null}
+
+      {result.decision.topSuggestion?.triggerKind ===
+      "configured_follow_through" ? (
+        <WorkflowFollowThroughActions
+          suggestion={result.decision.topSuggestion}
         />
       ) : null}
 
@@ -284,9 +293,9 @@ function CockpitResult({
 
       <SourceHealthGrid
         sources={run.sources}
-        supportingContext={result.workCockpit.supportingContext}
+        supportingContext={baseResult.workCockpit.supportingContext}
       />
-      <CodexOverview items={result.workCockpit.codexExecutions} />
+      <CodexOverview items={baseResult.workCockpit.codexExecutions} />
 
       <div
         className="attentionFeedback"
@@ -333,14 +342,22 @@ function CockpitResult({
           />
           <DiagnosticGroup
             title="Coverage"
-            values={result.coverage.reasonCodes}
+            values={[
+              `GITHUB_${result.coverage.githubCandidateCoverage.toUpperCase()}`,
+              `MANAGED_CODEX_${result.coverage.managedCodexCoverage.toUpperCase()}`,
+              result.coverage.negativeCandidateCoverageComplete
+                ? "NEGATIVE_COVERAGE_COMPLETE"
+                : "NEGATIVE_COVERAGE_LIMITED"
+            ]}
           />
           <dl>
             <div>
               <dt>후보</dt>
               <dd>
-                확정 {run.candidateCounts.eligible} · 임시{" "}
-                {run.candidateCounts.provisional} · 제외{" "}
+                통과 {run.candidateCounts.eligible} · 검토{" "}
+                {"reviewRequired" in run.candidateCounts
+                  ? run.candidateCounts.reviewRequired
+                  : run.candidateCounts.provisional} · 제외{" "}
                 {run.candidateCounts.ineligible}
               </dd>
             </div>
@@ -375,16 +392,68 @@ function CockpitResult({
   );
 }
 
+function AttentionReviewDisclosure({
+  assessments
+}: {
+  assessments: AttentionReadyResponse["result"]["assessments"];
+}) {
+  const userReview = assessments.filter(
+    (assessment) =>
+      assessment.status === "review_required" &&
+      assessment.reviewRoute === "user_review"
+  );
+  const refresh = assessments.filter(
+    (assessment) =>
+      assessment.status === "review_required" &&
+      assessment.reviewRoute === "refresh_sources"
+  );
+  if (userReview.length === 0 && refresh.length === 0) return null;
+  const userSources = reviewSourceLabels(userReview);
+  const refreshSources = reviewSourceLabels(refresh);
+  return (
+    <aside className="attentionWarning" role="status">
+      {userReview.length > 0 ? (
+        <span>
+          추천 순위에서 제외된 확인 필요 후보 {userReview.length}개 ·{" "}
+          {userSources.join(", ")} 근거 충돌
+        </span>
+      ) : null}
+      {userReview.length > 0 && refresh.length > 0 ? " · " : null}
+      {refresh.length > 0 ? (
+        <span>
+          근거 갱신 필요 {refresh.length}개 · {refreshSources.join(", ")}
+        </span>
+      ) : null}
+    </aside>
+  );
+}
+
+function reviewSourceLabels(
+  assessments: AttentionReadyResponse["result"]["assessments"]
+): string[] {
+  return Array.from(
+    new Set(
+      assessments.map((assessment) =>
+        assessment.triggerSource === "codex_managed"
+          ? "Codex 실행↔GitHub 연결"
+          : "GitHub 작업"
+      )
+    )
+  );
+}
+
 function AttentionDecision({
   status,
   suggestion,
   alternatives,
+  clarification,
   scopeStatement,
   certainty
 }: {
   status: AttentionReadyResponse["result"]["decision"]["status"];
-  suggestion: Phase2Candidate | null;
-  alternatives: Phase2Candidate[];
+  suggestion: ActiveAttentionCandidate | null;
+  alternatives: ActiveAttentionCandidate[];
+  clarification: AttentionReadyResponse["result"]["decision"]["clarification"];
   scopeStatement: string;
   certainty: AttentionReadyResponse["result"]["decision"]["certainty"];
 }) {
@@ -473,6 +542,16 @@ function AttentionDecision({
     >
       <p className="eyebrow">{content.label}</p>
       <h3>{content.title}</h3>
+      {clarification ? (
+        <div className="attentionClarification">
+          <strong>{clarification.question}</strong>
+          <span>
+            {clarification.triggerSource === "codex_managed"
+              ? "Codex 실행과 연결된 GitHub 작업의 근거가 충돌합니다."
+              : "GitHub 작업 근거가 서로 충돌합니다."}
+          </span>
+        </div>
+      ) : null}
       <p className="attentionScope">{scopeStatement}</p>
     </article>
   );
@@ -482,13 +561,13 @@ function WorkResumption({
   suggestion,
   codexItems
 }: {
-  suggestion: Phase2Candidate;
+  suggestion: ActiveAttentionCandidate;
   codexItems: Phase2CodexOverviewItem[];
 }) {
   const taskRef: WorkResumptionTaskRef = {
     kind: "attention_subject",
-    source: suggestion.source,
-    subjectId: suggestion.subjectId,
+    source: "github",
+    subjectId: suggestion.githubSubjectId,
     displayTitle: suggestion.title
   };
   const taskKey = `${taskRef.kind}:${taskRef.source}:${taskRef.subjectId}`;
@@ -623,6 +702,24 @@ function WorkResumption({
   const activeBinding = snapshot?.bindings.find((binding) =>
     sameTaskRef(binding.taskRef, taskRef)
   );
+  const expectedManagedBinding =
+    suggestion.triggerSource === "codex_managed" &&
+    suggestion.bindingId &&
+    suggestion.executionId
+      ? {
+          expectedBindingId: suggestion.bindingId,
+          expectedExecutionId: suggestion.executionId
+        }
+      : null;
+  const exactActiveBinding =
+    activeBinding &&
+    (!expectedManagedBinding ||
+      (activeBinding.bindingId ===
+        expectedManagedBinding.expectedBindingId &&
+        activeBinding.executionId ===
+          expectedManagedBinding.expectedExecutionId))
+      ? activeBinding
+      : undefined;
   const linkedSession = activeBinding
     ? sessionOptions.find(
         (item) => item.executionId === activeBinding.executionId
@@ -644,6 +741,10 @@ function WorkResumption({
       if (sequence !== requestSequence.current) return;
       if (acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
         setSelectedExecutionId("");
+        syncInvalidationBus.invalidate({
+          reason: "context_changed",
+          targets: ["attention"]
+        });
         setMessage(
           "선택한 Codex 세션을 이 작업에 연결했습니다. 제목이 비슷한 다른 세션은 자동 연결하지 않습니다."
         );
@@ -673,6 +774,10 @@ function WorkResumption({
       const response = await unbindWorkSession({ taskRef });
       if (sequence !== requestSequence.current) return;
       if (acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
+        syncInvalidationBus.invalidate({
+          reason: "context_changed",
+          targets: ["attention"]
+        });
         setMessage("Codex 세션 연결을 해제했습니다.");
       }
     } catch (error) {
@@ -691,7 +796,7 @@ function WorkResumption({
 
   async function openBoundSession() {
     if (
-      !activeBinding ||
+      !exactActiveBinding ||
       !companionOnline ||
       isMutating ||
       pollingCommandId
@@ -703,7 +808,10 @@ function WorkResumption({
     setMessage(null);
     setCommand(null);
     try {
-      const response = await openWorkSession({ taskRef });
+      const response = await openWorkSession({
+        taskRef,
+        ...(expectedManagedBinding ?? {})
+      });
       if (sequence !== requestSequence.current) return;
       if (!acceptWorkResumptionResponse(response, setSnapshot, setMessage)) {
         return;
@@ -752,7 +860,7 @@ function WorkResumption({
           작업 이어가기 상태를 확인할 수 없습니다. 이 기능은 준비된 로컬
           Blabase 환경에서만 연결하거나 실행할 수 있습니다.
         </p>
-      ) : activeBinding ? (
+      ) : exactActiveBinding ? (
         <div className="workResumptionBound">
           <div className="workResumptionSession">
             <span>사용자가 연결한 세션</span>
@@ -766,7 +874,7 @@ function WorkResumption({
                 ? `${linkedSession.projectLabel} · ${formatTimestamp(
                     linkedSession.sourceUpdatedAt
                   )}`
-                : `세션 ${shortOpaqueId(activeBinding.executionId)}`}
+                : `세션 ${shortOpaqueId(exactActiveBinding.executionId)}`}
             </small>
           </div>
           <div className="workResumptionActions">
@@ -808,6 +916,11 @@ function WorkResumption({
             </p>
           )}
         </div>
+      ) : expectedManagedBinding ? (
+        <p className="workResumptionEmpty" role="status">
+          이 추천을 만들 때 확인한 Codex 세션 연결이 현재 상태와 다릅니다.
+          새로고침 후 다시 평가하면 다른 세션을 실수로 열지 않습니다.
+        </p>
       ) : sessionOptions.length === 0 ? (
         <p className="workResumptionEmpty">
           연결할 Codex 과거 세션이 없습니다. Codex 연결에서 세션을 먼저
@@ -855,6 +968,13 @@ function WorkResumption({
         자동으로 실행하지 않습니다. Companion이 이전에 연 Terminal만
         포커스할 수 있으므로 다른 Codex 클라이언트에서 실행 중인 같은
         세션을 동시에 열지 마세요.
+        {suggestion.triggerKind === "managed_failure" ? (
+          <>
+            {" "}세션을 여는 것만으로 실패가 해결된 것으로 처리하지
+            않습니다. 더 최신 실행이나 직접 확인된 상태 변경이 들어올
+            때까지 이 제안은 다시 나타날 수 있습니다.
+          </>
+        ) : null}
       </p>
       {command ? <WorkResumptionCommandState command={command} /> : null}
       {message ? (
@@ -862,6 +982,90 @@ function WorkResumption({
           {message}
         </p>
       ) : null}
+    </section>
+  );
+}
+
+function WorkflowFollowThroughActions({
+  suggestion
+}: {
+  suggestion: ActiveAttentionCandidate;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const identity =
+    suggestion.triggerKind === "configured_follow_through" &&
+    suggestion.managedRunId &&
+    suggestion.bindingId &&
+    suggestion.executionId &&
+    suggestion.workflowDecisionId &&
+    suggestion.workflowActionKind
+      ? {
+          managedRunId: suggestion.managedRunId,
+          bindingId: suggestion.bindingId,
+          executionId: suggestion.executionId,
+          workflowDecisionId: suggestion.workflowDecisionId,
+          actionKind: suggestion.workflowActionKind
+        }
+      : null;
+
+  if (!identity) return null;
+
+  async function close(outcome: "completed" | "skipped") {
+    if (isSubmitting || !identity) return;
+    setIsSubmitting(true);
+    setMessage(null);
+    try {
+      await recordProjectWorkflowClosure({ ...identity, outcome });
+      setMessage(
+        outcome === "completed"
+          ? "후속 작업을 완료로 기록했습니다."
+          : "이번 후속 작업을 건너뜀으로 기록했습니다."
+      );
+      syncInvalidationBus.invalidate({
+        reason: "context_changed",
+        targets: ["attention"]
+      });
+    } catch {
+      setMessage("후속 작업 상태를 기록하지 못했습니다.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <section
+      className="workflowFollowThrough"
+      aria-labelledby="workflow-follow-through-title"
+      aria-busy={isSubmitting}
+    >
+      <div>
+        <p className="eyebrow">Configured follow-through</p>
+        <h3 id="workflow-follow-through-title">
+          이 후속 작업의 상태를 알려주세요
+        </h3>
+        <p>
+          완료 또는 건너뜀을 직접 기록하면 같은 Codex 실행에서 다시
+          제안하지 않습니다.
+        </p>
+      </div>
+      <div className="workflowFollowThroughActions">
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => void close("completed")}
+        >
+          완료로 기록
+        </button>
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => void close("skipped")}
+        >
+          이번에는 건너뛰기
+        </button>
+      </div>
+      {message ? <p role="status">{message}</p> : null}
     </section>
   );
 }
@@ -1045,7 +1249,7 @@ function SourceHealthGrid({
   supportingContext
 }: {
   sources: AttentionReadyResponse["run"]["sources"];
-  supportingContext: AttentionReadyResponse["result"]["workCockpit"]["supportingContext"];
+  supportingContext: AttentionReadyResponse["baseResult"]["workCockpit"]["supportingContext"];
 }) {
   return (
     <section className="attentionSubsection" aria-labelledby="source-health">
@@ -1115,7 +1319,9 @@ function SourceHealthItem({
   return (
     <li className={`is${capitalize(state.tone)}`}>
       <div>
-        <strong>{source.source === "github" ? "GitHub" : "Codex"}</strong>
+        <strong>
+          {source.source === "github" ? "GitHub" : "Codex history"}
+        </strong>
         <span>{state.detail}</span>
       </div>
       <span>{state.label}</span>
@@ -1272,28 +1478,34 @@ function sourceState(source: AttentionSourceMonitor): {
 }
 
 function whyNowLabel(
-  code: Phase2Candidate["whyNowReasonCodes"][number]
+  code: ActiveAttentionCandidate["whyNowReasonCodes"][number]
 ): string {
   switch (code) {
-    case "WHY_NOW_MILESTONE_DUE_SOON":
+    case "WHY_NOW_NATIVE_DEADLINE_DUE_SOON":
       return "48시간 안의 GitHub 마감";
-    case "WHY_NOW_MILESTONE_OVERDUE":
+    case "WHY_NOW_NATIVE_DEADLINE_OVERDUE":
       return "GitHub 마감일이 지남";
-    case "WHY_NOW_REVIEW_REQUEST_OBSERVED":
+    case "WHY_NOW_REVIEW_REQUEST_OPEN":
       return "리뷰 요청이 확인됨";
-    case "WHY_NOW_PRIMARY_OUTCOME_TEXT_MATCH":
-      return "이번 주 결과와 텍스트가 일치";
-    case "WHY_NOW_OPEN_ASSIGNED_WORK":
+    case "WHY_NOW_ASSIGNED_WORK_OPEN":
       return "열린 할당 작업이 확인됨";
+    case "WHY_NOW_MANAGED_FAILURE_CURRENT":
+      return "현재 Codex 실행 실패가 확인됨";
+    case "WHY_NOW_CONFIGURED_HANDOFF_OPEN":
+      return "설정한 완료 후속 작업이 남음";
+    case "WHY_NOW_PRIMARY_OUTCOME_TEXT_MATCH":
+      return "이번 주 결과와 직접 연결됨";
   }
 }
 
-function laneLabel(lane: Phase2Candidate["lane"]): string {
+function laneLabel(lane: ActiveAttentionCandidate["lane"]): string {
   switch (lane) {
     case "must_now":
       return "지금 확인";
     case "unblock":
       return "진행 해제";
+    case "close_loop":
+      return "마무리";
     case "focus":
       return "집중";
   }

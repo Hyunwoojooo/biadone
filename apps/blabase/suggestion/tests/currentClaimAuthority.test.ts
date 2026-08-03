@@ -38,11 +38,41 @@ import { observeCodexManagedNotification } from "../src/connectors/codex/observa
 import {
   sealManagedCodexWorkRelationProjection
 } from "../src/relations";
+import { activeAttentionFixture } from "./fixtures/activeAttentionFixture";
 
 const AS_OF = "2026-08-02T03:00:00.000Z";
 const OBSERVED_AT = "2026-08-02T02:50:00.000Z";
 
 describe("current claim authority projection", () => {
+  it("collapses compatible multi-role PR observations to the action-driving relationship", () => {
+    const projection = activeAttentionFixture({
+      githubKind: "authored_pull_request",
+      managedScenario: "none",
+      additionalGitHubTasks: [
+        {
+          id: 501,
+          kind: "review_requested_pull_request",
+          number: 42,
+          title: "Synthetic linked task"
+        }
+      ]
+    }).claims;
+    const relationships = projection.claims.filter(
+      (claim) => claim.field === "github_user_relationship"
+    );
+
+    expect(relationships).toHaveLength(1);
+    expect(relationships[0]?.value).toEqual({
+      type: "enum",
+      value: "review_requested_from_user"
+    });
+    expect(
+      projection.conflicts.filter(
+        (conflict) => conflict.field === "github_user_relationship"
+      )
+    ).toEqual([]);
+  });
+
   it("derives only direct GitHub and managed Codex fields and reports unsupported source coverage", () => {
     const batch = githubBatch({ includeWorkItem: true });
     const managed = managedProjection();

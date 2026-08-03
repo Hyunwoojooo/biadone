@@ -4,8 +4,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Draft v0.4 |
-| 기준일 | 2026-07-26 |
+| 문서 상태 | Phase 4B active decision baseline recorded, Draft v0.5 |
+| 기준일 | 2026-08-03 |
 | 평가 schema | `cross-source-evaluation-case-v0.1` |
 | reason code | `cross-source-reason-codes-v0.1` |
 | Attention 정의 | `cross-source-attention-definition-v0.2` |
@@ -13,6 +13,7 @@
 | dataset 상태 | Mutable Dev Candidate, revision 2 |
 | 입력 경계 | `normalized_work_signals_and_relations` |
 | 데이터 출처 | Synthetic only |
+| Active decision dataset | `suggestion-active-attention-dev-v0.1`, revision 2 |
 
 관련 파일:
 
@@ -26,6 +27,10 @@
 - `suggestion/eval/synthetic/crossSourceDevDataset.ts`
 - `suggestion/tests/crossSourceDatasetSchema.test.ts`
 - `suggestion/tests/phase2AttentionRouter.test.ts`
+- `suggestion/src/evaluation/activeAttentionDecisionEvaluation.ts`
+- `suggestion/eval/synthetic/activeAttentionDecisionCases.v0.1.json`
+- `suggestion/eval/synthetic/activeAttentionDecisionConfig.v0.2.json`
+- `suggestion/tools/run-active-attention-baseline.ts`
 - `docs/ENGINE_DEVELOPMENT_RECORDS.md`
 
 ---
@@ -115,17 +120,18 @@ v0.1 schema는 의도적으로 `dataOrigin = synthetic`,
 평가셋이 필요해지면 이 literal을 완화하지 않고, 적법성 검토와 별도의 schema 및
 dataset version을 만든다.
 
-### 2.3 현재 Codex v2와 미래 contract 분리
+### 2.3 Core revision 2의 Codex v2 tag와 active runtime 분리
 
-dataset tag를 반드시 구분한다.
+기존 30-case core dataset은 작성 당시의 경계를 재현하기 위해 다음 tag를
+그대로 보존한다. 이 이름은 2026-08-03 live runtime이 Codex v2라는 뜻이 아니다.
 
 ```text
 current_codex_v2
 future_candidate_capable_codex
 ```
 
-`current_codex_v2` 사례는 현재 연결된 `codex-snapshot-v2`가 실제로 제공하는
-metadata-only 범위를 나타낸다. 이 범위는 execution exception에 대해
+`current_codex_v2` 사례는 해당 dataset revision이 평가한
+`codex-snapshot-v2` metadata-only 범위를 나타낸다. 이 범위는 execution exception에 대해
 `overview_only`다.
 
 현재 v2의 optional `taskSummary`는 사용자가 표시를 opt-in한 경우 overview
@@ -145,8 +151,11 @@ workflow가 있을 때만 검토한다.
 - 전체 Attention에 대한 `no_action`
 
 `future_candidate_capable_codex` 사례는 richer ordered snapshot contract와
-detector가 생겼을 때의 정책을 미리 검증하는 합성 사례다. 이 tag가 통과해도 현재
-connector가 해당 기능을 제공한다는 뜻은 아니다.
+detector 정책을 미리 검증한 합성 사례다. Phase 4B는 이 중 Blabase-owned managed
+run의 direct failure와 configured completion follow-through만 별도 exact active
+evaluator로 승격했다. verified stall, scope drift와 approval/input escalation은
+여전히 active 범위가 아니다. 기존 tag 통과를 현재 connector 능력 주장으로
+사용하지 않는다.
 
 ---
 
@@ -983,16 +992,123 @@ current GitHub direct/provisional candidate
 → scoped no-action / insufficient-evidence
 → deterministic result integrity
 
-[다음: Phase 2B]
-richer connector contract와 충분한 history
-→ progress / exception / lifecycle detector
-→ claim / relation resolver
-→ evaluation runner
+[Phase 2B·3·4B 완료 범위]
+managed direct-fact history
+→ exact relation / claim / conflict
+→ current eligibility
+→ active candidate / lane / ranking / decision
+→ replay v2 / monitor v0.4
+
+[다음: Phase 4C]
+local supervisor
+→ 단축키 launcher
+→ Work Cockpit 즉시 실행/관찰
 ```
 
 처음부터 ranking weight를 세밀하게 튜닝하지 않는다. 30개 Dev Case에서 hard
 failure와 label 불일치를 먼저 줄인 뒤, reviewer agreement가 안정되면 첫
 Golden 후보를 만든다. human review와 adjudication은 Phase 6, Golden freeze와
-release decision은 Phase 7의 후속 작업이다. Phase 2A targeted runtime
-decision tests는 추가됐지만 frozen Cross-source Golden과 full synthetic
-decision evaluator는 아직 없으며 제품 route에도 연결하지 않았다.
+release decision은 Phase 7의 후속 작업이다. Phase 4B active evaluator와 제품
+route는 연결됐지만 frozen Cross-source Golden과 locked holdout은 아직 없다.
+
+---
+
+## 16. Phase 4B active Attention baseline
+
+Phase 4B는 기존 30-case core dataset을 active runtime 품질 주장으로 재사용하지
+않고, exact replayable evidence envelope를 입력으로 받는 별도 deterministic
+evaluator를 추가했다.
+
+### 16.1 버전과 범위
+
+- input/result: `cross-source-active-attention-input-v0.4` /
+  `cross-source-active-attention-result-v0.4`
+- policy: `aggressive-evidence-bound-attention-policy-v0.3`
+- candidate rule: `github-managed-codex-active-candidate-rule-v0.1`
+- lane/ID: `active-attention-lane-policy-v0.1` /
+  `active-attention-id-v0.1`
+- ranking/resolver: `active-attention-ranking-policy-v0.2` /
+  `active-attention-decision-resolver-v0.3`
+- live/monitor/replay: `attention-live-orchestrator-v0.4` /
+  `attention-monitor-run-v0.4` / `attention-replay-input-v2`
+
+평가 범위는 GitHub direct-work, managed Codex direct failure, configured completion
+follow-through, four-lane ordering, weekly focus inheritance, relevant conflict,
+source refresh와 user-review 분기, scoped no-action, deduplication, recovery,
+workflow timing/closure/artifact/action-target compatibility, archived project
+exclusion, `request_review` authored-PR relationship, inactive link, coverage,
+privacy와 determinism이다. verified stall, scope drift, stable request
+escalation, Calendar fit과 Notion task 후보는 포함하지 않는다.
+
+### 16.2 재현 기록
+
+- dataset: `suggestion-active-attention-dev-v0.1`, revision `2`, mutable synthetic
+  Dev Candidate, `44` cases
+- dataset canonical SHA-256:
+  `e10bf1fa0415e39003f5d03d760feb75dbe13dac1e606253e78ebb1ab9f0f290`
+- materialized input SHA-256:
+  `b1b467a42f1de6564e1a2d08a48b3823c74077fe87c9eb8af4318112480e1c58`
+- config version/ref: `active-attention-decision-config-v0.2` /
+  `eval/synthetic/activeAttentionDecisionConfig.v0.2.json`
+- config SHA-256:
+  `f8da1f5c0b8f55aaa6acffbd6885bdf4a1a759ca0c0f3cf61d84dcb35b6df30b`
+- code fingerprint SHA-256:
+  `71b0319dfc2e53866081c6b9b73f0ed1815c1fb5204a2a3b75edeae7d32e72a3`
+- deterministic output SHA-256:
+  `1be64deabff76cc625de4e7ac8dd292fe5d403380cbdf9308cb6108dbaa3a276`
+- run ID: `active_attention_eval_run_1a661f6515069b5721c9bbce775677d2`
+- canonical record payload SHA-256:
+  `f8c9311a46f2893225f0c378cd24ad410877573ad4c5a49daea81efaba6f3f80`
+- record artifact SHA-256:
+  `c4606ff0d7db7e20dfc7d6b60bda863c8bd619457df0a1a616b468bd7bca80d7`
+- exact result: cases `44/44`, assessments `80/80`, latency `609ms`, 모든 release
+  guardrail `0`
+
+revision 1의 `active_attention_eval_run_325d24b34e38226344b2adbc11f1648f`
+(`42/42`, `76/76`)은 archived-project와 authored-PR audit gate 추가 전
+pre-audit candidate history로 보존한다. 입력 dataset과 resolver version이 달라
+revision 2의 직접 comparison baseline으로 사용하지 않는다.
+
+artifact는 `.local/evaluations/active-attention`의 mode `0600` local private
+record다. production data, raw prompt/answer, command/output, diff/path/thread를
+포함하지 않는다.
+
+### 16.3 Dependency compatibility
+
+같은 Phase 4B 작업 계열에서 dependency behavior 변경을 별도 mutable revision으로
+재평가했다. active final baseline과 dependency run의 dirty-worktree fingerprint는
+서로 다르며, frozen dataset은 수정하지 않았다.
+
+- Claim Authority revision 2:
+  `claim_authority_run_0079980ec2ea503ca9718bc48f8846e6`, cases `40/40`,
+  resolutions `42/42`, conflicts `9/9`, dataset SHA-256
+  `809e459b2e27e26791ce20ba4599450818425b48603ba76cb2a8cad45544fe4d`
+- Eligibility revision 2:
+  `attention_eligibility_run_acaa74c69c3f8fa721eeb253d9916400`, cases `26/26`,
+  assessments `24/24`, dataset SHA-256
+  `7e53abbdf7ccf64ec30152c3fdd0c08161db10f5e2b191286745cbe729bb0343`
+
+전체 회귀는 Vitest `79` files / `670` tests, typecheck, lint와 production build를
+통과했다. 신규 unit regression은 archived-project workflow 제외,
+review-requested 다른 사용자의 PR 제외와 client partial expected identity의 local
+fail-closed, 명시적으로 전달된 빈 identity pair의 server 검증을 포함한다. Work
+Resumption browser E2E는 exact managed binding open, identity mismatch fail-closed를
+포함해 Chromium `3/3`을 통과했다.
+
+### 16.4 해석 제한
+
+이 baseline은 human review를 거치지 않은 mutable synthetic development contract다.
+따라서 실제 사용자 유용성, production 분포의 precision/recall 또는 정식 release
+readiness를 주장하지 않는다. production conversation이나 implicit feedback을
+Golden으로 자동 승격하지 않으며, 첫 Golden은 독립 review와 adjudication 후 새
+version/hash로 freeze한다.
+
+같은 target의 managed run이 동일 millisecond `startedAt`을 가지면 authoritative
+newer ordering을 증명하지 못하므로 오래된 failure supersession이 지연될 수 있다.
+임의 ID tie-break를 최신성 근거로 쓰지 않으며 후속 monotonic run-start sequence
+계약이 필요하다.
+
+또한 이 baseline 이전의 resolver v0.2로 기록된 monitor v0.4/failure v0.3 local
+record는 현재 v0.3 semantic replay와 직접 동등하지 않다. 현재 local monitor
+store에는 해당 record가 없지만 formal release 전 versioned migration 또는 안전한
+invalidation 계약을 추가해야 한다.

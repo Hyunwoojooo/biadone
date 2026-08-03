@@ -686,9 +686,13 @@ export function lookupProjectId(
   const registry = workContextRegistrySchema.parse(registryInput);
   const scope = sourceScopeRefSchema.parse(scopeInput);
   const decision = currentMappingDecision(registry, scope);
-  return decision?.action === "confirm"
-    ? decision.projectId
-    : null;
+  if (decision?.action !== "confirm" || decision.projectId === null) {
+    return null;
+  }
+  const project = registry.projects.find(
+    (candidate) => candidate.projectId === decision.projectId
+  );
+  return project?.archivedAt === null ? decision.projectId : null;
 }
 
 export function createEmptyWeeklyOutcomeStore(

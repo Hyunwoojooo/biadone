@@ -18,6 +18,7 @@ import {
   detachWorkArtifact,
   WorkArtifactRequestError
 } from "./workArtifactsClient";
+import { syncInvalidationBus } from "./sync/invalidationBus";
 
 export function ManagedCodexArtifacts({
   run,
@@ -65,8 +66,9 @@ export function ManagedCodexArtifacts({
       setArtifactUrl("");
       setMessage({
         tone: "success",
-        text: "결과 연결을 저장했습니다. 추천에는 아직 사용하지 않습니다."
+        text: "결과 연결을 저장했습니다. 완료된 후속 작업의 중복 추천을 막는 근거로 반영합니다."
       });
+      invalidateAttentionAfterArtifactMutation();
       await refreshAfterMutation(onChanged, setMessage);
     } catch (error) {
       if (sequence !== mutationSequence.current) return;
@@ -94,6 +96,7 @@ export function ManagedCodexArtifacts({
         tone: "success",
         text: "결과 연결을 해제했습니다. 과거 연결 이력은 보존됩니다."
       });
+      invalidateAttentionAfterArtifactMutation();
       await refreshAfterMutation(onChanged, setMessage);
     } catch (error) {
       if (sequence !== mutationSequence.current) return;
@@ -118,7 +121,7 @@ export function ManagedCodexArtifacts({
       <div className="managedCodexArtifactsHeader">
         <strong id={`${artifactUrlId}-title`}>생성된 결과</strong>
         <span className="managedCodexArtifactsBoundary">
-          사용자가 직접 연결 · 추천에는 아직 사용하지 않음
+          결과 자체는 후보가 아님 · 후속 작업 완료 여부의 근거로 사용
         </span>
       </div>
 
@@ -195,6 +198,13 @@ export function ManagedCodexArtifacts({
       ) : null}
     </section>
   );
+}
+
+export function invalidateAttentionAfterArtifactMutation(): void {
+  syncInvalidationBus.invalidate({
+    reason: "context_changed",
+    targets: ["attention"]
+  });
 }
 
 function exactActiveArtifacts(

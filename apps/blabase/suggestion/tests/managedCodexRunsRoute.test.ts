@@ -244,7 +244,10 @@ describe("managed Codex runs route", () => {
   it("fails closed when the semantic source revision is from another snapshot", async () => {
     vi.mocked(readManagedCodexObservability).mockResolvedValueOnce({
       projection: publicProjection(),
-      semantics: semanticProjection(2)
+      semantics: semanticProjection(2),
+      managedRunStartedAtById: {
+        [MANAGED_RUN_ID]: "2026-08-01T03:00:00.000Z"
+      }
     });
 
     const response = await getManagedCodexRuns(
@@ -262,6 +265,9 @@ describe("managed Codex runs route", () => {
       semantics: {
         ...semanticProjection(),
         ownerInstanceId: RAW_SENTINEL
+      },
+      managedRunStartedAtById: {
+        [MANAGED_RUN_ID]: "2026-08-01T03:00:00.000Z"
       }
     } as never);
 
@@ -280,7 +286,10 @@ const MANAGED_RUN_ID = `managed_run_${"1".repeat(32)}`;
 function observability() {
   return {
     projection: publicProjection(),
-    semantics: semanticProjection()
+    semantics: semanticProjection(),
+    managedRunStartedAtById: {
+      [MANAGED_RUN_ID]: "2026-08-01T03:00:00.000Z"
+    }
   };
 }
 

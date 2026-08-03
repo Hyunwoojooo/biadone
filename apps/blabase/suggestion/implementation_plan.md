@@ -1,5 +1,10 @@
 # blabase Priority Suggestion Engine 구현 계획
 
+> 현재 상태(2026-08-03): 이 문서는 초기 ChatGPT conversation-only v0.3 엔진의
+> 선행 계획으로 보존한다. GitHub + managed Codex 기반 Work Cockpit/active
+> Attention의 Phase 4B 구현 상태, 버전과 다음 단계는
+> `docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md`가 현재 기준이다.
+
 ## 1. 목적
 
 blabase의 중심 결과를 “대화 내용을 잘 정리한 결과”에서 “사용자가 지금 가장 먼저 처리해야 할 일을 근거와 함께 제안하는 결과”로 확장한다.

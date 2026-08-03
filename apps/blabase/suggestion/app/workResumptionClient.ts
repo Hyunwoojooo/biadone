@@ -101,11 +101,28 @@ export async function unbindWorkSession(input: {
 
 export async function openWorkSession(input: {
   taskRef: WorkResumptionTaskRef;
+  expectedBindingId?: string;
+  expectedExecutionId?: string;
 }): Promise<WorkResumptionApiResponse> {
+  if (
+    (input.expectedBindingId === undefined) !==
+    (input.expectedExecutionId === undefined)
+  ) {
+    throw new TypeError(
+      "Expected binding and execution identity must be provided together."
+    );
+  }
   return mutateWorkResumption({
     action: "open",
     taskRef: input.taskRef,
-    explicitUserAction: true
+    explicitUserAction: true,
+    ...(input.expectedBindingId !== undefined &&
+    input.expectedExecutionId !== undefined
+      ? {
+          expectedBindingId: input.expectedBindingId,
+          expectedExecutionId: input.expectedExecutionId
+        }
+      : {})
   });
 }
 

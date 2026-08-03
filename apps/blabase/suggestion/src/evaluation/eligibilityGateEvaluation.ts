@@ -216,7 +216,7 @@ export const attentionEligibilityEvaluationDatasetSchema = z
     datasetVersion: z.literal(
       "suggestion-attention-eligibility-dev-v0.1"
     ),
-    datasetRevision: z.literal(1),
+    datasetRevision: z.literal(2),
     datasetClass: z.literal("dev_candidate"),
     inputBoundary: z.literal("exact_phase3_evidence_graph"),
     dataOrigin: z.literal("synthetic"),
@@ -368,7 +368,7 @@ export type AttentionEligibilityEvaluationRecord = {
   latencyMs: number;
   dataset: {
     version: "suggestion-attention-eligibility-dev-v0.1";
-    revision: 1;
+    revision: 2;
     class: "dev_candidate";
     lifecycle: "mutable";
     inputBoundary: "exact_phase3_evidence_graph";

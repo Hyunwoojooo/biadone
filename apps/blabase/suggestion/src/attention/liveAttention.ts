@@ -39,16 +39,36 @@ import {
   runPhase2AttentionRouter
 } from "../crossSource/runAttentionRouter";
 import {
+  resolveActiveAttention,
+  sealActiveAttentionInput,
+  type ActiveAttentionResult
+} from "../attentionDecision";
+import {
   lookupProjectId,
   readWorkContextRegistry,
   readWeeklyOutcomeStore,
+  resolveAttentionWorkContext,
   resolveStoredAttentionWorkContext,
   type SourceScopeRef,
   type WorkContextRegistry
 } from "../context";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
+import { ACTIVE_ATTENTION_INPUT_CONTRACT } from "../crossSource/versions";
+import { resolveAttentionEligibilityShadow } from "../eligibility";
+import type { AttentionEligibilityShadowProjection } from "../eligibility";
 import { loadSharedLocalEnv } from "../localEnv";
 import { syncRuntimeSources } from "../sync/runtime";
+import {
+  resolveCurrentWorkEvidenceAtAuthoritySnapshot,
+  resolveEmptyManagedWorkEvidence,
+  type CurrentWorkEvidence
+} from "../workEvidence/currentWorkEvidence";
+import {
+  createEmptyProjectWorkflowStore,
+  readProjectWorkflowStore,
+  resolveProjectWorkflowProjection,
+  type ProjectWorkflowProjection
+} from "../workflows";
 import {
   adaptCalendarSnapshotForAttention,
   adaptNotionSnapshotForAttention,
@@ -112,10 +132,14 @@ type AttentionSnapshots = {
     validUntil: string | null;
   };
   contextProvenance?: AttentionWorkContextMonitor;
+  currentWorkEvidence?: CurrentWorkEvidence;
+  workflowProjection?: ProjectWorkflowProjection;
 };
 
 type EvaluatedAttention = {
-  result: ReturnType<typeof runPhase2AttentionRouter>;
+  result: ActiveAttentionResult;
+  baseResult: ReturnType<typeof runPhase2AttentionRouter>;
+  eligibilityProjection: AttentionEligibilityShadowProjection;
   run: AttentionMonitorRun;
   replayArtifact: AttentionReplayInputArtifact;
 };
@@ -137,13 +161,15 @@ export function asEphemeralAttentionPreview(
 export async function evaluateCurrentAttention(input?: {
   cwd?: string;
   now?: Date;
+  startedAt?: Date;
   env?: NodeJS.ProcessEnv;
   refreshSources?: boolean;
   executionIds?: AttentionExecutionIds;
   codeProvenance?: AttentionCodeProvenance;
 }): Promise<EvaluatedAttention> {
   const cwd = input?.cwd ?? process.cwd();
-  const startedAtMs = input?.now?.getTime() ?? Date.now();
+  const startedAtMs =
+    input?.startedAt?.getTime() ?? input?.now?.getTime() ?? Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const env = input?.env ?? process.env;
   loadSharedLocalEnv(env);
@@ -168,28 +194,53 @@ export async function evaluateCurrentAttention(input?: {
     googleCalendar,
     notion
   });
-  const [context, registryRead, outcomeRead] = await Promise.all([
-    resolveStoredAttentionWorkContext({
-      sourceScopes,
-      asOf: startedAt,
-      cwd
-    }),
+  const [registryRead, outcomeRead, workflowStore] = await Promise.all([
     readWorkContextRegistry(cwd),
-    readWeeklyOutcomeStore(cwd)
+    readWeeklyOutcomeStore(cwd),
+    readProjectWorkflowStore(cwd)
   ]);
-  const completedAtMs = input?.now
-    ? startedAtMs
-    : Math.max(startedAtMs, Date.now());
-
+  const registry =
+    registryRead.status === "available" ? registryRead.value : null;
+  const currentWorkEvidence =
+    await resolveCurrentWorkEvidenceAtAuthoritySnapshot({
+      cwd,
+      ...(input?.now ? { now: input.now } : {}),
+      contextRegistry: registry,
+      resolveGithubBatch: (asOf) => {
+        const normalized = normalizeGitHubSource(github, asOf, registry);
+        return normalized.sourceInput.status === "available"
+          ? normalized.sourceInput.batch
+          : null;
+      }
+    });
+  const asOf = currentWorkEvidence.asOf;
+  const context =
+    registryRead.status === "available" &&
+    outcomeRead.status !== "invalid"
+      ? resolveAttentionWorkContext({
+          registry: registryRead.value,
+          weeklyOutcomes:
+            outcomeRead.status === "available"
+              ? outcomeRead.value
+              : null,
+          sourceScopes,
+          asOf
+        })
+      : await resolveStoredAttentionWorkContext({
+          sourceScopes,
+          asOf,
+          cwd
+        });
+  const workflowProjection = resolveProjectWorkflowProjection({
+    store: workflowStore,
+    asOf
+  });
   return evaluateAttentionSnapshots({
     github,
     codex,
     googleCalendar,
     notion,
-    registry:
-      registryRead.status === "available"
-        ? registryRead.value
-        : null,
+    registry,
     focus: context.focus,
     contextProvenance: {
       contract: context.contract,
@@ -207,10 +258,13 @@ export async function evaluateCurrentAttention(input?: {
       focusState:
         context.focus.primaryOutcome === null ? "none" : "active"
     },
-    asOf: startedAt,
+    currentWorkEvidence,
+    workflowProjection,
+    asOf,
     startedAt,
-    completedAt: new Date(completedAtMs).toISOString(),
-    latencyMs: completedAtMs - startedAtMs,
+    completionClock: input?.now
+      ? () => startedAtMs
+      : () => Date.now(),
     executionIds: input?.executionIds,
     ...codeProvenance
   });
@@ -221,6 +275,8 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
   startedAt?: string;
   completedAt?: string;
   latencyMs?: number;
+  /** Internal wall clock sampled after normalization and decision resolution. */
+  completionClock?: () => number;
   codeCommitSha?: string | null;
   codeState?: AttentionCodeProvenance["codeState"];
   codeFingerprintSha256?: string | null;
@@ -274,14 +330,58 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
     notion,
     focus: input.focus
   });
-  const result = runPhase2AttentionRouter(attentionInput);
+  const baseResult = runPhase2AttentionRouter(attentionInput);
+  const githubBatch =
+    github.sourceInput.status === "available"
+      ? github.sourceInput.batch
+      : null;
+  const currentWorkEvidence =
+    input.currentWorkEvidence ??
+    resolveEmptyManagedWorkEvidence({
+      asOf: input.asOf,
+      githubBatch,
+      contextRegistry: input.registry ?? null
+    });
+  const workflowProjection =
+    input.workflowProjection ??
+    resolveProjectWorkflowProjection({
+      store: createEmptyProjectWorkflowStore(input.asOf),
+      asOf: input.asOf
+    });
+  const eligibilityProjection = resolveAttentionEligibilityShadow({
+    asOf: input.asOf,
+    githubBatch,
+    workRelationProjection: currentWorkEvidence.workRelations,
+    artifactRelationProjection: currentWorkEvidence.artifacts,
+    claimAuthorityProjection: currentWorkEvidence.claims
+  });
+  const activeInput = sealActiveAttentionInput({
+    contract: ACTIVE_ATTENTION_INPUT_CONTRACT,
+    asOf: input.asOf,
+    baseAttentionInput: attentionInput,
+    githubBatch,
+    eligibilityProjection,
+    managedPublicProjection: currentWorkEvidence.managedProjection,
+    managedSemanticProjection: currentWorkEvidence.managedSemantics,
+    managedRunStartedAtById:
+      currentWorkEvidence.managedRunStartedAtById,
+    workRelationProjection: currentWorkEvidence.workRelations,
+    artifactRelationProjection: currentWorkEvidence.artifacts,
+    claimAuthorityProjection: currentWorkEvidence.claims,
+    workflowProjection
+  });
+  const result = resolveActiveAttention(activeInput);
   const candidateCounts = {
     eligible: 0,
-    provisional: 0,
+    reviewRequired: 0,
     ineligible: 0
   };
-  for (const assessment of result.candidateAssessments) {
-    candidateCounts[assessment.disposition] += 1;
+  for (const assessment of result.assessments) {
+    candidateCounts[
+      assessment.status === "review_required"
+        ? "reviewRequired"
+        : assessment.status
+    ] += 1;
   }
   const errors = [github.monitor, codex.monitor].flatMap(
     (source) =>
@@ -295,7 +395,21 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
           ]
   );
   const startedAt = input.startedAt ?? input.asOf;
-  const completedAt = input.completedAt ?? input.asOf;
+  const startedAtMs = Date.parse(startedAt);
+  const suppliedLatencyMs =
+    input.latencyMs === undefined
+      ? undefined
+      : Math.max(0, Math.round(input.latencyMs));
+  const completedAtMs = input.completedAt
+    ? Date.parse(input.completedAt)
+    : input.completionClock
+      ? Math.max(startedAtMs, input.completionClock())
+      : suppliedLatencyMs === undefined
+        ? Date.parse(input.asOf)
+        : startedAtMs + suppliedLatencyMs;
+  const completedAt = new Date(completedAtMs).toISOString();
+  const latencyMs =
+    suppliedLatencyMs ?? completedAtMs - startedAtMs;
   const runId =
     input.executionIds?.runId ??
     `run_${randomBytes(16).toString("hex")}`;
@@ -315,10 +429,10 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       inputSha256: result.inputSha256,
       privacyClass: "private_local_engine_input",
       retentionDays: ATTENTION_MONITOR_RETENTION_DAYS,
-      input: attentionInput
+      input: activeInput
     });
   const replayArtifactSha256 = runtimeSha256({
-    domain: "attention-private-replay-artifact-v1",
+    domain: "attention-private-replay-artifact-v2",
     artifact: replayArtifact
   });
   const codeState =
@@ -327,6 +441,8 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
 
   return {
     result,
+    baseResult,
+    eligibilityProjection,
     run: attentionMonitorRunSchema.parse({
       contract: ATTENTION_MONITOR_RUN_CONTRACT,
       runId,
@@ -358,9 +474,13 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       },
       resultContract: result.contract,
       policyVersion: result.policyVersion,
-      githubCandidateRuleVersion:
-        result.githubCandidateRuleVersion,
-      codexOverviewRuleVersion: result.codexOverviewRuleVersion,
+      githubCandidateRuleVersion: null,
+      codexOverviewRuleVersion: null,
+      candidateRuleVersion: result.candidateRuleVersion,
+      lanePolicyVersion: result.lanePolicyVersion,
+      rankingPolicyVersion: result.rankingPolicyVersion,
+      resolverVersion: result.resolverVersion,
+      idPolicyVersion: result.idPolicyVersion,
       decisionStatus: result.decision.status,
       certainty: result.decision.certainty,
       topCandidateId:
@@ -368,18 +488,20 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       alternativeCount: result.decision.alternatives.length,
       candidateCounts,
       candidateAssessmentDetailState: "available",
-      candidateAssessments: result.candidateAssessments.map(
+      candidateAssessments: result.assessments.map(
         (assessment) => ({
           assessmentId: assessment.assessmentId,
-          taskKind: assessment.taskKind,
-          disposition: assessment.disposition,
           candidateId: assessment.candidateId,
-          gateReasonCodes: assessment.gateReasonCodes
+          triggerSource: assessment.triggerSource,
+          triggerKind: assessment.triggerKind,
+          status: assessment.status,
+          reviewRoute: assessment.reviewRoute,
+          reasonCodes: assessment.reasonCodes
         })
       ),
       codexExecutionCount:
-        result.workCockpit.codexExecutions.length,
-      coverageDisposition: result.coverage.disposition,
+        baseResult.workCockpit.codexExecutions.length,
+      coverageDisposition: activeCoverageDisposition(result),
       decisionReasonCodes: result.decision.reasonCodes,
       caveatCodes: result.decision.caveatCodes,
       sources: [github.monitor, codex.monitor],
@@ -387,11 +509,22 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       ...(input.contextProvenance
         ? { workContext: input.contextProvenance }
         : {}),
-      latencyMs: Math.max(0, Math.round(input.latencyMs ?? 0)),
+      latencyMs,
       errors
     }),
     replayArtifact
   };
+}
+
+function activeCoverageDisposition(
+  result: ActiveAttentionResult
+): "scoped_complete" | "limited_but_sufficient" | "insufficient" {
+  if (result.coverage.negativeCandidateCoverageComplete) {
+    return "scoped_complete";
+  }
+  return result.decision.status === "suggested"
+    ? "limited_but_sufficient"
+    : "insufficient";
 }
 
 function normalizeGitHubSource(

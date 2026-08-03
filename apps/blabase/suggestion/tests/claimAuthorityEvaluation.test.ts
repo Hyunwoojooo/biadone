@@ -17,7 +17,7 @@ describe("claim authority targeted evaluation", () => {
   it("loads a separate mutable 40-case synthetic Dev Candidate", () => {
     expect(claimAuthorityEvaluationDataset).toMatchObject({
       datasetVersion: "suggestion-claim-authority-dev-v0.1",
-      datasetRevision: 1,
+      datasetRevision: 2,
       datasetClass: "dev_candidate",
       inputBoundary: "normalized_claim_resolution_inputs",
       dataOrigin: "synthetic",
@@ -49,7 +49,7 @@ describe("claim authority targeted evaluation", () => {
       "98ddd2fd399286a89f23737ab7a3fa76cd16e2317150ca78800edcd2bfe63db0"
     );
     expect(CLAIM_AUTHORITY_DATASET_SHA256).toBe(
-      "65e7b3dea1b197133b3c776970b2bf3342bfb59777cbc2a1a0a01b31ec11606d"
+      "809e459b2e27e26791ce20ba4599450818425b48603ba76cb2a8cad45544fe4d"
     );
   });
 
@@ -112,7 +112,7 @@ describe("claim authority targeted evaluation", () => {
       "12f1eb24d6522170e828bfbf406b324d8d2d600b7a9013016d6c6adf95d5f8f1"
     );
     expect(record.deterministicOutputSha256).toBe(
-      "cb8e60f7a62d35ab87cac554967c370244bf9a252afa74dcc30452c74b3d08bd"
+      "34e560c4894f1b84c66348779a804fb014fdd01f28d70088c49a9163ce0a654a"
     );
     expect(record.attentionDisposition).toBe("not_connected");
     expect(record.inference).toEqual({

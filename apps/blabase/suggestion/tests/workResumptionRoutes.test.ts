@@ -251,6 +251,60 @@ describe("work resumption route", () => {
       ...snapshot,
       acceptedCommand: command
     });
+    expect(openWorkSession).toHaveBeenCalledWith({
+      taskRef,
+      explicitUserAction: true
+    });
+  });
+
+  it("passes exact managed binding identity and reports a changed binding", async () => {
+    const accepted = await postWorkResumption(
+      mutationRequest({
+        action: "open",
+        taskRef,
+        explicitUserAction: true,
+        expectedBindingId: binding.bindingId,
+        expectedExecutionId: binding.executionId
+      })
+    );
+    expect(accepted.status).toBe(202);
+    expect(openWorkSession).toHaveBeenCalledWith({
+      taskRef,
+      explicitUserAction: true,
+      expectedBindingId: binding.bindingId,
+      expectedExecutionId: binding.executionId
+    });
+
+    vi.mocked(openWorkSession).mockRejectedValueOnce(
+      new WorkResumptionStoreError("BINDING_IDENTITY_CHANGED")
+    );
+    const changed = await postWorkResumption(
+      mutationRequest({
+        action: "open",
+        taskRef,
+        explicitUserAction: true,
+        expectedBindingId: binding.bindingId,
+        expectedExecutionId: binding.executionId
+      })
+    );
+    expect(changed.status).toBe(409);
+    await expect(changed.json()).resolves.toMatchObject({
+      status: "error",
+      code: "BINDING_IDENTITY_CHANGED"
+    });
+  });
+
+  it("rejects a partial expected managed binding identity", async () => {
+    const response = await postWorkResumption(
+      mutationRequest({
+        action: "open",
+        taskRef,
+        explicitUserAction: true,
+        expectedBindingId: binding.bindingId
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(openWorkSession).not.toHaveBeenCalled();
   });
 
   it("never queues when the companion is offline", async () => {

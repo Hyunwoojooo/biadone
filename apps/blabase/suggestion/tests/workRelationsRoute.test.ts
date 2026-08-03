@@ -125,11 +125,15 @@ import {
   readWorkSessionBindingStore,
   withManagedCodexAuthorityLease
 } from "../src/resumption";
+import { resolveCurrentWorkEvidenceAtAuthoritySnapshot } from "../src/workEvidence";
 
 const AS_OF = "2026-08-01T03:00:00.000Z";
 const RAW_SENTINEL = "PRIVATE_RELATION_ROUTE_SENTINEL";
 const githubSnapshot = { schemaVersion: "github-snapshot-v2" } as never;
-const githubBatch = { source: "github" } as RuntimeWorkSignalBatch;
+const githubBatch = {
+  source: "github",
+  assessment: { asOf: AS_OF }
+} as RuntimeWorkSignalBatch;
 const contextRegistry = {
   registrySha256: "c".repeat(64)
 } as never;
@@ -228,7 +232,8 @@ beforeEach(() => {
   });
   vi.mocked(readManagedCodexObservability).mockResolvedValue({
     projection: managedProjection,
-    semantics: managedSemantics
+    semantics: managedSemantics,
+    managedRunStartedAtById: {}
   });
   vi.mocked(readWorkSessionBindingStore).mockResolvedValue(bindingStore);
   vi.mocked(readWorkArtifactAttributionStore).mockImplementation(
@@ -272,6 +277,31 @@ afterEach(() => {
 });
 
 describe("work relations route", () => {
+  it("allocates one exact as-of time inside the managed authority lease", async () => {
+    const resolveGithubBatch = vi.fn(() => githubBatch);
+
+    const evidence =
+      await resolveCurrentWorkEvidenceAtAuthoritySnapshot({
+        contextRegistry,
+        resolveGithubBatch
+      });
+
+    expect(resolveGithubBatch).toHaveBeenCalledWith(AS_OF);
+    expect(evidence).toMatchObject({
+      asOf: AS_OF,
+      githubBatch,
+      managedRunStartedAtById: {},
+      workRelations: projection,
+      artifacts: artifactProjection,
+      claims: claimProjection
+    });
+    expect(withManagedCodexAuthorityLease).toHaveBeenCalledWith(
+      process.cwd(),
+      expect.any(Function),
+      expect.any(Function)
+    );
+  });
+
   it("returns a separate local no-store relation projection", async () => {
     vi.mocked(lookupProjectId).mockReturnValue(
       `project_${"1".repeat(32)}`

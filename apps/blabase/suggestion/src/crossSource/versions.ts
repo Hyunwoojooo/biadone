@@ -80,7 +80,7 @@ export const CLAIM_CONFLICT_SCHEMA_VERSION =
   "claim-conflict-schema-v0.1" as const;
 
 export const CROSS_SOURCE_CLAIM_RESOLVER_VERSION =
-  "cross-source-claim-resolver-v0.1" as const;
+  "cross-source-claim-resolver-v0.2" as const;
 
 export const FIELD_CLAIM_AUTHORITY_POLICY_VERSION =
   "field-claim-authority-policy-v0.1" as const;
@@ -138,3 +138,27 @@ export const PHASE2_ATTENTION_RESULT_ID_POLICY_VERSION =
 
 export const PHASE2_CODEX_METADATA_RETENTION_POLICY_VERSION =
   "codex-metadata-retention-30d-v0.1" as const;
+
+export const ACTIVE_ATTENTION_INPUT_CONTRACT =
+  "cross-source-active-attention-input-v0.4" as const;
+
+export const ACTIVE_ATTENTION_RESULT_CONTRACT =
+  "cross-source-active-attention-result-v0.4" as const;
+
+export const ACTIVE_ATTENTION_POLICY_VERSION =
+  "aggressive-evidence-bound-attention-policy-v0.3" as const;
+
+export const ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION =
+  "github-managed-codex-active-candidate-rule-v0.1" as const;
+
+export const ACTIVE_ATTENTION_LANE_POLICY_VERSION =
+  "active-attention-lane-policy-v0.1" as const;
+
+export const ACTIVE_ATTENTION_RANKING_POLICY_VERSION =
+  "active-attention-ranking-policy-v0.2" as const;
+
+export const ACTIVE_ATTENTION_RESOLVER_VERSION =
+  "active-attention-decision-resolver-v0.3" as const;
+
+export const ACTIVE_ATTENTION_ID_POLICY_VERSION =
+  "active-attention-id-v0.1" as const;

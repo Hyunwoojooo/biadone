@@ -123,9 +123,13 @@ function currentEvidenceFixture(): CurrentWorkEvidence {
   return {
     asOf: AS_OF,
     githubBatch: null,
+    managedProjection: {} as never,
+    managedSemantics: {} as never,
+    managedRunStartedAtById: {},
     workRelations: { projectionSha256: "1".repeat(64) } as never,
     artifacts: { projectionSha256: "2".repeat(64) } as never,
-    claims: { projectionSha256: "3".repeat(64) } as never
+    claims: { projectionSha256: "3".repeat(64) } as never,
+    contextRegistry: null
   };
 }
 

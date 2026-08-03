@@ -5,8 +5,28 @@ import {
   phase2CandidateAssessmentSchema,
   type Phase2AttentionResult
 } from "../crossSource/attentionSchema";
+import {
+  activeAttentionAssessmentStatusSchema,
+  activeAttentionInputSchema,
+  activeAttentionInputSha256,
+  activeAttentionReasonCodeSchema,
+  activeAttentionReviewRouteSchema,
+  activeAttentionTriggerKindSchema,
+  activeAttentionTriggerSourceSchema,
+  MAX_ACTIVE_ATTENTION_ASSESSMENTS,
+  type ActiveAttentionResult
+} from "../attentionDecision/contracts";
+import type { AttentionEligibilityShadowProjection } from "../eligibility/contracts";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
 import {
+  ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION,
+  ACTIVE_ATTENTION_ID_POLICY_VERSION,
+  ACTIVE_ATTENTION_INPUT_CONTRACT,
+  ACTIVE_ATTENTION_LANE_POLICY_VERSION,
+  ACTIVE_ATTENTION_POLICY_VERSION,
+  ACTIVE_ATTENTION_RANKING_POLICY_VERSION,
+  ACTIVE_ATTENTION_RESOLVER_VERSION,
+  ACTIVE_ATTENTION_RESULT_CONTRACT,
   PHASE2_ATTENTION_INPUT_CONTRACT,
   PHASE2_ATTENTION_POLICY_VERSION,
   PHASE2_ATTENTION_RESULT_CONTRACT,
@@ -18,20 +38,33 @@ import {
   ATTENTION_FEEDBACK_CONTRACT,
   ATTENTION_LIVE_FRESHNESS_POLICY_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
+  ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_VERSION,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
   ATTENTION_MONITOR_FAILURE_LEGACY_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
   ATTENTION_MONITOR_PREVIEW_CONTRACT,
   ATTENTION_MONITOR_RUN_CONTRACT,
   ATTENTION_MONITOR_RUN_LEGACY_CONTRACT,
   ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_RUN_V02_CONTRACT,
   ATTENTION_REPLAY_INPUT_CONTRACT,
+  ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_STORE_CONTRACT
 } from "./versions";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const stableIdSchema = z.string().regex(/^[a-z]+_[a-f0-9]{32}$/);
+const activeResultIdSchema = z
+  .string()
+  .regex(/^attention_result_[a-f0-9]{32}$/);
+const activeAssessmentIdSchema = z
+  .string()
+  .regex(/^attention_assessment_[a-f0-9]{32}$/);
+const activeCandidateIdSchema = z
+  .string()
+  .regex(/^attention_[a-f0-9]{32}$/);
 const timestampSchema = z.string().datetime();
 
 export const attentionSourceMonitorSchema = z
@@ -233,13 +266,26 @@ const unresolvedWorkContextMonitor = {
   focusState: "none" as const
 };
 
-const candidateCountsSchema = z
+const legacyCandidateCountsSchema = z
   .object({
     eligible: z.number().int().nonnegative(),
     provisional: z.number().int().nonnegative(),
     ineligible: z.number().int().nonnegative()
   })
   .strict();
+
+const activeCandidateCountsSchema = z
+  .object({
+    eligible: z.number().int().nonnegative(),
+    reviewRequired: z.number().int().nonnegative(),
+    ineligible: z.number().int().nonnegative()
+  })
+  .strict();
+
+const candidateCountsSchema = z.union([
+  legacyCandidateCountsSchema,
+  activeCandidateCountsSchema
+]);
 
 export const attentionCandidateAssessmentMonitorSchema =
   phase2CandidateAssessmentSchema.pick({
@@ -250,11 +296,28 @@ export const attentionCandidateAssessmentMonitorSchema =
     gateReasonCodes: true
   });
 
+export const activeAttentionCandidateAssessmentMonitorSchema = z
+  .object({
+    assessmentId: activeAssessmentIdSchema,
+    candidateId: activeCandidateIdSchema.nullable(),
+    triggerSource: activeAttentionTriggerSourceSchema,
+    triggerKind: activeAttentionTriggerKindSchema,
+    status: activeAttentionAssessmentStatusSchema,
+    reviewRoute: activeAttentionReviewRouteSchema,
+    reasonCodes: z.array(activeAttentionReasonCodeSchema).min(1).max(16)
+  })
+  .strict();
+
+const candidateAssessmentMonitorSchema = z.union([
+  attentionCandidateAssessmentMonitorSchema,
+  activeAttentionCandidateAssessmentMonitorSchema
+]);
+
 function normalizeLegacyRunProvenance(input: unknown): unknown {
   if (!isRecord(input)) return input;
   if (
     input.contract !== ATTENTION_MONITOR_RUN_LEGACY_CONTRACT &&
-    input.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+    input.contract !== ATTENTION_MONITOR_RUN_V02_CONTRACT
   ) {
     return input;
   }
@@ -369,13 +432,14 @@ const attentionMonitorRunStrictSchema = z
     contract: z.enum([
       ATTENTION_MONITOR_PREVIEW_CONTRACT,
       ATTENTION_MONITOR_RUN_LEGACY_CONTRACT,
+      ATTENTION_MONITOR_RUN_V02_CONTRACT,
       ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
       ATTENTION_MONITOR_RUN_CONTRACT
     ]),
     runId: stableIdSchema,
     analysisId: stableIdSchema.nullable().default(null),
     sessionId: stableIdSchema.nullable().default(null),
-    resultId: stableIdSchema,
+    resultId: z.union([stableIdSchema, activeResultIdSchema]),
     status: z.literal("completed"),
     asOf: timestampSchema,
     startedAt: timestampSchema,
@@ -402,6 +466,7 @@ const attentionMonitorRunStrictSchema = z
     replayArtifactSha256: sha256Schema.nullable().default(null),
     orchestratorVersion: z.enum([
       ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_VERSION
     ]),
     freshnessPolicyVersion: z.literal(
@@ -416,8 +481,48 @@ const attentionMonitorRunStrictSchema = z
       .strict(),
     resultContract: z.string().min(1).max(120),
     policyVersion: z.string().min(1).max(120),
-    githubCandidateRuleVersion: z.string().min(1).max(120),
-    codexOverviewRuleVersion: z.string().min(1).max(120),
+    githubCandidateRuleVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    codexOverviewRuleVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    candidateRuleVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    lanePolicyVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    rankingPolicyVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    resolverVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    idPolicyVersion: z
+      .string()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
     decisionStatus: z.enum([
       "suggested",
       "needs_clarification",
@@ -434,8 +539,8 @@ const attentionMonitorRunStrictSchema = z
       .enum(["available", "not_recorded"])
       .default("not_recorded"),
     candidateAssessments: z
-      .array(attentionCandidateAssessmentMonitorSchema)
-      .max(1_000)
+      .array(candidateAssessmentMonitorSchema)
+      .max(MAX_ACTIVE_ATTENTION_ASSESSMENTS)
       .default([]),
     codexExecutionCount: z.number().int().nonnegative(),
     coverageDisposition: z.enum([
@@ -472,6 +577,21 @@ const attentionMonitorRunStrictSchema = z
   })
   .strict()
   .superRefine((run, context) => {
+    if (
+      run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT
+    ) {
+      const elapsed =
+        Date.parse(run.completedAt) - Date.parse(run.startedAt);
+      if (elapsed < 0 || run.latencyMs !== elapsed) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["latencyMs"],
+          message:
+            "Current run latency must equal the non-negative execution interval."
+        });
+      }
+    }
     if (run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT) {
       if (
         run.analysisId !== null ||
@@ -486,7 +606,10 @@ const attentionMonitorRunStrictSchema = z
         });
       }
     }
-    if (run.contract === ATTENTION_MONITOR_RUN_CONTRACT) {
+    if (
+      run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+    ) {
       if (
         run.analysisId === null ||
         run.sessionId === null ||
@@ -496,7 +619,7 @@ const attentionMonitorRunStrictSchema = z
         context.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "Current runs require analysis/session IDs and an immutable replay artifact."
+            "Replay-backed runs require analysis/session IDs and an immutable replay artifact."
         });
       }
       const cleanCode =
@@ -518,13 +641,13 @@ const attentionMonitorRunStrictSchema = z
           code: z.ZodIssueCode.custom,
           path: ["codeState"],
           message:
-            "Current run code provenance fields are inconsistent."
+            "Replay-backed run code provenance fields are inconsistent."
         });
       }
     }
     if (
       run.contract === ATTENTION_MONITOR_RUN_LEGACY_CONTRACT ||
-      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+      run.contract === ATTENTION_MONITOR_RUN_V02_CONTRACT
     ) {
       if (
         run.analysisId !== null ||
@@ -574,26 +697,189 @@ const attentionMonitorRunStrictSchema = z
           "Only suggested runs can retain a top candidate identifier."
       });
     }
-    const counted = {
-      eligible: 0,
-      provisional: 0,
-      ineligible: 0
-    };
-    for (const assessment of run.candidateAssessments) {
-      counted[assessment.disposition] += 1;
+    const activeRun =
+      run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT;
+    if (
+      (activeRun &&
+        run.orchestratorVersion !==
+          ATTENTION_LIVE_ORCHESTRATOR_VERSION) ||
+      (!activeRun &&
+        run.orchestratorVersion === ATTENTION_LIVE_ORCHESTRATOR_VERSION)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["orchestratorVersion"],
+        message:
+          "Monitor orchestrator version must match its contract generation."
+      });
+    }
+    const activeVersionsMatch =
+      run.policyVersion === ACTIVE_ATTENTION_POLICY_VERSION &&
+      run.candidateRuleVersion ===
+        ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION &&
+      run.lanePolicyVersion === ACTIVE_ATTENTION_LANE_POLICY_VERSION &&
+      run.rankingPolicyVersion ===
+        ACTIVE_ATTENTION_RANKING_POLICY_VERSION &&
+      run.resolverVersion === ACTIVE_ATTENTION_RESOLVER_VERSION &&
+      run.idPolicyVersion === ACTIVE_ATTENTION_ID_POLICY_VERSION;
+    const legacyVersionsMatch =
+      run.githubCandidateRuleVersion !== null &&
+      run.codexOverviewRuleVersion !== null &&
+      run.candidateRuleVersion === null &&
+      run.lanePolicyVersion === null &&
+      run.rankingPolicyVersion === null &&
+      run.resolverVersion === null &&
+      run.idPolicyVersion === null;
+    if (
+      (activeRun &&
+        (!activeVersionsMatch ||
+          run.githubCandidateRuleVersion !== null ||
+          run.codexOverviewRuleVersion !== null)) ||
+      (!activeRun && !legacyVersionsMatch)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateRuleVersion"],
+        message:
+          "Monitor semantic versions must match their contract generation."
+      });
     }
     if (
-      run.candidateAssessmentDetailState === "available" &&
-      (counted.eligible !== run.candidateCounts.eligible ||
-        counted.provisional !== run.candidateCounts.provisional ||
-        counted.ineligible !== run.candidateCounts.ineligible)
+      (activeRun &&
+        (run.resultContract !== ACTIVE_ATTENTION_RESULT_CONTRACT ||
+          !activeResultIdSchema.safeParse(run.resultId).success)) ||
+      (!activeRun &&
+        !stableIdSchema.safeParse(run.resultId).success)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resultContract"],
+        message:
+          "Monitor result identity must match its contract generation."
+      });
+    }
+    const activeCounts = activeCandidateCountsSchema.safeParse(
+      run.candidateCounts
+    );
+    const legacyCounts = legacyCandidateCountsSchema.safeParse(
+      run.candidateCounts
+    );
+    const activeAssessments = run.candidateAssessments.flatMap(
+      (assessment) => {
+        const parsed =
+          activeAttentionCandidateAssessmentMonitorSchema.safeParse(
+            assessment
+          );
+        return parsed.success ? [parsed.data] : [];
+      }
+    );
+    if (
+      activeRun &&
+      run.topCandidateId !== null &&
+      !activeCandidateIdSchema.safeParse(run.topCandidateId).success
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["topCandidateId"],
+        message:
+          "An active run top candidate must use the active candidate identity contract."
+      });
+    }
+    const legacyAssessments = run.candidateAssessments.flatMap(
+      (assessment) => {
+        const parsed =
+          attentionCandidateAssessmentMonitorSchema.safeParse(
+            assessment
+          );
+        return parsed.success ? [parsed.data] : [];
+      }
+    );
+    if (
+      (activeRun &&
+        (!activeCounts.success ||
+          activeAssessments.length !== run.candidateAssessments.length)) ||
+      (!activeRun &&
+        (!legacyCounts.success ||
+          legacyAssessments.length !== run.candidateAssessments.length))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["candidateAssessments"],
         message:
-          "Candidate assessment metadata must match the run counts."
+          "Candidate assessment metadata must match its monitor contract generation."
       });
+    }
+    if (
+      run.candidateAssessmentDetailState === "available" &&
+      activeRun &&
+      activeCounts.success
+    ) {
+      const counted = {
+        eligible: 0,
+        reviewRequired: 0,
+        ineligible: 0
+      };
+      for (const assessment of activeAssessments) {
+        counted[
+          assessment.status === "review_required"
+            ? "reviewRequired"
+            : assessment.status
+        ] += 1;
+      }
+      if (
+        counted.eligible !== activeCounts.data.eligible ||
+        counted.reviewRequired !== activeCounts.data.reviewRequired ||
+        counted.ineligible !== activeCounts.data.ineligible
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["candidateAssessments"],
+          message:
+            "Active candidate assessment metadata must match the run counts."
+        });
+      }
+      if (run.topCandidateId !== null) {
+        const matchingEligible = activeAssessments.filter(
+          (assessment) =>
+            assessment.status === "eligible" &&
+            assessment.candidateId === run.topCandidateId
+        );
+        if (matchingEligible.length !== 1) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["topCandidateId"],
+            message:
+              "An active top candidate must map to exactly one eligible assessment."
+          });
+        }
+      }
+    }
+    if (
+      run.candidateAssessmentDetailState === "available" &&
+      !activeRun &&
+      legacyCounts.success
+    ) {
+      const counted = {
+        eligible: 0,
+        provisional: 0,
+        ineligible: 0
+      };
+      for (const assessment of legacyAssessments) {
+        counted[assessment.disposition] += 1;
+      }
+      if (
+        counted.eligible !== legacyCounts.data.eligible ||
+        counted.provisional !== legacyCounts.data.provisional ||
+        counted.ineligible !== legacyCounts.data.ineligible
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["candidateAssessments"],
+          message:
+            "Legacy candidate assessment metadata must match the run counts."
+        });
+      }
     }
     if (
       run.candidateAssessmentDetailState === "not_recorded" &&
@@ -614,7 +900,6 @@ export const attentionMonitorRunSchema = z.preprocess(
 );
 
 const attentionReplayEnvelopeShape = {
-  contract: z.literal(ATTENTION_REPLAY_INPUT_CONTRACT),
   runId: stableIdSchema,
   analysisId: stableIdSchema,
   sessionId: stableIdSchema,
@@ -627,6 +912,30 @@ const attentionReplayEnvelopeShape = {
 export const currentAttentionReplayInputArtifactSchema = z
   .object({
     ...attentionReplayEnvelopeShape,
+    contract: z.literal(ATTENTION_REPLAY_INPUT_CONTRACT),
+    input: activeAttentionInputSchema
+  })
+  .strict()
+  .superRefine((artifact, context) => {
+    const calculated = activeAttentionInputSha256(artifact.input);
+    if (
+      artifact.input.contract !== ACTIVE_ATTENTION_INPUT_CONTRACT ||
+      artifact.inputSha256 !== artifact.input.inputSha256 ||
+      artifact.inputSha256 !== calculated
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["inputSha256"],
+        message:
+          "Replay v2 must contain the exact canonical Active Attention input."
+      });
+    }
+  });
+
+const previousAttentionReplayInputArtifactSchema = z
+  .object({
+    ...attentionReplayEnvelopeShape,
+    contract: z.literal(ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT),
     input: phase2AttentionInputSchema
   })
   .strict()
@@ -640,7 +949,7 @@ export const currentAttentionReplayInputArtifactSchema = z
         code: z.ZodIssueCode.custom,
         path: ["inputSha256"],
         message:
-          "Replay artifact input hash must match the canonical Attention input."
+          "Previous replay artifact hash must match its canonical v0.3 input."
       });
     }
   });
@@ -648,6 +957,7 @@ export const currentAttentionReplayInputArtifactSchema = z
 const legacyAttentionReplayInputArtifactSchema = z
   .object({
     ...attentionReplayEnvelopeShape,
+    contract: z.literal(ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT),
     input: z.record(z.unknown())
   })
   .strict()
@@ -680,6 +990,7 @@ const legacyAttentionReplayInputArtifactSchema = z
 
 export const attentionReplayInputArtifactSchema = z.union([
   currentAttentionReplayInputArtifactSchema,
+  previousAttentionReplayInputArtifactSchema,
   legacyAttentionReplayInputArtifactSchema
 ]);
 
@@ -715,12 +1026,7 @@ export const attentionFeedbackRecordSchema = z
   })
   .strict();
 
-const attentionMonitorFailureRecordStrictSchema = z
-  .object({
-    contract: z.enum([
-      ATTENTION_MONITOR_FAILURE_LEGACY_CONTRACT,
-      ATTENTION_MONITOR_FAILURE_CONTRACT
-    ]),
+const attentionMonitorFailureCommonShape = {
     runId: stableIdSchema,
     analysisId: stableIdSchema,
     sessionId: stableIdSchema,
@@ -734,18 +1040,8 @@ const attentionMonitorFailureRecordStrictSchema = z
     ]),
     retryCount: z.number().int().nonnegative().max(10),
     latencyMs: z.number().int().nonnegative(),
-    engineVersion: z.literal(ATTENTION_LIVE_ORCHESTRATOR_VERSION),
     freshnessPolicyVersion: z.literal(
       ATTENTION_LIVE_FRESHNESS_POLICY_VERSION
-    ),
-    inputSchemaVersion: z.literal(PHASE2_ATTENTION_INPUT_CONTRACT),
-    resultSchemaVersion: z.literal(PHASE2_ATTENTION_RESULT_CONTRACT),
-    policyVersion: z.literal(PHASE2_ATTENTION_POLICY_VERSION),
-    githubCandidateRuleVersion: z.literal(
-      PHASE2_GITHUB_CANDIDATE_RULE_VERSION
-    ),
-    codexOverviewRuleVersion: z.literal(
-      PHASE2_CODEX_OVERVIEW_RULE_VERSION
     ),
     codeCommitSha: z
       .string()
@@ -761,8 +1057,72 @@ const attentionMonitorFailureRecordStrictSchema = z
     codeFingerprintSha256: sha256Schema.nullable(),
     privacyClass: z.literal("private_local_metadata"),
     retentionDays: z.literal(ATTENTION_MONITOR_RETENTION_DAYS)
+};
+
+const currentAttentionMonitorFailureRecordSchema = z
+  .object({
+    ...attentionMonitorFailureCommonShape,
+    contract: z.literal(ATTENTION_MONITOR_FAILURE_CONTRACT),
+    engineVersion: z.literal(ATTENTION_LIVE_ORCHESTRATOR_VERSION),
+    inputSchemaVersion: z.literal(ACTIVE_ATTENTION_INPUT_CONTRACT),
+    resultSchemaVersion: z.literal(ACTIVE_ATTENTION_RESULT_CONTRACT),
+    policyVersion: z.literal(ACTIVE_ATTENTION_POLICY_VERSION),
+    candidateRuleVersion: z.literal(
+      ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION
+    ),
+    lanePolicyVersion: z.literal(ACTIVE_ATTENTION_LANE_POLICY_VERSION),
+    rankingPolicyVersion: z.literal(
+      ACTIVE_ATTENTION_RANKING_POLICY_VERSION
+    ),
+    resolverVersion: z.literal(ACTIVE_ATTENTION_RESOLVER_VERSION),
+    idPolicyVersion: z.literal(ACTIVE_ATTENTION_ID_POLICY_VERSION)
   })
-  .strict()
+  .strict();
+
+const legacyAttentionMonitorFailureRecordSchema = z
+  .object({
+    ...attentionMonitorFailureCommonShape,
+    contract: z.literal(ATTENTION_MONITOR_FAILURE_LEGACY_CONTRACT),
+    engineVersion: z.literal(
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION
+    ),
+    inputSchemaVersion: z.literal(PHASE2_ATTENTION_INPUT_CONTRACT),
+    resultSchemaVersion: z.literal(PHASE2_ATTENTION_RESULT_CONTRACT),
+    policyVersion: z.literal(PHASE2_ATTENTION_POLICY_VERSION),
+    githubCandidateRuleVersion: z.literal(
+      PHASE2_GITHUB_CANDIDATE_RULE_VERSION
+    ),
+    codexOverviewRuleVersion: z.literal(
+      PHASE2_CODEX_OVERVIEW_RULE_VERSION
+    )
+  })
+  .strict();
+
+const previousAttentionMonitorFailureRecordSchema = z
+  .object({
+    ...attentionMonitorFailureCommonShape,
+    contract: z.literal(ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT),
+    engineVersion: z.literal(
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION
+    ),
+    inputSchemaVersion: z.literal(PHASE2_ATTENTION_INPUT_CONTRACT),
+    resultSchemaVersion: z.literal(PHASE2_ATTENTION_RESULT_CONTRACT),
+    policyVersion: z.literal(PHASE2_ATTENTION_POLICY_VERSION),
+    githubCandidateRuleVersion: z.literal(
+      PHASE2_GITHUB_CANDIDATE_RULE_VERSION
+    ),
+    codexOverviewRuleVersion: z.literal(
+      PHASE2_CODEX_OVERVIEW_RULE_VERSION
+    )
+  })
+  .strict();
+
+const attentionMonitorFailureRecordStrictSchema = z
+  .discriminatedUnion("contract", [
+    currentAttentionMonitorFailureRecordSchema,
+    previousAttentionMonitorFailureRecordSchema,
+    legacyAttentionMonitorFailureRecordSchema
+  ])
   .superRefine((failure, context) => {
     if (
       failure.contract ===
@@ -866,6 +1226,28 @@ export type AttentionWorkContextMonitor = z.infer<
 export type AttentionMonitorRun = z.infer<
   typeof attentionMonitorRunSchema
 >;
+export type ActiveAttentionCandidateAssessmentMonitor = z.infer<
+  typeof activeAttentionCandidateAssessmentMonitorSchema
+>;
+export type ActiveAttentionMonitorRun = Omit<
+  AttentionMonitorRun,
+  "contract" | "candidateCounts" | "candidateAssessments"
+> & {
+  contract:
+    | typeof ATTENTION_MONITOR_RUN_CONTRACT
+    | typeof ATTENTION_MONITOR_PREVIEW_CONTRACT;
+  candidateCounts: z.infer<typeof activeCandidateCountsSchema>;
+  candidateAssessments: ActiveAttentionCandidateAssessmentMonitor[];
+};
+
+export function isActiveAttentionMonitorRun(
+  run: AttentionMonitorRun
+): run is ActiveAttentionMonitorRun {
+  return (
+    run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+    run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT
+  );
+}
 export type AttentionReplayInputArtifact = z.infer<
   typeof currentAttentionReplayInputArtifactSchema
 >;
@@ -890,7 +1272,9 @@ export type AttentionMonitorStore = z.infer<
 
 export type AttentionReadyResponse = {
   status: "ready";
-  result: Phase2AttentionResult;
+  result: ActiveAttentionResult;
+  baseResult: Phase2AttentionResult;
+  eligibilityProjection: AttentionEligibilityShadowProjection;
   run: AttentionMonitorRun;
   monitoring: {
     state: "preview" | "recorded" | "degraded";

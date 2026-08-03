@@ -43,6 +43,9 @@ export function deriveGitHubClaims(input: {
     (signal): signal is GitHubWorkItemSignal =>
       signal.kind === "work_item_observation"
   );
+  const relationshipClaimSignalIds = selectRelationshipClaimSignals(
+    workSignals
+  );
 
   for (const signal of workSignals) {
     const relationRefs = input.workRelations.relations
@@ -93,13 +96,17 @@ export function deriveGitHubClaims(input: {
         ...common,
         field: "github_work_item_state",
         value: { type: "enum", value: signal.facts.state }
-      }),
-      createNormalizedWorkClaim({
-        ...common,
-        field: "github_user_relationship",
-        value: { type: "enum", value: signal.facts.relationship }
       })
     );
+    if (relationshipClaimSignalIds.has(signal.signalId)) {
+      claims.push(
+        createNormalizedWorkClaim({
+          ...common,
+          field: "github_user_relationship",
+          value: { type: "enum", value: signal.facts.relationship }
+        })
+      );
+    }
 
     for (const relationId of relationRefs) {
       const relationTargetRef = createClaimTargetRef({
@@ -195,6 +202,68 @@ export function deriveGitHubClaims(input: {
   return claims.sort((left, right) =>
     compareRuntimeStrings(left.claimId, right.claimId)
   );
+}
+
+/**
+ * GitHub can return the same pull request through more than one user-role
+ * query (for example, authored by the user and review requested from the
+ * user). Those roles can coexist, so treating them as equal-authority value
+ * disagreement would manufacture a critical conflict. For an otherwise exact
+ * native object, retain the action-driving direct role as the singular
+ * relationship claim. Conflicting native identities are deliberately left
+ * untouched so the authority and relation layers can still fail closed.
+ */
+function selectRelationshipClaimSignals(
+  signals: GitHubWorkItemSignal[]
+): Set<string> {
+  const byTarget = new Map<string, GitHubWorkItemSignal[]>();
+  for (const signal of signals) {
+    const key = `${signal.sourceScopeId}:${signal.subjectId}`;
+    byTarget.set(key, [...(byTarget.get(key) ?? []), signal]);
+  }
+
+  const selected = new Set<string>();
+  for (const group of byTarget.values()) {
+    const first = group[0];
+    if (
+      !first ||
+      group.some((signal) => !sameNativeGitHubObject(first, signal))
+    ) {
+      for (const signal of group) selected.add(signal.signalId);
+      continue;
+    }
+    const winner = [...group].sort(
+      (left, right) =>
+        relationshipClaimPriority(left) -
+          relationshipClaimPriority(right) ||
+        compareRuntimeStrings(left.signalId, right.signalId)
+    )[0];
+    if (winner) selected.add(winner.signalId);
+  }
+  return selected;
+}
+
+function sameNativeGitHubObject(
+  left: GitHubWorkItemSignal,
+  right: GitHubWorkItemSignal
+): boolean {
+  return (
+    left.facts.objectType === right.facts.objectType &&
+    left.facts.number === right.facts.number &&
+    left.facts.destinationUrl === right.facts.destinationUrl &&
+    left.projectId === right.projectId
+  );
+}
+
+function relationshipClaimPriority(signal: GitHubWorkItemSignal): number {
+  switch (signal.facts.taskKind) {
+    case "review_requested_pull_request":
+      return 0;
+    case "assigned_issue":
+      return 1;
+    case "authored_pull_request":
+      return 2;
+  }
 }
 
 function claimCompleteness(
