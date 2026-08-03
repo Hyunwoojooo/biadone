@@ -43,25 +43,45 @@ test("production hard-delete SQL only removes the owner's trashed row", () => {
         id TEXT PRIMARY KEY NOT NULL,
         owner_key TEXT NOT NULL,
         deleted_at TEXT,
-        generation_metadata_json TEXT
+        generation_metadata_json TEXT,
+        summary_schema_version TEXT,
+        summary_json TEXT
       )
     `);
     const insert = database.prepare(`
-      INSERT INTO notes (id, owner_key, deleted_at, generation_metadata_json)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO notes (
+        id,
+        owner_key,
+        deleted_at,
+        generation_metadata_json,
+        summary_schema_version,
+        summary_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    insert.run("active-note", "owner-a", null, '{"runId":"active-run"}');
+    insert.run(
+      "active-note",
+      "owner-a",
+      null,
+      '{"runId":"active-run"}',
+      "gptmemory.summary.v2",
+      '{"title":{"text":"active"}}',
+    );
     insert.run(
       "other-owner-trash",
       "owner-b",
       "2026-08-02T01:00:00.000Z",
       '{"runId":"other-run"}',
+      "gptmemory.summary.v2",
+      '{"title":{"text":"other"}}',
     );
     insert.run(
       "owned-trash",
       "owner-a",
       "2026-08-02T02:00:00.000Z",
       '{"runId":"owned-run"}',
+      "gptmemory.summary.v2",
+      '{"title":{"text":"owned"}}',
     );
 
     const permanentlyDelete = database.prepare(PERMANENT_DELETE_NOTE_SQL);
@@ -86,13 +106,16 @@ test("production hard-delete SQL only removes the owner's trashed row", () => {
 
     const before = database
       .prepare(
-        "SELECT generation_metadata_json FROM notes WHERE id = ? AND owner_key = ?",
+        `SELECT generation_metadata_json, summary_schema_version, summary_json
+         FROM notes WHERE id = ? AND owner_key = ?`,
       )
       .get("owned-trash", "owner-a");
     assert.equal(
       before?.generation_metadata_json,
       '{"runId":"owned-run"}',
     );
+    assert.equal(before?.summary_schema_version, "gptmemory.summary.v2");
+    assert.equal(before?.summary_json, '{"title":{"text":"owned"}}');
 
     const deleted = permanentlyDelete.get("owned-trash", "owner-a");
     assert.equal(deleted?.id, "owned-trash");

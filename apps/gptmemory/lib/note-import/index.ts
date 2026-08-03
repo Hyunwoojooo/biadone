@@ -1,4 +1,9 @@
-export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v2";
+import {
+  SUMMARY_SCHEMA_VERSION,
+  type ConversationSummaryV2,
+} from "../note-summary/index.ts";
+
+export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v3";
 
 export type NoteImportReplacement = {
   noteId: string;
@@ -18,6 +23,10 @@ export type NoteImportGenerationMetadata = {
   adapterVersion: string;
   noteEngineVersion: string;
   noteSchemaVersion: string;
+  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+  summaryProvider: "gemini";
+  summaryModel: string;
+  summaryPromptVersion: string;
   sourceShareId: string;
   sourceContentSha256: string;
   sourceFetchedAt: string;
@@ -58,6 +67,16 @@ export type GeneratedNoteDraft = {
   tags: string[];
 };
 
+export type GeneratedImportDraft = {
+  legacyDraft: GeneratedNoteDraft;
+  summary: ConversationSummaryV2;
+  summaryProvider: {
+    provider: "gemini";
+    model: string;
+    promptVersion: string;
+  };
+};
+
 export type ImportedNoteWrite = {
   title: string;
   overview: string;
@@ -67,6 +86,8 @@ export type ImportedNoteWrite = {
   sourceTitle: string | null;
   sourceMessageCount: number;
   generationMetadata: NoteImportGenerationMetadata;
+  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+  summary: ConversationSummaryV2;
 };
 
 export type ImportStoredNote = {
@@ -117,7 +138,7 @@ export type NoteImportRepository<TNote extends ImportStoredNote> = {
 export type NoteImportDependencies<TNote extends ImportStoredNote> = {
   repository: NoteImportRepository<TNote>;
   importShareUrl(normalizedUrl: string): Promise<ImportedConversation>;
-  createDraft(imported: ImportedConversation): GeneratedNoteDraft;
+  createDraft(imported: ImportedConversation): Promise<GeneratedImportDraft>;
   noteEngineVersion: string;
   now(): string;
   randomUUID(): string;
@@ -191,14 +212,18 @@ export function createNoteImportService<TNote extends ImportStoredNote>(
 
       const imported = await dependencies.importShareUrl(command.normalizedUrl);
       assertImportedSource(imported, command);
-      const draft = dependencies.createDraft(imported);
+      const draft = await dependencies.createDraft(imported);
       const generatedAt = dependencies.now();
       const generationMetadata: NoteImportGenerationMetadata = {
         runId: dependencies.randomUUID(),
         workflowVersion: NOTE_IMPORT_WORKFLOW_VERSION,
         adapterVersion: imported.source.adapterVersion,
         noteEngineVersion: dependencies.noteEngineVersion,
-        noteSchemaVersion: draft.schemaVersion,
+        noteSchemaVersion: draft.legacyDraft.schemaVersion,
+        summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+        summaryProvider: draft.summaryProvider.provider,
+        summaryModel: draft.summaryProvider.model,
+        summaryPromptVersion: draft.summaryProvider.promptVersion,
         sourceShareId: command.shareId,
         sourceContentSha256: await dependencies.sha256Hex(
           canonicalizeImportedConversation(imported),
@@ -261,11 +286,11 @@ export async function sha256Hex(value: string): Promise<string> {
 
 function buildImportedNoteWrite(
   imported: ImportedConversation,
-  draft: GeneratedNoteDraft,
+  draft: GeneratedImportDraft,
   normalizedUrl: string,
   generationMetadata: NoteImportGenerationMetadata,
 ): ImportedNoteWrite {
-  const sections: Array<Record<string, unknown>> = draft.sections.map(
+  const sections: Array<Record<string, unknown>> = draft.legacyDraft.sections.map(
     (section, index) => ({
       id: section.id || `section-${index + 1}`,
       heading: section.heading.trim() || `맥락 ${index + 1}`,
@@ -273,27 +298,31 @@ function buildImportedNoteWrite(
       sourceMessageIds: section.sourceMessageIds,
     }),
   );
-  if (draft.closingState.trim()) {
+  if (draft.legacyDraft.closingState.trim()) {
     sections.push({
       id: "closing-state",
       heading: "대화가 도달한 지점",
-      body: draft.closingState.trim(),
+      body: draft.legacyDraft.closingState.trim(),
       sourceMessageIds: [],
     });
   }
 
   return {
     title:
-      draft.title.trim() ||
+      draft.summary.title.text.trim() ||
       imported.conversation.title?.trim() ||
       "ChatGPT 대화 노트",
-    overview: draft.overview.trim(),
+    // Keep the deterministic v1 body intact for the expandable legacy view.
+    // v2 cards and detail headers read summary.oneLineSummary directly.
+    overview: draft.legacyDraft.overview.trim(),
     sections,
-    tags: normalizeTags(draft.tags),
+    tags: normalizeTags(draft.legacyDraft.tags),
     sourceUrl: normalizedUrl,
     sourceTitle: imported.conversation.title?.trim() || null,
     sourceMessageCount: imported.conversation.messages.length,
     generationMetadata,
+    summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+    summary: draft.summary,
   };
 }
 

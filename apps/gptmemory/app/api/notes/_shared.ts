@@ -1,3 +1,9 @@
+import {
+  parseConversationSummaryV2,
+  SUMMARY_SCHEMA_VERSION,
+  type ConversationSummaryV2,
+} from "../../../lib/note-summary/index.ts";
+
 export const OWNER_HEADER = "x-gptmemory-owner";
 
 const OWNER_KEY_PATTERN = /^[A-Za-z0-9._~-]{32,128}$/;
@@ -35,6 +41,8 @@ export type PublicNote = {
   sourceUrl?: string;
   sourceTitle?: string;
   sourceMessageCount?: number;
+  summarySchemaVersion: typeof SUMMARY_SCHEMA_VERSION | null;
+  summary: ConversationSummaryV2 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt?: string;
@@ -261,6 +269,20 @@ export function noteErrorResponse(error: unknown): Response {
     },
     { status: 500 },
   );
+}
+
+export function parseStoredConversationSummary(
+  schemaVersion: string | null,
+  summaryJson: string | null,
+): ConversationSummaryV2 | null {
+  if (schemaVersion !== SUMMARY_SCHEMA_VERSION || !summaryJson) return null;
+  try {
+    return parseConversationSummaryV2(JSON.parse(summaryJson));
+  } catch {
+    // Generated summary corruption must not make its preserved v1 note
+    // unreadable. All new writes are validated before persistence.
+    return null;
+  }
 }
 
 function isNoteView(value: string): value is NoteView {

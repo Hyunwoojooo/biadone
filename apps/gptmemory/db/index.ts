@@ -15,6 +15,8 @@ const CREATE_NOTES_TABLE_SQL = `
     source_title TEXT,
     source_message_count INTEGER,
     generation_metadata_json TEXT,
+    summary_schema_version TEXT,
+    summary_json TEXT,
     favorite INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     deleted_at TEXT,
@@ -84,17 +86,14 @@ async function initializeNotesSchema(database: NotesDatabase): Promise<void> {
   const columns = await database
     .prepare("PRAGMA table_info(notes)")
     .all<{ name: string }>();
-  if (!columns.results.some((column) => column.name === "generation_metadata_json")) {
-    try {
-      await database
-        .prepare("ALTER TABLE notes ADD COLUMN generation_metadata_json TEXT")
-        .run();
-    } catch (error) {
-      // Two fresh isolates can observe the old schema at the same time. A
-      // concurrent successful additive migration is safe to accept.
-      if (!isDuplicateColumnError(error, "generation_metadata_json")) {
-        throw error;
-      }
+  const existingColumns = new Set(columns.results.map((column) => column.name));
+  for (const column of [
+    "generation_metadata_json",
+    "summary_schema_version",
+    "summary_json",
+  ]) {
+    if (!existingColumns.has(column)) {
+      await addNullableTextColumn(database, column);
     }
   }
 
@@ -102,6 +101,24 @@ async function initializeNotesSchema(database: NotesDatabase): Promise<void> {
     database.prepare(CREATE_NOTES_OWNER_VIEW_INDEX_SQL),
     database.prepare(CREATE_NOTES_OWNER_SOURCE_INDEX_SQL),
   ]);
+}
+
+async function addNullableTextColumn(
+  database: NotesDatabase,
+  column: string,
+): Promise<void> {
+  try {
+    // Column names come only from the fixed allowlist in initializeNotesSchema.
+    await database
+      .prepare(`ALTER TABLE notes ADD COLUMN ${column} TEXT`)
+      .run();
+  } catch (error) {
+    // Two fresh isolates can observe the old schema at the same time. A
+    // concurrent successful additive migration is safe to accept.
+    if (!isDuplicateColumnError(error, column)) {
+      throw error;
+    }
+  }
 }
 
 function isDuplicateColumnError(error: unknown, column: string): boolean {

@@ -6,6 +6,7 @@ import {
   parseCreateNoteInput,
   parseListNotesInput,
   parsePatchNoteInput,
+  parseStoredConversationSummary,
   requireOwnerKey,
 } from "../app/api/notes/_shared.ts";
 
@@ -109,6 +110,12 @@ test("validates list views and patch restore semantics", () => {
         workflowVersion: "gptmemory-note-import.v2",
       },
     },
+    { summarySchemaVersion: "gptmemory.summary.v2" },
+    {
+      summary: {
+        title: { text: "forged", sourceMessageIds: ["u1"] },
+      },
+    },
   ]) {
     assert.throws(
       () => parsePatchNoteInput(serverManagedPatch),
@@ -116,4 +123,46 @@ test("validates list views and patch restore semantics", () => {
         error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
     );
   }
+});
+
+test("keeps v1 rows readable when stored v2 summary metadata is absent or malformed", () => {
+  assert.equal(parseStoredConversationSummary(null, null), null);
+  assert.equal(
+    parseStoredConversationSummary("gptmemory.summary.v1", "{}"),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationSummary("gptmemory.summary.v2", "not-json"),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationSummary("gptmemory.summary.v2", "{}"),
+    null,
+  );
+});
+
+test("restores a valid v2 summary from its versioned JSON column", () => {
+  const summary = {
+    schemaVersion: "gptmemory.summary.v2",
+    title: { text: "요약 제목", sourceMessageIds: ["u1"] },
+    oneLineSummary: { text: "한 줄 요약입니다.", sourceMessageIds: ["u1"] },
+    keyPoints: [
+      { text: "핵심 1", sourceMessageIds: ["u1"] },
+      { text: "핵심 2", sourceMessageIds: ["a1"] },
+      { text: "핵심 3", sourceMessageIds: ["u1", "a1"] },
+    ],
+    outcomes: [],
+    actionItems: [],
+    necessaryContext: [
+      { text: "중요 배경", sourceMessageIds: ["u1"] },
+    ],
+  };
+
+  assert.deepEqual(
+    parseStoredConversationSummary(
+      "gptmemory.summary.v2",
+      JSON.stringify(summary),
+    ),
+    summary,
+  );
 });

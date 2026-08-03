@@ -6,10 +6,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { startLocalChatGPTFetcher } from "./local-chatgpt-fetcher.mjs";
+import { loadSharedGeminiEnv } from "./shared-gemini-env.mjs";
 
 const FETCHER_URL_ENV = "CHATGPT_SHARE_FETCHER_URL";
 const FETCHER_SECRET_ENV = "CHATGPT_SHARE_FETCHER_SECRET";
 const DEV_FETCHER_BINDINGS_ENV = "GPTMEMORY_DEV_FETCHER_BINDINGS";
+const DEV_GEMINI_BINDINGS_ENV = "GPTMEMORY_DEV_GEMINI_BINDINGS";
 const SIGNAL_EXIT_CODES = {
   SIGINT: 130,
   SIGTERM: 143,
@@ -56,11 +58,11 @@ export async function runDev({
   signalTarget = process,
   spawnProcess = spawn,
   startFetcher = startLocalChatGPTFetcher,
+  loadGeminiEnv = loadSharedGeminiEnv,
   createSecret = createFetcherSecret,
   log = console.log,
   logError = console.error,
 } = {}) {
-  const fetcherConfig = resolveFetcherConfig(env);
   let bridge;
   let child;
   let closePromise;
@@ -107,6 +109,13 @@ export async function runDev({
   signalTarget.once("SIGTERM", handleSigterm);
 
   try {
+    const loadedGeminiEnv = loadGeminiEnv(env);
+    const sharedGeminiEnv =
+      loadedGeminiEnv && typeof loadedGeminiEnv.then === "function"
+        ? await loadedGeminiEnv
+        : loadedGeminiEnv;
+    const runtimeEnv = { ...(sharedGeminiEnv ?? {}), ...env };
+    const fetcherConfig = resolveFetcherConfig(runtimeEnv);
     let fetcherUrl;
     let fetcherSecret;
 
@@ -135,12 +144,15 @@ export async function runDev({
     }
 
     const childEnv = {
-      ...env,
+      ...runtimeEnv,
       WRANGLER_LOG_PATH:
-        env.WRANGLER_LOG_PATH || ".wrangler/wrangler.log",
+        runtimeEnv.WRANGLER_LOG_PATH || ".wrangler/wrangler.log",
       [FETCHER_URL_ENV]: fetcherUrl,
       [FETCHER_SECRET_ENV]: fetcherSecret,
       [DEV_FETCHER_BINDINGS_ENV]: "1",
+      ...(runtimeEnv.GEMINI_API_KEY?.trim()
+        ? { [DEV_GEMINI_BINDINGS_ENV]: "1" }
+        : {}),
     };
     const executable = process.platform === "win32" ? "vinext.cmd" : "vinext";
 

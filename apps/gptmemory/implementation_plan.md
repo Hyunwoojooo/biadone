@@ -1,9 +1,38 @@
 # GPTMemory 구현 계획
 
-> 상태: Implementing v0.2
+> 상태: Implemented v0.3 compressed summary v2
 > 작성일: 2026-07-29
-> 현재 구현 기준일: 2026-08-02 (safe reimport `5aeb3a3` 이후 hard delete 포함)
+> 현재 구현 기준일: 2026-08-02 (Gemini structured summary v2 전환)
 > 대상 경로: `apps/gptmemory/`
+
+## 0.0 v2 압축 요약 전환 (현재 우선 계약)
+
+기존 시간순 v1 노트는 과거 노트 호환과 `대화 흐름 상세 보기`를 위해 유지하되,
+신규 import의 기본 결과는 다음 `gptmemory.summary.v2` 압축 요약으로 전환한다.
+
+- `title`, 120자 이하 `oneLineSummary`, 핵심 3~7개, 결과, 명시된 할 일,
+  필요한 맥락 1~5개를 제공한다.
+- 결과는 `conclusion`, `decision`, `proposal`, `unresolved`를 구분한다.
+- 모든 공개 항목은 실제 정제 입력의 `sourceMessageIds`를 가진다.
+- 서버가 완전한 문장·불릿 단위의 evidence catalog와 요청 전용 숫자 인덱스를 만들고,
+  Gemini Structured Output은 허용 범위의 인덱스만 선택한다. 서버가 이를 실제
+  메시지 ID와 정확한 조항으로 복원해 역할, 길이와 개수를 결정적으로 검증한다.
+  `decision`과 action은 모델의
+  재서술 대신 검증된 사용자 조항을 공개 텍스트로 사용하며, assistant 제안만으로
+  `decision`을 만들거나 사용자에게 명시되지 않은 action을 만들 수 없다.
+- 대화 텍스트는 신뢰할 수 없는 데이터이며 내부 지시로 system instruction을
+  변경할 수 없다.
+- 정제된 대화는 요약 생성을 위해 Google Gemini API로 전송된다. API key와
+  모델 설정은 서버에서만 접근하고, 원본 HTML·복원된 전체 메시지 배열·provider
+  원문 응답은 영구 저장하거나 로그에 남기지 않는다.
+- D1에는 nullable `summary_schema_version`, `summary_json`을 추가하고 기존
+  `overview`, `sections_json`은 그대로 유지한다. v1 노트는 자동 변환하지 않으며,
+  사용자가 `새 요약으로 재생성`을 선택할 때만 조건부 원자 갱신한다.
+- provider·timeout·rate limit·구조·evidence 검증 실패와 stale write에서는 기존
+  row를 변경하지 않는다.
+
+아래 v1 설명은 legacy 구현 기록이다. v2 계약과 충돌하는 경우 이 절과 실제 코드가
+우선한다.
 
 ## 0. 구현 시 확정된 변경
 
@@ -12,7 +41,8 @@
 설계는 향후 선택지를 설명하는 기록일 뿐이며, 현재 제품 계약과 충돌할 때는
 이 절과 실제 코드가 우선한다.
 
-- OpenAI API와 외부 LLM을 첫 버전에서 제외한다.
+- OpenAI API와 외부 LLM을 첫 버전에서 제외했다. 이 항목은 v1의 역사적 결정이며,
+  현재 v2는 위 계약에 따라 Gemini를 사용한다.
 - 노트 엔진은 대화 순서, 사용자 요청, 조건 수정, 맥락 전환, 이어진 응답을
   결정적 규칙으로 묶는다.
 - 엔티티, 관계, 결정, 액션, 감정, 숨은 의도는 추출하지 않는다.

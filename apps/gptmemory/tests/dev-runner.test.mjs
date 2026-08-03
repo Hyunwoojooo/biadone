@@ -8,6 +8,12 @@ import {
   resolveFetcherConfig,
   runDev,
 } from "../tools/dev.mjs";
+import {
+  loadSharedGeminiEnv,
+  parseEnvText,
+} from "../tools/shared-gemini-env.mjs";
+
+const withoutGemini = () => ({});
 
 test("fetcher config requires URL and secret together", () => {
   assert.deepEqual(resolveFetcherConfig({}), { mode: "local" });
@@ -45,6 +51,57 @@ test("generated fetcher secrets are non-empty and distinct", () => {
   assert.notEqual(first, second);
 });
 
+test("loads only whitelisted Gemini values through the Blabase env pointer", async () => {
+  const files = new Map([
+    ["/blabase/.env.local", "BLABASE_SHARED_ENV_PATH=/private/shared.env"],
+    [
+      "/private/shared.env",
+      [
+        "GEMINI_API_KEY=private-test-key",
+        'export GEMINI_MODEL="gemini-test"',
+        "GEMINI_BASE_URL=https://gemini.example.test/v1",
+        "UNRELATED_SECRET=must-not-load",
+      ].join("\n"),
+    ],
+  ]);
+  const loaded = await loadSharedGeminiEnv(
+    {},
+    {
+      blabasePointerFile: "/blabase/.env.local",
+      readTextFile: async (path) => {
+        if (!files.has(path)) throw new Error("missing fixture");
+        return files.get(path);
+      },
+    },
+  );
+
+  assert.deepEqual(loaded, {
+    GEMINI_API_KEY: "private-test-key",
+    GEMINI_MODEL: "gemini-test",
+    GEMINI_BASE_URL: "https://gemini.example.test/v1",
+  });
+  assert.equal(loaded.UNRELATED_SECRET, undefined);
+  assert.deepEqual(parseEnvText("A='one two'\nexport B=three"), {
+    A: "one two",
+    B: "three",
+  });
+});
+
+test("does not read a shared file when Gemini is already configured", async () => {
+  let reads = 0;
+  const loaded = await loadSharedGeminiEnv(
+    { GEMINI_API_KEY: "runtime-key" },
+    {
+      readTextFile: async () => {
+        reads += 1;
+        return "";
+      },
+    },
+  );
+  assert.deepEqual(loaded, {});
+  assert.equal(reads, 0);
+});
+
 test("dev runner starts a local bridge, forwards args, and closes it", async () => {
   const child = new EventEmitter();
   child.exitCode = null;
@@ -59,6 +116,10 @@ test("dev runner starts a local bridge, forwards args, and closes it", async () 
   const resultPromise = runDev({
     args: ["--hostname", "127.0.0.1", "--port", "3101"],
     env: { PATH: "/test/bin" },
+    loadGeminiEnv: () => ({
+      GEMINI_API_KEY: "shared-gemini-test-key",
+      GEMINI_MODEL: "gemini-test-model",
+    }),
     createSecret: () => "ephemeral-test-secret",
     startFetcher: async (options) => {
       bridgeOptions = options;
@@ -107,9 +168,18 @@ test("dev runner starts a local bridge, forwards args, and closes it", async () 
     spawnCall.options.env.GPTMEMORY_DEV_FETCHER_BINDINGS,
     "1",
   );
+  assert.equal(
+    spawnCall.options.env.GPTMEMORY_DEV_GEMINI_BINDINGS,
+    "1",
+  );
+  assert.equal(spawnCall.options.env.GEMINI_MODEL, "gemini-test-model");
   assert.equal(calls.close, 1);
   assert.equal(
     logs.some((message) => message.includes("ephemeral-test-secret")),
+    false,
+  );
+  assert.equal(
+    logs.some((message) => message.includes("shared-gemini-test-key")),
     false,
   );
 });
@@ -127,6 +197,7 @@ test("dev runner reuses a complete external fetcher configuration", async () => 
       CHATGPT_SHARE_FETCHER_URL: "https://fetcher.example.test",
       CHATGPT_SHARE_FETCHER_SECRET: "external-test-secret",
     },
+    loadGeminiEnv: withoutGemini,
     startFetcher: async () => {
       startCalls += 1;
       throw new Error("should not start");
@@ -171,6 +242,7 @@ test("dev runner forwards a shutdown signal once and closes the bridge", async (
   let closeCalls = 0;
   const resultPromise = runDev({
     env: {},
+    loadGeminiEnv: withoutGemini,
     signalTarget,
     startFetcher: async () => ({
       url: "http://127.0.0.1:43210/fetch",
@@ -206,6 +278,7 @@ test("dev runner closes a bridge without spawning after a startup signal", async
 
   const resultPromise = runDev({
     env: {},
+    loadGeminiEnv: withoutGemini,
     signalTarget,
     startFetcher: () => fetcherStarted,
     spawnProcess: () => {
@@ -251,6 +324,7 @@ test("dev runner terminates vinext when the local bridge stops", async () => {
   const errors = [];
   const resultPromise = runDev({
     env: {},
+    loadGeminiEnv: withoutGemini,
     signalTarget,
     startFetcher: async () => ({
       url: "http://127.0.0.1:43210/fetch",

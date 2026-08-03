@@ -15,6 +15,13 @@
       "when": 1785675600000,
       "tag": "0001_add_note_generation_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785682800000,
+      "tag": "0002_add_note_summary_v2",
+      "breakpoints": true
     }
   ]
 }

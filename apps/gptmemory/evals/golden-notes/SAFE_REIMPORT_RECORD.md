@@ -1,5 +1,10 @@
 # Duplicate-safe ChatGPT Reimport — Engine Change Record
 
+> 2026-08-02 v3 follow-up: compressed summary v2 changed regeneration to update
+> only `summary_*`, source metadata, and generation provenance. The v2 behavior
+> recorded below—replacing edited title/overview/sections/tags—is historical and
+> no longer applies. See `COMPRESSED_SUMMARY_V2_RECORD.md`.
+
 - Date: 2026-08-02 (Asia/Seoul)
 - Owner: Codex; local MVP behavior requested by project owner
 - Goal: 같은 ChatGPT 공유 링크를 다시 입력했을 때 기존 노트를 조용히 중복 생성하거나 덮어쓰지 않고, 기존 노트 열기·취소·명시적 다시 생성을 선택할 수 있게 한다.

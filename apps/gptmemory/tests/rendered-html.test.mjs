@@ -14,7 +14,7 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   ]);
 
   assert.match(page, /<GPTMemoryApp \/>/);
-  assert.match(page, /대화를 다시 읽는 노트/);
+  assert.match(page, /대화의 핵심을 10초 안에/);
   assert.match(layout, /lang="ko"/);
   assert.match(layout, /GPTMemory/);
   assert.match(component, /All Notes/);
@@ -23,17 +23,63 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   assert.match(component, /Trash/);
   assert.match(component, /\/api\/notes\/import/);
   assert.match(component, /공개 공유 링크만 지원합니다/);
+  assert.match(component, /Google Gemini API로/);
+  assert.match(
+    component,
+    /원본 공유 HTML과 복원된 전체 메시지 배열은[\s\S]{0,50}GPTMemory에 저장하지 않습니다/,
+  );
+  assert.doesNotMatch(
+    component,
+    /외부 AI를 호출하지|외부 AI로 전송하지 않습니다/,
+  );
+  assert.doesNotMatch(component, /GEMINI_API_KEY|process\.env/);
   assert.match(component, /already_exists/);
   assert.match(component, /expectedUpdatedAt/);
   assert.match(component, /이미 가져온 대화입니다/);
   assert.match(component, /기존 노트 열기/);
-  assert.match(component, /다시 생성/);
-  assert.match(component, /생성에 실패하면 기존 노트는 그대로 유지됩니다/);
+  assert.match(component, /새 요약으로 재생성/);
+  assert.match(component, /새 v2 요약만 갱신되고 기존 편집 본문은 보존됩니다/);
+  assert.match(
+    component,
+    /생성에\s+실패하면 기존 노트는 그대로 유지됩니다/,
+  );
+  assert.match(component, /summarySchemaVersion/);
+  assert.match(component, /note\.summary\?\.title\.text/);
+  assert.match(
+    component,
+    /outcomes\.some\(\(outcome\) => outcome\.kind === "decision"\)/,
+  );
+  assert.match(component, /Boolean\(note\.summary\?\.actionItems\.length\)/);
+  assert.match(component, /결정 있음/);
+  assert.match(component, /할 일 있음/);
+  assert.match(component, /확정된 결정/);
+  assert.match(component, /제안/);
+  assert.match(component, /미해결/);
+  assert.match(component, /<details className="conversation-flow-details">/);
+  assert.doesNotMatch(
+    component,
+    /<details className="conversation-flow-details"[^>]*\sopen(?:=|\s|>)/,
+  );
+  assert.match(component, /<summary>대화 흐름 상세 보기<\/summary>/);
+  assert.match(component, /note\.summary \? \(/);
+  assert.match(component, /<LegacyNoteBody/);
+  assert.match(component, /!note\.summary && !editing && view !== "trash"/);
+  assert.match(component, /aria-describedby="import-description gemini-transfer-notice"/);
+  const cardStart = component.indexOf('className={`note-card');
+  const cardEnd = component.indexOf("</button>", cardStart);
+  assert.ok(cardStart >= 0 && cardEnd > cardStart);
+  const cardMarkup = component.slice(cardStart, cardEnd);
+  assert.doesNotMatch(cardMarkup, /note\.favorite|note\.tags|mini-tag/);
   assert.doesNotMatch(component, /Entity Graph|Extraction Monitor|Knowledge Graph/);
 
   assert.match(styles, /grid-template-columns:\s*232px/);
   assert.match(styles, /data-mobile-pane/);
   assert.match(styles, /existing-note-card/);
+  assert.match(styles, /note-card-signal\.decision/);
+  assert.match(styles, /note-card-signal\.action/);
+  assert.match(styles, /compressed-summary/);
+  assert.match(styles, /outcome-kind\.decision/);
+  assert.match(styles, /conversation-flow-details/);
   assert.match(styles, /@media \(max-width:\s*900px\)/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
@@ -140,10 +186,7 @@ test("declares the duplicate-safe import and generation metadata contract", asyn
   assert.match(noteImportService, /sourceContentSha256/);
   assert.doesNotMatch(shared, /generationMetadata/);
   assert.match(repository, /expectedUpdatedAt/);
-  assert.match(
-    database,
-    /ALTER TABLE notes ADD COLUMN generation_metadata_json TEXT/,
-  );
+  assert.match(database, /addNullableTextColumn\(database, column\)/);
   assert.doesNotMatch(migration, /ALTER TABLE/);
   assert.match(migration, /SELECT 1/);
   assert.match(

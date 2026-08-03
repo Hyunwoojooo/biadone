@@ -1,13 +1,17 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
+import { sites } from "@openai/sites-vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 const DEV_FETCHER_BINDINGS_ENV = "GPTMEMORY_DEV_FETCHER_BINDINGS";
+const DEV_GEMINI_BINDINGS_ENV = "GPTMEMORY_DEV_GEMINI_BINDINGS";
 const FETCHER_URL_ENV = "CHATGPT_SHARE_FETCHER_URL";
 const FETCHER_SECRET_ENV = "CHATGPT_SHARE_FETCHER_SECRET";
+const GEMINI_KEY_ENV = "GEMINI_API_KEY";
+const GEMINI_MODEL_ENV = "GEMINI_MODEL";
+const GEMINI_BASE_URL_ENV = "GEMINI_BASE_URL";
 
 const { d1, r2 } = hostingConfig;
 
@@ -31,11 +35,32 @@ function getDevFetcherSecrets(): { required: string[] } | undefined {
 }
 
 const devFetcherSecrets = getDevFetcherSecrets();
+const devGeminiEnabled = process.env[DEV_GEMINI_BINDINGS_ENV] === "1";
+if (devGeminiEnabled && !process.env[GEMINI_KEY_ENV]?.trim()) {
+  throw new Error("GPTMemory dev Gemini bindings require GEMINI_API_KEY.");
+}
+const requiredSecrets = [
+  ...(devFetcherSecrets?.required ?? []),
+  ...(devGeminiEnabled ? [GEMINI_KEY_ENV] : []),
+];
+const localVars = devGeminiEnabled
+  ? {
+      ...(process.env[GEMINI_MODEL_ENV]
+        ? { [GEMINI_MODEL_ENV]: process.env[GEMINI_MODEL_ENV] }
+        : {}),
+      ...(process.env[GEMINI_BASE_URL_ENV]
+        ? { [GEMINI_BASE_URL_ENV]: process.env[GEMINI_BASE_URL_ENV] }
+        : {}),
+    }
+  : {};
 
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  ...(devFetcherSecrets ? { secrets: devFetcherSecrets } : {}),
+  ...(requiredSecrets.length
+    ? { secrets: { required: requiredSecrets } }
+    : {}),
+  ...(Object.keys(localVars).length ? { vars: localVars } : {}),
   d1_databases: d1
     ? [
         {

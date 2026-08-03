@@ -8,7 +8,7 @@ import {
   createNoteImportService,
   NoteImportWorkflowError,
   sha256Hex,
-  type GeneratedNoteDraft,
+  type GeneratedImportDraft,
   type ImportedConversation,
   type ImportedNoteWrite,
   type ImportStoredNote,
@@ -33,6 +33,8 @@ type TestNote = ImportStoredNote & {
   favorite: boolean;
   createdAt: string;
   generationMetadata?: ImportedNoteWrite["generationMetadata"];
+  summarySchemaVersion?: ImportedNoteWrite["summarySchemaVersion"];
+  summary?: ImportedNoteWrite["summary"];
   userEditedMarker?: string;
 };
 
@@ -128,7 +130,11 @@ function createHarness(options: HarnessOptions = {}) {
       }
       stored = {
         ...stored,
-        ...input.note,
+        sourceTitle: input.note.sourceTitle,
+        sourceMessageCount: input.note.sourceMessageCount,
+        generationMetadata: input.note.generationMetadata,
+        summarySchemaVersion: input.note.summarySchemaVersion,
+        summary: input.note.summary,
         updatedAt: REPLACED_UPDATED_AT,
       };
       return stored;
@@ -147,10 +153,10 @@ function createHarness(options: HarnessOptions = {}) {
       }
       return imported;
     },
-    createDraft(value) {
+    async createDraft(value) {
       calls.createDraft += 1;
       return dependencyOverrides?.createDraft
-        ? dependencyOverrides.createDraft(value)
+        ? await dependencyOverrides.createDraft(value)
         : draft;
     },
     noteEngineVersion:
@@ -242,6 +248,23 @@ test("stores exact generation versions and a stable source digest", async () => 
   const result = await harness.service.execute(importCommand());
 
   assert.equal(result.status, "created");
+  assert.equal(harness.getLastCreate()?.title, "새 노트 제목");
+  assert.equal(harness.getLastCreate()?.overview, "legacy overview");
+  assert.equal(harness.getLastCreate()?.summarySchemaVersion, "gptmemory.summary.v2");
+  assert.deepEqual(harness.getLastCreate()?.sections, [
+    {
+      id: "section-1",
+      heading: "첫 맥락",
+      body: "새 본문",
+      sourceMessageIds: ["u1", "a1"],
+    },
+    {
+      id: "closing-state",
+      heading: "대화가 도달한 지점",
+      body: "새 도달점",
+      sourceMessageIds: [],
+    },
+  ]);
   assert.equal(
     canonicalizeImportedConversation(harness.imported),
     '{"title":"대화 제목","messages":[{"role":"user","text":"질문"},{"role":"assistant","text":"답변"}]}',
@@ -253,6 +276,10 @@ test("stores exact generation versions and a stable source digest", async () => 
     adapterVersion: "gptmemory-chatgpt-share.v4",
     noteEngineVersion: "gptmemory-note-engine.v1",
     noteSchemaVersion: "gptmemory.note-draft.v1",
+    summarySchemaVersion: "gptmemory.summary.v2",
+    summaryProvider: "gemini",
+    summaryModel: "gemini-test-model",
+    summaryPromptVersion: "gptmemory-summary-prompt.v2",
     sourceShareId: SHARE_ID,
     sourceContentSha256:
       "b57425be2f9b3318551c853ba8bdfa2ccdc7532ec8d23fc75bebb563204d4353",
@@ -287,6 +314,54 @@ test("keeps the existing note byte-for-byte unchanged when import fails", async 
   assert.equal(harness.calls.import, 1);
   assert.equal(harness.calls.create, 0);
   assert.equal(harness.calls.replace, 0);
+});
+
+test("keeps the existing note byte-for-byte unchanged when summary generation fails", async () => {
+  const existing = storedNote();
+  const before = JSON.stringify(existing);
+  const harness = createHarness({
+    stored: existing,
+    dependencies: {
+      async createDraft() {
+        throw new Error("synthetic malformed structured output");
+      },
+    },
+  });
+
+  await assert.rejects(
+    harness.service.execute(replaceCommand()),
+    /synthetic malformed structured output/,
+  );
+
+  assert.equal(JSON.stringify(harness.getStored()), before);
+  assert.equal(harness.calls.import, 1);
+  assert.equal(harness.calls.createDraft, 1);
+  assert.equal(harness.calls.digest, 0);
+  assert.equal(harness.calls.create, 0);
+  assert.equal(harness.calls.replace, 0);
+});
+
+test("does not write when the summary provider times out or rate limits", async () => {
+  for (const providerFailure of ["synthetic timeout", "synthetic rate limit"]) {
+    const existing = storedNote();
+    const before = JSON.stringify(existing);
+    const harness = createHarness({
+      stored: existing,
+      dependencies: {
+        async createDraft() {
+          throw new Error(providerFailure);
+        },
+      },
+    });
+
+    await assert.rejects(
+      harness.service.execute(replaceCommand()),
+      new RegExp(providerFailure),
+    );
+    assert.equal(JSON.stringify(harness.getStored()), before);
+    assert.equal(harness.calls.create, 0);
+    assert.equal(harness.calls.replace, 0);
+  }
 });
 
 test("rejects a stale replacement before import or writes", async () => {
@@ -336,7 +411,7 @@ test("does not mutate the existing note when the conditional write loses a race"
   assert.equal(harness.calls.replace, 1);
 });
 
-test("successful replacement changes generated fields and preserves note state", async () => {
+test("successful replacement adds v2 summary and preserves legacy edits and note state", async () => {
   const existing = storedNote({
     archived: true,
     deletedAt: "2026-08-01T12:00:00.000Z",
@@ -358,9 +433,13 @@ test("successful replacement changes generated fields and preserves note state",
     result.note.userEditedMarker,
     "keep-state-outside-generated-fields",
   );
-  assert.equal(result.note.title, "새 노트 제목");
-  assert.equal(result.note.overview, "새 개요");
+  assert.equal(result.note.title, existing.title);
+  assert.equal(result.note.overview, existing.overview);
+  assert.deepEqual(result.note.sections, existing.sections);
+  assert.deepEqual(result.note.tags, existing.tags);
   assert.equal(result.note.sourceMessageCount, 2);
+  assert.equal(result.note.summarySchemaVersion, "gptmemory.summary.v2");
+  assert.equal(result.note.summary?.title.text, "새 노트 제목");
   assert.equal(harness.getLastCreate(), null);
   assert.equal(
     harness.getLastReplace()?.generationMetadata.workflowVersion,
@@ -448,21 +527,46 @@ function importedConversation(): ImportedConversation {
   };
 }
 
-function generatedDraft(): GeneratedNoteDraft {
+function generatedDraft(): GeneratedImportDraft {
   return {
-    schemaVersion: "gptmemory.note-draft.v1",
-    title: " 새 노트 제목 ",
-    overview: " 새 개요 ",
-    sections: [
-      {
-        id: "section-1",
-        heading: " 첫 맥락 ",
-        body: " 새 본문 ",
+    legacyDraft: {
+      schemaVersion: "gptmemory.note-draft.v1",
+      title: " legacy title ",
+      overview: " legacy overview ",
+      sections: [
+        {
+          id: "section-1",
+          heading: " 첫 맥락 ",
+          body: " 새 본문 ",
+          sourceMessageIds: ["u1", "a1"],
+        },
+      ],
+      closingState: " 새 도달점 ",
+      tags: ["#AI", "ai", "기록"],
+    },
+    summary: {
+      schemaVersion: "gptmemory.summary.v2",
+      title: { text: "새 노트 제목", sourceMessageIds: ["u1", "a1"] },
+      oneLineSummary: {
+        text: "새 개요",
         sourceMessageIds: ["u1", "a1"],
       },
-    ],
-    closingState: " 새 도달점 ",
-    tags: ["#AI", "ai", "기록"],
+      keyPoints: [
+        { text: "핵심 내용", sourceMessageIds: ["u1", "a1"] },
+        { text: "핵심 결정", sourceMessageIds: ["u1"] },
+        { text: "핵심 답변", sourceMessageIds: ["a1"] },
+      ],
+      outcomes: [],
+      actionItems: [],
+      necessaryContext: [
+        { text: "중요 배경", sourceMessageIds: ["u1"] },
+      ],
+    },
+    summaryProvider: {
+      provider: "gemini",
+      model: "gemini-test-model",
+      promptVersion: "gptmemory-summary-prompt.v2",
+    },
   };
 }
 

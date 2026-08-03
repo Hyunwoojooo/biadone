@@ -20,6 +20,8 @@ export const notes = sqliteTable(
     sourceTitle: text("source_title"),
     sourceMessageCount: integer("source_message_count"),
     generationMetadataJson: text("generation_metadata_json"),
+    summarySchemaVersion: text("summary_schema_version"),
+    summaryJson: text("summary_json"),
     favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
     archived: integer("archived", { mode: "boolean" }).notNull().default(false),
     deletedAt: text("deleted_at"),

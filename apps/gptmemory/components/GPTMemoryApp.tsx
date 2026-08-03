@@ -20,6 +20,30 @@ type NoteSection = {
   sourceMessageIds?: string[];
 };
 
+type SummaryEvidenceText = {
+  text: string;
+  sourceMessageIds: string[];
+};
+
+type SummaryOutcome = SummaryEvidenceText & {
+  kind: "conclusion" | "decision" | "proposal" | "unresolved";
+};
+
+type SummaryActionItem = SummaryEvidenceText & {
+  owner?: string;
+  status?: string;
+  dueAt?: string;
+};
+
+type NoteSummaryV2 = {
+  title: SummaryEvidenceText;
+  oneLineSummary: SummaryEvidenceText;
+  keyPoints: SummaryEvidenceText[];
+  outcomes: SummaryOutcome[];
+  actionItems: SummaryActionItem[];
+  necessaryContext: SummaryEvidenceText[];
+};
+
 type NoteRecord = {
   id: string;
   title: string;
@@ -29,6 +53,8 @@ type NoteRecord = {
   sourceUrl: string | null;
   sourceTitle: string | null;
   sourceMessageCount: number | null;
+  summarySchemaVersion: string | null;
+  summary: NoteSummaryV2 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt: string | null;
@@ -63,6 +89,13 @@ type ImportResponsePayload = {
 };
 
 const OWNER_KEY_STORAGE = "gptmemory.owner-key.v1";
+const SUMMARY_SCHEMA_VERSION = "gptmemory.summary.v2";
+const OUTCOME_LABELS: Record<SummaryOutcome["kind"], string> = {
+  conclusion: "결론",
+  decision: "확정된 결정",
+  proposal: "제안",
+  unresolved: "미해결",
+};
 
 const viewMeta: Record<
   ViewKey,
@@ -91,6 +124,7 @@ function getOwnerKey() {
 }
 
 function normalizeNote(input: Partial<NoteRecord>): NoteRecord {
+  const summarySchemaVersion = input.summarySchemaVersion ?? null;
   return {
     id: String(input.id ?? ""),
     title: input.title?.trim() || "제목 없는 노트",
@@ -109,6 +143,11 @@ function normalizeNote(input: Partial<NoteRecord>): NoteRecord {
     sourceMessageCount:
       typeof input.sourceMessageCount === "number"
         ? input.sourceMessageCount
+        : null,
+    summarySchemaVersion,
+    summary:
+      summarySchemaVersion === SUMMARY_SCHEMA_VERSION
+        ? normalizeSummary(input.summary)
         : null,
     favorite: Boolean(input.favorite),
     archived: Boolean(input.archived),
@@ -132,12 +171,113 @@ function formatDate(value: string) {
 
 function notePreview(note: NoteRecord) {
   return (
+    note.summary?.oneLineSummary.text ||
     note.overview ||
     note.sections.find((section) => section.body.trim())?.body ||
     "아직 내용이 없습니다."
   )
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function noteTitle(note: NoteRecord) {
+  return note.summary?.title.text || note.title;
+}
+
+function noteHasDecision(note: NoteRecord) {
+  return (
+    note.summary?.outcomes.some((outcome) => outcome.kind === "decision") ??
+    false
+  );
+}
+
+function noteHasActionItems(note: NoteRecord) {
+  return Boolean(note.summary?.actionItems.length);
+}
+
+function normalizeSummary(value: unknown): NoteSummaryV2 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const title = normalizeEvidenceText(record.title);
+  const oneLineSummary = normalizeEvidenceText(record.oneLineSummary);
+  const keyPoints = normalizeEvidenceList(record.keyPoints);
+  const necessaryContext = normalizeEvidenceList(record.necessaryContext);
+  if (!title || !oneLineSummary || !keyPoints || !necessaryContext) return null;
+  if (!Array.isArray(record.outcomes) || !Array.isArray(record.actionItems)) {
+    return null;
+  }
+
+  const outcomes: SummaryOutcome[] = [];
+  for (const value of record.outcomes) {
+    const evidence = normalizeEvidenceText(value);
+    if (!evidence || !value || typeof value !== "object") return null;
+    const kind = (value as Record<string, unknown>).kind;
+    if (
+      kind !== "conclusion" &&
+      kind !== "decision" &&
+      kind !== "proposal" &&
+      kind !== "unresolved"
+    ) {
+      return null;
+    }
+    outcomes.push({ ...evidence, kind });
+  }
+
+  const actionItems: SummaryActionItem[] = [];
+  for (const value of record.actionItems) {
+    const evidence = normalizeEvidenceText(value);
+    if (!evidence || !value || typeof value !== "object") return null;
+    const item = value as Record<string, unknown>;
+    actionItems.push({
+      ...evidence,
+      ...(typeof item.owner === "string" && item.owner.trim()
+        ? { owner: item.owner.trim() }
+        : {}),
+      ...(typeof item.status === "string" && item.status.trim()
+        ? { status: item.status.trim() }
+        : {}),
+      ...(typeof item.dueAt === "string" && item.dueAt.trim()
+        ? { dueAt: item.dueAt.trim() }
+        : {}),
+    });
+  }
+
+  return {
+    title,
+    oneLineSummary,
+    keyPoints,
+    outcomes,
+    actionItems,
+    necessaryContext,
+  };
+}
+
+function normalizeEvidenceList(value: unknown): SummaryEvidenceText[] | null {
+  if (!Array.isArray(value)) return null;
+  const result: SummaryEvidenceText[] = [];
+  for (const item of value) {
+    const evidence = normalizeEvidenceText(item);
+    if (!evidence) return null;
+    result.push(evidence);
+  }
+  return result;
+}
+
+function normalizeEvidenceText(value: unknown): SummaryEvidenceText | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.text !== "string" ||
+    !record.text.trim() ||
+    !Array.isArray(record.sourceMessageIds) ||
+    record.sourceMessageIds.some((id) => typeof id !== "string" || !id.trim())
+  ) {
+    return null;
+  }
+  return {
+    text: record.text.trim(),
+    sourceMessageIds: record.sourceMessageIds.map((id) => String(id).trim()),
+  };
 }
 
 function parseError(payload: unknown, fallback: string) {
@@ -368,7 +508,9 @@ export function GPTMemoryApp() {
           <p>
             공개 공유 링크만 가져옵니다.
             <br />
-            대화는 외부 AI로 전송하지 않습니다.
+            정제된 대화는 요약 생성을 위해 Google Gemini API로
+            전송됩니다. 원본 공유 HTML과 복원된 전체 메시지 배열은
+            GPTMemory에 저장하지 않습니다.
           </p>
         </div>
       </aside>
@@ -442,23 +584,21 @@ export function GPTMemoryApp() {
                 onClick={() => chooseNote(note.id)}
               >
                 <span className="note-card-topline">
-                  <strong>{note.title}</strong>
-                  {note.favorite ? (
-                    <span className="favorite-dot" aria-label="즐겨찾기">
-                      ♥
-                    </span>
-                  ) : null}
+                  <strong>{noteTitle(note)}</strong>
                 </span>
                 <span className="note-card-preview">{notePreview(note)}</span>
                 <span className="note-card-meta">
+                  {noteHasDecision(note) ? (
+                    <span className="note-card-signal decision">
+                      결정 있음
+                    </span>
+                  ) : null}
+                  {noteHasActionItems(note) ? (
+                    <span className="note-card-signal action">할 일 있음</span>
+                  ) : null}
                   <time dateTime={note.updatedAt}>
                     {formatDate(note.updatedAt)}
                   </time>
-                  {note.tags.slice(0, 2).map((tag) => (
-                    <span className="mini-tag" key={tag}>
-                      #{tag}
-                    </span>
-                  ))}
                 </span>
               </button>
             ))
@@ -479,7 +619,7 @@ export function GPTMemoryApp() {
                   ? "다른 검색어나 태그를 사용해보세요."
                   : view === "trash"
                     ? "삭제한 노트가 없거나 모두 영구 삭제되었습니다."
-                    : "ChatGPT 공유 링크 하나면 대화의 흐름이 읽기 좋은 노트가 됩니다."}
+                    : "ChatGPT 공유 링크 하나면 핵심과 결정, 할 일을 10초 안에 확인할 수 있습니다."}
               </p>
               {!queryInput && !activeTag && view === "all" ? (
                 <button type="button" onClick={() => setImportOpen(true)}>
@@ -571,11 +711,11 @@ function EmptyDetail({
       <div className="paper-orbit" aria-hidden="true">
         <span>“</span>
       </div>
-      <p className="detail-eyebrow">A quiet place for your conversations</p>
-      <h2>대화에서 중요한 건<br />목록보다 흐름이니까요.</h2>
+      <p className="detail-eyebrow">A clear view of every conversation</p>
+      <h2>10초 안에 핵심을<br />판단할 수 있도록.</h2>
       <p>
-        공개 ChatGPT 공유 링크를 붙여 넣으면 질문, 답변, 수정된 조건과
-        마지막 맥락을 순서대로 읽히는 한 편의 노트로 정리합니다.
+        공개 ChatGPT 공유 링크를 붙여 넣으면 핵심 내용과 결론, 확정된 결정,
+        할 일, 중요한 맥락만 강하게 압축해 보여줍니다.
       </p>
       <button className="primary-action" type="button" onClick={onImport}>
         첫 대화 가져오기 <span aria-hidden="true">→</span>
@@ -616,6 +756,7 @@ function NoteDetail({
   const permanentDeleteCancelRef = useRef<HTMLButtonElement>(null);
   const permanentDeleteConfirmRef = useRef<HTMLButtonElement>(null);
   const permanentDeleteInFlight = useRef(false);
+  const displayTitle = noteTitle(note);
 
   useEffect(
     () => () => {
@@ -889,7 +1030,9 @@ function NoteDetail({
           <span>
             {note.sourceMessageCount
               ? `${note.sourceMessageCount}개의 메시지에서 정리`
-              : "대화 흐름 노트"}
+              : note.summary
+                ? "대화 압축 요약"
+                : "대화 흐름 노트"}
           </span>
           <span aria-hidden="true">·</span>
           <time dateTime={note.updatedAt}>{formatDate(note.updatedAt)} 수정</time>
@@ -904,7 +1047,7 @@ function NoteDetail({
           </span>
         </div>
 
-        {editing ? (
+        {editing && !note.summary ? (
           <div className="note-editor">
             <label>
               <span>Title</span>
@@ -990,34 +1133,20 @@ function NoteDetail({
           </div>
         ) : (
           <>
-            <h1>{note.title}</h1>
-            {note.overview ? <p className="note-overview">{note.overview}</p> : null}
-            <div className="note-divider">
-              <span />
-              <i>conversation note</i>
-              <span />
-            </div>
-            <div className="note-sections">
-              {note.sections.map((section, index) => (
-                <section key={section.id}>
-                  <span className="section-number">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <div>
-                    <h2>{section.heading}</h2>
-                    {section.body
-                      .split(/\n{2,}/)
-                      .filter(Boolean)
-                      .map((paragraph, paragraphIndex) => (
-                        <p key={`${section.id}-${paragraphIndex}`}>
-                          {paragraph}
-                        </p>
-                      ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-            {note.tags.length ? (
+            <h1>{displayTitle}</h1>
+            {note.summary ? (
+              <V2Summary
+                summary={note.summary}
+                overview={note.overview}
+                sections={note.sections}
+              />
+            ) : (
+              <LegacyNoteBody
+                overview={note.overview}
+                sections={note.sections}
+              />
+            )}
+            {!note.summary && note.tags.length ? (
               <div className="note-tags" aria-label="노트 태그">
                 {note.tags.map((tag) => (
                   <span key={tag}>#{tag}</span>
@@ -1029,7 +1158,7 @@ function NoteDetail({
         )}
       </div>
 
-      {!editing && view !== "trash" ? (
+      {!note.summary && !editing && view !== "trash" ? (
         <button
           className="edit-note-button"
           type="button"
@@ -1080,7 +1209,7 @@ function NoteDetail({
               className="permanent-delete-description"
               id="permanent-delete-description"
             >
-              <strong>{note.title}</strong> 노트와 저장된 대화 정리를 즉시
+              <strong>{displayTitle}</strong> 노트와 저장된 대화 정리를 즉시
               삭제합니다. 이 작업은 취소하거나 복원할 수 없습니다.
             </p>
             {permanentDeleteError ? (
@@ -1111,6 +1240,137 @@ function NoteDetail({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function V2Summary({
+  summary,
+  overview,
+  sections,
+}: {
+  summary: NoteSummaryV2;
+  overview: string;
+  sections: NoteSection[];
+}) {
+  return (
+    <div className="compressed-summary">
+      <p className="summary-lede">{summary.oneLineSummary.text}</p>
+
+      {summary.keyPoints.length ? (
+        <section className="summary-block key-points-block">
+          <h2>핵심 내용</h2>
+          <ul className="summary-list key-points-list">
+            {summary.keyPoints.map((item, index) => (
+              <li key={`key-point-${index}`}>{item.text}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {summary.outcomes.length ? (
+        <section className="summary-block outcomes-block">
+          <h2>결과</h2>
+          <ul className="outcome-list">
+            {summary.outcomes.map((outcome, index) => (
+              <li key={`${outcome.kind}-${index}`}>
+                <span className={`outcome-kind ${outcome.kind}`}>
+                  {OUTCOME_LABELS[outcome.kind]}
+                </span>
+                <p>{outcome.text}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {summary.actionItems.length ? (
+        <section className="summary-block action-items-block">
+          <h2>할 일</h2>
+          <ol className="action-item-list">
+            {summary.actionItems.map((item, index) => {
+              const metadata = [
+                item.owner ? `담당자: ${item.owner}` : "",
+                item.status ? `상태: ${item.status}` : "",
+                item.dueAt ? `기한: ${item.dueAt}` : "",
+              ].filter(Boolean);
+              return (
+                <li key={`action-item-${index}`}>
+                  <p>{item.text}</p>
+                  {metadata.length ? (
+                    <small className="action-item-meta">
+                      {metadata.join(" · ")}
+                    </small>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ) : null}
+
+      {summary.necessaryContext.length ? (
+        <section className="summary-block necessary-context-block">
+          <h2>필요한 맥락</h2>
+          <ul className="summary-list context-list">
+            {summary.necessaryContext.map((item, index) => (
+              <li key={`necessary-context-${index}`}>{item.text}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {overview || sections.length ? (
+        <details className="conversation-flow-details">
+          <summary>대화 흐름 상세 보기</summary>
+          <div className="conversation-flow-body">
+            <LegacyNoteBody overview={overview} sections={sections} />
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function LegacyNoteBody({
+  overview,
+  sections,
+}: {
+  overview: string;
+  sections: NoteSection[];
+}) {
+  return (
+    <>
+      {overview ? <p className="note-overview">{overview}</p> : null}
+      {sections.length ? (
+        <>
+          <div className="note-divider">
+            <span />
+            <i>conversation note</i>
+            <span />
+          </div>
+          <div className="note-sections">
+            {sections.map((section, index) => (
+              <section key={section.id}>
+                <span className="section-number">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  <h2>{section.heading}</h2>
+                  {section.body
+                    .split(/\n{2,}/)
+                    .filter(Boolean)
+                    .map((paragraph, paragraphIndex) => (
+                      <p key={`${section.id}-${paragraphIndex}`}>
+                        {paragraph}
+                      </p>
+                    ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -1145,8 +1405,8 @@ function ImportDialog({
     setError("");
     setStatus(
       replace
-        ? "기존 노트를 보존한 채 새 결과를 준비하는 중입니다…"
-        : "공개 대화를 불러와 노트로 정리하는 중입니다…",
+        ? "기존 노트를 보존한 채 새 요약을 생성하는 중입니다…"
+        : "공개 대화를 불러와 핵심 요약을 생성하는 중입니다…",
     );
     try {
       const response = await fetch("/api/notes/import", {
@@ -1247,6 +1507,7 @@ function ImportDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-title"
+        aria-describedby="import-description gemini-transfer-notice"
       >
         <button
           className="dialog-close"
@@ -1259,9 +1520,9 @@ function ImportDialog({
         </button>
         <span className="dialog-kicker">New conversation note</span>
         <h2 id="import-title">대화를 노트로 가져오기</h2>
-        <p className="dialog-intro">
-          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 질문과 답변의 순서를 따라가며
-          맥락이 바뀐 지점을 하나의 읽기 좋은 노트로 정리합니다.
+        <p className="dialog-intro" id="import-description">
+          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 핵심 내용과 결과, 할 일,
+          꼭 필요한 맥락만 빠르게 판단할 수 있는 요약으로 만듭니다.
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
@@ -1280,11 +1541,13 @@ function ImportDialog({
               />
             </div>
           </label>
-          <div className="import-assurance">
+          <div className="import-assurance" id="gemini-transfer-notice">
             <span aria-hidden="true">◉</span>
             <p>
-              공개 공유 링크만 지원합니다. 외부 AI를 호출하지 않으며, 가져온
-              대화는 이 노트를 만드는 데만 사용합니다.
+              공개 공유 링크만 지원합니다. tool·reasoning 등 내부 정보를 제거한
+              정제된 대화가 요약 생성을 위해 Google Gemini API로 전송됩니다.
+              원본 공유 HTML과 복원된 전체 메시지 배열은 GPTMemory에 저장하지
+              않습니다.
             </p>
           </div>
           {existing ? (
@@ -1307,8 +1570,8 @@ function ImportDialog({
                     : ""}
                 </p>
                 <p className="existing-note-warning">
-                  다시 생성하면 직접 편집한 내용을 포함한 현재 노트가 새 결과로
-                  교체됩니다. 생성에 실패하면 기존 노트는 그대로 유지됩니다.
+                  새 v2 요약만 갱신되고 기존 편집 본문은 보존됩니다. 생성에
+                  실패하면 기존 노트는 그대로 유지됩니다.
                 </p>
               </div>
             </div>
@@ -1343,7 +1606,7 @@ function ImportDialog({
                 onClick={() => void requestImport(existing)}
                 disabled={submitting}
               >
-                {submitting ? "처리하는 중…" : "다시 생성"}
+                {submitting ? "처리하는 중…" : "새 요약으로 재생성"}
               </button>
             </div>
           ) : (
@@ -1356,7 +1619,7 @@ function ImportDialog({
                 type="submit"
                 disabled={submitting || !shareUrl.trim()}
               >
-                {submitting ? "정리하는 중…" : "노트 만들기"}
+                {submitting ? "요약하는 중…" : "요약 노트 만들기"}
                 {!submitting ? <span aria-hidden="true">→</span> : null}
               </button>
             </div>

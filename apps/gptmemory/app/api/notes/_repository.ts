@@ -4,9 +4,15 @@ import type {
   ImportedNoteWrite,
   NoteImportGenerationMetadata,
 } from "@/lib/note-import";
+import {
+  parseConversationSummaryV2,
+  SUMMARY_SCHEMA_VERSION,
+  type ConversationSummaryV2,
+} from "@/lib/note-summary";
 
 import {
   parseCreateNoteInput,
+  parseStoredConversationSummary,
   type CreateNoteInput,
   type ListNotesInput,
   type PatchNoteInput,
@@ -32,6 +38,18 @@ function validateImportedNoteWrite(input: ImportedNoteWrite): CreateNoteInput {
   });
 }
 
+function validateImportedSummary(input: ImportedNoteWrite): ConversationSummaryV2 {
+  if (input.summarySchemaVersion !== SUMMARY_SCHEMA_VERSION) {
+    throw new Error("Imported note summary version is unsupported.");
+  }
+  return parseConversationSummaryV2(input.summary);
+}
+
+type StoredSummaryWrite = {
+  schemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+  summary: ConversationSummaryV2;
+};
+
 type NoteDbRow = {
   id: string;
   title: string;
@@ -41,6 +59,8 @@ type NoteDbRow = {
   source_url: string | null;
   source_title: string | null;
   source_message_count: number | null;
+  summary_schema_version: string | null;
+  summary_json: string | null;
   favorite: number;
   archived: number;
   deleted_at: string | null;
@@ -57,6 +77,8 @@ const PUBLIC_NOTE_COLUMNS = `
   source_url,
   source_title,
   source_message_count,
+  summary_schema_version,
+  summary_json,
   favorite,
   archived,
   deleted_at,
@@ -95,8 +117,9 @@ export async function listNotes(
       OR LOWER(sections_json) LIKE ? ESCAPE '\\'
       OR LOWER(tags_json) LIKE ? ESCAPE '\\'
       OR LOWER(COALESCE(source_title, '')) LIKE ? ESCAPE '\\'
+      OR LOWER(COALESCE(summary_json, '')) LIKE ? ESCAPE '\\'
     )`);
-    bindings.push(search, search, search, search, search);
+    bindings.push(search, search, search, search, search, search);
   }
 
   if (input.tag) {
@@ -126,7 +149,7 @@ export async function createNote(
   ownerKey: string,
   input: CreateNoteInput,
 ): Promise<ImportedNoteCreateResult<PublicNote>> {
-  return insertNote(ownerKey, input, null);
+  return insertNote(ownerKey, input, null, null);
 }
 
 export async function findNoteBySourceUrl(
@@ -187,6 +210,10 @@ export async function createImportedNote(
     ownerKey,
     validateImportedNoteWrite(input),
     input.generationMetadata,
+    {
+      schemaVersion: SUMMARY_SCHEMA_VERSION,
+      summary: validateImportedSummary(input),
+    },
   );
 }
 
@@ -199,19 +226,17 @@ export async function replaceImportedNote(input: {
 }): Promise<PublicNote | null> {
   const database = await getNotesDatabase();
   const noteInput = validateImportedNoteWrite(input.note);
+  const summary = validateImportedSummary(input.note);
   const updatedAt = nextUpdatedAt(input.expectedUpdatedAt);
   const note = await database
     .prepare(
       `
         UPDATE notes
-        SET title = ?,
-            overview = ?,
-            sections_json = ?,
-            tags_json = ?,
-            source_url = ?,
-            source_title = ?,
+        SET source_title = ?,
             source_message_count = ?,
             generation_metadata_json = ?,
+            summary_schema_version = ?,
+            summary_json = ?,
             updated_at = ?
         WHERE id = ?
           AND owner_key = ?
@@ -221,14 +246,11 @@ export async function replaceImportedNote(input: {
       `,
     )
     .bind(
-      noteInput.title,
-      noteInput.overview,
-      JSON.stringify(noteInput.sections),
-      JSON.stringify(noteInput.tags),
-      noteInput.sourceUrl,
       noteInput.sourceTitle,
       noteInput.sourceMessageCount,
       JSON.stringify(input.note.generationMetadata),
+      SUMMARY_SCHEMA_VERSION,
+      JSON.stringify(summary),
       updatedAt,
       input.noteId,
       input.ownerKey,
@@ -349,6 +371,10 @@ export async function permanentlyDeleteNote(
 }
 
 function toPublicNote(row: NoteDbRow): PublicNote {
+  const summary = parseStoredConversationSummary(
+    row.summary_schema_version,
+    row.summary_json,
+  );
   return {
     id: row.id,
     title: row.title,
@@ -360,6 +386,8 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     ...(row.source_message_count !== null
       ? { sourceMessageCount: row.source_message_count }
       : {}),
+    summarySchemaVersion: summary ? SUMMARY_SCHEMA_VERSION : null,
+    summary,
     favorite: Boolean(row.favorite),
     archived: Boolean(row.archived),
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
@@ -372,6 +400,7 @@ async function insertNote(
   ownerKey: string,
   input: CreateNoteInput,
   generationMetadata: NoteImportGenerationMetadata | null,
+  generatedSummary: StoredSummaryWrite | null,
 ): Promise<ImportedNoteCreateResult<PublicNote>> {
   const database = await getNotesDatabase();
   const id = crypto.randomUUID();
@@ -390,13 +419,15 @@ async function insertNote(
           source_title,
           source_message_count,
           generation_metadata_json,
+          summary_schema_version,
+          summary_json,
           favorite,
           archived,
           deleted_at,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         ON CONFLICT(owner_key, source_url)
           WHERE source_url IS NOT NULL
           DO NOTHING
@@ -414,6 +445,8 @@ async function insertNote(
       input.sourceTitle,
       input.sourceMessageCount,
       generationMetadata ? JSON.stringify(generationMetadata) : null,
+      generatedSummary?.schemaVersion ?? null,
+      generatedSummary ? JSON.stringify(generatedSummary.summary) : null,
       input.favorite ? 1 : 0,
       input.archived ? 1 : 0,
       now,
