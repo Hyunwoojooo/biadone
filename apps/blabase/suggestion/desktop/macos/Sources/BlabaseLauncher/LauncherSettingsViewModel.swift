@@ -84,22 +84,33 @@ final class LauncherSettingsViewModel: ObservableObject {
             return
         }
         do {
-            let resolved = try LauncherDataRootPolicy.validateExistingRoot(
-                path: selectedURL.path,
-                fileManager: fileManager
-            )
-            dataRootChoice = .existingReadOnly(path: resolved.path)
-            errorMessage = nil
-            statusMessage = "데이터는 복사하지 않고 이 폴더의 snapshot을 연결합니다."
+            try connectExistingDataRoot(at: selectedURL)
         } catch {
             errorMessage = Self.message(for: error)
         }
     }
 
+    func connectExistingDataRoot(at selectedURL: URL) throws {
+        let resolved = try LauncherDataRootPolicy.validateExistingRoot(
+            path: selectedURL.path,
+            fileManager: fileManager
+        )
+        dataRootChoice = .existingReadOnly(path: resolved.path)
+        dashboardBaseURLText =
+            LauncherDataRootSelectionPolicy
+                .dashboardBaseURLStringForExistingRoot(
+                    current: dashboardBaseURLText
+                )
+        errorMessage = nil
+        statusMessage =
+            "데이터는 복사하지 않고 이 폴더의 snapshot을 연결합니다. 새 데이터는 로컬 Work Cockpit에서 갱신합니다."
+    }
+
     func useManagedDefault() {
         dataRootChoice = .managedDefault
         errorMessage = nil
-        statusMessage = "Blabase가 전용 로컬 저장소에서 source 갱신을 관리합니다."
+        statusMessage =
+            "전용 저장소를 사용하려면 이 저장소에 GitHub 또는 Codex source 연결이 필요합니다."
     }
 
     func useCloudDashboard() {

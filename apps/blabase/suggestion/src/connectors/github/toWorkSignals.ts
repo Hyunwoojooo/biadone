@@ -25,6 +25,7 @@ import {
   validateGitHubSnapshot
 } from "../../crossSource/validateSnapshots";
 import {
+  GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
   GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
   RUNTIME_WORK_SIGNAL_BATCH_CONTRACT,
   RUNTIME_WORK_SIGNAL_CONTRACT
@@ -49,6 +50,10 @@ export function normalizeGitHubSnapshotToWorkSignals(
   if (validation.status === "rejected") return validation;
 
   const artifact = validation.artifact;
+  const normalizerVersion =
+    artifact.sourceSchemaVersion === "github-snapshot-v3"
+      ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+      : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION;
   const assessment = assessSnapshot(
     artifact,
     options.asOf,
@@ -95,6 +100,7 @@ export function normalizeGitHubSnapshotToWorkSignals(
         artifact.fetchedAt,
         assessment.truncated,
         issues,
+        normalizerVersion,
         options.resolveProjectId
       );
       signals.push(...normalized);
@@ -123,6 +129,7 @@ export function normalizeGitHubSnapshotToWorkSignals(
           artifact.sourceSnapshotSha256,
           artifact.fetchedAt,
           assessment.truncated,
+          normalizerVersion,
           options.resolveProjectId
         )
       );
@@ -141,13 +148,13 @@ export function normalizeGitHubSnapshotToWorkSignals(
       source: "github",
       sourceSchemaVersion: artifact.sourceSchemaVersion,
       collectorVersion: artifact.collectorVersion,
-      normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+      normalizerVersion,
       workSignalContract: RUNTIME_WORK_SIGNAL_CONTRACT,
       sourceSnapshotSha256: artifact.sourceSnapshotSha256,
       normalizationInputSha256: computeNormalizationInputSha256({
         sourceSnapshotSha256: artifact.sourceSnapshotSha256,
         sourceSchemaVersion: artifact.sourceSchemaVersion,
-        normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+        normalizerVersion,
         asOf: assessment.asOf,
         freshnessPolicy: options.freshnessPolicy,
         contextRegistrySha256:
@@ -167,6 +174,9 @@ function normalizeTask(
   observedAt: string,
   truncated: boolean,
   issues: NormalizationIssue[],
+  normalizerVersion:
+    | typeof GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
+    | typeof GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
   resolveProjectId:
     | ((sourceScopeId: string) => string | null)
     | undefined
@@ -175,6 +185,9 @@ function normalizeTask(
   const sourceScopeId = `repository:${task.repositoryId}`;
   const projectId = resolveProjectId?.(sourceScopeId) ?? null;
   const relationship = relationshipFor(task.kind);
+  const actionableAuthoredPullRequest =
+    task.kind === "authored_pull_request" &&
+    task.actionability?.actionRequired === true;
   const destinationUrl = safeGitHubDestination(task);
   if (destinationUrl === null) {
     issues.push({
@@ -189,7 +202,7 @@ function normalizeTask(
   const workItem = finalizeRuntimeWorkSignal({
     contract: RUNTIME_WORK_SIGNAL_CONTRACT,
     sourceSnapshotSha256: snapshotSha256,
-    normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+    normalizerVersion,
     source: "github",
     subjectId,
     subjectType: "work_item",
@@ -203,7 +216,8 @@ function normalizeTask(
       state: "open",
       relationship,
       semanticRole:
-        task.kind === "authored_pull_request"
+        task.kind === "authored_pull_request" &&
+        !actionableAuthoredPullRequest
           ? "context_only"
           : "direct_work_item",
       eligibilityLimit:
@@ -211,18 +225,27 @@ function normalizeTask(
           ? "none"
           : task.kind === "review_requested_pull_request"
             ? "draft_state_unknown"
-            : "not_actionable_by_source_kind",
+            : actionableAuthoredPullRequest
+              ? "none"
+              : "not_actionable_by_source_kind",
       draftState:
         task.kind === "assigned_issue"
           ? "not_applicable"
-          : "unknown",
+          : task.actionability === undefined
+            ? "unknown"
+            : task.actionability.draft
+              ? "draft"
+              : "ready",
       repositoryFullName: safeText(
         task.repositoryFullName,
         "repository"
       ),
       number: task.number,
       title: safeText(task.title, "Untitled GitHub item"),
-      destinationUrl
+      destinationUrl,
+      ...(task.actionability
+        ? { actionability: task.actionability }
+        : {})
     },
     observedAt,
     sourceUpdatedAt: task.updatedAt,
@@ -230,7 +253,8 @@ function normalizeTask(
     directness: "explicit",
     completeness: truncated ? "truncated" : "complete",
     attentionCapability:
-      task.kind === "authored_pull_request"
+      task.kind === "authored_pull_request" &&
+      !actionableAuthoredPullRequest
         ? "overview_only"
         : "candidate_input",
     evidence: [
@@ -249,6 +273,12 @@ function normalizeTask(
         snapshotSha256,
         subjectId,
         observedAt
+      ),
+      ...githubActionabilityEvidence(
+        task,
+        snapshotSha256,
+        subjectId,
+        observedAt
       )
     ]
   });
@@ -257,7 +287,7 @@ function normalizeTask(
   const deadline = finalizeRuntimeWorkSignal({
     contract: RUNTIME_WORK_SIGNAL_CONTRACT,
     sourceSnapshotSha256: snapshotSha256,
-    normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+    normalizerVersion,
     source: "github",
     subjectId,
     subjectType: "work_item",
@@ -317,6 +347,9 @@ function normalizeActivity(
   snapshotSha256: string,
   observedAt: string,
   truncated: boolean,
+  normalizerVersion:
+    | typeof GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
+    | typeof GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
   resolveProjectId:
     | ((sourceScopeId: string) => string | null)
     | undefined
@@ -339,7 +372,7 @@ function normalizeActivity(
   return finalizeRuntimeWorkSignal({
     contract: RUNTIME_WORK_SIGNAL_CONTRACT,
     sourceSnapshotSha256: snapshotSha256,
-    normalizerVersion: GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+    normalizerVersion,
     source: "github",
     subjectId,
     subjectType: "source_activity",
@@ -438,6 +471,98 @@ function githubTaskFieldEvidence(
   ] as const;
 }
 
+function githubActionabilityEvidence(
+  task: GitHubTaskSignal,
+  snapshotSha256: string,
+  subjectId: string,
+  observedAt: string
+) {
+  if (!task.actionability) return [];
+  const actionability = task.actionability;
+  return [
+    githubObjectEvidence(
+      task,
+      "collection_state",
+      actionability.collectionState,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "draft",
+      actionability.draft,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "review_decision",
+      actionability.reviewDecision,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "checks_summary",
+      actionability.checksSummary,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "mergeable",
+      actionability.mergeable,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "merge_conflict",
+      actionability.mergeConflict,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "unresolved_change_request_count",
+      actionability.unresolvedChangeRequestCount,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "requested_reviewer_count",
+      actionability.requestedReviewerCount,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "action_required",
+      actionability.actionRequired,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    ),
+    githubObjectEvidence(
+      task,
+      "action_required_reasons",
+      actionability.actionRequiredReasons,
+      snapshotSha256,
+      subjectId,
+      observedAt
+    )
+  ] as const;
+}
+
 function githubObjectEvidence(
   task: GitHubTaskSignal,
   field:
@@ -448,7 +573,17 @@ function githubObjectEvidence(
     | "html_url"
     | "milestone_due_at"
     | "created_at"
-    | "updated_at",
+    | "updated_at"
+    | "collection_state"
+    | "draft"
+    | "review_decision"
+    | "checks_summary"
+    | "mergeable"
+    | "merge_conflict"
+    | "unresolved_change_request_count"
+    | "requested_reviewer_count"
+    | "action_required"
+    | "action_required_reasons",
   value: unknown,
   snapshotSha256: string,
   subjectId: string,

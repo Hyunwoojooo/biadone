@@ -12,7 +12,12 @@ final class LauncherPanelController {
     ) {
         self.viewModel = viewModel
         panel = LauncherPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 430),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: LauncherVisualTokens.panelWidth,
+                height: LauncherVisualTokens.panelHeight
+            ),
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -34,6 +39,9 @@ final class LauncherPanelController {
             .moveToActiveSpace
         ]
         panel.animationBehavior = .utilityWindow
+        panel.cancelHandler = { [weak viewModel] in
+            viewModel?.handleCancel() ?? false
+        }
     }
 
     func toggle() {
@@ -41,6 +49,7 @@ final class LauncherPanelController {
     }
 
     func show(loadsAttention: Bool = true) {
+        viewModel.prepareForPresentation()
         positionOnActiveScreen()
         NSApplication.shared.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -62,19 +71,32 @@ final class LauncherPanelController {
             panel.center()
             return
         }
+        let preferredX = visibleFrame.midX - panel.frame.width / 2
+        let preferredY = visibleFrame.midY - panel.frame.height / 2 + 60
+        let maximumX = max(
+            visibleFrame.minX,
+            visibleFrame.maxX - panel.frame.width
+        )
+        let maximumY = max(
+            visibleFrame.minY,
+            visibleFrame.maxY - panel.frame.height
+        )
         let origin = NSPoint(
-            x: visibleFrame.midX - panel.frame.width / 2,
-            y: visibleFrame.midY - panel.frame.height / 2 + 60
+            x: min(max(preferredX, visibleFrame.minX), maximumX),
+            y: min(max(preferredY, visibleFrame.minY), maximumY)
         )
         panel.setFrameOrigin(origin)
     }
 }
 
 private final class LauncherPanel: NSPanel {
+    var cancelHandler: (() -> Bool)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     override func cancelOperation(_ sender: Any?) {
+        if cancelHandler?() == true { return }
         orderOut(sender)
     }
 }

@@ -12,6 +12,7 @@ import {
 } from "../../src/connectors/codex/observationContract";
 import { normalizeGitHubSnapshotToWorkSignals } from "../../src/connectors/github/toWorkSignals";
 import type {
+  GitHubPullRequestActionabilitySignal,
   GitHubSnapshot,
   GitHubTaskSignal
 } from "../../src/connectors/github/types";
@@ -120,6 +121,7 @@ export type ActiveAttentionFixtureOptions = {
   bindManagedRun?: boolean;
   githubProjectMismatch?: boolean;
   deadlineAt?: string | null;
+  githubActionability?: GitHubPullRequestActionabilitySignal;
   additionalGitHubTasks?: Array<{
     id: number;
     kind: GitHubTaskSignal["kind"];
@@ -171,7 +173,8 @@ export function activeAttentionFixture(
                   title: options.githubTitle ?? "Synthetic linked task",
                   repositoryId: 101,
                   repositoryFullName: "synthetic/private",
-                  deadlineAt: options.deadlineAt ?? null
+                  deadlineAt: options.deadlineAt ?? null,
+                  actionability: options.githubActionability
                 })
               ]),
           ...(options.additionalGitHubTasks ?? []).map((task) =>
@@ -651,8 +654,17 @@ function normalizeGitHub(
 }
 
 function githubSnapshot(tasks: GitHubTaskSignal[]): GitHubSnapshot {
+  const authored = tasks.filter(
+    (task) => task.kind === "authored_pull_request"
+  );
+  const actionabilityCollected = authored.filter(
+    (task) => task.actionability !== undefined
+  );
+  const usesActionabilityV3 = actionabilityCollected.length > 0;
   return {
-    schemaVersion: "github-snapshot-v2",
+    schemaVersion: usesActionabilityV3
+      ? "github-snapshot-v3"
+      : "github-snapshot-v2",
     appClientId: "synthetic-client",
     appSlug: "synthetic-app",
     apiVersion: "2022-11-28",
@@ -662,6 +674,24 @@ function githubSnapshot(tasks: GitHubTaskSignal[]): GitHubSnapshot {
     activityWindowStart: "2026-07-25T00:00:00.000Z",
     activitiesState: "available",
     activitiesTruncated: false,
+    ...(usesActionabilityV3
+      ? {
+          actionabilityCoverage: {
+            state:
+              actionabilityCollected.length === authored.length &&
+              actionabilityCollected.every(
+                (task) =>
+                  task.actionability?.collectionState === "complete"
+              )
+                ? ("complete" as const)
+                : ("partial" as const),
+            authoredPullRequestCount: authored.length,
+            attemptedCount: authored.length,
+            collectedCount: actionabilityCollected.length,
+            truncated: false
+          }
+        }
+      : {}),
     installations: [
       {
         id: 1,
@@ -707,6 +737,7 @@ function githubTask(input: {
   repositoryId: number;
   repositoryFullName: string;
   deadlineAt: string | null;
+  actionability?: GitHubPullRequestActionabilitySignal;
 }): GitHubTaskSignal {
   const pullRequest = input.kind !== "assigned_issue";
   return {
@@ -724,7 +755,10 @@ function githubTask(input: {
     milestoneDueAt: input.deadlineAt,
     state: "open",
     createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: FETCHED_AT
+    updatedAt: FETCHED_AT,
+    ...(input.actionability
+      ? { actionability: input.actionability }
+      : {})
   };
 }
 

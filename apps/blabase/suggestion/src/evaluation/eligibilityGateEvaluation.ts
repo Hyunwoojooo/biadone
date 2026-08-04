@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import configArtifact from "../../eval/synthetic/eligibilityGateConfig.v0.1.json";
 import datasetArtifact from "../../eval/synthetic/eligibilityGateCases.v0.1.json";
+import expectationRevisionArtifact from "../../eval/synthetic/eligibilityGateExpectations.v0.2.json";
 import {
   sealManagedCodexArtifactRelationProjection,
   type ManagedCodexArtifactRelationProjection
@@ -170,6 +171,7 @@ const expectedAssessmentSchema = z
         z.enum([
           "ELIGIBLE_DIRECT_ASSIGNED_ISSUE",
           "ELIGIBLE_REVIEW_STATUS_INSPECTION",
+          "ELIGIBLE_ACTIONABLE_AUTHORED_PULL_REQUEST",
           "ELIGIBLE_RELEVANT_CONFLICT_RESOLVED",
           "ELIGIBLE_WITH_LIMITED_SOURCE_COVERAGE",
           "REVIEW_RELEVANT_CRITICAL_CONFLICT_USER",
@@ -214,9 +216,9 @@ export const attentionEligibilityEvaluationDatasetSchema = z
       ATTENTION_ELIGIBILITY_EVALUATION_CASE_SCHEMA_VERSION
     ),
     datasetVersion: z.literal(
-      "suggestion-attention-eligibility-dev-v0.1"
+      "suggestion-attention-eligibility-dev-v0.2"
     ),
-    datasetRevision: z.literal(2),
+    datasetRevision: z.literal(3),
     datasetClass: z.literal("dev_candidate"),
     inputBoundary: z.literal("exact_phase3_evidence_graph"),
     dataOrigin: z.literal("synthetic"),
@@ -367,8 +369,8 @@ export type AttentionEligibilityEvaluationRecord = {
   completedAt: string;
   latencyMs: number;
   dataset: {
-    version: "suggestion-attention-eligibility-dev-v0.1";
-    revision: 2;
+    version: "suggestion-attention-eligibility-dev-v0.2";
+    revision: 3;
     class: "dev_candidate";
     lifecycle: "mutable";
     inputBoundary: "exact_phase3_evidence_graph";
@@ -446,10 +448,64 @@ export const ATTENTION_ELIGIBILITY_CONFIG_SHA256 = sha256Canonical(
   attentionEligibilityEvaluationConfig
 );
 export const attentionEligibilityEvaluationDataset =
-  loadAttentionEligibilityEvaluationDataset(datasetArtifact);
+  loadAttentionEligibilityEvaluationDataset(
+    applyEligibilityExpectationRevision(
+      datasetArtifact,
+      expectationRevisionArtifact
+    )
+  );
 export const ATTENTION_ELIGIBILITY_DATASET_SHA256 = sha256Canonical(
   attentionEligibilityEvaluationDataset
 );
+
+function applyEligibilityExpectationRevision(
+  baseInput: unknown,
+  revisionInput: unknown
+): unknown {
+  const base = z
+    .object({
+      datasetVersion: z.literal(
+        "suggestion-attention-eligibility-dev-v0.1"
+      ),
+      datasetRevision: z.literal(2)
+    })
+    .passthrough()
+    .parse(baseInput);
+  const revision = z
+    .object({
+      contract: z.literal(
+        "attention-eligibility-expectation-revision-v0.1"
+      ),
+      baseDatasetVersion: z.literal(base.datasetVersion),
+      baseDatasetRevision: z.literal(base.datasetRevision),
+      baseDatasetSha256: sha256Schema,
+      datasetVersion: z.literal(
+        "suggestion-attention-eligibility-dev-v0.2"
+      ),
+      datasetRevision: z.literal(3),
+      reason: z.literal(
+        "eligibility-v0.2-versioned-output-rebaseline"
+      ),
+      expectedProjectionSha256ByCase: z.record(
+        z.string().regex(/^ELIG-DEV-[0-9]{3}$/),
+        sha256Schema.nullable()
+      )
+    })
+    .strict()
+    .parse(revisionInput);
+  if (sha256Canonical(baseInput) !== revision.baseDatasetSha256) {
+    throw new TypeError(
+      "Eligibility expectation revision base dataset hash mismatch."
+    );
+  }
+  return {
+    ...base,
+    datasetVersion: revision.datasetVersion,
+    datasetRevision: revision.datasetRevision,
+    expectedProjectionSha256ByCase:
+      revision.expectedProjectionSha256ByCase
+  };
+}
 
 export function runAttentionEligibilityEvaluation(input?: {
   startedAt?: Date;

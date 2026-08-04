@@ -67,8 +67,8 @@ describe("Phase 4 Attention monitor compatibility", () => {
     const parsed = attentionMonitorRunSchema.parse(active);
 
     expect(parsed).toMatchObject({
-      contract: "attention-monitor-run-v0.4",
-      resultContract: "cross-source-active-attention-result-v0.4",
+      contract: "attention-monitor-run-v0.5",
+      resultContract: "cross-source-active-attention-result-v0.5",
       candidateCounts: {
         eligible: 0,
         reviewRequired: 1,
@@ -269,6 +269,79 @@ describe("Phase 4 Attention monitor compatibility", () => {
     ).toBe(false);
   });
 
+  it("reads the previous v0.4 active run against its original replay v2 input", async () => {
+    const cwd = await temporaryDirectory();
+    const { input } = activeAttentionFixture();
+    const result = resolveActiveAttention(input);
+    const runId = `run_${"8".repeat(32)}`;
+    const analysisId = `analysis_${"9".repeat(32)}`;
+    const sessionId = `session_${"a".repeat(32)}`;
+    const replayArtifact =
+      currentAttentionReplayInputArtifactSchema.parse({
+        contract: "attention-replay-input-v2",
+        runId,
+        analysisId,
+        sessionId,
+        capturedAt: AS_OF,
+        inputSha256: input.inputSha256,
+        privacyClass: "private_local_engine_input",
+        retentionDays: 30,
+        input
+      });
+    const replayArtifactSha256 = runtimeSha256({
+      domain: "attention-private-replay-artifact-v2",
+      artifact: replayArtifact
+    });
+    const current = activeRunFromResult({
+      result,
+      runId,
+      analysisId,
+      sessionId,
+      replayArtifactSha256
+    });
+    const previous = attentionMonitorRunSchema.parse({
+      ...current,
+      contract: "attention-monitor-run-v0.4",
+      orchestratorVersion: "attention-live-orchestrator-v0.4",
+      resultContract: "cross-source-active-attention-result-v0.4",
+      policyVersion: "aggressive-evidence-bound-attention-policy-v0.3",
+      candidateRuleVersion:
+        "github-managed-codex-active-candidate-rule-v0.1",
+      rankingPolicyVersion: "active-attention-ranking-policy-v0.2",
+      resolverVersion: "active-attention-decision-resolver-v0.3"
+    });
+    await mkdir(attentionReplayInputDirectory(cwd), {
+      recursive: true
+    });
+    await mkdir(attentionMonitorDirectory(cwd), { recursive: true });
+    await writeFile(
+      join(attentionReplayInputDirectory(cwd), `${runId}.json`),
+      `${JSON.stringify(replayArtifact)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(attentionMonitorDirectory(cwd), "monitor.json"),
+      `${JSON.stringify({
+        contract: "attention-monitor-store-v0.1",
+        updatedAt: AS_OF,
+        runs: [previous],
+        feedback: [],
+        failures: []
+      })}\n`,
+      "utf8"
+    );
+
+    const parsed = await readAttentionMonitorStore(
+      cwd,
+      new Date("2026-08-02T12:01:00.000Z")
+    );
+    expect(parsed.runs[0]).toMatchObject({
+      contract: "attention-monitor-run-v0.4",
+      orchestratorVersion: "attention-live-orchestrator-v0.4",
+      resultContract: "cross-source-active-attention-result-v0.4"
+    });
+  });
+
   it("reads and raw-preserves the previous v0.2 failure contract", async () => {
     const cwd = await temporaryDirectory();
     const monitorDirectory = attentionMonitorDirectory(cwd);
@@ -347,7 +420,7 @@ describe("Phase 4 Attention monitor compatibility", () => {
       )
     ).toEqual(previousFailure);
     expect(currentFailure.contract).toBe(
-      "attention-monitor-failure-v0.3"
+      "attention-monitor-failure-v0.4"
     );
   });
 });
@@ -361,7 +434,7 @@ function activeRunFromResult(input: {
 }) {
   const { result } = input;
   return attentionMonitorRunSchema.parse({
-    contract: "attention-monitor-run-v0.4",
+    contract: "attention-monitor-run-v0.5",
     runId: input.runId,
     analysisId: input.analysisId,
     sessionId: input.sessionId,
@@ -377,7 +450,7 @@ function activeRunFromResult(input: {
     resultSha256: result.resultSha256,
     replayArtifactState: "available",
     replayArtifactSha256: input.replayArtifactSha256,
-    orchestratorVersion: "attention-live-orchestrator-v0.4",
+    orchestratorVersion: "attention-live-orchestrator-v0.5",
     freshnessPolicyVersion:
       "attention-live-freshness-policy-v0.1",
     freshnessPolicy: {
@@ -427,7 +500,7 @@ function activeRunFromResult(input: {
 
 function activeRunFixture() {
   return {
-    contract: "attention-monitor-run-v0.4" as const,
+    contract: "attention-monitor-run-v0.5" as const,
     runId: `run_${"4".repeat(32)}`,
     analysisId: `analysis_${"5".repeat(32)}`,
     sessionId: `session_${"6".repeat(32)}`,
@@ -443,7 +516,7 @@ function activeRunFixture() {
     resultSha256: "9".repeat(64),
     replayArtifactState: "available" as const,
     replayArtifactSha256: "a".repeat(64),
-    orchestratorVersion: "attention-live-orchestrator-v0.4" as const,
+    orchestratorVersion: "attention-live-orchestrator-v0.5" as const,
     freshnessPolicyVersion:
       "attention-live-freshness-policy-v0.1" as const,
     freshnessPolicy: {
@@ -451,13 +524,13 @@ function activeRunFixture() {
       codexMaxAgeMs: 5 * 60 * 1_000,
       maxFutureClockSkewMs: 60 * 1_000
     },
-    resultContract: "cross-source-active-attention-result-v0.4",
-    policyVersion: "aggressive-evidence-bound-attention-policy-v0.3",
+    resultContract: "cross-source-active-attention-result-v0.5",
+    policyVersion: "aggressive-evidence-bound-attention-policy-v0.4",
     candidateRuleVersion:
-      "github-managed-codex-active-candidate-rule-v0.1",
+      "github-managed-codex-active-candidate-rule-v0.2",
     lanePolicyVersion: "active-attention-lane-policy-v0.1",
-    rankingPolicyVersion: "active-attention-ranking-policy-v0.2",
-    resolverVersion: "active-attention-decision-resolver-v0.3",
+    rankingPolicyVersion: "active-attention-ranking-policy-v0.3",
+    resolverVersion: "active-attention-decision-resolver-v0.4",
     idPolicyVersion: "active-attention-id-v0.1",
     decisionStatus: "needs_clarification" as const,
     certainty: null,

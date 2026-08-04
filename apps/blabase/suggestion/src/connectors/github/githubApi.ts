@@ -12,9 +12,12 @@ import {
   refreshGitHubAccessToken
 } from "./oauth";
 import type {
+  GitHubActionabilityCoverage,
   GitHubActivityKind,
   GitHubActivitySubjectType,
   GitHubInstallationSignal,
+  GitHubPullRequestActionabilitySignal,
+  GitHubPullRequestActionRequiredReason,
   GitHubRepositorySignal,
   GitHubReviewState,
   GitHubSnapshot,
@@ -28,11 +31,20 @@ export const MAX_GITHUB_INSTALLATIONS = 50;
 export const MAX_GITHUB_REPOSITORIES = 100;
 export const MAX_GITHUB_TASKS = 200;
 export const MAX_GITHUB_ACTIVITIES = 300;
+export const MAX_GITHUB_AUTHORED_PR_ACTIONABILITY = 25;
 
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_PAGES = 10;
 const MAX_GITHUB_ACTIVITY_PAGES = 3;
+const MAX_GITHUB_REVIEW_PAGES = 3;
+const GITHUB_ACTIONABILITY_CONCURRENCY = 4;
 const GITHUB_ACTIVITY_LOOKBACK_DAYS = 30;
+const FAILED_CHECK_CONCLUSIONS = new Set([
+  "failure",
+  "timed_out",
+  "action_required",
+  "startup_failure"
+]);
 const SUPPORTED_GITHUB_EVENT_TYPES = new Set([
   "PushEvent",
   "CreateEvent",
@@ -113,6 +125,57 @@ const searchResponseSchema = z.object({
   total_count: z.number().int().nonnegative(),
   incomplete_results: z.boolean(),
   items: z.array(taskResponseSchema)
+});
+
+const pullRequestDetailSchema = z.object({
+  draft: z.boolean(),
+  mergeable: z.boolean().nullable(),
+  mergeable_state: z.string().optional().default("unknown"),
+  requested_reviewers: z.array(z.unknown()).optional().default([]),
+  requested_teams: z.array(z.unknown()).optional().default([]),
+  head: z.object({
+    sha: z.string().min(1).max(200)
+  })
+});
+
+const pullRequestReviewSchema = z.object({
+  id: z.number().int().positive(),
+  state: z.string().min(1),
+  submitted_at: z.string().datetime().nullable().optional().default(null),
+  user: z
+    .object({ id: z.number().int().positive() })
+    .nullable()
+    .optional()
+    .default(null)
+});
+
+const pullRequestReviewsSchema = z.array(pullRequestReviewSchema);
+
+const checkRunsResponseSchema = z.object({
+  total_count: z.number().int().nonnegative(),
+  check_runs: z.array(
+    z.object({
+      status: z.enum([
+        "queued",
+        "in_progress",
+        "completed",
+        "waiting",
+        "requested",
+        "pending"
+      ]),
+      conclusion: z.string().nullable().optional().default(null)
+    })
+  )
+});
+
+const combinedStatusResponseSchema = z.object({
+  state: z.enum(["error", "failure", "pending", "success"]),
+  total_count: z.number().int().nonnegative(),
+  statuses: z.array(
+    z.object({
+      state: z.enum(["error", "failure", "pending", "success"])
+    })
+  )
 });
 
 const eventsResponseSchema = z.array(z.unknown());
@@ -287,7 +350,12 @@ export async function fetchAndStoreGitHubSnapshot(
     ...reviewRequestedResult.tasks,
     ...authoredPullRequestResult.tasks
   ]).sort(compareGitHubTasks);
-  const tasks = combinedTasks.slice(0, maxTasks);
+  const actionabilityResult = await enrichAuthoredPullRequestActionability(
+    combinedTasks.slice(0, maxTasks),
+    config,
+    request
+  );
+  const tasks = actionabilityResult.tasks;
   const activityWindowStart = new Date(
     now.getTime() -
       GITHUB_ACTIVITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
@@ -304,7 +372,7 @@ export async function fetchAndStoreGitHubSnapshot(
         ).catch(() => unavailableActivityResult(activityWindowStart));
 
   const snapshot: GitHubSnapshot = {
-    schemaVersion: "github-snapshot-v2",
+    schemaVersion: "github-snapshot-v3",
     appClientId: config.clientId,
     appSlug: config.appSlug,
     apiVersion: config.apiVersion,
@@ -321,6 +389,7 @@ export async function fetchAndStoreGitHubSnapshot(
     activityWindowStart: activityResult.windowStart,
     activitiesState: activityResult.state,
     activitiesTruncated: activityResult.truncated,
+    actionabilityCoverage: actionabilityResult.coverage,
     installations: installationResult.installations,
     repositories: repositoryResult.repositories.sort(
       compareGitHubRepositories
@@ -620,6 +689,450 @@ async function fetchSearchedPullRequests(
   }
 
   return { tasks, truncated };
+}
+
+async function enrichAuthoredPullRequestActionability(
+  tasks: GitHubTaskSignal[],
+  config: GitHubConfig,
+  request: AuthenticatedRequest
+): Promise<{
+  tasks: GitHubTaskSignal[];
+  coverage: GitHubActionabilityCoverage;
+}> {
+  const allAuthored = tasks.filter(
+    (task) => task.kind === "authored_pull_request"
+  );
+  const authored = allAuthored.slice(
+    0,
+    MAX_GITHUB_AUTHORED_PR_ACTIONABILITY
+  );
+  const actionabilityByTaskId = new Map<
+    number,
+    GitHubPullRequestActionabilitySignal
+  >();
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < authored.length) {
+      const task = authored[nextIndex];
+      nextIndex += 1;
+      if (!task) continue;
+      const actionability = await fetchPullRequestActionability(
+        task,
+        config,
+        request
+      ).catch(() => null);
+      if (actionability) actionabilityByTaskId.set(task.id, actionability);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          GITHUB_ACTIONABILITY_CONCURRENCY,
+          authored.length
+        )
+      },
+      () => worker()
+    )
+  );
+
+  const enrichedTasks = tasks.map((task) => {
+    const actionability = actionabilityByTaskId.get(task.id);
+    return actionability && task.kind === "authored_pull_request"
+      ? { ...task, actionability }
+      : task;
+  });
+  const collected = [...actionabilityByTaskId.values()];
+  const truncated = allAuthored.length > authored.length;
+  const allCollectedCompletely =
+    collected.length === allAuthored.length &&
+    collected.every(
+      (actionability) => actionability.collectionState === "complete"
+    );
+
+  return {
+    tasks: enrichedTasks,
+    coverage: {
+      state:
+        allAuthored.length === 0 || allCollectedCompletely
+          ? "complete"
+          : collected.length === 0
+            ? "unavailable"
+            : "partial",
+      authoredPullRequestCount: allAuthored.length,
+      attemptedCount: authored.length,
+      collectedCount: collected.length,
+      truncated,
+    }
+  };
+}
+
+async function fetchPullRequestActionability(
+  task: GitHubTaskSignal,
+  config: GitHubConfig,
+  request: AuthenticatedRequest
+): Promise<GitHubPullRequestActionabilitySignal> {
+  const pullRequestPath = githubPullRequestPath(task);
+  const detailResponse = await request(apiUrl(config, pullRequestPath));
+  assertResponseOk(detailResponse, "TASKS_REQUEST_FAILED");
+  const detail = await parseResponse(
+    detailResponse,
+    pullRequestDetailSchema,
+    "TASKS_RESPONSE_INVALID"
+  );
+
+  const [reviewResult, checksSummary] = await Promise.all([
+    fetchPullRequestReviewSummary(config, request, pullRequestPath).catch(
+      () => null
+    ),
+    fetchPullRequestChecksSummary(
+      config,
+      request,
+      task.repositoryFullName,
+      detail.head.sha
+    ).catch(() => null)
+  ]);
+  const requestedReviewerCount =
+    detail.requested_reviewers.length + detail.requested_teams.length;
+  const reviewDecision = reviewResult
+    ? !reviewResult.truncated &&
+      reviewResult.unresolvedChangeRequestCount > 0
+      ? ("changes_requested" as const)
+      : requestedReviewerCount > 0
+        ? ("review_requested" as const)
+        : reviewResult.truncated
+          ? ("unknown" as const)
+          : reviewResult.approvalCount > 0
+            ? ("approved" as const)
+            : ("none" as const)
+    : ("unknown" as const);
+  const mergeConflict =
+    detail.mergeable_state === "dirty"
+      ? true
+      : detail.mergeable === true
+        ? false
+        : null;
+  const actionRequiredReasons: GitHubPullRequestActionRequiredReason[] = [];
+  if ((checksSummary?.failedCount ?? 0) > 0) {
+    actionRequiredReasons.push("checks_failed");
+  }
+  if (
+    reviewResult !== null &&
+    !reviewResult.truncated &&
+    reviewResult.unresolvedChangeRequestCount > 0
+  ) {
+    actionRequiredReasons.push("changes_requested");
+  }
+  if (mergeConflict === true) {
+    actionRequiredReasons.push("merge_conflict");
+  }
+
+  return {
+    collectionState:
+      reviewResult !== null &&
+      !reviewResult.truncated &&
+      checksSummary !== null &&
+      checksSummary.collectionState === "complete" &&
+      !checksSummary.truncated &&
+      mergeConflict !== null
+        ? "complete"
+        : "partial",
+    draft: detail.draft,
+    reviewDecision,
+    checksSummary,
+    mergeable: detail.mergeable,
+    mergeConflict,
+    unresolvedChangeRequestCount:
+      reviewResult === null || reviewResult.truncated
+        ? null
+        : reviewResult.unresolvedChangeRequestCount,
+    requestedReviewerCount,
+    actionRequired: actionRequiredReasons.length > 0,
+    actionRequiredReasons
+  };
+}
+
+async function fetchPullRequestReviewSummary(
+  config: GitHubConfig,
+  request: AuthenticatedRequest,
+  pullRequestPath: string
+): Promise<{
+  unresolvedChangeRequestCount: number;
+  approvalCount: number;
+  truncated: boolean;
+}> {
+  const reviews: z.infer<typeof pullRequestReviewSchema>[] = [];
+  let truncated = false;
+  let reviewerIdentityIncomplete = false;
+
+  for (let page = 1; page <= MAX_GITHUB_REVIEW_PAGES; page += 1) {
+    const response = await request(
+      apiUrl(config, `${pullRequestPath}/reviews`, {
+        per_page: String(GITHUB_PAGE_SIZE),
+        page: String(page)
+      })
+    );
+    assertResponseOk(response, "TASKS_REQUEST_FAILED");
+    const items = await parseResponse(
+      response,
+      pullRequestReviewsSchema,
+      "TASKS_RESPONSE_INVALID"
+    );
+    reviews.push(...items);
+    if (items.length < GITHUB_PAGE_SIZE) break;
+    if (page === MAX_GITHUB_REVIEW_PAGES) truncated = true;
+  }
+
+  const latestDecisionByReviewer = new Map<
+    number,
+    {
+      state: "approved" | "changes_requested" | "dismissed";
+      submittedAtMs: number | null;
+      id: number;
+    }
+  >();
+  for (const review of reviews) {
+    const state = normalizeDecisionReviewState(review.state);
+    if (!state) continue;
+    if (!review.user) {
+      reviewerIdentityIncomplete = true;
+      continue;
+    }
+    const submittedAtMs = review.submitted_at
+      ? Date.parse(review.submitted_at)
+      : null;
+    const previous = latestDecisionByReviewer.get(review.user.id);
+    if (
+      !previous ||
+      isReviewLater(
+        { submittedAtMs, id: review.id },
+        previous
+      )
+    ) {
+      latestDecisionByReviewer.set(review.user.id, {
+        state,
+        submittedAtMs,
+        id: review.id
+      });
+    }
+  }
+  const current = [...latestDecisionByReviewer.values()];
+  return {
+    unresolvedChangeRequestCount: current.filter(
+      (review) => review.state === "changes_requested"
+    ).length,
+    approvalCount: current.filter((review) => review.state === "approved")
+      .length,
+    truncated: truncated || reviewerIdentityIncomplete
+  };
+}
+
+async function fetchPullRequestChecksSummary(
+  config: GitHubConfig,
+  request: AuthenticatedRequest,
+  repositoryFullName: string,
+  headSha: string
+): Promise<GitHubPullRequestActionabilitySignal["checksSummary"]> {
+  const [owner, repository] = repositoryFullName.split("/");
+  if (!owner || !repository || repositoryFullName.split("/").length !== 2) {
+    throw new GitHubApiError("TASKS_RESPONSE_INVALID");
+  }
+  const encodedOwner = encodeURIComponent(owner);
+  const encodedRepository = encodeURIComponent(repository);
+  const encodedHeadSha = encodeURIComponent(headSha);
+  const [checkRuns, commitStatuses] = await Promise.all([
+    fetchCheckRunsAggregate(
+      config,
+      request,
+      encodedOwner,
+      encodedRepository,
+      encodedHeadSha
+    ).catch(() => null),
+    fetchCommitStatusAggregate(
+      config,
+      request,
+      encodedOwner,
+      encodedRepository,
+      encodedHeadSha
+    ).catch(() => null)
+  ]);
+  if (checkRuns === null && commitStatuses === null) return null;
+
+  const totalCount =
+    (checkRuns?.totalCount ?? 0) +
+    (commitStatuses?.totalCount ?? 0);
+  const completedCount =
+    (checkRuns?.completedCount ?? 0) +
+    (commitStatuses?.completedCount ?? 0);
+  const failedCount =
+    (checkRuns?.failedCount ?? 0) +
+    (commitStatuses?.failedCount ?? 0);
+  const pendingCount =
+    (checkRuns?.pendingCount ?? 0) +
+    (commitStatuses?.pendingCount ?? 0);
+  const truncated =
+    (checkRuns?.truncated ?? false) ||
+    (commitStatuses?.truncated ?? false);
+  const collectionState =
+    checkRuns !== null && commitStatuses !== null && !truncated
+      ? ("complete" as const)
+      : ("partial" as const);
+  const state =
+    failedCount > 0
+      ? ("failing" as const)
+      : pendingCount > 0
+        ? ("pending" as const)
+        : collectionState === "partial"
+          ? ("unknown" as const)
+          : totalCount > 0
+            ? ("passing" as const)
+            : ("none" as const);
+
+  return {
+    collectionState,
+    state,
+    totalCount,
+    completedCount,
+    failedCount,
+    pendingCount,
+    truncated
+  };
+}
+
+type ChecksAggregate = {
+  totalCount: number;
+  completedCount: number;
+  failedCount: number;
+  pendingCount: number;
+  truncated: boolean;
+};
+
+async function fetchCheckRunsAggregate(
+  config: GitHubConfig,
+  request: AuthenticatedRequest,
+  encodedOwner: string,
+  encodedRepository: string,
+  encodedHeadSha: string
+): Promise<ChecksAggregate> {
+  const response = await request(
+    apiUrl(
+      config,
+      `/repos/${encodedOwner}/${encodedRepository}/commits/${encodedHeadSha}/check-runs`,
+      { filter: "latest", per_page: String(GITHUB_PAGE_SIZE) }
+    )
+  );
+  assertResponseOk(response, "TASKS_REQUEST_FAILED");
+  const parsed = await parseResponse(
+    response,
+    checkRunsResponseSchema,
+    "TASKS_RESPONSE_INVALID"
+  );
+  const failedCount = parsed.check_runs.filter(isFailedCheckRun).length;
+  const completedCount = parsed.check_runs.filter(
+    (check) => check.status === "completed" && check.conclusion !== null
+  ).length;
+  const pendingCount = parsed.check_runs.length - completedCount;
+  const truncated = parsed.total_count > parsed.check_runs.length;
+  return {
+    totalCount: parsed.total_count,
+    completedCount,
+    failedCount,
+    pendingCount,
+    truncated
+  };
+}
+
+async function fetchCommitStatusAggregate(
+  config: GitHubConfig,
+  request: AuthenticatedRequest,
+  encodedOwner: string,
+  encodedRepository: string,
+  encodedHeadSha: string
+): Promise<ChecksAggregate> {
+  const response = await request(
+    apiUrl(
+      config,
+      `/repos/${encodedOwner}/${encodedRepository}/commits/${encodedHeadSha}/status`,
+      { per_page: String(GITHUB_PAGE_SIZE) }
+    )
+  );
+  assertResponseOk(response, "TASKS_REQUEST_FAILED");
+  const parsed = await parseResponse(
+    response,
+    combinedStatusResponseSchema,
+    "TASKS_RESPONSE_INVALID"
+  );
+  const knownFailedCount = parsed.statuses.filter(
+    (status) => status.state === "failure" || status.state === "error"
+  ).length;
+  const failedCount =
+    knownFailedCount === 0 &&
+    (parsed.state === "failure" || parsed.state === "error")
+      ? 1
+      : knownFailedCount;
+  const pendingCount = parsed.statuses.filter(
+    (status) => status.state === "pending"
+  ).length;
+  const knownCompletedCount = parsed.statuses.length - pendingCount;
+  return {
+    totalCount: parsed.total_count,
+    completedCount: Math.max(knownCompletedCount, failedCount),
+    failedCount,
+    pendingCount:
+      pendingCount === 0 &&
+      parsed.state === "pending" &&
+      parsed.total_count > 0
+        ? 1
+        : pendingCount,
+    truncated: parsed.total_count > parsed.statuses.length
+  };
+}
+
+function githubPullRequestPath(task: GitHubTaskSignal): string {
+  const parts = task.repositoryFullName.split("/");
+  const owner = parts[0];
+  const repository = parts[1];
+  if (!owner || !repository || parts.length !== 2) {
+    throw new GitHubApiError("TASKS_RESPONSE_INVALID");
+  }
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/pulls/${task.number}`;
+}
+
+function normalizeDecisionReviewState(
+  value: string
+): "approved" | "changes_requested" | "dismissed" | null {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "approved" ||
+    normalized === "changes_requested" ||
+    normalized === "dismissed"
+    ? normalized
+    : null;
+}
+
+function isReviewLater(
+  current: { submittedAtMs: number | null; id: number },
+  previous: { submittedAtMs: number | null; id: number }
+): boolean {
+  if (
+    current.submittedAtMs !== null &&
+    previous.submittedAtMs !== null &&
+    current.submittedAtMs !== previous.submittedAtMs
+  ) {
+    return current.submittedAtMs > previous.submittedAtMs;
+  }
+  return current.id > previous.id;
+}
+
+function isFailedCheckRun(
+  check: z.infer<typeof checkRunsResponseSchema>["check_runs"][number]
+): boolean {
+  return (
+    check.status === "completed" &&
+    check.conclusion !== null &&
+    FAILED_CHECK_CONCLUSIONS.has(check.conclusion.toLowerCase())
+  );
 }
 
 async function fetchUserActivities(
@@ -1154,16 +1667,16 @@ function apiUrl(
   return url;
 }
 
-async function parseResponse<T>(
+async function parseResponse<TSchema extends z.ZodTypeAny>(
   response: Response,
-  schema: z.ZodType<T>,
+  schema: TSchema,
   errorCode:
     | "USER_RESPONSE_INVALID"
     | "INSTALLATIONS_RESPONSE_INVALID"
     | "REPOSITORIES_RESPONSE_INVALID"
     | "TASKS_RESPONSE_INVALID"
     | "ACTIVITIES_RESPONSE_INVALID"
-): Promise<T> {
+): Promise<z.output<TSchema>> {
   try {
     return schema.parse(await response.json());
   } catch {

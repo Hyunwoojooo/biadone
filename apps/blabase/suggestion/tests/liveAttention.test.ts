@@ -106,6 +106,21 @@ describe("live Attention orchestration", () => {
     expect(evaluated.eligibilityProjection.projectionSha256).toBe(
       evaluated.result.dependencies.eligibilityProjectionSha256
     );
+    expect(evaluated.developerSignals.publicSummary).toMatchObject({
+      contract: "developer-runtime-public-summary-v0.1",
+      runId: evaluated.run.runId,
+      analysisId: evaluated.run.analysisId,
+      resultId: evaluated.result.resultId,
+      entityCounts: {
+        workItems: 1
+      },
+      stageSummaries: expect.arrayContaining([
+        expect.objectContaining({
+          stage: "selected",
+          outcomeCounts: expect.objectContaining({ selected: 1 })
+        })
+      ])
+    });
 
     const serializedRun = JSON.stringify(evaluated.run);
     expect(serializedRun).not.toContain("Private launch checklist");
@@ -114,6 +129,16 @@ describe("live Attention orchestration", () => {
     );
     expect(serializedRun).not.toContain("private-project");
     expect(serializedRun).not.toContain("Private Codex summary");
+    const serializedDeveloperSummary = JSON.stringify(
+      evaluated.developerSignals.publicSummary
+    );
+    expect(serializedDeveloperSummary).not.toContain(
+      "Private launch checklist"
+    );
+    expect(serializedDeveloperSummary).not.toContain("private-project");
+    expect(serializedDeveloperSummary).not.toContain(
+      "Private Codex summary"
+    );
     expect(evaluated.run.analysisId).toMatch(
       /^analysis_[a-f0-9]{32}$/
     );

@@ -16,8 +16,8 @@ const FIXED_END = new Date("2026-08-02T03:00:00.050Z");
 describe("Phase 4A attention eligibility targeted evaluation", () => {
   it("loads a separate mutable 26-case synthetic Dev Candidate", () => {
     expect(attentionEligibilityEvaluationDataset).toMatchObject({
-      datasetVersion: "suggestion-attention-eligibility-dev-v0.1",
-      datasetRevision: 2,
+      datasetVersion: "suggestion-attention-eligibility-dev-v0.2",
+      datasetRevision: 3,
       datasetClass: "dev_candidate",
       inputBoundary: "exact_phase3_evidence_graph",
       dataOrigin: "synthetic",
@@ -61,7 +61,7 @@ describe("Phase 4A attention eligibility targeted evaluation", () => {
       "33c2719e45d6d3715053c44e87f5d5e36317f0457e3ee939ca76aa36c53a2e57"
     );
     expect(ATTENTION_ELIGIBILITY_DATASET_SHA256).toBe(
-      "7e53abbdf7ccf64ec30152c3fdd0c08161db10f5e2b191286745cbe729bb0343"
+      "3bb839262a78095b5a54a4e73c105802c41f276fe19a5743fadd50c20bd235d4"
     );
   });
 
@@ -104,7 +104,7 @@ describe("Phase 4A attention eligibility targeted evaluation", () => {
       "1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034"
     );
     expect(record.deterministicOutputSha256).toBe(
-      "da6814647c9425fe088940cf8b6407af90a1ed310bd7291d58d84fc3c73fb5a3"
+      "00e1008c24b1c57a66c626a2db8fc78ab74c6c28499919fe79ea6297916ed703"
     );
     expect(record.attentionDisposition).toBe("shadow_only");
     expect(record.inference).toEqual({

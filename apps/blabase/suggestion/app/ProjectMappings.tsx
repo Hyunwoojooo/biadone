@@ -46,7 +46,12 @@ const SOURCE_ORDER = [
   "google_calendar"
 ] as const;
 
-export function ProjectMappings() {
+export function ProjectMappings({
+  defaultOpen = false
+}: {
+  defaultOpen?: boolean;
+} = {}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   const [discovery, setDiscovery] =
     useState<SourceScopeDiscovery | null>(null);
   const [drafts, setDrafts] = useState<ScopeDrafts>({});
@@ -300,7 +305,11 @@ export function ProjectMappings() {
       .length ?? 0;
 
   return (
-    <details className="projectMappings">
+    <details
+      className="projectMappings"
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+    >
       <summary>
         <span>
           <strong>프로젝트 연결</strong>

@@ -7,6 +7,9 @@ import {
 import {
   ATTENTION_CANDIDATE_SEED_SCHEMA_VERSION,
   ATTENTION_ELIGIBILITY_EVIDENCE_POLICY_VERSION,
+  ATTENTION_ELIGIBILITY_LEGACY_EVIDENCE_POLICY_VERSION,
+  ATTENTION_ELIGIBILITY_LEGACY_POLICY_VERSION,
+  ATTENTION_ELIGIBILITY_LEGACY_RESOLVER_VERSION,
   ATTENTION_ELIGIBILITY_ID_POLICY_VERSION,
   ATTENTION_ELIGIBILITY_POLICY_VERSION,
   ATTENTION_ELIGIBILITY_RESOLVER_VERSION,
@@ -39,6 +42,7 @@ export const attentionEligibilityReviewRouteSchema = z.enum([
 export const attentionEligibilityReasonCodeSchema = z.enum([
   "ELIGIBLE_DIRECT_ASSIGNED_ISSUE",
   "ELIGIBLE_REVIEW_STATUS_INSPECTION",
+  "ELIGIBLE_ACTIONABLE_AUTHORED_PULL_REQUEST",
   "ELIGIBLE_RELEVANT_CONFLICT_RESOLVED",
   "ELIGIBLE_WITH_LIMITED_SOURCE_COVERAGE",
   "REVIEW_RELEVANT_CRITICAL_CONFLICT_USER",
@@ -111,6 +115,18 @@ export const attentionEligibilityAssessmentSchema = z
       });
     }
     if (
+      assessment.taskKind === "authored_pull_request" &&
+      assessment.status !== "ineligible" &&
+      assessment.actionKind !== "do"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message:
+          "A verified actionable authored pull request uses the direct do action."
+      });
+    }
+    if (
       !isCanonicalUnique(assessment.reasonCodes) ||
       !isCanonicalUnique(assessment.relationRefs) ||
       !isCanonicalUnique(assessment.relatedConflictIds)
@@ -144,13 +160,18 @@ const eligibilityProjectionContentSchema = z
     candidateSeedSchemaVersion: z.literal(
       ATTENTION_CANDIDATE_SEED_SCHEMA_VERSION
     ),
-    policyVersion: z.literal(ATTENTION_ELIGIBILITY_POLICY_VERSION),
-    evidencePolicyVersion: z.literal(
+    policyVersion: z.enum([
+      ATTENTION_ELIGIBILITY_LEGACY_POLICY_VERSION,
+      ATTENTION_ELIGIBILITY_POLICY_VERSION
+    ]),
+    evidencePolicyVersion: z.enum([
+      ATTENTION_ELIGIBILITY_LEGACY_EVIDENCE_POLICY_VERSION,
       ATTENTION_ELIGIBILITY_EVIDENCE_POLICY_VERSION
-    ),
-    resolverVersion: z.literal(
+    ]),
+    resolverVersion: z.enum([
+      ATTENTION_ELIGIBILITY_LEGACY_RESOLVER_VERSION,
       ATTENTION_ELIGIBILITY_RESOLVER_VERSION
-    ),
+    ]),
     idPolicyVersion: z.literal(ATTENTION_ELIGIBILITY_ID_POLICY_VERSION),
     mode: z.literal("shadow"),
     asOf: timestampSchema,
@@ -195,6 +216,24 @@ export const attentionEligibilityShadowProjectionSchema =
     .extend({ projectionSha256: sha256Schema })
     .strict()
     .superRefine((projection, context) => {
+      const legacyGeneration =
+        projection.policyVersion ===
+        ATTENTION_ELIGIBILITY_LEGACY_POLICY_VERSION;
+      if (
+        legacyGeneration !==
+          (projection.evidencePolicyVersion ===
+            ATTENTION_ELIGIBILITY_LEGACY_EVIDENCE_POLICY_VERSION) ||
+        legacyGeneration !==
+          (projection.resolverVersion ===
+            ATTENTION_ELIGIBILITY_LEGACY_RESOLVER_VERSION)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["policyVersion"],
+          message:
+            "Eligibility policy, evidence, and resolver versions must use one generation."
+        });
+      }
       if (
         projection.projectionSha256 !==
         attentionEligibilityProjectionSha256(projection)

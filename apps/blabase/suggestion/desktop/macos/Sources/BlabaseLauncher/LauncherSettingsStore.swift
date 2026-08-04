@@ -124,6 +124,18 @@ struct LauncherSettingsApplyPlan: Equatable, Sendable {
     }
 }
 
+enum LauncherDataRootSelectionPolicy {
+    static let localDashboardBaseURLString = "http://localhost:3102"
+
+    static func dashboardBaseURLStringForExistingRoot(
+        current: String
+    ) -> String {
+        current == SafeURLPolicy.defaultDashboardBaseURL.absoluteString
+            ? localDashboardBaseURLString
+            : current
+    }
+}
+
 @MainActor
 enum LauncherSettingsTransaction {
     static func run(

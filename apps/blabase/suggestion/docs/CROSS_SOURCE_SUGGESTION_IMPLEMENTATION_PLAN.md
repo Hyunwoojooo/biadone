@@ -2985,11 +2985,21 @@ Golden이나 production 유용성 주장이 아니라 local development contract
   추천 전환
 
 런처는 추천을 별도로 계산하거나 정렬하지 않는다. 기존 Active Attention 결과를
-`blabase-launcher-attention-v1`로 축소해 표시하며 raw prompt/answer, command/output,
+`blabase-launcher-attention-v2`로 축소해 표시하며 raw prompt/answer, command/output,
 diff, native thread ID와 project 경로는 IPC에 포함하지 않는다. GitHub 이동은 정확한
 HTTPS destination만 허용하고 Codex 이어가기는 현재 연결 identity가 같을 때만
 기존 Work Resumption queue에 넣는다. 임의 prompt, shell command, 승인 응답과 외부
 source write는 지원하지 않는다.
+
+v2 projection은 decision reason, eligible/review/ineligible candidate count와 GitHub,
+Codex, Notion, Google Calendar의 진단을 고정 순서로 포함한다. 런처는
+제안이 없을 때 source별 연결·수집·freshness·signal/candidate coverage를
+보여주고 GitHub·Codex 중 하나라도 복구가 필요하면 root ownership에 맞는
+복구 동작을 제공한다. existing root는 owner Work Cockpit의 `/sources`, managed
+root는 native data-root 설정으로 이동한다. 기존 data root를 명시적으로 선택할 때 dashboard가 기본
+Cloud URL이면 local Work Cockpit `http://localhost:3102`로 맞추되, token·snapshot
+복사나 Cloud/local data bridge는 생성하지 않는다. candidate 생성, filtering,
+ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
 
 현재 beta는 macOS native host 안에 고정 Node Local Agent를 포함하는 hybrid
 구조다. 대시보드는 별도 웹 URL로 유지한다. 향후 추천 계산을 서버 권위로 옮겨도

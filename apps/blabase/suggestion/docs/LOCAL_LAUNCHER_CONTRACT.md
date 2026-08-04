@@ -1,6 +1,6 @@
 # Blabase Local Launcher Contract
 
-상태: Phase 4C.1 macOS local beta v0.2
+상태: Phase 4C.2 macOS local beta v0.3
 
 ## 1. 목적
 
@@ -102,7 +102,7 @@ shared-root `read_only` mode의 `true`는 저장된 snapshot만 다시 평가한
 
 ```ts
 type LauncherAttentionProjection = {
-  contract: "blabase-launcher-attention-v1";
+  contract: "blabase-launcher-attention-v2";
   resultId: string;
   asOf: string;
   decisionStatus:
@@ -110,6 +110,39 @@ type LauncherAttentionProjection = {
     | "needs_clarification"
     | "no_action"
     | "insufficient_evidence";
+  decisionReasonCodes: Array<
+    | "DECISION_BEST_ELIGIBLE_CANDIDATE"
+    | "DECISION_REFRESH_REQUIRED"
+    | "DECISION_USER_CLARIFICATION_REQUIRED"
+    | "DECISION_SCOPED_NO_ACTION"
+    | "DECISION_RELEVANT_COVERAGE_INSUFFICIENT"
+  >;
+  candidateCounts: {
+    eligible: number;
+    reviewRequired: number;
+    ineligible: number;
+  };
+  sourceDiagnostics: Array<{
+    source: "github" | "codex" | "notion" | "google_calendar";
+    state:
+      | "available"
+      | "stale"
+      | "invalid"
+      | "missing"
+      | "rejected"
+      | "disconnected"
+      | "collection_failed"
+      | "unevaluated";
+    signalCount: number;
+    candidateSetComplete: boolean | null;
+    reasonCode:
+      | "SNAPSHOT_MISSING"
+      | "SNAPSHOT_PARSE_FAILED"
+      | "SNAPSHOT_SCHEMA_UNSUPPORTED"
+      | "CONNECTOR_DISCONNECTED"
+      | "COLLECTION_FAILED"
+      | null;
+  }>;
   card: {
     candidateId: string;
     title: string;
@@ -132,6 +165,14 @@ type LauncherAttentionProjection = {
   dashboardPath: "/";
 };
 ```
+
+`sourceDiagnostics` 순서는 GitHub, Codex, Notion, Google Calendar로 고정한다.
+GitHub·Codex만 후보 source이므로 `candidateSetComplete`를 boolean으로
+표시하고 Notion·Calendar는 `null`을 사용한다. 상태와 bounded reason code,
+decision status와 decision reason/candidate count가 모두 일치해야 decoder가
+받아든인다. 이 진단 필드는 런처가 추천을 다시 판정하기 위한 값이
+아니라, 제안이 없을 때 source 연결·수집·후보 범위 중 어디가 막혔는지
+사용자에게 설명하기 위한 관찰 계약이다.
 
 projection에는 `baseResult`, replay input, raw prompt/answer, command/output/diff,
 credential, native thread ID와 project cwd를 포함하지 않는다.
@@ -197,6 +238,12 @@ coordinator를 실행하지 않는다. 런처는 선택 과정에서 token, OAut
 snapshot 또는 다른 data를 기본 root와 선택 root 사이에 자동 복사·이동·병합하지
 않는다.
 
+기존 root를 선택할 때 dashboard가 기본 Blabase Cloud URL이면 host는 같은
+로컬 owner를 사용하도록 `http://localhost:3102`로 초기 전환한다. 사용자가
+이미 다른 허용된 localhost endpoint를 명시했다면 그 선택은 보존한다.
+이는 명시적 data-root recovery를 쉽게 만드는 local beta 기본값이며 token,
+snapshot을 옮기거나 Cloud와 local root를 동기화하는 동작은 아니다.
+
 여기서 `read_only`는 **source snapshot 갱신과 Attention history write를 막는 source
 ownership mode**이며 파일시스템 전체를 불변으로 만드는 뜻이 아니다. Codex
 `focus_or_resume`를 위해 Companion queue, heartbeat와 만료 command 정리 상태는 같은
@@ -206,8 +253,12 @@ root 아래에 기록될 수 있다. 따라서 선택 root는 읽기와 이 제�
 first-run은 창을 닫거나 기본 화면을 한 번 열었다는 이유로 완료되지 않는다.
 사용자가 기본 managed root 또는 기존 read-only root와 dashboard endpoint를 확인한
 뒤 완료 동작을 명시적으로 실행했을 때만 완료 상태를 저장한다. 설정 화면은 현재
-effective root/mode와 projection의 `unavailableSources`를 source 상태로 보여준다.
-이는 가용성 표시일 뿐 후보 eligibility나 source 의미를 새로 해석하지 않는다.
+effective root/mode와 projection의 `sourceDiagnostics`를 바탕으로 source 연결,
+수집, freshness, signal count와 candidate coverage를 보여준다. GitHub와 Codex 중
+하나라도 `available`이 아니면 복구 동작을 제공한다. existing read-only
+root는 이 root를 소유한 Work Cockpit의 `/sources`를 열고, managed root는 기존
+data root 선택을 확인하는 native 설정을 연다.
+이는 관찰·복구 표시일 뿐 후보 eligibility나 source 의미를 새로 해석하지 않는다.
 
 저장된 dashboard endpoint는 HTTPS Blabase Cloud 또는 HTTP
 `localhost`/`127.0.0.1`만 허용한다. username/password, fragment와 허용되지 않은
@@ -266,6 +317,11 @@ ordering 또는 결과 의미를 바꾸지 않는다. 사용자가 어느 기존
 않는다. 이 변경만으로 Golden Dataset 또는 semantic baseline을 다시 실행할 필요는
 없다.
 
+Phase 4C.2 diagnostics projection도 기존 resolver output의 상태·개수·source monitor
+요약을 private 원문 없이 표시하는 transport/UI 변경이다. candidate 생성,
+filtering, ranking, selection을 변경하지 않으므로 Golden Dataset과 semantic
+baseline은 재실행하지 않는다.
+
 - 네 decision status와 top suggestion이 손실 없이 projection되는지
 - launcher가 top suggestion filtering/ordering을 바꾸지 않는지
 - raw/private field가 projection과 stdout log에 나오지 않는지
@@ -292,5 +348,9 @@ ordering 또는 결과 의미를 바꾸지 않는다. 사용자가 어느 기존
   Resumption queue/heartbeat의 제한된 write는 계속 가능한지
 - projection의 source unavailable 상태가 표시되지만 추천 순위나 의미에는 영향을
   추가하지 않는지
+- v2 projection의 decision reason, candidate count와 네 source diagnostic이 engine
+  monitor와 일치하고, 상태/reason·순서·completeness 불일치를 fail closed하는지
+- 기존 root 선택 시 기본 Cloud dashboard만 local Work Cockpit으로 전환되고
+  사용자가 명시한 허용 localhost endpoint는 보존되는지
 - 후속: dashboard status의 opaque root identity/snapshot revision handshake로 서로
   다른 store를 보는 launcher와 Work Cockpit을 감지하는지

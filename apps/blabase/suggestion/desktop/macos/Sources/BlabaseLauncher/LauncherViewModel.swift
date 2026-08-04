@@ -8,6 +8,7 @@ final class LauncherViewModel: ObservableObject {
     @Published private(set) var isPerformingAction = false
     @Published private(set) var isHotKeyRegistered = false
     @Published private(set) var actionMessage: String?
+    @Published private(set) var route: LauncherRoute = .home
 
     private let client: LauncherAgentClient
     private let dashboardBaseURLProvider: () -> URL?
@@ -98,8 +99,35 @@ final class LauncherViewModel: ObservableObject {
         isHotKeyRegistered = isRegistered
     }
 
+    func prepareForPresentation() {
+        route = .home
+    }
+
+    func showEvidence() {
+        guard currentProjection?.card != nil else { return }
+        route = .evidence
+    }
+
+    func showHome() {
+        route = .home
+    }
+
+    func handleCancel() -> Bool {
+        let result = LauncherNavigationReducer.cancel(from: route)
+        route = result.route
+        return result.disposition == .handledInLauncher
+    }
+
     func openDashboard() {
         let path = currentProjection?.dashboardPath ?? "/"
+        openDashboard(path: path)
+    }
+
+    func openSourceConnections() {
+        openDashboard(path: "/sources")
+    }
+
+    private func openDashboard(path: String) {
         guard let baseURL = dashboardBaseURLProvider() else {
             actionMessage = "허용된 Blabase 대시보드 주소가 아닙니다."
             return
@@ -207,6 +235,7 @@ final class LauncherViewModel: ObservableObject {
         isRefreshing = false
         isPerformingAction = false
         actionMessage = nil
+        route = .home
     }
 
     private static func executionMessage(

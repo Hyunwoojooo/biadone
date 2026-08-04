@@ -1,0 +1,517 @@
+:root {
+  --bb-color-surface-canvas: #f4f3ef;
+  --bb-color-surface-floating: #fffefb;
+  --bb-color-surface-subtle: #ecebe6;
+  --bb-color-surface-selected: #eaf1ff;
+  --bb-color-border-default: #d9dce3;
+  --bb-color-border-focus: #5c7cfa;
+  --bb-color-action-primary: #3457d5;
+  --bb-color-action-primary-hover: #2948bc;
+  --bb-color-text-primary: #171a20;
+  --bb-color-text-secondary: #5c6577;
+  --bb-color-text-tertiary: #747d8d;
+  --bb-color-status-success: #186743;
+  --bb-color-status-warning: #8b4e00;
+  --bb-color-status-error: #b23a32;
+  --bb-color-signal: #ca4b3c;
+
+  /* Keep the existing component vocabulary mapped to the V3 system. */
+  --background: var(--bb-color-surface-canvas);
+  --surface: var(--bb-color-surface-floating);
+  --text: var(--bb-color-text-primary);
+  --muted: var(--bb-color-text-secondary);
+  --line: var(--bb-color-border-default);
+  --accent: var(--bb-color-action-primary);
+  --accent-hover: var(--bb-color-action-primary-hover);
+  --soft: var(--bb-color-surface-selected);
+  --error: var(--bb-color-status-error);
+  --error-soft: #fff1ef;
+}
+
+html,
+body {
+  min-height: 100%;
+  background:
+    linear-gradient(
+      90deg,
+      rgb(255 122 102 / 4%),
+      transparent 48%,
+      rgb(92 124 250 / 6%)
+    ),
+    var(--bb-color-surface-canvas);
+}
+
+body {
+  color: var(--bb-color-text-primary);
+  font-family:
+    "Noto Sans KR", Pretendard, "Apple SD Gothic Neo", system-ui,
+    sans-serif;
+}
+
+.monoValue,
+.attentionCandidateContext,
+.attentionProjectContext small,
+.calendarMeta,
+.calendarMore {
+  font-family:
+    "SFMono-Regular", "Geist Mono", Menlo, Consolas, monospace;
+}
+
+.attentionCockpit {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.attentionHeader {
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.attentionHeader h2 {
+  margin: 0 0 4px;
+  color: var(--bb-color-text-primary);
+  font-size: 18px;
+  line-height: 24px;
+  letter-spacing: -0.015em;
+}
+
+.attentionHeader > div > p:last-child {
+  max-width: 650px;
+  color: var(--bb-color-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.attentionKickerRow {
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.attentionTitleSignal {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--bb-color-text-primary);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.attentionTitleSignal > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--bb-color-signal);
+  box-shadow: 0 0 0 4px rgb(202 75 60 / 8%);
+}
+
+.attentionKickerRow > span {
+  padding: 3px 7px;
+  border-color: var(--bb-color-border-default);
+  border-radius: 7px;
+  background: var(--bb-color-surface-subtle);
+  color: var(--bb-color-text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.attentionRefreshButton {
+  min-height: 38px;
+  padding: 0 13px;
+  border-color: var(--bb-color-border-default);
+  border-radius: 10px;
+  background: var(--bb-color-surface-floating);
+  color: var(--bb-color-text-primary);
+  font-size: 12px;
+}
+
+.attentionRefreshButton:hover:not(:disabled) {
+  border-color: var(--bb-color-border-focus);
+  background: var(--bb-color-surface-selected);
+  color: var(--bb-color-action-primary);
+}
+
+.attentionAsOf {
+  margin: 0 0 10px;
+  color: var(--bb-color-text-tertiary);
+  font-family:
+    "SFMono-Regular", "Geist Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.attentionDecision {
+  padding: 18px;
+  border-color: var(--bb-color-border-default);
+  border-radius: 14px;
+  background: var(--bb-color-surface-floating);
+}
+
+.attentionDecision-suggested {
+  border-color: var(--bb-color-border-default);
+  box-shadow: none;
+}
+
+.attentionProjectContext {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--bb-color-border-default);
+  border-radius: 12px;
+  background: var(--bb-color-surface-floating);
+}
+
+.attentionProjectMark {
+  flex: 0 0 auto;
+  color: var(--bb-color-action-primary);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.attentionProjectContext > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.attentionProjectContext strong,
+.attentionProjectContext small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attentionProjectContext strong {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.attentionProjectContext small {
+  color: var(--bb-color-text-secondary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.attentionProjectShortcut {
+  margin-left: auto;
+  color: var(--bb-color-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.attentionDecisionMeta {
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.attentionDecisionMeta span {
+  padding: 4px 8px;
+  border: 1px solid var(--bb-color-border-default);
+  border-radius: 8px;
+  background: var(--bb-color-surface-subtle);
+  color: var(--bb-color-text-secondary);
+  font-size: 10px;
+}
+
+.attentionDecisionMeta span:last-child {
+  background: var(--bb-color-surface-subtle);
+}
+
+.attentionDecisionMeta .attentionSourceBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.attentionSourceBadge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bb-color-action-primary);
+}
+
+.attentionSourceBadge.isCodex i {
+  background: var(--bb-color-signal);
+}
+
+.attentionDecision h3 {
+  max-width: 760px;
+  margin-bottom: 7px;
+  font-size: clamp(20px, 3vw, 26px);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.attentionCandidateContext,
+.attentionWhyNow {
+  font-size: 11px;
+}
+
+.attentionWhyNow {
+  color: var(--bb-color-status-success);
+}
+
+.attentionExplanation,
+.attentionScope {
+  max-width: 780px;
+  color: var(--bb-color-text-secondary);
+  font-size: 13px;
+}
+
+.attentionFirstStep {
+  margin: 16px 0 14px;
+  padding: 13px 14px;
+  border: 1px solid var(--bb-color-border-default);
+  border-radius: 10px;
+  background: var(--bb-color-surface-subtle);
+}
+
+.attentionFirstStep > span {
+  color: var(--bb-color-text-secondary);
+}
+
+.attentionFirstStep p {
+  font-size: 13px;
+}
+
+.attentionPrimaryLink {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  background: var(--bb-color-action-primary);
+  font-size: 12px;
+}
+
+.attentionPrimaryLink:hover {
+  background: var(--bb-color-action-primary-hover);
+}
+
+.attentionAlternatives li {
+  border-color: var(--bb-color-border-default);
+  border-radius: 10px;
+  background: var(--bb-color-surface-floating);
+}
+
+.attentionStatusStrip {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--bb-color-surface-subtle);
+  color: var(--bb-color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.attentionStatusStrip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attentionStatusStrip .isHealthy {
+  color: var(--bb-color-status-success);
+}
+
+.attentionStatusStrip .isWarning {
+  color: var(--bb-color-status-warning);
+}
+
+.attentionWarning,
+.attentionFeedback,
+.attentionDiagnostics,
+.attentionSubsection,
+.managedCodexProgress,
+.workResumption {
+  border-color: var(--bb-color-border-default);
+  border-radius: 14px;
+  background: var(--bb-color-surface-floating);
+  box-shadow: none;
+}
+
+.workResumption {
+  background: var(--bb-color-surface-selected);
+}
+
+.attentionFeedback button,
+.projectMappings button,
+.projectMappings select {
+  border-color: var(--bb-color-border-default);
+  background: var(--bb-color-surface-floating);
+  color: var(--bb-color-text-primary);
+}
+
+.attentionFeedback button:hover,
+.attentionFeedback button.isSelected {
+  border-color: var(--bb-color-border-focus);
+  background: var(--bb-color-surface-selected);
+  color: var(--bb-color-action-primary);
+}
+
+.attentionLabLink {
+  color: var(--bb-color-action-primary);
+}
+
+.weeklyOutcome,
+.calendarSection,
+.timelineSection,
+.projectMappings {
+  border-color: var(--bb-color-border-default);
+  border-radius: 14px;
+  background: var(--bb-color-surface-floating);
+  box-shadow: none;
+}
+
+.weeklyOutcome {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  margin-bottom: 18px;
+  padding: 18px;
+  background: var(--bb-color-surface-floating);
+}
+
+.weeklyOutcome h2,
+.weeklyOutcomeValue strong,
+.projectMappings > summary strong,
+.projectMappingGroup h3,
+.projectWorkflowSettingsHeader h3,
+.projectWorkflowProject strong {
+  color: var(--bb-color-text-primary);
+}
+
+.weeklyOutcome p,
+.weeklyOutcomeValue span,
+.weeklyOutcomeStatus,
+.projectMappingsIntro p,
+.projectMappingsEmpty,
+.projectMappingsNotice,
+.projectMappingsMessage,
+.projectWorkflowSettingsHeader p,
+.projectWorkflowPolicy,
+.projectWorkflowProject span {
+  color: var(--bb-color-text-secondary);
+}
+
+.weeklyOutcome button[type="submit"],
+.calendarPrimaryButton {
+  border-color: var(--bb-color-action-primary);
+  background: var(--bb-color-action-primary);
+}
+
+.weeklyOutcome button[type="submit"]:hover,
+.calendarPrimaryButton:hover:not(:disabled) {
+  background: var(--bb-color-action-primary-hover);
+}
+
+.projectMappings {
+  margin: 0;
+  overflow: hidden;
+}
+
+.projectMappings > summary {
+  min-height: 64px;
+  padding: 15px 18px;
+}
+
+.projectMappingsBody {
+  padding: 0 18px 18px;
+  border-top-color: var(--bb-color-border-default);
+}
+
+.projectMappingGroup,
+.projectWorkflowSettings {
+  border-top-color: var(--bb-color-border-default);
+}
+
+.projectMappingGroup li,
+.projectWorkflowSettings li,
+.projectMappingsEmpty {
+  background: var(--bb-color-surface-subtle);
+}
+
+.calendarSection,
+.timelineSection {
+  margin-bottom: 14px;
+  padding: 18px;
+}
+
+.calendarHeader h2,
+.timelineHeader h2 {
+  color: var(--bb-color-text-primary);
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.calendarKicker,
+.timelineRefreshButton,
+.calendarSecondaryActions button,
+.calendarSecondaryActions a {
+  color: var(--bb-color-action-primary);
+}
+
+.calendarStatus,
+.timelineSourceSummary li,
+.calendarEventList,
+.calendarEventList li,
+.codexScopeList,
+.codexScopeList label {
+  border-color: var(--bb-color-border-default);
+  background: var(--bb-color-surface-floating);
+}
+
+.calendarStatus.isConnected,
+.calendarNotice-success,
+.codexSummaryConsent {
+  background: var(--bb-color-surface-selected);
+  color: var(--bb-color-action-primary);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--bb-color-border-focus);
+  outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .attentionHeader {
+    align-items: flex-start;
+  }
+
+  .attentionKickerRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .attentionStatusStrip {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .attentionStatusStrip span {
+    white-space: normal;
+  }
+
+  .attentionProjectContext {
+    align-items: flex-start;
+  }
+
+  .attentionProjectShortcut {
+    display: none;
+  }
+
+  .weeklyOutcome {
+    grid-template-columns: 1fr;
+  }
+}

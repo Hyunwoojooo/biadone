@@ -15,6 +15,11 @@ import {
   cleanupStaleConnectorTempFiles,
   withActiveConnectorTempFile
 } from "../localTempCleanup";
+import {
+  actionabilityCoverageMatchesTasks,
+  githubActionabilityCoverageSchema,
+  githubPullRequestActionabilitySchema
+} from "./actionabilityContract";
 import type { GitHubSnapshot, StoredGitHubTokens } from "./types";
 
 const GITHUB_STORE_BASENAMES = [
@@ -69,7 +74,19 @@ const taskSchema = z.object({
   milestoneDueAt: z.string().datetime().nullable(),
   state: z.literal("open"),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  updatedAt: z.string().datetime(),
+  actionability: githubPullRequestActionabilitySchema.optional()
+}).superRefine((task, context) => {
+  if (
+    task.kind !== "authored_pull_request" &&
+    task.actionability !== undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["actionability"],
+      message: "Only authored PR tasks can contain actionability."
+    });
+  }
 });
 
 const activitySchema = z.object({
@@ -125,7 +142,7 @@ const snapshotV1Schema = z.object({
   tasks: z.array(taskSchema)
 });
 
-const snapshotSchema = snapshotV1Schema
+const snapshotV2BaseSchema = snapshotV1Schema
   .omit({ schemaVersion: true })
   .extend({
     schemaVersion: z.literal("github-snapshot-v2"),
@@ -139,8 +156,44 @@ const snapshotSchema = snapshotV1Schema
     activities: z.array(activitySchema)
   });
 
+const snapshotV2Schema = snapshotV2BaseSchema.superRefine(
+  (snapshot, context) => {
+    if (snapshot.tasks.some((task) => task.actionability !== undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tasks"],
+        message: "GitHub v2 snapshots cannot contain v3 actionability facts."
+      });
+    }
+  }
+);
+
+const snapshotV3Schema = snapshotV2BaseSchema
+  .omit({ schemaVersion: true })
+  .extend({
+    schemaVersion: z.literal("github-snapshot-v3"),
+    actionabilityCoverage: githubActionabilityCoverageSchema
+  })
+  .superRefine((snapshot, context) => {
+    if (
+      !actionabilityCoverageMatchesTasks(
+        snapshot.actionabilityCoverage,
+        snapshot.tasks
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionabilityCoverage"],
+        message: "GitHub actionability coverage must match collected PR facts."
+      });
+    }
+  });
+
+const snapshotSchema = z.union([snapshotV3Schema, snapshotV2Schema]);
+
 const storedSnapshotSchema = z.union([
-  snapshotSchema,
+  snapshotV3Schema,
+  snapshotV2Schema,
   snapshotV1Schema
 ]);
 
@@ -228,9 +281,9 @@ export async function readStoredGitHubSnapshot(
       "utf8"
     );
     const snapshot = storedSnapshotSchema.parse(JSON.parse(text));
-    return snapshot.schemaVersion === "github-snapshot-v2"
-      ? snapshot
-      : migrateV1Snapshot(snapshot);
+    return snapshot.schemaVersion === "github-snapshot-v1"
+      ? migrateV1Snapshot(snapshot)
+      : snapshot;
   } catch {
     return null;
   }

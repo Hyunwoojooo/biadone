@@ -236,10 +236,18 @@ final class LauncherModelsTests: XCTestCase {
     func testDecodesSuggestedAttentionProjection() throws {
         let json = #"""
         {
-          "contract":"blabase-launcher-attention-v1",
+          "contract":"blabase-launcher-attention-v2",
           "resultId":"attention_result_11111111111111111111111111111111",
           "asOf":"2026-08-03T00:00:00.000Z",
           "decisionStatus":"suggested",
+          "decisionReasonCodes":["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+          "candidateCounts":{"eligible":1,"reviewRequired":0,"ineligible":2},
+          "sourceDiagnostics":[
+            {"source":"github","state":"available","signalCount":3,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"codex","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"notion","state":"disconnected","signalCount":0,"candidateSetComplete":null,"reasonCode":"CONNECTOR_DISCONNECTED"},
+            {"source":"google_calendar","state":"available","signalCount":2,"candidateSetComplete":null,"reasonCode":null}
+          ],
           "card":{
             "candidateId":"attention_22222222222222222222222222222222",
             "title":"Phase 4C launcher 만들기",
@@ -287,15 +295,54 @@ final class LauncherModelsTests: XCTestCase {
     func testRejectsProjectionInvariantMismatch() throws {
         let json = #"""
         {
-          "contract":"blabase-launcher-attention-v1",
+          "contract":"blabase-launcher-attention-v2",
           "resultId":"attention_result_11111111111111111111111111111111",
           "asOf":"2026-08-03T00:00:00.000Z",
           "decisionStatus":"suggested",
+          "decisionReasonCodes":["DECISION_BEST_ELIGIBLE_CANDIDATE"],
+          "candidateCounts":{"eligible":1,"reviewRequired":0,"ineligible":0},
+          "sourceDiagnostics":[
+            {"source":"github","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"codex","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"notion","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null},
+            {"source":"google_calendar","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null}
+          ],
           "card":null,
           "clarificationQuestion":null,
           "scopeStatement":"연결되고 갱신된 source만 평가했습니다.",
           "unavailableSources":[],
           "dashboardPath":"/private"
+        }
+        """#.data(using: .utf8)!
+
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                LauncherAttentionProjection.self,
+                from: json
+            )
+        )
+    }
+
+    func testRejectsNonCanonicalOrIncompleteSourceDiagnostics() throws {
+        let json = #"""
+        {
+          "contract":"blabase-launcher-attention-v2",
+          "resultId":"attention_result_11111111111111111111111111111111",
+          "asOf":"2026-08-03T00:00:00.000Z",
+          "decisionStatus":"insufficient_evidence",
+          "decisionReasonCodes":["DECISION_RELEVANT_COVERAGE_INSUFFICIENT"],
+          "candidateCounts":{"eligible":0,"reviewRequired":0,"ineligible":0},
+          "sourceDiagnostics":[
+            {"source":"codex","state":"disconnected","signalCount":0,"candidateSetComplete":false,"reasonCode":"CONNECTOR_DISCONNECTED"},
+            {"source":"github","state":"missing","signalCount":0,"candidateSetComplete":false,"reasonCode":"SNAPSHOT_MISSING"},
+            {"source":"notion","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null},
+            {"source":"google_calendar","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null}
+          ],
+          "card":null,
+          "clarificationQuestion":null,
+          "scopeStatement":"현재 평가 범위가 부족합니다.",
+          "unavailableSources":["github","codex"],
+          "dashboardPath":"/"
         }
         """#.data(using: .utf8)!
 
@@ -344,6 +391,13 @@ final class LauncherModelsTests: XCTestCase {
                 baseURL: URL(string: "http://localhost:3102")!
             )?.absoluteString,
             "http://localhost:3102/attention-lab"
+        )
+        XCTAssertEqual(
+            SafeURLPolicy.dashboardURL(
+                path: "/sources",
+                baseURL: URL(string: "http://localhost:3102")!
+            )?.absoluteString,
+            "http://localhost:3102/sources"
         )
         XCTAssertEqual(
             SafeURLPolicy.dashboardBaseURL(

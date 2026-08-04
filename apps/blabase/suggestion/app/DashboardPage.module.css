@@ -1,0 +1,256 @@
+.page {
+  display: grid;
+  gap: 28px;
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 2px 2px 4px;
+}
+
+.pageHeaderText {
+  max-width: 700px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #3564c7;
+  font: 720 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pageHeader h1 {
+  margin: 0;
+  color: #1f2023;
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 740;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.description {
+  max-width: 650px;
+  margin: 12px 0 0;
+  color: #6d6d66;
+  font-size: 14px;
+  line-height: 1.65;
+  word-break: keep-all;
+}
+
+.statusPill {
+  display: inline-flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border: 1px solid #d9d5cc;
+  border-radius: 999px;
+  color: #5e5e59;
+  background: rgb(255 255 255 / 72%);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.statusPill::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4f75d6;
+  box-shadow: 0 0 0 3px rgb(79 117 214 / 12%);
+  content: "";
+}
+
+.sectionIntro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 10px 2px -8px;
+}
+
+.sectionIntro h2 {
+  margin: 0;
+  color: #2b2c2f;
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+}
+
+.sectionIntro p {
+  max-width: 620px;
+  margin: 4px 0 0;
+  color: #77766f;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.contentPanel {
+  padding: 22px;
+  border: 1px solid #dedbd3;
+  border-radius: 18px;
+  background: rgb(252 251 248 / 82%);
+  box-shadow: 0 14px 34px rgb(55 51 43 / 4%);
+}
+
+.sourceStack {
+  display: grid;
+  gap: 18px;
+}
+
+.sourceBoundary {
+  margin: 0 2px;
+  padding: 12px 14px;
+  border: 1px solid #dfe4f2;
+  border-radius: 11px;
+  color: #5f6780;
+  background: #f6f8ff;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.settingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settingsCard {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid #dedbd3;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 78%);
+  box-shadow: 0 12px 28px rgb(55 51 43 / 4%);
+}
+
+.settingsCardWide {
+  grid-column: 1 / -1;
+}
+
+.settingsCard h2 {
+  margin: 0 0 7px;
+  color: #2a2b2e;
+  font-size: 15px;
+  font-weight: 730;
+  letter-spacing: -0.02em;
+}
+
+.settingsCard p {
+  margin: 0;
+  color: #73736c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.shortcutRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #ebe8e1;
+}
+
+.shortcutRow span {
+  color: #47484b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.shortcutRow kbd {
+  padding: 6px 10px;
+  border: 1px solid #d7d4cd;
+  border-radius: 8px;
+  color: #3f4147;
+  background: #f9f8f5;
+  box-shadow: 0 1px 2px rgb(35 37 41 / 6%);
+  font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.linkList {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.linkList a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid #e4e1da;
+  border-radius: 10px;
+  color: #315fca;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.linkList a::after {
+  color: #8b9dcc;
+  content: "→";
+}
+
+.linkList a:hover {
+  border-color: #cbd8f6;
+  background: #f8faff;
+}
+
+.policyList {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policyList li {
+  position: relative;
+  padding-left: 17px;
+  color: #666760;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.policyList li::before {
+  position: absolute;
+  top: 0.55em;
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #5478d3;
+  content: "";
+}
+
+@media (max-width: 760px) {
+  .pageHeader {
+    display: grid;
+    gap: 12px;
+  }
+
+  .statusPill {
+    justify-self: start;
+  }
+
+  .settingsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsCardWide {
+    grid-column: auto;
+  }
+
+  .contentPanel {
+    padding: 14px;
+  }
+}

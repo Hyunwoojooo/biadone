@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import { githubPullRequestActionabilitySchema } from "../connectors/github/actionabilityContract";
 import {
   CODEX_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
   GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
   RUNTIME_SNAPSHOT_ASSESSMENT_CONTRACT,
   RUNTIME_WORK_SIGNAL_BATCH_CONTRACT,
@@ -21,6 +23,8 @@ export const snapshotAssessmentReasonCodeSchema = z.enum([
   "SNAPSHOT_TRUNCATED",
   "GITHUB_ACTIVITIES_PARTIAL",
   "GITHUB_ACTIVITIES_UNAVAILABLE",
+  "GITHUB_ACTIONABILITY_PARTIAL",
+  "GITHUB_ACTIONABILITY_UNAVAILABLE",
   "CODEX_OVERVIEW_ONLY"
 ]);
 
@@ -30,6 +34,8 @@ export const normalizationIssueCodeSchema = z.enum([
   "SNAPSHOT_TRUNCATED",
   "GITHUB_ACTIVITIES_PARTIAL",
   "GITHUB_ACTIVITIES_UNAVAILABLE",
+  "GITHUB_ACTIONABILITY_PARTIAL",
+  "GITHUB_ACTIONABILITY_UNAVAILABLE",
   "UNSAFE_DESTINATION",
   "CONFLICTING_DUPLICATE_RECORD",
   "RECORD_INVALID"
@@ -129,7 +135,17 @@ export const githubObjectFieldEvidenceSchema = z
       "html_url",
       "milestone_due_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "collection_state",
+      "draft",
+      "review_decision",
+      "checks_summary",
+      "mergeable",
+      "merge_conflict",
+      "unresolved_change_request_count",
+      "requested_reviewer_count",
+      "action_required",
+      "action_required_reasons"
     ]),
     valueSha256: sha256Schema,
     ...evidenceBase
@@ -250,14 +266,18 @@ const githubWorkItemFactsSchema = z
       "draft_state_unknown",
       "not_actionable_by_source_kind"
     ]),
-    draftState: z.enum(["unknown", "not_applicable"]),
+    draftState: z.enum(["unknown", "not_applicable", "draft", "ready"]),
     repositoryFullName: z.string().min(1).max(240),
     number: z.number().int().positive(),
     title: z.string().min(1).max(240),
-    destinationUrl: z.string().url().nullable()
+    destinationUrl: z.string().url().nullable(),
+    actionability: githubPullRequestActionabilitySchema.optional()
   })
   .strict()
   .superRefine((facts, context) => {
+    const authoredActionRequired =
+      facts.taskKind === "authored_pull_request" &&
+      facts.actionability?.actionRequired === true;
     const expected =
       facts.taskKind === "assigned_issue"
         ? {
@@ -275,13 +295,39 @@ const githubWorkItemFactsSchema = z
               eligibilityLimit: "draft_state_unknown",
               draftState: "unknown"
             }
-          : {
+          : authoredActionRequired
+            ? {
+                objectType: "pull_request",
+                relationship: "authored_by_user",
+                semanticRole: "direct_work_item",
+                eligibilityLimit: "none",
+                draftState: facts.actionability?.draft ? "draft" : "ready"
+              }
+            : {
               objectType: "pull_request",
               relationship: "authored_by_user",
               semanticRole: "context_only",
               eligibilityLimit: "not_actionable_by_source_kind",
-              draftState: "unknown"
+              draftState:
+                facts.actionability === undefined
+                  ? "unknown"
+                  : facts.actionability.draft
+                    ? "draft"
+                    : "ready"
             };
+
+    if (
+      (facts.taskKind === "assigned_issue" &&
+        facts.actionability !== undefined) ||
+      (facts.actionability !== undefined &&
+        facts.taskKind !== "authored_pull_request")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionability"],
+        message: "Only authored pull requests may carry actionability facts."
+      });
+    }
 
     for (const [key, value] of Object.entries(expected)) {
       if (facts[key as keyof typeof facts] !== value) {
@@ -598,9 +644,10 @@ export const githubWorkItemSignalSchema = z
   .object({
     ...workSignalBase,
     source: z.literal("github"),
-    normalizerVersion: z.literal(
-      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
-    ),
+    normalizerVersion: z.enum([
+      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+    ]),
     subjectType: z.literal("work_item"),
     kind: z.literal("work_item_observation"),
     facts: githubWorkItemFactsSchema,
@@ -619,9 +666,10 @@ export const githubDeadlineSignalSchema = z
   .object({
     ...workSignalBase,
     source: z.literal("github"),
-    normalizerVersion: z.literal(
-      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
-    ),
+    normalizerVersion: z.enum([
+      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+    ]),
     subjectType: z.literal("work_item"),
     kind: z.literal("deadline_observation"),
     facts: githubDeadlineFactsSchema,
@@ -640,9 +688,10 @@ export const githubActivitySignalSchema = z
   .object({
     ...workSignalBase,
     source: z.literal("github"),
-    normalizerVersion: z.literal(
-      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
-    ),
+    normalizerVersion: z.enum([
+      GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+    ]),
     subjectType: z.literal("source_activity"),
     kind: z.literal("activity_observation"),
     facts: githubActivityFactsSchema,
@@ -710,6 +759,18 @@ export const runtimeWorkSignalSchema = z
     }
     if (
       signal.kind === "work_item_observation" &&
+      signal.normalizerVersion ===
+        GITHUB_WORK_SIGNAL_NORMALIZER_VERSION &&
+      signal.facts.actionability !== undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["facts", "actionability"],
+        message: "Legacy GitHub signals cannot contain v3 actionability facts."
+      });
+    }
+    if (
+      signal.kind === "work_item_observation" &&
       signal.facts.semanticRole === "context_only" &&
       signal.attentionCapability !== "overview_only"
     ) {
@@ -717,6 +778,19 @@ export const runtimeWorkSignalSchema = z
         code: z.ZodIssueCode.custom,
         path: ["attentionCapability"],
         message: "Context-only GitHub work cannot be candidate input."
+      });
+    }
+    if (
+      signal.kind === "work_item_observation" &&
+      signal.facts.taskKind === "authored_pull_request" &&
+      signal.facts.actionability?.actionRequired === true &&
+      signal.attentionCapability !== "candidate_input"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["attentionCapability"],
+        message:
+          "Verified actionable authored pull requests must be candidate input."
       });
     }
     if (
@@ -817,6 +891,35 @@ export const runtimeWorkSignalSchema = z
           message:
             "GitHub work-item state requires native state evidence."
         });
+      }
+      if (signal.facts.actionability !== undefined) {
+        const evidenceFields = new Set(
+          signal.evidence
+            .filter(
+              (evidence) => evidence.type === "github_object_field"
+            )
+            .map((evidence) => evidence.field)
+        );
+        for (const requiredField of [
+          "collection_state",
+          "draft",
+          "review_decision",
+          "checks_summary",
+          "mergeable",
+          "merge_conflict",
+          "unresolved_change_request_count",
+          "requested_reviewer_count",
+          "action_required",
+          "action_required_reasons"
+        ] as const) {
+          if (!evidenceFields.has(requiredField)) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["evidence"],
+              message: `GitHub PR actionability requires ${requiredField} evidence.`
+            });
+          }
+        }
       }
     }
     if (signal.kind === "deadline_observation") {
@@ -960,7 +1063,9 @@ export const runtimeWorkSignalBatchSchema = z
     }
     const expectedNormalizerVersion =
       batch.source === "github"
-        ? GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
+        ? batch.sourceSchemaVersion === "github-snapshot-v3"
+          ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+          : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
         : CODEX_WORK_SIGNAL_NORMALIZER_VERSION;
     if (batch.normalizerVersion !== expectedNormalizerVersion) {
       context.addIssue({

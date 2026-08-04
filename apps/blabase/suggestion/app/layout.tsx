@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 
-import { AppHeader } from "./AppHeader";
+import { DashboardShell } from "./DashboardShell";
 import "./globals.css";
+import "./v3.css";
 
 export const metadata: Metadata = {
   title: "blabase Work Cockpit",
@@ -19,8 +20,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
-        <AppHeader />
-        {children}
+        <DashboardShell>{children}</DashboardShell>
       </body>
     </html>
   );

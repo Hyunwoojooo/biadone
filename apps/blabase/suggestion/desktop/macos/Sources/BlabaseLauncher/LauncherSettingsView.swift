@@ -4,6 +4,8 @@ struct LauncherSettingsView: View {
     @ObservedObject var viewModel: LauncherSettingsViewModel
     @ObservedObject var launcherViewModel: LauncherViewModel
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -22,7 +24,9 @@ struct LauncherSettingsView: View {
             .frame(height: 64)
         }
         .frame(width: 650, height: 700)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(LauncherVisualTokens.surfaceFloating(colorScheme))
+        .foregroundStyle(LauncherVisualTokens.textPrimary(colorScheme))
+        .tint(LauncherVisualTokens.actionPrimary(colorScheme))
     }
 
     private var heading: some View {
@@ -30,7 +34,9 @@ struct LauncherSettingsView: View {
             HStack(spacing: 10) {
                 Image(systemName: "sparkles.square.filled")
                     .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(
+                        LauncherVisualTokens.actionPrimary(colorScheme)
+                    )
                 Text(
                     viewModel.isSetupRequired
                         ? "Blabase 시작 설정"
@@ -39,10 +45,14 @@ struct LauncherSettingsView: View {
                 .font(.title2.weight(.semibold))
             }
             Text("연결할 작업 데이터와 별도 웹 대시보드 주소를 정합니다.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(
+                    LauncherVisualTokens.textSecondary(colorScheme)
+                )
             Text("기존 폴더를 연결해도 credential과 snapshot을 자동 복사·이동하지 않습니다.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(
+                    LauncherVisualTokens.textSecondary(colorScheme)
+                )
         }
     }
 
@@ -55,7 +65,9 @@ struct LauncherSettingsView: View {
                             ? "internaldrive"
                             : "link"
                     )
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
                     VStack(alignment: .leading, spacing: 4) {
                         Text(
                             viewModel.sourceMode == .managed
@@ -65,7 +77,9 @@ struct LauncherSettingsView: View {
                         .font(.headline)
                         Text(viewModel.selectedDataRootPath)
                             .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(
+                                LauncherVisualTokens.textSecondary(colorScheme)
+                            )
                             .textSelection(.enabled)
                             .lineLimit(2)
                     }
@@ -78,7 +92,22 @@ struct LauncherSettingsView: View {
                         : "연결한 source snapshot은 읽기 전용으로 평가합니다. Codex 작업 이어가기에 필요한 queue 상태는 갱신될 수 있습니다."
                 )
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(
+                    LauncherVisualTokens.textSecondary(colorScheme)
+                )
+                if viewModel.sourceMode == .managed {
+                    Text("처음 사용하는 전용 저장소에는 기존 연결을 자동으로 복사하지 않습니다. GitHub 또는 Codex를 이 저장소에 연결하기 전에는 추천 후보를 만들 수 없습니다.")
+                        .font(.caption)
+                        .foregroundStyle(
+                            LauncherVisualTokens.statusWarning(colorScheme)
+                        )
+                } else {
+                    Text("기존 데이터를 선택하면 기본 웹 주소도 이 폴더를 소유한 로컬 Work Cockpit으로 맞춥니다.")
+                        .font(.caption)
+                        .foregroundStyle(
+                            LauncherVisualTokens.textSecondary(colorScheme)
+                        )
+                }
                 HStack {
                     Button("기존 데이터 연결…") {
                         viewModel.chooseExistingDataRoot()
@@ -115,10 +144,14 @@ struct LauncherSettingsView: View {
                 .disabled(viewModel.isApplying)
                 Text("Blabase Cloud HTTPS 또는 이 Mac의 localhost 주소만 허용합니다.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
                 Text("이 주소는 화면을 여는 위치입니다. 로컬 Work Cockpit은 위 데이터 폴더를 소유한 프로세스로 실행해야 합니다.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
             }
         }
     }
@@ -135,7 +168,9 @@ struct LauncherSettingsView: View {
                         Spacer()
                         Text(sourceStatus(source))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(
+                                LauncherVisualTokens.textSecondary(colorScheme)
+                            )
                     }
                 }
                 Text(
@@ -144,14 +179,25 @@ struct LauncherSettingsView: View {
                         : "현재 적용된 데이터 기준이며, 미평가 source는 추천 화면에도 그대로 표시됩니다."
                 )
                     .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
+                    .padding(.top, 2)
                 if let detail = sourceStateDetail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(
-                            isSourceStateError ? Color.red : Color.secondary
+                            isSourceStateError
+                                ? LauncherVisualTokens.statusSignal(colorScheme)
+                                : LauncherVisualTokens.textSecondary(colorScheme)
                         )
+                }
+                if viewModel.sourceMode == .readOnly {
+                    Button("Source 연결 관리") {
+                        launcherViewModel.openSourceConnections()
+                    }
+                    .buttonStyle(.link)
+                    .disabled(viewModel.isDataRootDraftDirty)
                 }
             }
         }
@@ -162,11 +208,15 @@ struct LauncherSettingsView: View {
         if let error = viewModel.errorMessage {
             Label(error, systemImage: "exclamationmark.triangle.fill")
                 .font(.callout)
-                .foregroundStyle(.red)
+                .foregroundStyle(
+                    LauncherVisualTokens.statusSignal(colorScheme)
+                )
         } else if let status = viewModel.statusMessage {
             Label(status, systemImage: "info.circle")
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(
+                    LauncherVisualTokens.textSecondary(colorScheme)
+                )
         }
     }
 
@@ -197,7 +247,11 @@ struct LauncherSettingsView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(
-            (viewModel.sourceMode == .managed ? Color.green : Color.orange)
+            (
+                viewModel.sourceMode == .managed
+                    ? LauncherVisualTokens.statusSuccess(colorScheme)
+                    : LauncherVisualTokens.statusWarning(colorScheme)
+            )
                 .opacity(0.13)
         )
         .clipShape(Capsule())
@@ -215,11 +269,14 @@ struct LauncherSettingsView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(LauncherVisualTokens.surfaceSubtle(colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                .stroke(
+                    LauncherVisualTokens.borderDefault(colorScheme),
+                    lineWidth: 1
+                )
         }
     }
 
@@ -235,27 +292,45 @@ struct LauncherSettingsView: View {
         case .error:
             return "확인 실패"
         case .projection(let projection, _):
-            return projection.unavailableSources.contains(source)
-                ? "현재 미평가"
-                : "평가 가능"
+            guard let diagnostic = projection.sourceDiagnostics.first(
+                where: { $0.source == source }
+            ) else { return "확인 실패" }
+            let display = LauncherPresentation.sourceDiagnosticDisplay(
+                diagnostic
+            )
+            return "\(display.stateLabel) · 신호 \(diagnostic.signalCount)"
         }
     }
 
     private func sourceColor(_ source: AttentionSource) -> Color {
         if viewModel.isDataRootDraftDirty {
-            return .secondary
+            return LauncherVisualTokens.textTertiary(colorScheme)
         }
         switch launcherViewModel.state {
         case .setupRequired:
-            return .secondary
+            return LauncherVisualTokens.textTertiary(colorScheme)
         case .loading:
-            return .accentColor
+            return LauncherVisualTokens.actionPrimary(colorScheme)
         case .error:
-            return .red
+            return LauncherVisualTokens.statusSignal(colorScheme)
         case .projection(let projection, _):
-            return projection.unavailableSources.contains(source)
-                ? .orange
-                : .green
+            guard let diagnostic = projection.sourceDiagnostics.first(
+                where: { $0.source == source }
+            ) else {
+                return LauncherVisualTokens.statusSignal(colorScheme)
+            }
+            switch LauncherPresentation.sourceDiagnosticDisplay(
+                diagnostic
+            ).tone {
+            case .positive:
+                return LauncherVisualTokens.statusSuccess(colorScheme)
+            case .warning:
+                return LauncherVisualTokens.statusWarning(colorScheme)
+            case .critical:
+                return LauncherVisualTokens.statusSignal(colorScheme)
+            case .neutral:
+                return LauncherVisualTokens.textTertiary(colorScheme)
+            }
         }
     }
 
@@ -268,8 +343,10 @@ struct LauncherSettingsView: View {
             return "Local Agent가 현재 snapshot을 확인하고 있습니다."
         case .error(let message):
             return "Local Agent: \(message)"
-        case .projection:
-            return nil
+        case .projection(let projection, _):
+            return LauncherPresentation.decisionReasonSummary(
+                projection.decisionReasonCodes
+            )
         }
     }
 

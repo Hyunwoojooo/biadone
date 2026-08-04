@@ -58,6 +58,64 @@ describe("Phase 4B active Attention resolver", () => {
     });
   });
 
+  it.each([
+    {
+      reason: "checks_failed" as const,
+      expectedCandidateReason:
+        "CANDIDATE_GITHUB_AUTHORED_PR_CHECKS_FAILED" as const,
+      expectedWhyNow: "WHY_NOW_AUTHORED_PR_CHECKS_FAILED" as const,
+      expectedFirstStep: "실패한 check"
+    },
+    {
+      reason: "changes_requested" as const,
+      expectedCandidateReason:
+        "CANDIDATE_GITHUB_AUTHORED_PR_CHANGES_REQUESTED" as const,
+      expectedWhyNow:
+        "WHY_NOW_AUTHORED_PR_CHANGES_REQUESTED" as const,
+      expectedFirstStep: "요청된 변경 사항"
+    },
+    {
+      reason: "merge_conflict" as const,
+      expectedCandidateReason:
+        "CANDIDATE_GITHUB_AUTHORED_PR_MERGE_CONFLICT" as const,
+      expectedWhyNow:
+        "WHY_NOW_AUTHORED_PR_MERGE_CONFLICT" as const,
+      expectedFirstStep: "충돌 파일"
+    }
+  ])(
+    "turns a verified authored PR $reason into an unblock candidate",
+    ({ reason, expectedCandidateReason, expectedWhyNow, expectedFirstStep }) => {
+      const result = resolveActiveAttention(
+        activeAttentionFixture({
+          githubKind: "authored_pull_request",
+          githubActionability: authoredPullRequestActionability(reason)
+        }).input
+      );
+
+      expect(result.decision).toMatchObject({
+        status: "suggested",
+        topSuggestion: {
+          taskKind: "authored_pull_request",
+          lane: "unblock",
+          intervention: "do",
+          certainty: "confirmed",
+          reasonCodes: expect.arrayContaining([expectedCandidateReason]),
+          whyNowReasonCodes: expect.arrayContaining([expectedWhyNow]),
+          firstStep: expect.stringContaining(expectedFirstStep)
+        }
+      });
+      expect(result.assessments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            triggerSource: "github",
+            status: "eligible",
+            actionKind: "do"
+          })
+        ])
+      );
+    }
+  );
+
   it("preserves the complete Phase 2 GitHub order beyond its three-item display bound", () => {
     const fixture = activeAttentionFixture({
       managedScenario: "none",
@@ -703,3 +761,33 @@ describe("Phase 4B active Attention resolver", () => {
     );
   });
 });
+
+function authoredPullRequestActionability(
+  reason: "checks_failed" | "changes_requested" | "merge_conflict"
+) {
+  const checksFailed = reason === "checks_failed";
+  const changesRequested = reason === "changes_requested";
+  const mergeConflict = reason === "merge_conflict";
+  return {
+    collectionState: "complete" as const,
+    draft: false,
+    reviewDecision: changesRequested
+      ? ("changes_requested" as const)
+      : ("none" as const),
+    checksSummary: {
+      collectionState: "complete" as const,
+      state: checksFailed ? ("failing" as const) : ("passing" as const),
+      totalCount: 1,
+      completedCount: 1,
+      failedCount: checksFailed ? 1 : 0,
+      pendingCount: 0,
+      truncated: false
+    },
+    mergeable: !mergeConflict,
+    mergeConflict,
+    unresolvedChangeRequestCount: changesRequested ? 1 : 0,
+    requestedReviewerCount: 0,
+    actionRequired: true,
+    actionRequiredReasons: [reason]
+  };
+}

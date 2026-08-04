@@ -249,17 +249,17 @@ describe("Attention routes", () => {
       stage: "source_sync",
       errorCode: "SOURCE_SYNC_FAILED",
       retryCount: 0,
-      engineVersion: "attention-live-orchestrator-v0.4",
+      engineVersion: "attention-live-orchestrator-v0.5",
       inputSchemaVersion: "cross-source-active-attention-input-v0.4",
-      resultSchemaVersion: "cross-source-active-attention-result-v0.4",
-      policyVersion: "aggressive-evidence-bound-attention-policy-v0.3",
+      resultSchemaVersion: "cross-source-active-attention-result-v0.5",
+      policyVersion: "aggressive-evidence-bound-attention-policy-v0.4",
       candidateRuleVersion:
-        "github-managed-codex-active-candidate-rule-v0.1",
+        "github-managed-codex-active-candidate-rule-v0.2",
       lanePolicyVersion: "active-attention-lane-policy-v0.1",
-      rankingPolicyVersion: "active-attention-ranking-policy-v0.2",
-      resolverVersion: "active-attention-decision-resolver-v0.3",
+      rankingPolicyVersion: "active-attention-ranking-policy-v0.3",
+      resolverVersion: "active-attention-decision-resolver-v0.4",
       idPolicyVersion: "active-attention-id-v0.1",
-      contract: "attention-monitor-failure-v0.3",
+      contract: "attention-monitor-failure-v0.4",
       codeCommitSha: "a".repeat(40),
       codeState: "declared_commit",
       codeFingerprintSha256: null,
@@ -456,6 +456,12 @@ function evaluatedFixture() {
     },
     eligibilityProjection: {
       projectionSha256: "d".repeat(64)
+    },
+    developerSignals: {
+      publicSummary: {
+        contract: "developer-runtime-public-summary-v0.1",
+        summarySha256: "e".repeat(64)
+      }
     },
     run: {
       runId: `run_${"a".repeat(32)}`,

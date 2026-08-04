@@ -2946,3 +2946,267 @@
   - full Xcode Swift XCTest/XCUITest에서 folder picker, relaunch와 Agent lifecycle E2E
   - Developer ID hardened-runtime signing, Terminal automation permission와 notarization
   - server-authoritative recommendation/data bridge와 multi-device sync
+
+## 2026-08-04 Phase 4C.2 launcher diagnostics and explicit local-root recovery
+
+- Date: 2026-08-04
+- Owner: Codex with human direction
+- Goal:
+  - 추천이 없을 때 일반적인 `안전하게 한 가지를 고르기 어렵습니다`
+    문구 대신 decision 근거, 후보 수와 source별 차단 원인을 표시
+  - fresh managed root와 기존 연결 data root가 분리된 상태에서 token·snapshot을
+    복사하지 않고 사용자가 기존 root를 명시적으로 선택해 복구
+  - 기존 root 선택 시 기본 Cloud dashboard를 그 root의 local Work Cockpit
+    endpoint로 맞춤
+- Affected pipeline stages:
+  - launcher-only Attention public projection과 TypeScript/Swift decoder
+  - macOS launcher no-suggestion/settings presentation
+  - first-run/existing-root dashboard default selection policy
+- Behavior before:
+  - attention projection v1은 decision status, card, scope와 unavailable source만
+    전달해 source 연결·수집·후보 범위 중 어디가 막혔는지 표시할 수 없음
+  - fresh managed root에 source가 없어도 런처는 일반적 insufficient-evidence
+    문구만 표시
+  - 기존 root를 선택해도 기본 Cloud dashboard URL이 남아 local root와
+    dashboard owner가 다를 수 있음
+- Behavior after:
+  - `blabase-launcher-attention-v2`가 bounded `decisionReasonCodes`, eligible/review/
+    ineligible `candidateCounts`와 canonical GitHub/Codex/Notion/Google Calendar
+    `sourceDiagnostics`를 필수로 전달
+  - TypeScript schema와 Swift decoder가 decision/count, source state/reason, source 순서,
+    signal count와 candidate completeness 불일치를 fail closed
+  - no-suggestion 화면이 decision 설명, 후보 수와 2x2 source 진단을 표시하고
+    GitHub·Codex 중 하나라도 `available`이 아니면 root ownership에 맞는
+    복구 동작을 표시. existing root는 `/sources`, managed root는 native 설정을 열음
+  - 기존 root를 선택할 때 dashboard가 기본 Cloud URL이면
+    `http://localhost:3102`로 전환하고, 사용자가 명시한 다른 허용
+    localhost URL은 보존
+  - settings source 상태도 v2 diagnostic state와 signal count를 사용
+  - no-suggestion 복구 버튼은 42 pt로 고정하고 launcher panel origin을 active
+    screen visible frame 안으로 clamp
+- Versions before:
+  - launcher attention projection: `blabase-launcher-attention-v1`
+  - local launcher contract: Phase 4C.1 v0.2
+  - data-root selector policy: `launcher-data-root-policy-v0.2`
+- Versions after:
+  - launcher attention projection: `blabase-launcher-attention-v2`
+  - launcher IPC/execution/settings schema: v1 유지
+  - local launcher contract: Phase 4C.2 v0.3
+  - data-root selection default policy: local recovery behavior 추가
+  - Active Attention input/result/policy/ranking/resolver: 변경 없음
+- Code commit:
+  - suggestion base commit:
+    `c60caf5821122b4e60c0800cd8cac571e75f7d96`
+  - base subject: `feat(blabase): add first-run launcher data setup`
+  - implementation state: `dirty_worktree`; 현재 record에서 commit을 생성하지 않음
+- Evaluation dataset and run:
+  - 새 dataset, Golden/Regression version, engine comparison run ID 없음
+  - resolver input, candidate 생성, eligibility, filtering, ranking, selection과 explanation
+    의미를 변경하지 않는 projection/configuration/UI 변경이므로 frozen Golden과
+    Phase 4B semantic baseline은 재실행하지 않음
+- Commands executed:
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - `npm run launcher:swift:smoke`
+  - `npm run launcher:app:build`
+  - local same-origin `/api/sync/start`, `/api/sync` and `/api/attention` runtime check
+  - `git diff --check`
+- Verification and metrics:
+  - full Vitest: `83/83` files, `704/704` tests passed
+  - typecheck, ESLint, Next.js production build: passed
+  - XCTest-independent Swift v2 model/presentation/settings smoke: passed
+  - macOS release executable, bundled Agent, ad-hoc signature verification: passed
+  - actual app accessibility/screenshot: decision reason, `0/0/0` candidate counts,
+    GitHub disconnected, Codex 9 signals, Notion·Calendar diagnostic과 42 pt 복구 버튼
+    표시 확인. sync 후 Codex가 available이어도 GitHub 하나가 disconnected이면
+    `Source 연결 관리`가 남고 owner Work Cockpit `/sources` GET 200으로 이동함을 확인
+  - final runtime: launcher host 1개, bundled Agent 1개가 선택한
+    `/Users/nika/biadone/apps/blabase/suggestion` root를 사용함을 확인
+  - local coordinator 명시적 sync: Codex·Notion latest snapshot success, GitHub
+    `CONNECTOR_DISCONNECTED`, Google Calendar `REAUTHORIZATION_REQUIRED` 확인. 이후
+    Attention은 GitHub coverage unavailable·Codex eligible candidate 0으로 계속
+    `DECISION_RELEVANT_COVERAGE_INSUFFICIENT`
+  - provider/model/prompt/token usage: `not_applicable`; deterministic projection/config/UI
+- Regressions or accepted exceptions:
+  - dashboard URL을 local로 맞추는 것은 navigation default이며 opaque root identity/
+    snapshot revision handshake가 아님. local Work Cockpit process가 선택 root를 소유해야 함
+  - 기존 root의 GitHub connector가 disconnected이거나 Codex snapshot이 candidate coverage를
+    만족하지 못하면 진단은 정확히 표시되지만 추천을 조작해 만들지 않음
+  - Command Line Tools 환경의 XCTest module 제약으로 full Swift XCTest는
+    external beta CI의 full Xcode에서 계속 확인해야 함
+- Privacy and retention impact:
+  - v2에는 bounded decision/source code와 개수만 추가. raw prompt/answer/reasoning,
+    command/output/diff, URL, native thread ID, cwd, credential과 token은 여전히 IPC에 없음
+  - 기존 root 선택은 path/allowlisted dashboard URL만 preference에 저장하고
+    token, OAuth credential와 snapshot을 복사·이동·병합하지 않음
+  - 새 cloud telemetry, remote retention, source mutation과 production data 수집을 추가하지 않음
+- Compatibility:
+  - attention projection v1 consumer는 v2를 거부하므로 Node Agent와 Swift host는 같은
+    app artifact로 함께 배포해야 함
+  - launcher IPC/execution, Work Resumption, Phase 4B Active Attention public result와
+    source snapshot schema는 변경 없음
+- Release decision:
+  - 이 Mac의 local development `.app`에서 사용: 허용
+  - external beta: full Xcode tests, Developer ID signing/notarization과 dashboard/root
+    handshake 전까지 보류
+  - Golden/production recommendation quality claim: 변경 없음
+- Rollback method:
+  - Swift host/Node Agent를 같은 이전 app artifact로 돌려 attention projection v1로 복귀
+  - local dashboard default selection policy를 제거. source store와 connector data migration은
+    수행하지 않았으므로 rollback/backfill 필요 없음
+- Follow-up work:
+  - dashboard status API의 opaque root identity + snapshot revision handshake
+  - GitHub OAuth 재연결과 Codex conversation/candidate coverage를 사용자 동의 후 완성
+  - full Xcode Swift XCTest/XCUITest와 Developer ID/notarized external beta
+
+## 2026-08-05 Developer Signal Intelligence v0.1 and actionable authored PRs
+
+- Date: 2026-08-05
+- Owner: Codex with human direction
+- Goal:
+  - GitHub·Codex normalized signal을 바로 점수화하지 않고 재현 가능한 Developer
+    Work Ledger와 단계별 Candidate Funnel을 거치게 함
+  - 본인이 연 PR에서 현재 확인된 failed checks, changes requested, merge conflict를
+    실제 Attention 후보로 만들고, 단순 open/draft/unknown PR은 계속 제외
+  - Codex prompt·answer·execution의 bounded 과거 맥락에서 open-loop claim을 추출하되
+    currentness 검증 전에는 추천 후보로 승격하지 않음
+- Affected pipeline stages:
+  - GitHub App REST collection, snapshot validation과 WorkSignal normalization
+  - Phase 4A eligibility와 Phase 4B Active candidate generation/ranking/explanation
+  - Codex bounded WorkSignal → OpenLoopClaim adapter
+  - runtime Work Ledger, Candidate Funnel과 public aggregate projection
+  - live Attention API, Attention Lab observability와 monitor compatibility reader
+- Behavior before:
+  - authored PR은 context-only로만 보존되어 CI 실패·변경 요청·병합 충돌이 있어도
+    후보가 될 수 없음
+  - Codex normalized history는 overview였지만 명시적 미완료 claim과 그 근거를
+    별도 lifecycle로 추적하지 않음
+  - 추천 결과에서 source item이 collected 이후 어느 단계에서 제외됐는지 볼 수 없음
+- Behavior after:
+  - `github-snapshot-v3`가 최대 25개 authored PR을 대상으로 PR detail, reviews,
+    Check Runs와 Commit Status를 bounded concurrency 4로 수집하고 snapshot-level
+    actionability coverage를 complete/partial/unavailable로 기록
+  - `checks_failed`, `changes_requested`, `merge_conflict`의 verified positive만
+    authored PR eligibility를 통과하며 기본 lane은 `unblock`, intervention은 `do`
+  - 보조 endpoint 실패나 cap은 negative coverage를 partial로 낮추지만 이미 확인된
+    positive는 보존. unknown 상태는 actionability로 추정하지 않음
+  - GitHub v2 snapshot은 기존 normalizer와 materialized hash를 유지하고 v3만 새
+    actionability normalizer를 사용
+  - Codex OpenLoop extractor가 goal, remaining work, blocker, verification needed와
+    follow-through를 exact bounded field evidence, confidence, verification status,
+    7일 expiry와 supersession 정보로 기록
+  - Codex history claim은 private ledger에 들어가지만 funnel의 verified 단계에서
+    rejected되고 eligibility/selection으로 진입하지 않음. 기존 managed-live Codex
+    failure와 configured follow-through의 Active 의미는 유지
+  - API는 ledger/funnel hash, entity·claim count와 여섯 단계 summary만 반환하며
+    Attention Lab에서 현재 run의 수집→정규화→해석→검증→자격→선택 funnel을 표시
+- Versions before:
+  - GitHub snapshot/normalizer: v2 / `github-project-context-normalizer-v0.2`
+  - eligibility policy/evidence/resolver: v0.1
+  - Active result/policy/candidate/ranking/resolver: v0.4/v0.3/v0.1/v0.2/v0.3
+  - live orchestrator/monitor run/failure: v0.4/v0.4/v0.3
+- Versions after:
+  - GitHub snapshot: v3; v2 read compatibility 유지
+  - GitHub actionability normalizer: `github-pr-actionability-normalizer-v0.3`
+  - Work Ledger, Candidate Funnel, runtime projection: v0.1
+  - Codex OpenLoop schema/rule/evidence/expiry: v1
+  - eligibility policy/evidence/resolver: v0.2; v0.1 projection read compatibility 유지
+  - Active result/policy/candidate/ranking/resolver: v0.5/v0.4/v0.2/v0.3/v0.4
+  - live orchestrator/monitor run/failure: v0.5/v0.5/v0.4
+  - monitor v0.4 + replay v2와 v0.3 + replay v1 read compatibility 유지
+- Code commit:
+  - implementation state: `dirty_worktree`; 이 record에서 commit을 생성하지 않음
+  - baseline code fingerprint:
+    `d59d2fdbe5e26ae0d678a3f8ca7e055348647e5c54d86efee3dfdd6c023320d8`
+- Evaluation dataset and run:
+  - 기존 mutable Dev Candidate 원본 v0.1 revision 2와 기대 hash를 수정하지 않음
+  - 별도 expectation revision artifact로 eligibility v0.2 revision 3와 Active v0.2
+    revision 3을 생성. frozen Golden/Regression dataset 변경 없음
+  - eligibility dataset SHA-256:
+    `3bb839262a78095b5a54a4e73c105802c41f276fe19a5743fadd50c20bd235d4`
+  - eligibility materialized input SHA-256:
+    `1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034`
+  - eligibility baseline run:
+    `attention_eligibility_run_cecf4c97681437b38b3857ddd6cfccfc`, passed 26/26
+  - Active dataset SHA-256:
+    `fc8be53b229f4c685591e34b005a4e99fbf49eb7722cc86cd4aeab97f04c8a26`
+  - Active materialized input SHA-256:
+    `baa7a6ec69173b4207e4409b900519c3148ad06995726aad78f9e2d6ef79f940`
+  - Active baseline run:
+    `active_attention_eval_run_056c3ce2e6084663841f28a20d408088`, passed 44/44
+  - prior run IDs are retained in private local evaluation history but are not reported as a
+    formal metric comparison because the Active exact input envelope changed with upstream
+    eligibility versions
+  - authored PR three-state regression, Codex OpenLoop and sidecar privacy/currentness are
+    bounded synthetic Vitest cases, not human-approved Gold
+- Commands executed:
+  - `cd suggestion && npm test`
+  - `cd suggestion && npm run typecheck`
+  - `cd suggestion && npm run lint`
+  - `cd suggestion && npm run build`
+  - `cd suggestion && npm run attention-eligibility:baseline`
+  - `cd suggestion && npm run active-attention:baseline`
+  - local `127.0.0.1:3102/api/attention` aggregate-only runtime check
+  - root `npm run typecheck`
+  - root `npm run lint` attempt
+  - `git diff --check -- suggestion`
+- Verification and metrics:
+  - full Vitest: `87/87` files, `732/732` tests passed
+  - relevant suggestion typecheck, ESLint and production Next.js build: passed
+  - root typecheck: passed
+  - both deterministic baselines: passed; provider/model/prompt/token usage
+    `not_applicable`
+  - GitHub collector/normalizer tests verify positive preservation, partial coverage,
+    v2 hash compatibility and privacy minimization
+  - public summary strict schema rejects display values, excerpts, URLs and paths
+  - local explicit refresh migrated the stored GitHub snapshot to v3 and returned HTTP 200
+    with public summary v0.1. The observed authored PR was draft/context-only with no verified
+    action-required reason, so 1 item was ineligible and 0 selected; actionability and activity
+    coverage remained partial. Only aggregate state and reason codes were printed
+- Regressions or accepted exceptions:
+  - root lint traverses generated `suggestion/.next` and `.open-next` files and fails on
+    generated framework code; the relevant suggestion lint command explicitly ignores those
+    build directories and passes
+  - v0.1 sidecar summary is returned for the current API result but not yet stored per historical
+    monitor run; historical funnel comparison is a follow-up
+  - GitHub unresolved review threads, Project priority/dependency and linked issue semantics are
+    not included
+  - Codex OpenLoop history has no direct candidate path until a current managed run, verified
+    GitHub binding/current state, or explicit user confirmation supplies currentness
+- Privacy and retention impact:
+  - GitHub snapshot stores no check name/output, reviewer identity, commit SHA, branch, review
+    body or comment body; only bounded counts/booleans/reason codes and coverage
+  - Codex adapter reads normalized bounded facts only. conversation excerpts remain private,
+    retain the existing 7-day expiry and never enter public API/history
+  - Work Ledger is an ephemeral private runtime sidecar. public projection is aggregate metadata
+    with hashes/counts only and uses the existing 30-day monitor privacy posture
+  - no external LLM call, new cloud telemetry, production→Gold promotion, credential mutation or
+    source write was added
+- Compatibility:
+  - existing GitHub v2 snapshots normalize with v0.2 semantics until the next successful v3 sync
+  - old eligibility projections and monitor/failure contracts remain parseable only as their own
+    generation; mixed semantic version tuples fail closed
+  - API adds `developerSignals` aggregate summary. launcher v2 projection ignores this additive
+    field and continues to use the Active result contract
+- Operational requirement:
+  - GitHub App repository permissions must include `Pull requests: Read-only`,
+    `Checks: Read-only`, `Commit statuses: Read-only`; existing installations may require owner
+    re-approval. Missing permissions degrade actionability coverage rather than inventing a task
+- Release decision:
+  - local developer beta and Attention Lab observation: allowed
+  - external recommendation quality claim: deferred until human-reviewed Developer Attention
+    dataset and production shadow evaluation exist
+- Rollback method:
+  - stop producing v3 snapshots and return to the v2 normalizer; v2 data remains readable
+  - revert Active/eligibility versions and authored actionability gate together
+  - remove runtime sidecar/API summary without deleting connector or monitor stores; no source
+    migration/backfill is required
+- Follow-up work:
+  - persist metadata-only funnel summaries per monitor run and compare funnel drift over time
+  - verify Codex OpenLoop currentness through managed run lifecycle, explicit project binding and
+    user confirmation
+  - add GitHub unresolved review threads, Project priority, dependencies and linked issues
+  - capture explicit feedback for wrong link/already done/not important/later and build a
+    human-reviewed Developer Attention Golden Dataset

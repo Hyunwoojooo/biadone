@@ -103,6 +103,13 @@ root를 소유한 웹 dashboard의 `SourceSyncCoordinator`가 갱신한다.
 이전 Local Agent의 실제 종료를 기다린 뒤 새 root로 시작하고 현재 snapshot을 다시
 평가한다. dashboard endpoint만 바뀌면 Agent를 재시작하지 않는다.
 
+`managed` root에 연결된 source가 하나도 없으면 launcher는 이를 추천 결과처럼
+뭉뚱그리지 않고 source별 `disconnected` 진단과 후보 수 `0`을 표시하며 설정으로
+돌아가는 동작을 제공한다. 기존 root를 선택할 때 dashboard가 아직 기본 Cloud
+주소라면 해당 root를 실제로 소유할 수 있는 `http://localhost:3102`로 함께 맞춘다.
+사용자가 이미 다른 허용된 localhost 주소를 정했다면 그대로 보존한다. 이 동작도
+token이나 snapshot을 복사하는 handshake가 아니라 명시적 local navigation 설정이다.
+
 dashboard endpoint preference에는 HTTPS Blabase Cloud 또는 HTTP
 `localhost`/`127.0.0.1` URL만 저장할 수 있다. credential, fragment, 다른 scheme이나
 임의 host가 포함된 URL은 거부한다. preference에는 선택 path와 허용된 URL만
@@ -168,6 +175,13 @@ Phase 4B semantic baseline을 다시 실행하지 않는다. 대신 구현과 pa
   복사·이동·병합하지 않는다.
 - source 상태 표시는 projection을 그대로 반영하며 추천 filtering/ordering을
   변경하지 않는다.
+- launcher Attention v2 projection은 decision reason code, 후보 수와 네 source의
+  bounded 진단만 전달하며 raw prompt/answer, URL, path와 credential을 추가하지 않는다.
+- GitHub와 Codex 중 하나라도 복구가 필요할 때 launcher가 일반적인 빈 상태
+  대신 source별 원인과 복구 동작을 표시한다. existing read-only root는
+  owner Work Cockpit의 `/sources`를 열고 managed root는 data-root 설정을 연다.
+- 기존 root를 선택하면서 기본 Cloud dashboard가 남아 있으면 local Work Cockpit
+  기본값으로 전환하고, 사용자가 정한 다른 localhost endpoint는 보존한다.
 
 ## Development beta build
 

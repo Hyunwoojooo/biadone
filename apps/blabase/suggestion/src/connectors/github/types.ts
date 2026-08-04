@@ -30,6 +30,54 @@ export type GitHubReviewState =
   | "changes_requested"
   | "commented";
 
+export type GitHubPullRequestActionRequiredReason =
+  | "checks_failed"
+  | "changes_requested"
+  | "merge_conflict";
+
+export type GitHubPullRequestChecksSummary = {
+  collectionState: "complete" | "partial";
+  state: "passing" | "failing" | "pending" | "none" | "unknown";
+  totalCount: number;
+  completedCount: number;
+  failedCount: number;
+  pendingCount: number;
+  truncated: boolean;
+};
+
+/**
+ * Privacy-minimized, REST-derived PR actionability metadata.
+ *
+ * Review bodies, check/status names and output, reviewer identities, commit
+ * SHAs, and branch names are intentionally excluded. Older
+ * github-snapshot-v2 records omit this field and remain valid.
+ */
+export type GitHubPullRequestActionabilitySignal = {
+  collectionState: "complete" | "partial";
+  draft: boolean;
+  reviewDecision:
+    | "changes_requested"
+    | "review_requested"
+    | "approved"
+    | "none"
+    | "unknown";
+  checksSummary: GitHubPullRequestChecksSummary | null;
+  mergeable: boolean | null;
+  mergeConflict: boolean | null;
+  unresolvedChangeRequestCount: number | null;
+  requestedReviewerCount: number;
+  actionRequired: boolean;
+  actionRequiredReasons: GitHubPullRequestActionRequiredReason[];
+};
+
+export type GitHubActionabilityCoverage = {
+  state: "complete" | "partial" | "unavailable";
+  authoredPullRequestCount: number;
+  attemptedCount: number;
+  collectedCount: number;
+  truncated: boolean;
+};
+
 export type GitHubUserSignal = {
   id: number;
   login: string;
@@ -68,6 +116,7 @@ export type GitHubTaskSignal = {
   state: "open";
   createdAt: string;
   updatedAt: string;
+  actionability?: GitHubPullRequestActionabilitySignal;
 };
 
 export type GitHubUserActivitySignal = {
@@ -86,7 +135,7 @@ export type GitHubUserActivitySignal = {
 };
 
 export type GitHubSnapshot = {
-  schemaVersion: "github-snapshot-v2";
+  schemaVersion: "github-snapshot-v2" | "github-snapshot-v3";
   appClientId: string;
   appSlug: string;
   apiVersion: string;
@@ -96,6 +145,8 @@ export type GitHubSnapshot = {
   activityWindowStart: string;
   activitiesState: "available" | "partial" | "unavailable";
   activitiesTruncated: boolean;
+  /** Required by github-snapshot-v3; absent from legacy v2 snapshots. */
+  actionabilityCoverage?: GitHubActionabilityCoverage;
   installations: GitHubInstallationSignal[];
   repositories: GitHubRepositorySignal[];
   tasks: GitHubTaskSignal[];

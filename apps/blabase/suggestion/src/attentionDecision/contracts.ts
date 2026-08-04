@@ -31,7 +31,7 @@ import { projectWorkflowProjectionSchema } from "../workflows/contracts";
 export const ACTIVE_ATTENTION_INPUT_HASH_DOMAIN =
   "blabase-active-attention-input-v0.4" as const;
 export const ACTIVE_ATTENTION_RESULT_HASH_DOMAIN =
-  "blabase-active-attention-result-v0.4" as const;
+  "blabase-active-attention-result-v0.5" as const;
 export const MANAGED_CODEX_PUBLIC_DEPENDENCY_HASH_DOMAIN =
   "blabase-managed-codex-public-dependency-v0.1" as const;
 export const MANAGED_CODEX_START_TIMES_HASH_DOMAIN =
@@ -136,6 +136,9 @@ export const activeAttentionReasonCodeSchema = z.enum([
 export const activeAttentionCandidateReasonCodeSchema = z.enum([
   "CANDIDATE_GITHUB_ASSIGNED_ISSUE",
   "CANDIDATE_GITHUB_REVIEW_STATUS_CHECK",
+  "CANDIDATE_GITHUB_AUTHORED_PR_CHECKS_FAILED",
+  "CANDIDATE_GITHUB_AUTHORED_PR_CHANGES_REQUESTED",
+  "CANDIDATE_GITHUB_AUTHORED_PR_MERGE_CONFLICT",
   "CANDIDATE_CODEX_LATEST_DIRECT_FAILURE",
   "CANDIDATE_CODEX_CONFIGURED_REVIEW_CHANGES",
   "CANDIDATE_CODEX_CONFIGURED_COMMIT_CHANGES",
@@ -148,6 +151,9 @@ export const activeAttentionWhyNowReasonCodeSchema = z.enum([
   "WHY_NOW_NATIVE_DEADLINE_DUE_SOON",
   "WHY_NOW_REVIEW_REQUEST_OPEN",
   "WHY_NOW_ASSIGNED_WORK_OPEN",
+  "WHY_NOW_AUTHORED_PR_CHECKS_FAILED",
+  "WHY_NOW_AUTHORED_PR_CHANGES_REQUESTED",
+  "WHY_NOW_AUTHORED_PR_MERGE_CONFLICT",
   "WHY_NOW_MANAGED_FAILURE_CURRENT",
   "WHY_NOW_CONFIGURED_HANDOFF_OPEN",
   "WHY_NOW_PRIMARY_OUTCOME_TEXT_MATCH"
@@ -158,6 +164,7 @@ export const activeAttentionCaveatCodeSchema = z.enum([
   "CAVEAT_CANDIDATE_SET_INCOMPLETE",
   "CAVEAT_DEFAULT_TIE_BREAK_USED",
   "CAVEAT_MANAGED_FAILURE_INSPECTION_ONLY",
+  "CAVEAT_GITHUB_PR_ACTIONABILITY_PARTIAL",
   "CAVEAT_UPSTREAM_OBJECTS_REMAIN_NON_CANDIDATES"
 ]);
 

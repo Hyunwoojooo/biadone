@@ -244,14 +244,6 @@ function assessGitHubSeed(
       reasonCodes: ["INELIGIBLE_CONTEXT_ONLY"]
     });
   }
-  if (signal.facts.taskKind === "authored_pull_request") {
-    return assessment(base, {
-      actionKind: null,
-      status: "ineligible",
-      reviewRoute: "none",
-      reasonCodes: ["INELIGIBLE_UNSUPPORTED_TASK_KIND"]
-    });
-  }
   if (signal.facts.destinationUrl === null) {
     return assessment(base, {
       actionKind: null,
@@ -272,7 +264,9 @@ function assessGitHubSeed(
   const actionKind =
     signal.facts.taskKind === "assigned_issue"
       ? ("do" as const)
-      : ("inspect" as const);
+      : signal.facts.taskKind === "review_requested_pull_request"
+        ? ("inspect" as const)
+        : ("do" as const);
   if (batch === null || batch.assessment.freshness !== "fresh") {
     return assessment(base, {
       actionKind,
@@ -321,7 +315,9 @@ function assessGitHubSeed(
   const expectedRelationship =
     signal.facts.taskKind === "assigned_issue"
       ? "assigned_to_user"
-      : "review_requested_from_user";
+      : signal.facts.taskKind === "review_requested_pull_request"
+        ? "review_requested_from_user"
+        : "authored_by_user";
   if (
     relationship.claim.value.type !== "enum" ||
     relationship.claim.value.value !== expectedRelationship
@@ -356,7 +352,9 @@ function assessGitHubSeed(
   const reasonCodes: AttentionEligibilityReasonCode[] = [
     signal.facts.taskKind === "assigned_issue"
       ? "ELIGIBLE_DIRECT_ASSIGNED_ISSUE"
-      : "ELIGIBLE_REVIEW_STATUS_INSPECTION"
+      : signal.facts.taskKind === "review_requested_pull_request"
+        ? "ELIGIBLE_REVIEW_STATUS_INSPECTION"
+        : "ELIGIBLE_ACTIONABLE_AUTHORED_PULL_REQUEST"
   ];
   if (relatedConflicts.length > 0) {
     reasonCodes.push("ELIGIBLE_RELEVANT_CONFLICT_RESOLVED");

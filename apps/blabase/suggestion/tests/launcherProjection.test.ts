@@ -8,6 +8,7 @@ import {
 import { runPhase2AttentionRouter } from "../src/crossSource/runAttentionRouter";
 import {
   buildLauncherAttentionView,
+  launcherAttentionProjectionSchema,
   projectAttentionForLauncher
 } from "../src/launcher";
 import type { WorkResumptionStatus } from "../src/resumption";
@@ -33,9 +34,41 @@ describe("launcher Attention projection", () => {
     });
 
     expect(projection).toMatchObject({
-      contract: "blabase-launcher-attention-v1",
+      contract: "blabase-launcher-attention-v2",
       resultId: result.resultId,
       decisionStatus: "suggested",
+      decisionReasonCodes: result.decision.reasonCodes,
+      candidateCounts: result.counts,
+      sourceDiagnostics: [
+        {
+          source: "github",
+          state: "available",
+          signalCount: 2,
+          candidateSetComplete: true,
+          reasonCode: null
+        },
+        {
+          source: "codex",
+          state: "disconnected",
+          signalCount: 0,
+          candidateSetComplete: false,
+          reasonCode: "CONNECTOR_DISCONNECTED"
+        },
+        {
+          source: "notion",
+          state: "disconnected",
+          signalCount: 0,
+          candidateSetComplete: null,
+          reasonCode: "CONNECTOR_DISCONNECTED"
+        },
+        {
+          source: "google_calendar",
+          state: "disconnected",
+          signalCount: 0,
+          candidateSetComplete: null,
+          reasonCode: "CONNECTOR_DISCONNECTED"
+        }
+      ],
       card: {
         candidateId: result.decision.topSuggestion?.candidateId,
         title: "Synthetic linked task",
@@ -127,8 +160,102 @@ describe("launcher Attention projection", () => {
     });
 
     expect(projection.decisionStatus).toBe("no_action");
+    expect(projection.decisionReasonCodes).toEqual(
+      result.decision.reasonCodes
+    );
+    expect(projection.candidateCounts).toEqual(result.counts);
     expect(projection.card).toBeNull();
     expect(projection.clarificationQuestion).toBeNull();
+  });
+
+  it("keeps source diagnostics canonical and bounded to monitor metadata", () => {
+    const fixture = activeAttentionFixture();
+    const result = resolveActiveAttention(fixture.input);
+    const projection = projectAttentionForLauncher({
+      result,
+      baseResult: runPhase2AttentionRouter(
+        fixture.input.baseAttentionInput
+      ),
+      run: monitorRun({
+        githubFreshness: "stale",
+        githubCandidateSetComplete: false,
+        supportingAvailable: true
+      }),
+      resumption: resumption()
+    });
+
+    expect(projection.sourceDiagnostics).toEqual([
+      {
+        source: "github",
+        state: "stale",
+        signalCount: 2,
+        candidateSetComplete: false,
+        reasonCode: null
+      },
+      {
+        source: "codex",
+        state: "disconnected",
+        signalCount: 0,
+        candidateSetComplete: false,
+        reasonCode: "CONNECTOR_DISCONNECTED"
+      },
+      {
+        source: "notion",
+        state: "unevaluated",
+        signalCount: 3,
+        candidateSetComplete: null,
+        reasonCode: null
+      },
+      {
+        source: "google_calendar",
+        state: "unevaluated",
+        signalCount: 2,
+        candidateSetComplete: null,
+        reasonCode: null
+      }
+    ]);
+    expect(JSON.stringify(projection.sourceDiagnostics)).not.toContain(
+      "snapshot"
+    );
+  });
+
+  it("rejects diagnostic fields that disagree with the decision", () => {
+    const fixture = activeAttentionFixture();
+    const projection = projectAttentionForLauncher({
+      result: resolveActiveAttention(fixture.input),
+      baseResult: runPhase2AttentionRouter(
+        fixture.input.baseAttentionInput
+      ),
+      run: monitorRun(),
+      resumption: resumption()
+    });
+
+    expect(
+      launcherAttentionProjectionSchema.safeParse({
+        ...projection,
+        decisionReasonCodes: ["DECISION_SCOPED_NO_ACTION"]
+      }).success
+    ).toBe(false);
+    expect(
+      launcherAttentionProjectionSchema.safeParse({
+        ...projection,
+        candidateCounts: {
+          ...projection.candidateCounts,
+          eligible: 0
+        }
+      }).success
+    ).toBe(false);
+    expect(
+      launcherAttentionProjectionSchema.safeParse({
+        ...projection,
+        sourceDiagnostics: [
+          projection.sourceDiagnostics[1],
+          projection.sourceDiagnostics[0],
+          projection.sourceDiagnostics[2],
+          projection.sourceDiagnostics[3]
+        ]
+      }).success
+    ).toBe(false);
   });
 
   it("rejects a destination outside the exact GitHub work-item URL", () => {
@@ -162,23 +289,64 @@ describe("launcher Attention projection", () => {
 });
 
 function monitorRun(
-  options: { githubUnavailable?: boolean } = {}
+  options: {
+    githubUnavailable?: boolean;
+    githubFreshness?: "fresh" | "stale" | "invalid";
+    githubCandidateSetComplete?: boolean;
+    supportingAvailable?: boolean;
+  } = {}
 ): AttentionMonitorRun {
+  const githubUnavailable = options.githubUnavailable === true;
+  const supportingAvailable = options.supportingAvailable === true;
   return {
     sources: [
       {
         source: "github",
-        inputState:
-          options.githubUnavailable === true
-            ? "disconnected"
-            : "available",
-        freshness:
-          options.githubUnavailable === true ? null : "fresh"
+        inputState: githubUnavailable ? "disconnected" : "available",
+        unavailableReason: githubUnavailable
+          ? "CONNECTOR_DISCONNECTED"
+          : null,
+        freshness: githubUnavailable
+          ? null
+          : (options.githubFreshness ?? "fresh"),
+        completeness: githubUnavailable ? null : "complete",
+        candidateSetComplete: githubUnavailable
+          ? false
+          : (options.githubCandidateSetComplete ?? true),
+        signalCount: githubUnavailable ? 0 : 2,
+        skippedRecordCount: githubUnavailable ? 0 : 1
       },
       {
         source: "codex",
         inputState: "disconnected",
-        freshness: null
+        unavailableReason: "CONNECTOR_DISCONNECTED",
+        freshness: null,
+        completeness: null,
+        candidateSetComplete: false,
+        signalCount: 0,
+        skippedRecordCount: 0
+      }
+    ],
+    supportingSources: [
+      {
+        source: "google_calendar",
+        inputState: supportingAvailable ? "available" : "unavailable",
+        unavailableReason: supportingAvailable
+          ? null
+          : "CONNECTOR_DISCONNECTED",
+        freshness: supportingAvailable ? "fresh" : null,
+        itemCount: supportingAvailable ? 2 : 0,
+        mappedItemCount: supportingAvailable ? 1 : 0
+      },
+      {
+        source: "notion",
+        inputState: supportingAvailable ? "available" : "unavailable",
+        unavailableReason: supportingAvailable
+          ? null
+          : "CONNECTOR_DISCONNECTED",
+        freshness: supportingAvailable ? "fresh" : null,
+        itemCount: supportingAvailable ? 3 : 0,
+        mappedItemCount: supportingAvailable ? 2 : 0
       }
     ]
   } as AttentionMonitorRun;

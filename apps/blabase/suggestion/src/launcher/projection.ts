@@ -14,7 +14,8 @@ import {
   LAUNCHER_ATTENTION_CONTRACT,
   launcherAttentionProjectionSchema,
   type LauncherAttentionProjection,
-  type LauncherPrimaryAction
+  type LauncherPrimaryAction,
+  type LauncherSourceDiagnosticState
 } from "./contracts";
 
 export type LauncherProjectionInput = {
@@ -74,6 +75,9 @@ export function buildLauncherAttentionView(
     resultId: input.result.resultId,
     asOf: input.result.asOf,
     decisionStatus: input.result.decision.status,
+    decisionReasonCodes: input.result.decision.reasonCodes,
+    candidateCounts: input.result.counts,
+    sourceDiagnostics: sourceDiagnostics(input.run),
     card,
     clarificationQuestion:
       input.result.decision.clarification?.question ?? null,
@@ -186,6 +190,152 @@ function unavailableSources(
   return order.filter((source) => unavailable.has(source));
 }
 
+type CoreSourceMonitor = AttentionMonitorRun["sources"][number];
+type SupportingSourceMonitor =
+  AttentionMonitorRun["supportingSources"][number];
+
+type LauncherSourceDiagnostic =
+  LauncherAttentionProjection["sourceDiagnostics"][number];
+
+function sourceDiagnostics(
+  run: AttentionMonitorRun
+): LauncherAttentionProjection["sourceDiagnostics"] {
+  const github = run.sources[0];
+  const codex = run.sources[1];
+  const googleCalendar = run.supportingSources[0];
+  const notion = run.supportingSources[1];
+  return [
+    coreSourceDiagnostic(github),
+    coreSourceDiagnostic(codex),
+    supportingSourceDiagnostic(notion),
+    supportingSourceDiagnostic(googleCalendar)
+  ];
+}
+
+function coreSourceDiagnostic(
+  source: CoreSourceMonitor
+): LauncherSourceDiagnostic {
+  if (source.inputState !== "available") {
+    const unavailable = unavailableSourceDiagnostic(
+      source.inputState,
+      source.unavailableReason
+    );
+    return {
+      source: source.source,
+      ...unavailable,
+      signalCount: source.signalCount,
+      candidateSetComplete: source.candidateSetComplete
+    };
+  }
+  if (source.freshness === "invalid") {
+    return {
+      source: source.source,
+      state: "invalid",
+      signalCount: source.signalCount,
+      candidateSetComplete: source.candidateSetComplete,
+      reasonCode: null
+    };
+  }
+  if (source.freshness === "stale") {
+    return {
+      source: source.source,
+      state: "stale",
+      signalCount: source.signalCount,
+      candidateSetComplete: source.candidateSetComplete,
+      reasonCode: null
+    };
+  }
+  return {
+    source: source.source,
+    state: "available",
+    signalCount: source.signalCount,
+    candidateSetComplete: source.candidateSetComplete,
+    reasonCode: null
+  };
+}
+
+function supportingSourceDiagnostic(
+  source: SupportingSourceMonitor
+): LauncherSourceDiagnostic {
+  if (source.inputState === "unavailable") {
+    const unavailable = unavailableSourceDiagnostic(
+      null,
+      source.unavailableReason
+    );
+    return {
+      source: source.source,
+      ...unavailable,
+      signalCount: source.itemCount,
+      candidateSetComplete: null
+    };
+  }
+  if (source.freshness === "stale") {
+    return {
+      source: source.source,
+      state: "stale",
+      signalCount: source.itemCount,
+      candidateSetComplete: null,
+      reasonCode: null
+    };
+  }
+  return {
+    source: source.source,
+    state: "unevaluated",
+    signalCount: source.itemCount,
+    candidateSetComplete: null,
+    reasonCode: null
+  };
+}
+
+function unavailableSourceDiagnostic(
+  inputState:
+    | "missing"
+    | "rejected"
+    | "disconnected"
+    | "collection_failed"
+    | null,
+  reasonCode:
+    | "SNAPSHOT_MISSING"
+    | "SNAPSHOT_PARSE_FAILED"
+    | "SNAPSHOT_SCHEMA_UNSUPPORTED"
+    | "CONNECTOR_DISCONNECTED"
+    | "COLLECTION_FAILED"
+    | null
+): {
+  state: LauncherSourceDiagnosticState;
+  reasonCode: Exclude<LauncherSourceDiagnostic["reasonCode"], null>;
+} {
+  if (inputState !== null) {
+    return { state: inputState, reasonCode: requireReason(reasonCode) };
+  }
+  switch (reasonCode) {
+    case "SNAPSHOT_MISSING":
+      return { state: "missing", reasonCode };
+    case "SNAPSHOT_PARSE_FAILED":
+    case "SNAPSHOT_SCHEMA_UNSUPPORTED":
+      return { state: "rejected", reasonCode };
+    case "CONNECTOR_DISCONNECTED":
+      return { state: "disconnected", reasonCode };
+    case "COLLECTION_FAILED":
+      return { state: "collection_failed", reasonCode };
+    case null:
+      throw new TypeError(
+        "Unavailable source diagnostics require a reason code."
+      );
+  }
+}
+
+function requireReason(
+  reasonCode: LauncherSourceDiagnostic["reasonCode"]
+): Exclude<LauncherSourceDiagnostic["reasonCode"], null> {
+  if (reasonCode === null) {
+    throw new TypeError(
+      "Unavailable source diagnostics require a reason code."
+    );
+  }
+  return reasonCode;
+}
+
 function safeGitHubDestination(
   suggestion: ActiveAttentionCandidate
 ): string {
@@ -220,6 +370,12 @@ function launcherWhyNowLabel(
       return "리뷰 요청이 확인됨";
     case "WHY_NOW_ASSIGNED_WORK_OPEN":
       return "열린 할당 작업이 확인됨";
+    case "WHY_NOW_AUTHORED_PR_CHECKS_FAILED":
+      return "내 PR의 검사 실패가 확인됨";
+    case "WHY_NOW_AUTHORED_PR_CHANGES_REQUESTED":
+      return "내 PR에 변경 요청이 확인됨";
+    case "WHY_NOW_AUTHORED_PR_MERGE_CONFLICT":
+      return "내 PR의 병합 충돌이 확인됨";
     case "WHY_NOW_MANAGED_FAILURE_CURRENT":
       return "현재 Codex 실행 실패가 확인됨";
     case "WHY_NOW_CONFIGURED_HANDOFF_OPEN":

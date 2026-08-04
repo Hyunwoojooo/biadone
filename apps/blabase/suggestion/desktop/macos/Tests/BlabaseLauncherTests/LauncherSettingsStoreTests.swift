@@ -115,6 +115,52 @@ final class LauncherSettingsStoreTests: XCTestCase {
         XCTAssertNil(reloaded.legacyDashboardBaseURLString)
     }
 
+    func testConnectingExistingDataAlsoTargetsItsLocalDashboardByDefault() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let store = LauncherSettingsStore(
+            userDefaults: fixture.defaults,
+            environment: [:],
+            fileManager: fixture.fileManager
+        )
+        let viewModel = LauncherSettingsViewModel(
+            store: store,
+            fileManager: fixture.fileManager,
+            applyHandler: { _, _ in throw CancellationError() }
+        )
+
+        XCTAssertEqual(
+            viewModel.dashboardBaseURLText,
+            "https://app.blabase.com"
+        )
+
+        try viewModel.connectExistingDataRoot(at: fixture.dataRoot)
+
+        XCTAssertEqual(
+            viewModel.dataRootChoice,
+            .existingReadOnly(
+                path: fixture.dataRoot
+                    .resolvingSymlinksInPath()
+                    .standardizedFileURL.path
+            )
+        )
+        XCTAssertEqual(
+            viewModel.dashboardBaseURLText,
+            "http://localhost:3102"
+        )
+        XCTAssertTrue(viewModel.isDataRootDraftDirty)
+    }
+
+    func testExistingDataKeepsAnExplicitNonDefaultDashboard() throws {
+        XCTAssertEqual(
+            LauncherDataRootSelectionPolicy
+                .dashboardBaseURLStringForExistingRoot(
+                    current: "http://127.0.0.1:3199"
+                ),
+            "http://127.0.0.1:3199"
+        )
+    }
+
     func testUnknownSettingsVersionFailsClosed() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

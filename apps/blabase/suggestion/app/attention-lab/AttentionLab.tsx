@@ -226,6 +226,7 @@ export function AttentionLab() {
             : null
         }
       />
+      <DeveloperSignalPanel response={current} />
       <ActiveDecisionPanel response={current} />
 
       {history?.status === "ready" ? (
@@ -248,6 +249,100 @@ export function AttentionLab() {
       ) : null}
     </main>
   );
+}
+
+function DeveloperSignalPanel({
+  response
+}: {
+  response: AttentionApiResponse | null;
+}) {
+  if (response?.status !== "ready") return null;
+  const summary = response.developerSignals;
+  return (
+    <section
+      className="labEligibilityPanel"
+      aria-labelledby="developer-signal-title"
+    >
+      <div className="labPanelHeader">
+        <div>
+          <p className="eyebrow">Developer Signal Intelligence · v0.1</p>
+          <h2 id="developer-signal-title">작업 장부와 후보 funnel</h2>
+        </div>
+        <span>원문 없는 집계</span>
+      </div>
+      <p className="labEligibilityBoundary">
+        GitHub와 Codex 관찰을 먼저 작업 장부로 합치고, 수집·정규화·해석·
+        검증·자격 판정·선택 단계를 모두 기록합니다. Codex 과거 대화의
+        열린 고리는 현재성 검증 전에는 추천 후보가 되지 않습니다.
+      </p>
+      <div className="labFunnel labEligibilityFunnel">
+        <div>
+          <strong>{summary.entityCounts.workItems}</strong>
+          <span>작업 항목</span>
+        </div>
+        <div>
+          <strong>{summary.entityCounts.blockers}</strong>
+          <span>확인된 blocker</span>
+        </div>
+        <div>
+          <strong>{summary.claimCounts.open}</strong>
+          <span>Codex 열린 고리</span>
+        </div>
+      </div>
+      <ol className="labActiveRanking">
+        {summary.stageSummaries.map((stage) => (
+          <li key={stage.stage}>
+            <span>{developerStageLabel(stage.stage)}</span>
+            <div>
+              <strong>{stage.enteredCount}개 진입</strong>
+              <small>
+                제외 {stage.outcomeCounts.rejected} · 미도달{" "}
+                {stage.outcomeCounts.notReached}
+              </small>
+            </div>
+            <code>
+              {stage.outcomeCounts.selected > 0
+                ? `selected ${stage.outcomeCounts.selected}`
+                : `traces ${stage.totalTraceCount}`}
+            </code>
+          </li>
+        ))}
+      </ol>
+      <details className="labTechnical">
+        <summary>장부·funnel integrity 정보</summary>
+        <dl>
+          <TechnicalValue label="Ledger" value={summary.ledgerSha256} />
+          <TechnicalValue label="Funnel" value={summary.funnelSha256} />
+          <TechnicalValue label="Summary" value={summary.summarySha256} />
+        </dl>
+      </details>
+    </section>
+  );
+}
+
+function developerStageLabel(
+  stage:
+    | "collected"
+    | "normalized"
+    | "interpreted"
+    | "verified"
+    | "eligibility"
+    | "selected"
+): string {
+  switch (stage) {
+    case "collected":
+      return "수집";
+    case "normalized":
+      return "정규화";
+    case "interpreted":
+      return "해석";
+    case "verified":
+      return "검증";
+    case "eligibility":
+      return "자격";
+    case "selected":
+      return "선택";
+  }
 }
 
 function ActiveDecisionPanel({

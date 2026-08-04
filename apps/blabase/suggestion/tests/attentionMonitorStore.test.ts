@@ -308,7 +308,7 @@ describe("Attention local monitor store", () => {
         (run) => run.runId === currentRun.run.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-run-v0.4",
+      contract: "attention-monitor-run-v0.5",
       replayArtifactState: "available"
     });
     expect(persisted.feedback).toHaveLength(1);
@@ -322,7 +322,7 @@ describe("Attention local monitor store", () => {
         (failure) => failure.runId === currentFailure.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-failure-v0.3",
+      contract: "attention-monitor-failure-v0.4",
       codeState: "unavailable"
     });
   });
@@ -446,7 +446,7 @@ describe("Attention local monitor store", () => {
           status: "failed",
           errorCode: "ATTENTION_RESOLUTION_FAILED",
           latencyMs: 1_250,
-          contract: "attention-monitor-failure-v0.3",
+          contract: "attention-monitor-failure-v0.4",
           codeCommitSha: "a".repeat(40),
           codeState: "declared_commit",
           codeFingerprintSha256: null
@@ -746,7 +746,7 @@ describe("Attention local monitor store", () => {
     });
   });
 
-  it("fails closed when a v0.4 replay artifact is missing or schema-invalid", async () => {
+  it("fails closed when a v0.5 replay artifact is missing or schema-invalid", async () => {
     for (const corruption of ["missing", "invalid_schema"] as const) {
       const cwd = await temporaryDirectory();
       const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
@@ -777,7 +777,7 @@ describe("Attention local monitor store", () => {
     }
   });
 
-  it("fails closed when a v0.4 replay hash claim is not the artifact hash", async () => {
+  it("fails closed when a v0.5 replay hash claim is not the artifact hash", async () => {
     const cwd = await temporaryDirectory();
     const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
     await recordAttentionRun(
@@ -1028,7 +1028,7 @@ function legacyRunFieldsFromEvaluation(
 function legacyFailureFixture(
   current: ReturnType<typeof createAttentionFailureRecord>
 ) {
-  if (current.contract !== "attention-monitor-failure-v0.3") {
+  if (current.contract !== "attention-monitor-failure-v0.4") {
     throw new TypeError("Expected a current failure fixture.");
   }
   const {

@@ -95,12 +95,21 @@ export const ATTENTION_CANDIDATE_SEED_SCHEMA_VERSION =
   "attention-candidate-seed-v0.1" as const;
 
 export const ATTENTION_ELIGIBILITY_POLICY_VERSION =
+  "hard-attention-eligibility-policy-v0.2" as const;
+
+export const ATTENTION_ELIGIBILITY_LEGACY_POLICY_VERSION =
   "hard-attention-eligibility-policy-v0.1" as const;
 
 export const ATTENTION_ELIGIBILITY_EVIDENCE_POLICY_VERSION =
+  "attention-eligibility-evidence-v0.2" as const;
+
+export const ATTENTION_ELIGIBILITY_LEGACY_EVIDENCE_POLICY_VERSION =
   "attention-eligibility-evidence-v0.1" as const;
 
 export const ATTENTION_ELIGIBILITY_RESOLVER_VERSION =
+  "attention-eligibility-resolver-v0.2" as const;
+
+export const ATTENTION_ELIGIBILITY_LEGACY_RESOLVER_VERSION =
   "attention-eligibility-resolver-v0.1" as const;
 
 export const ATTENTION_ELIGIBILITY_ID_POLICY_VERSION =
@@ -114,6 +123,9 @@ export const WORK_SIGNAL_ID_POLICY_VERSION =
 
 export const GITHUB_WORK_SIGNAL_NORMALIZER_VERSION =
   "github-project-context-normalizer-v0.2" as const;
+
+export const GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION =
+  "github-pr-actionability-normalizer-v0.3" as const;
 
 export const CODEX_WORK_SIGNAL_NORMALIZER_VERSION =
   "codex-historical-context-normalizer-v0.3" as const;
@@ -143,21 +155,36 @@ export const ACTIVE_ATTENTION_INPUT_CONTRACT =
   "cross-source-active-attention-input-v0.4" as const;
 
 export const ACTIVE_ATTENTION_RESULT_CONTRACT =
+  "cross-source-active-attention-result-v0.5" as const;
+
+export const ACTIVE_ATTENTION_PREVIOUS_RESULT_CONTRACT =
   "cross-source-active-attention-result-v0.4" as const;
 
 export const ACTIVE_ATTENTION_POLICY_VERSION =
+  "aggressive-evidence-bound-attention-policy-v0.4" as const;
+
+export const ACTIVE_ATTENTION_PREVIOUS_POLICY_VERSION =
   "aggressive-evidence-bound-attention-policy-v0.3" as const;
 
 export const ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION =
+  "github-managed-codex-active-candidate-rule-v0.2" as const;
+
+export const ACTIVE_ATTENTION_PREVIOUS_CANDIDATE_RULE_VERSION =
   "github-managed-codex-active-candidate-rule-v0.1" as const;
 
 export const ACTIVE_ATTENTION_LANE_POLICY_VERSION =
   "active-attention-lane-policy-v0.1" as const;
 
 export const ACTIVE_ATTENTION_RANKING_POLICY_VERSION =
+  "active-attention-ranking-policy-v0.3" as const;
+
+export const ACTIVE_ATTENTION_PREVIOUS_RANKING_POLICY_VERSION =
   "active-attention-ranking-policy-v0.2" as const;
 
 export const ACTIVE_ATTENTION_RESOLVER_VERSION =
+  "active-attention-decision-resolver-v0.4" as const;
+
+export const ACTIVE_ATTENTION_PREVIOUS_RESOLVER_VERSION =
   "active-attention-decision-resolver-v0.3" as const;
 
 export const ACTIVE_ATTENTION_ID_POLICY_VERSION =

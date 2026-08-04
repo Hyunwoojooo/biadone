@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import configArtifact from "../../eval/synthetic/activeAttentionDecisionConfig.v0.2.json";
 import datasetArtifact from "../../eval/synthetic/activeAttentionDecisionCases.v0.1.json";
+import expectationRevisionArtifact from "../../eval/synthetic/activeAttentionExpectations.v0.2.json";
 import {
   ACTIVE_ATTENTION_EVALUATION_SCENARIOS,
   buildActiveAttentionEvaluationFixture
@@ -256,8 +257,8 @@ export const activeAttentionEvaluationDatasetSchema = z
     schemaVersion: z.literal(
       ACTIVE_ATTENTION_EVALUATION_CASE_SCHEMA_VERSION
     ),
-    datasetVersion: z.literal("suggestion-active-attention-dev-v0.1"),
-    datasetRevision: z.literal(2),
+    datasetVersion: z.literal("suggestion-active-attention-dev-v0.2"),
+    datasetRevision: z.literal(3),
     datasetClass: z.literal("dev_candidate"),
     inputBoundary: z.literal(
       "exact_phase4b_replayable_evidence_envelope"
@@ -426,8 +427,8 @@ export type ActiveAttentionDecisionEvaluationRecord = {
   completedAt: string;
   latencyMs: number;
   dataset: {
-    version: "suggestion-active-attention-dev-v0.1";
-    revision: 2;
+    version: "suggestion-active-attention-dev-v0.2";
+    revision: 3;
     class: "dev_candidate";
     split: "development";
     lifecycle: "mutable";
@@ -562,10 +563,64 @@ export const ACTIVE_ATTENTION_CONFIG_SHA256 = sha256Canonical(
   activeAttentionEvaluationConfig
 );
 export const activeAttentionEvaluationDataset =
-  loadActiveAttentionEvaluationDataset(datasetArtifact);
+  loadActiveAttentionEvaluationDataset(
+    applyActiveAttentionExpectationRevision(
+      datasetArtifact,
+      expectationRevisionArtifact
+    )
+  );
 export const ACTIVE_ATTENTION_DATASET_SHA256 = sha256Canonical(
   activeAttentionEvaluationDataset
 );
+
+function applyActiveAttentionExpectationRevision(
+  baseInput: unknown,
+  revisionInput: unknown
+): unknown {
+  const base = z
+    .object({
+      datasetVersion: z.literal(
+        "suggestion-active-attention-dev-v0.1"
+      ),
+      datasetRevision: z.literal(2)
+    })
+    .passthrough()
+    .parse(baseInput);
+  const revision = z
+    .object({
+      contract: z.literal(
+        "active-attention-expectation-revision-v0.1"
+      ),
+      baseDatasetVersion: z.literal(base.datasetVersion),
+      baseDatasetRevision: z.literal(base.datasetRevision),
+      baseDatasetSha256: sha256Schema,
+      datasetVersion: z.literal(
+        "suggestion-active-attention-dev-v0.2"
+      ),
+      datasetRevision: z.literal(3),
+      reason: z.literal(
+        "active-attention-v0.5-versioned-output-rebaseline"
+      ),
+      expectedResultSha256ByCase: z.record(
+        z.string().regex(/^ACTIVE-DEV-[0-9]{3}$/),
+        sha256Schema.nullable()
+      )
+    })
+    .strict()
+    .parse(revisionInput);
+  if (sha256Canonical(baseInput) !== revision.baseDatasetSha256) {
+    throw new TypeError(
+      "Active Attention expectation revision base dataset hash mismatch."
+    );
+  }
+  return {
+    ...base,
+    datasetVersion: revision.datasetVersion,
+    datasetRevision: revision.datasetRevision,
+    expectedResultSha256ByCase:
+      revision.expectedResultSha256ByCase
+  };
+}
 
 export function runActiveAttentionDecisionEvaluation(input?: {
   startedAt?: Date;

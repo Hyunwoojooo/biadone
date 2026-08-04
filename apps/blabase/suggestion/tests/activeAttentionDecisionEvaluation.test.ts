@@ -17,8 +17,8 @@ const FIXED_END = new Date("2026-08-02T03:00:00.150Z");
 describe("Phase 4B active Attention targeted evaluation", () => {
   it("loads a separate mutable 44-case bounded synthetic Dev Candidate", () => {
     expect(activeAttentionEvaluationDataset).toMatchObject({
-      datasetVersion: "suggestion-active-attention-dev-v0.1",
-      datasetRevision: 2,
+      datasetVersion: "suggestion-active-attention-dev-v0.2",
+      datasetRevision: 3,
       datasetClass: "dev_candidate",
       inputBoundary: "exact_phase4b_replayable_evidence_envelope",
       dataOrigin: "bounded_synthetic",
@@ -59,7 +59,7 @@ describe("Phase 4B active Attention targeted evaluation", () => {
       "f8da1f5c0b8f55aaa6acffbd6885bdf4a1a759ca0c0f3cf61d84dcb35b6df30b"
     );
     expect(ACTIVE_ATTENTION_DATASET_SHA256).toBe(
-      "e10bf1fa0415e39003f5d03d760feb75dbe13dac1e606253e78ebb1ab9f0f290"
+      "fc8be53b229f4c685591e34b005a4e99fbf49eb7722cc86cd4aeab97f04c8a26"
     );
   });
 
@@ -107,14 +107,14 @@ describe("Phase 4B active Attention targeted evaluation", () => {
     expect(record.cases.every((item) => item.passed)).toBe(true);
     expect(record.errors).toEqual([]);
     expect(record.versions).toMatchObject({
-      rankingPolicyVersion: "active-attention-ranking-policy-v0.2",
-      resolverVersion: "active-attention-decision-resolver-v0.3"
+      rankingPolicyVersion: "active-attention-ranking-policy-v0.3",
+      resolverVersion: "active-attention-decision-resolver-v0.4"
     });
     expect(record.dataset.materializedInputSha256).toBe(
-      "b1b467a42f1de6564e1a2d08a48b3823c74077fe87c9eb8af4318112480e1c58"
+      "baa7a6ec69173b4207e4409b900519c3148ad06995726aad78f9e2d6ef79f940"
     );
     expect(record.deterministicOutputSha256).toBe(
-      "1be64deabff76cc625de4e7ac8dd292fe5d403380cbdf9308cb6108dbaa3a276"
+      "6ce881d595ab1476e95f33710c5ee7c6cd9be412d492b2b79daa26faf71c0d55"
     );
     expect(record.privacy).toEqual({
       classification: "synthetic_sanitized_metadata",
@@ -142,26 +142,30 @@ describe("Phase 4B active Attention targeted evaluation", () => {
     );
   });
 
-  it("uses unique run IDs while preserving deterministic artifacts", () => {
-    const input = { startedAt: FIXED_START, completedAt: FIXED_END };
-    const first = runActiveAttentionDecisionEvaluation(input);
-    const second = runActiveAttentionDecisionEvaluation(input);
+  it(
+    "uses unique run IDs while preserving deterministic artifacts",
+    () => {
+      const input = { startedAt: FIXED_START, completedAt: FIXED_END };
+      const first = runActiveAttentionDecisionEvaluation(input);
+      const second = runActiveAttentionDecisionEvaluation(input);
 
-    expect(first.runId).toMatch(
-      /^active_attention_eval_run_[a-f0-9]{32}$/
-    );
-    expect(second.runId).toMatch(
-      /^active_attention_eval_run_[a-f0-9]{32}$/
-    );
-    expect(first.runId).not.toBe(second.runId);
-    expect(first.deterministicOutputSha256).toBe(
-      second.deterministicOutputSha256
-    );
-    expect(first.dataset.materializedInputSha256).toBe(
-      second.dataset.materializedInputSha256
-    );
-    expect(first.cases).toEqual(second.cases);
-  });
+      expect(first.runId).toMatch(
+        /^active_attention_eval_run_[a-f0-9]{32}$/
+      );
+      expect(second.runId).toMatch(
+        /^active_attention_eval_run_[a-f0-9]{32}$/
+      );
+      expect(first.runId).not.toBe(second.runId);
+      expect(first.deterministicOutputSha256).toBe(
+        second.deterministicOutputSha256
+      );
+      expect(first.dataset.materializedInputSha256).toBe(
+        second.dataset.materializedInputSha256
+      );
+      expect(first.cases).toEqual(second.cases);
+    },
+    15_000
+  );
 
   it("rejects config hash and semantic config tampering", () => {
     const wrongHash = structuredClone(activeAttentionEvaluationDataset);

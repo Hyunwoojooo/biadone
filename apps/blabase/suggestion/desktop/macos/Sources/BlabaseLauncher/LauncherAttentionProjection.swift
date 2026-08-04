@@ -7,6 +7,17 @@ enum AttentionDecisionStatus: String, Codable, Sendable, CaseIterable {
     case insufficientEvidence = "insufficient_evidence"
 }
 
+enum AttentionDecisionReasonCode: String, Codable, Sendable, CaseIterable,
+    Hashable {
+    case bestEligibleCandidate = "DECISION_BEST_ELIGIBLE_CANDIDATE"
+    case refreshRequired = "DECISION_REFRESH_REQUIRED"
+    case userClarificationRequired =
+        "DECISION_USER_CLARIFICATION_REQUIRED"
+    case scopedNoAction = "DECISION_SCOPED_NO_ACTION"
+    case relevantCoverageInsufficient =
+        "DECISION_RELEVANT_COVERAGE_INSUFFICIENT"
+}
+
 enum AttentionSource: String, Codable, Sendable, CaseIterable, Hashable {
     case github
     case codex
@@ -19,6 +30,82 @@ enum AttentionSource: String, Codable, Sendable, CaseIterable, Hashable {
         case .codex: "Codex"
         case .notion: "Notion"
         case .googleCalendar: "Google Calendar"
+        }
+    }
+}
+
+enum AttentionSourceDiagnosticState: String, Codable, Sendable {
+    case available
+    case stale
+    case invalid
+    case missing
+    case rejected
+    case disconnected
+    case collectionFailed = "collection_failed"
+    case unevaluated
+
+    var isUsable: Bool { self == .available }
+}
+
+enum AttentionSourceDiagnosticReasonCode: String, Codable, Sendable {
+    case snapshotMissing = "SNAPSHOT_MISSING"
+    case snapshotParseFailed = "SNAPSHOT_PARSE_FAILED"
+    case snapshotSchemaUnsupported = "SNAPSHOT_SCHEMA_UNSUPPORTED"
+    case connectorDisconnected = "CONNECTOR_DISCONNECTED"
+    case collectionFailed = "COLLECTION_FAILED"
+}
+
+struct AttentionCandidateCounts: Codable, Equatable, Sendable {
+    static let maximumCount = 1_000_000_000
+
+    let eligible: Int
+    let reviewRequired: Int
+    let ineligible: Int
+
+    var isValid: Bool {
+        [eligible, reviewRequired, ineligible].allSatisfy {
+            (0...Self.maximumCount).contains($0)
+        }
+    }
+}
+
+struct AttentionSourceDiagnostic: Codable, Equatable, Sendable {
+    static let maximumSignalCount = 1_000_000_000
+
+    let source: AttentionSource
+    let state: AttentionSourceDiagnosticState
+    let signalCount: Int
+    let candidateSetComplete: Bool?
+    let reasonCode: AttentionSourceDiagnosticReasonCode?
+
+    var isValid: Bool {
+        (0...Self.maximumSignalCount).contains(signalCount) &&
+            candidateCompletenessMatchesSource &&
+            reasonMatchesState
+    }
+
+    private var candidateCompletenessMatchesSource: Bool {
+        switch source {
+        case .github, .codex:
+            candidateSetComplete != nil
+        case .notion, .googleCalendar:
+            candidateSetComplete == nil
+        }
+    }
+
+    private var reasonMatchesState: Bool {
+        switch state {
+        case .available, .stale, .invalid, .unevaluated:
+            reasonCode == nil
+        case .missing:
+            reasonCode == .snapshotMissing
+        case .rejected:
+            reasonCode == .snapshotParseFailed ||
+                reasonCode == .snapshotSchemaUnsupported
+        case .disconnected:
+            reasonCode == .connectorDisconnected
+        case .collectionFailed:
+            reasonCode == .collectionFailed
         }
     }
 }
@@ -107,11 +194,14 @@ struct AttentionCard: Codable, Equatable, Sendable {
 }
 
 struct LauncherAttentionProjection: Equatable, Sendable {
-    static let contract = "blabase-launcher-attention-v1"
+    static let contract = "blabase-launcher-attention-v2"
 
     let resultId: String
     let asOf: String
     let decisionStatus: AttentionDecisionStatus
+    let decisionReasonCodes: [AttentionDecisionReasonCode]
+    let candidateCounts: AttentionCandidateCounts
+    let sourceDiagnostics: [AttentionSourceDiagnostic]
     let card: AttentionCard?
     let clarificationQuestion: String?
     let scopeStatement: String
@@ -125,6 +215,9 @@ extension LauncherAttentionProjection: Codable {
         case resultId
         case asOf
         case decisionStatus
+        case decisionReasonCodes
+        case candidateCounts
+        case sourceDiagnostics
         case card
         case clarificationQuestion
         case scopeStatement
@@ -147,6 +240,18 @@ extension LauncherAttentionProjection: Codable {
         decisionStatus = try container.decode(
             AttentionDecisionStatus.self,
             forKey: .decisionStatus
+        )
+        decisionReasonCodes = try container.decode(
+            [AttentionDecisionReasonCode].self,
+            forKey: .decisionReasonCodes
+        )
+        candidateCounts = try container.decode(
+            AttentionCandidateCounts.self,
+            forKey: .candidateCounts
+        )
+        sourceDiagnostics = try container.decode(
+            [AttentionSourceDiagnostic].self,
+            forKey: .sourceDiagnostics
         )
         card = try container.decodeIfPresent(AttentionCard.self, forKey: .card)
         clarificationQuestion = try container.decodeIfPresent(
@@ -183,6 +288,35 @@ extension LauncherAttentionProjection: Codable {
             )
         }
         guard
+            !decisionReasonCodes.isEmpty,
+            decisionReasonCodes.count <= 3,
+            Set(decisionReasonCodes).count == decisionReasonCodes.count,
+            Self.reasonCodesMatchDecision(
+                decisionReasonCodes,
+                decisionStatus: decisionStatus
+            ),
+            candidateCounts.isValid,
+            (decisionStatus == .suggested) ==
+                (candidateCounts.eligible > 0)
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .decisionReasonCodes,
+                in: container,
+                debugDescription: "Launcher decision diagnostics are inconsistent."
+            )
+        }
+        guard
+            sourceDiagnostics.map(\.source) == AttentionSource.allCases,
+            sourceDiagnostics.allSatisfy(\.isValid)
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sourceDiagnostics,
+                in: container,
+                debugDescription:
+                    "Launcher source diagnostics must contain four canonical valid entries."
+            )
+        }
+        guard
             (decisionStatus == .needsClarification) ==
                 (clarificationQuestion != nil)
         else {
@@ -210,6 +344,12 @@ extension LauncherAttentionProjection: Codable {
         try container.encode(resultId, forKey: .resultId)
         try container.encode(asOf, forKey: .asOf)
         try container.encode(decisionStatus, forKey: .decisionStatus)
+        try container.encode(
+            decisionReasonCodes,
+            forKey: .decisionReasonCodes
+        )
+        try container.encode(candidateCounts, forKey: .candidateCounts)
+        try container.encode(sourceDiagnostics, forKey: .sourceDiagnostics)
         try container.encodeIfPresent(card, forKey: .card)
         try container.encodeIfPresent(
             clarificationQuestion,
@@ -218,6 +358,25 @@ extension LauncherAttentionProjection: Codable {
         try container.encode(scopeStatement, forKey: .scopeStatement)
         try container.encode(unavailableSources, forKey: .unavailableSources)
         try container.encode(dashboardPath, forKey: .dashboardPath)
+    }
+
+    private static func reasonCodesMatchDecision(
+        _ reasonCodes: [AttentionDecisionReasonCode],
+        decisionStatus: AttentionDecisionStatus
+    ) -> Bool {
+        let allowed: Set<AttentionDecisionReasonCode>
+        switch decisionStatus {
+        case .suggested:
+            allowed = [.bestEligibleCandidate]
+        case .needsClarification:
+            allowed = [.userClarificationRequired]
+        case .noAction:
+            allowed = [.scopedNoAction]
+        case .insufficientEvidence:
+            allowed = [.refreshRequired, .relevantCoverageInsufficient]
+        }
+        return !allowed.isDisjoint(with: reasonCodes) &&
+            reasonCodes.allSatisfy(allowed.contains)
     }
 }
 

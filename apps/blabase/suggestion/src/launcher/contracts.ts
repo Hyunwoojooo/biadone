@@ -3,7 +3,7 @@ import { z } from "zod";
 export const LAUNCHER_IPC_CONTRACT =
   "blabase-launcher-ipc-v1" as const;
 export const LAUNCHER_ATTENTION_CONTRACT =
-  "blabase-launcher-attention-v1" as const;
+  "blabase-launcher-attention-v2" as const;
 export const LAUNCHER_EXECUTION_CONTRACT =
   "blabase-launcher-execution-v1" as const;
 
@@ -85,6 +85,95 @@ export const launcherPrimaryActionSchema = z.discriminatedUnion(
   ]
 );
 
+export const launcherDecisionReasonCodeSchema = z.enum([
+  "DECISION_BEST_ELIGIBLE_CANDIDATE",
+  "DECISION_REFRESH_REQUIRED",
+  "DECISION_USER_CLARIFICATION_REQUIRED",
+  "DECISION_SCOPED_NO_ACTION",
+  "DECISION_RELEVANT_COVERAGE_INSUFFICIENT"
+]);
+
+export const launcherSourceDiagnosticStateSchema = z.enum([
+  "available",
+  "stale",
+  "invalid",
+  "missing",
+  "rejected",
+  "disconnected",
+  "collection_failed",
+  "unevaluated"
+]);
+
+export const launcherSourceDiagnosticReasonCodeSchema = z.enum([
+  "SNAPSHOT_MISSING",
+  "SNAPSHOT_PARSE_FAILED",
+  "SNAPSHOT_SCHEMA_UNSUPPORTED",
+  "CONNECTOR_DISCONNECTED",
+  "COLLECTION_FAILED"
+]);
+
+export const launcherCandidateCountsSchema = z
+  .object({
+    eligible: z.number().int().nonnegative(),
+    reviewRequired: z.number().int().nonnegative(),
+    ineligible: z.number().int().nonnegative()
+  })
+  .strict();
+
+export const launcherSourceDiagnosticSchema = z
+  .object({
+    source: z.enum([
+      "github",
+      "codex",
+      "notion",
+      "google_calendar"
+    ]),
+    state: launcherSourceDiagnosticStateSchema,
+    signalCount: z.number().int().nonnegative(),
+    candidateSetComplete: z.boolean().nullable(),
+    reasonCode: launcherSourceDiagnosticReasonCodeSchema.nullable()
+  })
+  .strict()
+  .superRefine((diagnostic, context) => {
+    const isCandidateSource =
+      diagnostic.source === "github" || diagnostic.source === "codex";
+    if (
+      (isCandidateSource && diagnostic.candidateSetComplete === null) ||
+      (!isCandidateSource && diagnostic.candidateSetComplete !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateSetComplete"],
+        message:
+          "Candidate completeness is required only for GitHub and Codex."
+      });
+    }
+
+    const reasonMatchesState =
+      ((diagnostic.state === "available" ||
+        diagnostic.state === "stale" ||
+        diagnostic.state === "invalid" ||
+        diagnostic.state === "unevaluated") &&
+        diagnostic.reasonCode === null) ||
+      (diagnostic.state === "disconnected" &&
+        diagnostic.reasonCode === "CONNECTOR_DISCONNECTED") ||
+      (diagnostic.state === "missing" &&
+        diagnostic.reasonCode === "SNAPSHOT_MISSING") ||
+      (diagnostic.state === "rejected" &&
+        (diagnostic.reasonCode === "SNAPSHOT_PARSE_FAILED" ||
+          diagnostic.reasonCode ===
+            "SNAPSHOT_SCHEMA_UNSUPPORTED")) ||
+      (diagnostic.state === "collection_failed" &&
+        diagnostic.reasonCode === "COLLECTION_FAILED");
+    if (!reasonMatchesState) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reasonCode"],
+        message: "Source diagnostic state and reason code must agree."
+      });
+    }
+  });
+
 export const launcherAttentionProjectionSchema = z
   .object({
     contract: z.literal(LAUNCHER_ATTENTION_CONTRACT),
@@ -95,6 +184,17 @@ export const launcherAttentionProjectionSchema = z
       "needs_clarification",
       "no_action",
       "insufficient_evidence"
+    ]),
+    decisionReasonCodes: z
+      .array(launcherDecisionReasonCodeSchema)
+      .min(1)
+      .max(3),
+    candidateCounts: launcherCandidateCountsSchema,
+    sourceDiagnostics: z.tuple([
+      launcherSourceDiagnosticSchema,
+      launcherSourceDiagnosticSchema,
+      launcherSourceDiagnosticSchema,
+      launcherSourceDiagnosticSchema
     ]),
     card: z
       .object({
@@ -156,6 +256,82 @@ export const launcherAttentionProjectionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["unavailableSources"],
         message: "Unavailable sources must be unique."
+      });
+    }
+    if (
+      new Set(projection.decisionReasonCodes).size !==
+      projection.decisionReasonCodes.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["decisionReasonCodes"],
+        message: "Decision reason codes must be unique."
+      });
+    }
+    const reasonCodesMatchDecision = (() => {
+      switch (projection.decisionStatus) {
+        case "suggested":
+          return (
+            projection.decisionReasonCodes.length === 1 &&
+            projection.decisionReasonCodes[0] ===
+              "DECISION_BEST_ELIGIBLE_CANDIDATE"
+          );
+        case "needs_clarification":
+          return (
+            projection.decisionReasonCodes.length === 1 &&
+            projection.decisionReasonCodes[0] ===
+              "DECISION_USER_CLARIFICATION_REQUIRED"
+          );
+        case "no_action":
+          return (
+            projection.decisionReasonCodes.length === 1 &&
+            projection.decisionReasonCodes[0] ===
+              "DECISION_SCOPED_NO_ACTION"
+          );
+        case "insufficient_evidence":
+          return projection.decisionReasonCodes.every(
+            (reasonCode) =>
+              reasonCode === "DECISION_REFRESH_REQUIRED" ||
+              reasonCode ===
+                "DECISION_RELEVANT_COVERAGE_INSUFFICIENT"
+          );
+      }
+    })();
+    if (!reasonCodesMatchDecision) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["decisionReasonCodes"],
+        message: "Decision reason codes must match decision status."
+      });
+    }
+    if (
+      (projection.decisionStatus === "suggested") !==
+      (projection.candidateCounts.eligible > 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateCounts", "eligible"],
+        message:
+          "A suggested decision requires at least one eligible candidate, and other decisions cannot claim one."
+      });
+    }
+    const canonicalSources = [
+      "github",
+      "codex",
+      "notion",
+      "google_calendar"
+    ] as const;
+    if (
+      projection.sourceDiagnostics.some(
+        (diagnostic, index) =>
+          diagnostic.source !== canonicalSources[index]
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sourceDiagnostics"],
+        message:
+          "Source diagnostics must contain GitHub, Codex, Notion, and Google Calendar in canonical order."
       });
     }
   });
@@ -222,6 +398,21 @@ export type LauncherCommandGetRequest = z.infer<
 >;
 export type LauncherPrimaryAction = z.infer<
   typeof launcherPrimaryActionSchema
+>;
+export type LauncherDecisionReasonCode = z.infer<
+  typeof launcherDecisionReasonCodeSchema
+>;
+export type LauncherSourceDiagnosticState = z.infer<
+  typeof launcherSourceDiagnosticStateSchema
+>;
+export type LauncherSourceDiagnosticReasonCode = z.infer<
+  typeof launcherSourceDiagnosticReasonCodeSchema
+>;
+export type LauncherCandidateCounts = z.infer<
+  typeof launcherCandidateCountsSchema
+>;
+export type LauncherSourceDiagnostic = z.infer<
+  typeof launcherSourceDiagnosticSchema
 >;
 export type LauncherAttentionProjection = z.infer<
   typeof launcherAttentionProjectionSchema

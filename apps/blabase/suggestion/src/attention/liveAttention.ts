@@ -56,6 +56,15 @@ import { runtimeSha256 } from "../crossSource/canonicalHash";
 import { ACTIVE_ATTENTION_INPUT_CONTRACT } from "../crossSource/versions";
 import { resolveAttentionEligibilityShadow } from "../eligibility";
 import type { AttentionEligibilityShadowProjection } from "../eligibility";
+import {
+  CODEX_OPEN_LOOP_INPUT_CONTRACT,
+  adaptCodexWorkSignalBatchToOpenLoopInput,
+  extractCodexOpenLoops
+} from "../developerSignals/codexOpenLoops";
+import {
+  buildDeveloperRuntimeProjection,
+  type DeveloperRuntimeProjection
+} from "../developerSignals/runtimeProjection";
 import { loadSharedLocalEnv } from "../localEnv";
 import { syncRuntimeSources } from "../sync/runtime";
 import {
@@ -140,6 +149,7 @@ type EvaluatedAttention = {
   result: ActiveAttentionResult;
   baseResult: ReturnType<typeof runPhase2AttentionRouter>;
   eligibilityProjection: AttentionEligibilityShadowProjection;
+  developerSignals: DeveloperRuntimeProjection;
   run: AttentionMonitorRun;
   replayArtifact: AttentionReplayInputArtifact;
 };
@@ -335,6 +345,10 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
     github.sourceInput.status === "available"
       ? github.sourceInput.batch
       : null;
+  const codexBatch =
+    codex.sourceInput.status === "available"
+      ? codex.sourceInput.batch
+      : null;
   const currentWorkEvidence =
     input.currentWorkEvidence ??
     resolveEmptyManagedWorkEvidence({
@@ -438,11 +452,41 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
   const codeState =
     input.codeState ??
     (input.codeCommitSha ? "declared_commit" : "unavailable");
+  const codexOpenLoopLedger = extractCodexOpenLoops(
+    codexBatch !== null &&
+      codexBatch.assessment.freshness === "fresh" &&
+      codexBatch.assessment.usableForOverview
+      ? adaptCodexWorkSignalBatchToOpenLoopInput({
+          batch: codexBatch,
+          asOf: input.asOf
+        })
+      : {
+          contract: CODEX_OPEN_LOOP_INPUT_CONTRACT,
+          asOf: input.asOf,
+          signals: []
+        }
+  );
+  const developerSignals = buildDeveloperRuntimeProjection({
+    asOf: input.asOf,
+    runId,
+    analysisId,
+    codeProvenance: {
+      codeState,
+      codeCommitSha: input.codeCommitSha ?? null,
+      codeFingerprintSha256: input.codeFingerprintSha256 ?? null
+    },
+    githubBatch,
+    codexBatch,
+    activeAttentionResult: result,
+    eligibilityProjection,
+    codexOpenLoopLedger
+  });
 
   return {
     result,
     baseResult,
     eligibilityProjection,
+    developerSignals,
     run: attentionMonitorRunSchema.parse({
       contract: ATTENTION_MONITOR_RUN_CONTRACT,
       runId,

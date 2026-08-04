@@ -22,7 +22,6 @@ import {
   submitAttentionFeedback
 } from "./attentionClient";
 import { ManagedCodexProgress } from "./ManagedCodexProgress";
-import { ProjectMappings } from "./ProjectMappings";
 import { recordProjectWorkflowClosure } from "./projectWorkflowsClient";
 import { syncInvalidationBus } from "./sync/invalidationBus";
 import {
@@ -180,12 +179,15 @@ export function WorkCockpit() {
       <div className="attentionHeader">
         <div>
           <div className="attentionKickerRow">
-            <p className="eyebrow">Work Cockpit</p>
-            <span>Beta · 추천은 read-only</span>
+            <p className="attentionTitleSignal">
+              <span aria-hidden="true" />
+              지금 이어갈 한 가지
+            </p>
+            <span>Beta · 확인 전에는 실행하지 않음</span>
           </div>
-          <h2 id="attention-title">지금 개입할 한 가지</h2>
+          <h2 id="attention-title">멈춘 곳에서 바로 이어가세요.</h2>
           <p>
-            연결되고 갱신된 범위에서 확인된 작업과 Codex 실행 현황입니다.
+            연결되고 갱신된 프로젝트 범위에서 확인한 다음 작업입니다.
           </p>
         </div>
         <button
@@ -195,12 +197,10 @@ export function WorkCockpit() {
           disabled={isLoading || isRefreshing}
         >
           {isRefreshing
-            ? "연결된 소스 갱신 중"
-            : "연결된 소스 새로고침 후 평가"}
+            ? "소스 갱신 중"
+            : "새로고침"}
         </button>
       </div>
-
-      <ProjectMappings />
 
       {isLoading && payload === null ? (
         <div className="attentionLoading" role="status">
@@ -271,6 +271,8 @@ function CockpitResult({
         scopeStatement={result.decision.scopeStatement}
         certainty={result.decision.certainty}
       />
+
+      <AttentionStatusStrip payload={payload} />
 
       <AttentionReviewDisclosure assessments={result.assessments} />
 
@@ -392,6 +394,37 @@ function CockpitResult({
   );
 }
 
+function AttentionStatusStrip({
+  payload
+}: {
+  payload: AttentionReadyResponse;
+}) {
+  const availableSources = payload.run.sources.filter(
+    (source) =>
+      source.inputState === "available" && source.freshness !== "invalid"
+  );
+  const reviewCount = payload.result.assessments.filter(
+    (assessment) => assessment.status === "review_required"
+  ).length;
+  return (
+    <div className="attentionStatusStrip" aria-label="평가 상태 요약">
+      <span>
+        마지막 평가 {formatTimestamp(payload.result.asOf)}
+      </span>
+      <span className="isHealthy">
+        {availableSources.length > 0
+          ? `${availableSources.map((source) => sourceLabel(source.source)).join(" · ")} 확인`
+          : "현재 확인된 source 없음"}
+      </span>
+      <span className={reviewCount > 0 ? "isWarning" : "isHealthy"}>
+        {reviewCount > 0
+          ? `확인 필요한 근거 ${reviewCount}개`
+          : "근거 충돌 없음"}
+      </span>
+    </div>
+  );
+}
+
 function AttentionReviewDisclosure({
   assessments
 }: {
@@ -458,12 +491,36 @@ function AttentionDecision({
   certainty: AttentionReadyResponse["result"]["decision"]["certainty"];
 }) {
   if (status === "suggested" && suggestion) {
+    const source =
+      suggestion.triggerSource === "codex_managed" ? "Codex" : "GitHub";
     return (
       <article className="attentionDecision attentionDecision-suggested">
+        <div className="attentionProjectContext">
+          <span className="attentionProjectMark" aria-hidden="true">
+            ◈
+          </span>
+          <span>
+            <strong>{suggestion.repositoryFullName}</strong>
+            <small>
+              {suggestion.projectId
+                ? "프로젝트 매핑 확인됨"
+                : "현재 저장소 범위 · 프로젝트 매핑 미확인"}
+            </small>
+          </span>
+          <span className="attentionProjectShortcut">현재 범위</span>
+        </div>
         <div className="attentionDecisionMeta">
           <span>{laneLabel(suggestion.lane)}</span>
           <span>
             {certainty === "confirmed" ? "확인된 후보" : "임시 제안"}
+          </span>
+          <span
+            className={`attentionSourceBadge ${
+              source === "Codex" ? "isCodex" : "isGitHub"
+            }`}
+          >
+            <i aria-hidden="true" />
+            {source}
           </span>
         </div>
         <h3>{suggestion.title}</h3>
@@ -1477,6 +1534,12 @@ function sourceState(source: AttentionSourceMonitor): {
   };
 }
 
+function sourceLabel(
+  source: AttentionSourceMonitor["source"]
+): string {
+  return source === "github" ? "GitHub" : "Codex";
+}
+
 function whyNowLabel(
   code: ActiveAttentionCandidate["whyNowReasonCodes"][number]
 ): string {
@@ -1489,6 +1552,12 @@ function whyNowLabel(
       return "리뷰 요청이 확인됨";
     case "WHY_NOW_ASSIGNED_WORK_OPEN":
       return "열린 할당 작업이 확인됨";
+    case "WHY_NOW_AUTHORED_PR_CHECKS_FAILED":
+      return "내 PR의 검사 실패가 확인됨";
+    case "WHY_NOW_AUTHORED_PR_CHANGES_REQUESTED":
+      return "내 PR에 변경 요청이 확인됨";
+    case "WHY_NOW_AUTHORED_PR_MERGE_CONFLICT":
+      return "내 PR의 병합 충돌이 확인됨";
     case "WHY_NOW_MANAGED_FAILURE_CURRENT":
       return "현재 Codex 실행 실패가 확인됨";
     case "WHY_NOW_CONFIGURED_HANDOFF_OPEN":

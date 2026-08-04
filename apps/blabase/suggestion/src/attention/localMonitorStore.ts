@@ -39,9 +39,11 @@ import {
   ATTENTION_MONITOR_MAX_RUNS,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
   ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_V02_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
   ATTENTION_MONITOR_RUN_CONTRACT,
   ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_RUN_V03_CONTRACT,
   ATTENTION_REPLAY_INPUT_CONTRACT,
   ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_STORE_CONTRACT
@@ -310,6 +312,8 @@ function assertReplayArtifactMatchesRun(
     (run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
       artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
     (run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
+      artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
+    (run.contract === ATTENTION_MONITOR_RUN_V03_CONTRACT &&
       artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT);
   const artifactSha256 = runtimeSha256({
     domain:
@@ -426,7 +430,8 @@ async function assertPersistedReplayClaims(
   for (const run of store.runs) {
     if (
       run.contract !== ATTENTION_MONITOR_RUN_CONTRACT &&
-      run.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+      run.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
+      run.contract !== ATTENTION_MONITOR_RUN_V03_CONTRACT
     ) {
       continue;
     }
@@ -646,6 +651,7 @@ async function writeAttentionMonitorStore(
     ),
     failures: store.failures.map((failure) =>
       failure.contract === "attention-monitor-failure-v0.1" ||
+      failure.contract === ATTENTION_MONITOR_FAILURE_V02_CONTRACT ||
       failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT
         ? legacyRecords.failures.get(failure.runId) ?? failure
         : failure
@@ -705,6 +711,7 @@ function collectPersistedLegacyRecords(
         isRecord(failure) &&
         typeof failure.runId === "string" &&
         (failure.contract === "attention-monitor-failure-v0.1" ||
+          failure.contract === ATTENTION_MONITOR_FAILURE_V02_CONTRACT ||
           failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT)
       ) {
         records.failures.set(failure.runId, failure);

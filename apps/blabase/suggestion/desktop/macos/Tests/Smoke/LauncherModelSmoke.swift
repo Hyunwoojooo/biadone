@@ -9,6 +9,93 @@ enum LauncherModelSmoke {
             "Shift-Space shortcut"
         )
         try expect(
+            LauncherNavigationReducer.cancel(from: .evidence) ==
+                LauncherCancelResult(
+                    route: .home,
+                    disposition: .handledInLauncher
+                ),
+            "evidence cancel returns home"
+        )
+        try expect(
+            LauncherNavigationReducer.cancel(from: .home) ==
+                LauncherCancelResult(
+                    route: .home,
+                    disposition: .closePanel
+                ),
+            "home cancel closes panel"
+        )
+        let partialCoverage = LauncherSourceCoverage.make(
+            unavailableSources: [.notion, .googleCalendar]
+        )
+        try expect(
+            partialCoverage.availableSources == [.github, .codex],
+            "source coverage canonical order"
+        )
+        try expect(
+            partialCoverage.compactSummary == "평가 범위 2/4",
+            "source coverage summary"
+        )
+        let disconnectedDiagnostics = [
+            AttentionSourceDiagnostic(
+                source: .github,
+                state: .missing,
+                signalCount: 0,
+                candidateSetComplete: false,
+                reasonCode: .snapshotMissing
+            ),
+            AttentionSourceDiagnostic(
+                source: .codex,
+                state: .disconnected,
+                signalCount: 0,
+                candidateSetComplete: false,
+                reasonCode: .connectorDisconnected
+            ),
+            AttentionSourceDiagnostic(
+                source: .notion,
+                state: .unevaluated,
+                signalCount: 0,
+                candidateSetComplete: nil,
+                reasonCode: nil
+            ),
+            AttentionSourceDiagnostic(
+                source: .googleCalendar,
+                state: .unevaluated,
+                signalCount: 0,
+                candidateSetComplete: nil,
+                reasonCode: nil
+            )
+        ]
+        try expect(
+            LauncherPresentation.shouldOfferDataConnectionCheck(
+                sourceDiagnostics: disconnectedDiagnostics
+            ),
+            "primary source recovery action"
+        )
+        let oneDisconnectedDiagnostics = [
+            AttentionSourceDiagnostic(
+                source: .github,
+                state: .available,
+                signalCount: 1,
+                candidateSetComplete: true,
+                reasonCode: nil
+            ),
+            disconnectedDiagnostics[1],
+            disconnectedDiagnostics[2],
+            disconnectedDiagnostics[3]
+        ]
+        try expect(
+            LauncherPresentation.shouldOfferDataConnectionCheck(
+                sourceDiagnostics: oneDisconnectedDiagnostics
+            ),
+            "single primary source recovery action"
+        )
+        try expect(
+            LauncherPresentation.sourceDiagnosticDisplay(
+                disconnectedDiagnostics[1]
+            ).stateLabel == "연결 안 됨",
+            "exact source diagnostic state"
+        )
+        try expect(
             LauncherIPC.requestID(
                 uuid: UUID(
                     uuidString: "11111111-2222-3333-4444-555555555555"
@@ -40,6 +127,13 @@ enum LauncherModelSmoke {
                 from: "http://localhost:3102"
             )?.absoluteString == "http://localhost:3102",
             "local dashboard base"
+        )
+        try expect(
+            SafeURLPolicy.dashboardURL(
+                path: "/sources",
+                baseURL: URL(string: "http://localhost:3102")!
+            )?.absoluteString == "http://localhost:3102/sources",
+            "local source connection destination"
         )
         try expect(
             SafeURLPolicy.dashboardBaseURL(
@@ -171,6 +265,20 @@ enum LauncherModelSmoke {
             reloadedSettings.currentDataRootChoice ==
                 .existingReadOnly(path: validatedDataRoot.path),
             "persisted root precedence"
+        )
+        try expect(
+            LauncherDataRootSelectionPolicy
+                .dashboardBaseURLStringForExistingRoot(
+                    current: "https://app.blabase.com"
+                ) == "http://localhost:3102",
+            "existing root local dashboard default"
+        )
+        try expect(
+            LauncherDataRootSelectionPolicy
+                .dashboardBaseURLStringForExistingRoot(
+                    current: "http://127.0.0.1:3199"
+                ) == "http://127.0.0.1:3199",
+            "existing root explicit dashboard retention"
         )
         try expect(
             LauncherSettingsApplyPlan.make(
@@ -310,10 +418,18 @@ enum LauncherModelSmoke {
         agentClient.shutdown()
         let validProjectionString = #"""
         {
-          "contract":"blabase-launcher-attention-v1",
+          "contract":"blabase-launcher-attention-v2",
           "resultId":"attention_result_11111111111111111111111111111111",
           "asOf":"2026-08-03T00:00:00.000Z",
           "decisionStatus":"insufficient_evidence",
+          "decisionReasonCodes":["DECISION_RELEVANT_COVERAGE_INSUFFICIENT"],
+          "candidateCounts":{"eligible":0,"reviewRequired":0,"ineligible":0},
+          "sourceDiagnostics":[
+            {"source":"github","state":"missing","signalCount":0,"candidateSetComplete":false,"reasonCode":"SNAPSHOT_MISSING"},
+            {"source":"codex","state":"available","signalCount":2,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"notion","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null},
+            {"source":"google_calendar","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null}
+          ],
           "card":null,
           "clarificationQuestion":null,
           "scopeStatement":"연결되고 갱신된 source만 평가했습니다.",

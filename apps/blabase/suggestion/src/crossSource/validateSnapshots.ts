@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import type { CodexSnapshot } from "../connectors/codex/types";
+import {
+  actionabilityCoverageMatchesTasks,
+  githubActionabilityCoverageSchema,
+  githubPullRequestActionabilitySchema
+} from "../connectors/github/actionabilityContract";
 import type { GitHubSnapshot } from "../connectors/github/types";
 import {
   compareRuntimeStrings,
@@ -182,9 +187,22 @@ const githubTaskSchema = z
     milestoneDueAt: timestampSchema.nullable(),
     state: z.literal("open"),
     createdAt: timestampSchema,
-    updatedAt: timestampSchema
+    updatedAt: timestampSchema,
+    actionability: githubPullRequestActionabilitySchema.optional()
   })
-  .strict();
+  .strict()
+  .superRefine((task, context) => {
+    if (
+      task.kind !== "authored_pull_request" &&
+      task.actionability !== undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionability"],
+        message: "Only authored PR tasks can contain actionability."
+      });
+    }
+  });
 
 const githubActivitySchema = z
   .object({
@@ -227,7 +245,7 @@ const githubActivitySchema = z
 
 export const githubRuntimeSnapshotSchema = z
   .object({
-    schemaVersion: z.literal("github-snapshot-v2"),
+    schemaVersion: z.enum(["github-snapshot-v2", "github-snapshot-v3"]),
     appClientId: z.string().min(1),
     appSlug: z.string().min(1),
     apiVersion: z.string().min(1),
@@ -246,12 +264,51 @@ export const githubRuntimeSnapshotSchema = z
       "unavailable"
     ]),
     activitiesTruncated: z.boolean(),
+    actionabilityCoverage: githubActionabilityCoverageSchema.optional(),
     installations: z.array(githubInstallationSchema),
     repositories: z.array(githubRepositorySchema),
     tasks: z.array(githubTaskSchema),
     activities: z.array(githubActivitySchema)
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, context) => {
+    if (
+      snapshot.schemaVersion === "github-snapshot-v2" &&
+      (snapshot.actionabilityCoverage !== undefined ||
+        snapshot.tasks.some((task) => task.actionability !== undefined))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tasks"],
+        message: "GitHub v2 snapshots cannot contain v3 actionability facts."
+      });
+    }
+    if (
+      snapshot.schemaVersion === "github-snapshot-v3" &&
+      snapshot.actionabilityCoverage === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionabilityCoverage"],
+        message: "GitHub v3 snapshots require actionability coverage."
+      });
+    }
+    if (snapshot.actionabilityCoverage !== undefined) {
+      if (
+        !actionabilityCoverageMatchesTasks(
+          snapshot.actionabilityCoverage,
+          snapshot.tasks
+        )
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["actionabilityCoverage"],
+          message:
+            "GitHub actionability coverage must match collected PR facts."
+        });
+      }
+    }
+  });
 
 const codexSessionSchema = z
   .object({
@@ -507,6 +564,15 @@ export function assessSnapshot(
     } else if (artifact.payload.activitiesState === "unavailable") {
       reasonCodes.push("GITHUB_ACTIVITIES_UNAVAILABLE");
     }
+    if (artifact.sourceSchemaVersion === "github-snapshot-v3") {
+      const actionabilityState =
+        artifact.payload.actionabilityCoverage?.state ?? "unavailable";
+      if (actionabilityState === "partial") {
+        reasonCodes.push("GITHUB_ACTIONABILITY_PARTIAL");
+      } else if (actionabilityState === "unavailable") {
+        reasonCodes.push("GITHUB_ACTIONABILITY_UNAVAILABLE");
+      }
+    }
   } else {
     reasonCodes.push("CODEX_OVERVIEW_ONLY");
   }
@@ -562,13 +628,18 @@ function completenessFor(
   const truncated =
     artifact.payload.truncated ||
     artifact.payload.activitiesTruncated;
+  const actionabilityComplete =
+    artifact.sourceSchemaVersion === "github-snapshot-v2" ||
+    artifact.payload.actionabilityCoverage?.state === "complete";
   return {
     completeness:
-      truncated || artifact.payload.activitiesState !== "available"
+      truncated ||
+      artifact.payload.activitiesState !== "available" ||
+      !actionabilityComplete
         ? "partial"
         : "complete",
     truncated,
-    candidateSetComplete: !truncated
+    candidateSetComplete: !truncated && actionabilityComplete
   };
 }
 
@@ -592,14 +663,14 @@ function rejectedSnapshot(
     typeof input === "object" &&
     typeof (input as Record<string, unknown>).schemaVersion ===
       "string"
-      ? (input as Record<string, unknown>).schemaVersion
+      ? ((input as Record<string, unknown>).schemaVersion as string)
       : null;
-  const expectedVersion =
+  const expectedVersions: Set<string> =
     source === "github"
-      ? "github-snapshot-v2"
-      : "codex-snapshot-v3";
+      ? new Set(["github-snapshot-v2", "github-snapshot-v3"])
+      : new Set(["codex-snapshot-v3"]);
   const unsupported =
-    schemaVersion !== null && schemaVersion !== expectedVersion;
+    schemaVersion !== null && !expectedVersions.has(schemaVersion);
 
   return {
     status: "rejected",
@@ -624,7 +695,17 @@ function normalizeGitHubPayload(
     tasks: sortCanonical(
       snapshot.tasks.map((task) => ({
         ...task,
-        labelNames: [...new Set(task.labelNames)].sort()
+        labelNames: [...new Set(task.labelNames)].sort(),
+        ...(task.actionability
+          ? {
+              actionability: {
+                ...task.actionability,
+                actionRequiredReasons: [
+                  ...task.actionability.actionRequiredReasons
+                ].sort(compareRuntimeStrings)
+              }
+            }
+          : {})
       }))
     ),
     activities: sortCanonical(snapshot.activities)

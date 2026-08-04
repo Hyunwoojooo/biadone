@@ -220,6 +220,130 @@ describe("GitHub runtime WorkSignal normalization", () => {
     ).toBe(true);
   });
 
+  it("keeps a verified authored PR failure actionable while global actionability coverage is partial", () => {
+    const result = normalizeGitHubSnapshotToWorkSignals(
+      githubSnapshot({
+        schemaVersion: "github-snapshot-v3",
+        actionabilityCoverage: {
+          state: "partial",
+          authoredPullRequestCount: 2,
+          attemptedCount: 2,
+          collectedCount: 1,
+          truncated: false
+        },
+        tasks: [
+          githubTask({
+            id: 301,
+            kind: "authored_pull_request",
+            number: 31,
+            title: "Fix failing checkout checks",
+            htmlUrl: "https://github.com/acme/app/pull/31",
+            actionability: {
+              collectionState: "partial",
+              draft: false,
+              reviewDecision: "unknown",
+              checksSummary: {
+                collectionState: "complete",
+                state: "failing",
+                totalCount: 2,
+                completedCount: 2,
+                failedCount: 1,
+                pendingCount: 0,
+                truncated: false
+              },
+              mergeable: true,
+              mergeConflict: false,
+              unresolvedChangeRequestCount: null,
+              requestedReviewerCount: 0,
+              actionRequired: true,
+              actionRequiredReasons: ["checks_failed"]
+            }
+          }),
+          githubTask({
+            id: 302,
+            kind: "authored_pull_request",
+            number: 32,
+            title: "Actionability unavailable",
+            htmlUrl: "https://github.com/acme/app/pull/32"
+          })
+        ],
+        activities: []
+      }),
+      options
+    );
+    expect(result.status).toBe("normalized");
+    if (result.status !== "normalized") return;
+
+    expect(result.batch.assessment).toMatchObject({
+      completeness: "partial",
+      truncated: false,
+      candidateSetComplete: false,
+      usableForCurrentCandidates: true,
+      reasonCodes: expect.arrayContaining([
+        "GITHUB_ACTIONABILITY_PARTIAL"
+      ])
+    });
+    const actionable = result.batch.signals.find(
+      (signal) => signal.subjectId === "github:object:301"
+    );
+    expect(actionable).toMatchObject({
+      kind: "work_item_observation",
+      completeness: "complete",
+      attentionCapability: "candidate_input",
+      facts: {
+        semanticRole: "direct_work_item",
+        eligibilityLimit: "none",
+        draftState: "ready",
+        actionability: {
+          actionRequired: true,
+          actionRequiredReasons: ["checks_failed"]
+        }
+      }
+    });
+    if (actionable?.kind !== "work_item_observation") return;
+    const actionabilityFields = new Set(
+      actionable.evidence
+        .filter((evidence) => evidence.type === "github_object_field")
+        .map((evidence) => evidence.field)
+    );
+    for (const field of [
+      "collection_state",
+      "draft",
+      "review_decision",
+      "checks_summary",
+      "mergeable",
+      "merge_conflict",
+      "unresolved_change_request_count",
+      "requested_reviewer_count",
+      "action_required",
+      "action_required_reasons"
+    ] as const) {
+      expect(actionabilityFields.has(field)).toBe(true);
+    }
+    expect(
+      runtimeWorkSignalSchema.safeParse({
+        ...actionable,
+        evidence: actionable.evidence.filter(
+          (evidence) =>
+            evidence.type !== "github_object_field" ||
+            evidence.field !== "action_required"
+        )
+      }).success
+    ).toBe(false);
+
+    expect(
+      result.batch.signals.find(
+        (signal) => signal.subjectId === "github:object:302"
+      )
+    ).toMatchObject({
+      attentionCapability: "overview_only",
+      facts: {
+        semanticRole: "context_only",
+        eligibilityLimit: "not_actionable_by_source_kind"
+      }
+    });
+  });
+
   it("crosses into the synthetic evaluation contract only through an explicit mapper", () => {
     const normalized = normalizeGitHubSnapshotToWorkSignals(
       githubSnapshot(),

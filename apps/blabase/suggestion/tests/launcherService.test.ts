@@ -41,7 +41,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: true })
     );
 
-    expect(result.contract).toBe("blabase-launcher-attention-v1");
+    expect(result.contract).toBe("blabase-launcher-attention-v2");
     expect(syncSources).toHaveBeenCalledWith({
       cwd: DATA_ROOT,
       env: expect.any(Object)
@@ -123,7 +123,7 @@ describe("LauncherService", () => {
     const projection = await service.handle(
       request("attention.get", { refresh: false })
     );
-    if (projection.contract !== "blabase-launcher-attention-v1") {
+    if (projection.contract !== "blabase-launcher-attention-v2") {
       throw new Error("Expected launcher attention projection.");
     }
     expect(projection.card?.primaryAction).toEqual({
@@ -193,7 +193,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: false })
     );
     if (
-      projection.contract !== "blabase-launcher-attention-v1" ||
+      projection.contract !== "blabase-launcher-attention-v2" ||
       !projection.card
     ) {
       throw new Error("Expected recommendation.");
@@ -238,7 +238,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: false })
     );
     if (
-      projection.contract !== "blabase-launcher-attention-v1" ||
+      projection.contract !== "blabase-launcher-attention-v2" ||
       !projection.card
     ) {
       throw new Error("Expected recommendation.");
@@ -278,7 +278,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: false })
     );
     if (
-      projection.contract !== "blabase-launcher-attention-v1" ||
+      projection.contract !== "blabase-launcher-attention-v2" ||
       !projection.card
     ) {
       throw new Error("Expected recommendation.");
@@ -324,7 +324,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: false })
     );
     if (
-      projection.contract !== "blabase-launcher-attention-v1" ||
+      projection.contract !== "blabase-launcher-attention-v2" ||
       !projection.card
     ) {
       throw new Error("Expected recommendation.");
@@ -378,7 +378,7 @@ describe("LauncherService", () => {
       request("attention.get", { refresh: false })
     );
     if (
-      projection.contract !== "blabase-launcher-attention-v1" ||
+      projection.contract !== "blabase-launcher-attention-v2" ||
       !projection.card
     ) {
       throw new Error("Expected recommendation.");
@@ -449,12 +449,40 @@ function evaluation(
         {
           source: "github",
           inputState: "available",
-          freshness: "fresh"
+          unavailableReason: null,
+          freshness: "fresh",
+          completeness: "complete",
+          candidateSetComplete: true,
+          signalCount: 1,
+          skippedRecordCount: 0
         },
         {
           source: "codex",
           inputState: "disconnected",
-          freshness: null
+          unavailableReason: "CONNECTOR_DISCONNECTED",
+          freshness: null,
+          completeness: null,
+          candidateSetComplete: false,
+          signalCount: 0,
+          skippedRecordCount: 0
+        }
+      ],
+      supportingSources: [
+        {
+          source: "google_calendar",
+          inputState: "unavailable",
+          unavailableReason: "CONNECTOR_DISCONNECTED",
+          freshness: null,
+          itemCount: 0,
+          mappedItemCount: 0
+        },
+        {
+          source: "notion",
+          inputState: "unavailable",
+          unavailableReason: "CONNECTOR_DISCONNECTED",
+          freshness: null,
+          itemCount: 0,
+          mappedItemCount: 0
         }
       ]
     } as AttentionMonitorRun,

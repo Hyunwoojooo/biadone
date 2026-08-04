@@ -1126,10 +1126,20 @@ invalidation 계약을 추가해야 한다.
 ## 17. Phase 4C launcher compatibility 검증
 
 Phase 4C는 Active Attention의 input, candidate, eligibility, lane, ranking,
-selection과 explanation을 변경하지 않는다. 기존 Phase 4B 결과를
-`blabase-launcher-attention-v1` public projection으로 축소하고 명시적
+selection과 explanation을 변경하지 않는다. 기존 Phase 4B 결과를 초기
+`blabase-launcher-attention-v1`, 현재 `blabase-launcher-attention-v2` public
+projection으로 축소하고 명시적
 `focus_or_resume`를 기존 Work Resumption queue에 전달하는 transport/OS integration
 변경이다. 따라서 frozen Golden이나 active decision baseline은 재실행하지 않았다.
+
+v2는 제안이 없을 때 일반 문구만 보이던 문제를 수정하기 위해 기존
+decision reason code, candidate counts와 source monitor 요약을 추가한다. 런처는
+이 값으로 GitHub·Codex의 연결, freshness, signal count, candidate coverage를
+설명하고 둘 중 하나라도 복구가 필요할 때 root ownership에 맞는 복구 동작을
+제공한다. 단, Swift가
+후보를 새로 생성·제외·재정렬하지 않는다. v2 regression은 상태/reason,
+decision/count, canonical source 순서와 candidate completeness 불일치를 TypeScript과
+Swift decoder 모두에서 fail closed하는지 검증한다.
 
 자동 검증 결과:
 

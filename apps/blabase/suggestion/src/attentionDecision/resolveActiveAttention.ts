@@ -719,7 +719,15 @@ function buildGitHubCandidate(input: {
   );
   const isReview =
     input.signal.facts.taskKind === "review_requested_pull_request";
-  const lane = due.urgent ? "must_now" : isReview ? "unblock" : "focus";
+  const isActionableAuthored =
+    input.signal.facts.taskKind === "authored_pull_request" &&
+    input.signal.facts.actionability?.actionRequired === true;
+  const lane =
+    due.urgent || isReview || isActionableAuthored
+      ? due.urgent
+        ? "must_now"
+        : "unblock"
+      : "focus";
   const candidateId = runtimeStableId(
     "attention",
     ACTIVE_ATTENTION_ID_POLICY_VERSION,
@@ -732,6 +740,12 @@ function buildGitHubCandidate(input: {
     "CAVEAT_UPSTREAM_OBJECTS_REMAIN_NON_CANDIDATES"
   ];
   if (isReview) caveats.push("CAVEAT_REVIEW_DRAFT_UNKNOWN");
+  if (
+    isActionableAuthored &&
+    input.signal.facts.actionability?.collectionState === "partial"
+  ) {
+    caveats.push("CAVEAT_GITHUB_PR_ACTIONABILITY_PARTIAL");
+  }
   if (
     input.input.eligibilityProjection.coverage.githubCandidateCoverage !==
     "complete"
@@ -764,23 +778,27 @@ function buildGitHubCandidate(input: {
       destinationUrl: input.signal.facts.destinationUrl as string,
       certainty:
         isReview ||
+        input.signal.facts.actionability?.collectionState === "partial" ||
         input.input.eligibilityProjection.coverage.githubCandidateCoverage !==
           "complete"
           ? "provisional"
           : "confirmed",
-      reasonCodes: canonical([
-        isReview
-          ? "CANDIDATE_GITHUB_REVIEW_STATUS_CHECK"
-          : "CANDIDATE_GITHUB_ASSIGNED_ISSUE"
-      ]),
+      reasonCodes: canonical(
+        githubCandidateReasonCodes(input.signal)
+      ),
       whyNowReasonCodes: canonical([
-        due.overdue
-          ? "WHY_NOW_NATIVE_DEADLINE_OVERDUE"
+        ...(due.overdue
+          ? (["WHY_NOW_NATIVE_DEADLINE_OVERDUE"] as const)
           : due.dueSoon
-            ? "WHY_NOW_NATIVE_DEADLINE_DUE_SOON"
-            : isReview
-              ? "WHY_NOW_REVIEW_REQUEST_OPEN"
-              : "WHY_NOW_ASSIGNED_WORK_OPEN",
+            ? (["WHY_NOW_NATIVE_DEADLINE_DUE_SOON"] as const)
+            : []),
+        ...(isReview
+          ? (["WHY_NOW_REVIEW_REQUEST_OPEN"] as const)
+          : isActionableAuthored
+            ? githubAuthoredWhyNowReasonCodes(input.signal)
+            : !due.urgent
+              ? (["WHY_NOW_ASSIGNED_WORK_OPEN"] as const)
+              : []),
         ...(input.focusMatched
           ? (["WHY_NOW_PRIMARY_OUTCOME_TEXT_MATCH"] as const)
           : [])
@@ -794,11 +812,15 @@ function buildGitHubCandidate(input: {
       sourceUpdatedAt: input.signal.sourceUpdatedAt,
       firstStep: isReview
         ? `GitHub PR #${input.signal.facts.number}을 열어 draft 여부와 리뷰 가능 상태를 확인합니다.`
-        : `GitHub issue #${input.signal.facts.number}을 열어 다음 행동을 확인합니다.`,
+        : isActionableAuthored
+          ? authoredPullRequestFirstStep(input.signal)
+          : `GitHub issue #${input.signal.facts.number}을 열어 다음 행동을 확인합니다.`,
       explanation: `${
         isReview
           ? "현재 사용자에게 열린 PR 리뷰가 요청됐으며, 먼저 현재 리뷰 가능 상태를 확인해야 합니다."
-          : "현재 사용자에게 할당된 열린 GitHub 작업입니다."
+          : isActionableAuthored
+            ? authoredPullRequestExplanation(input.signal)
+            : "현재 사용자에게 할당된 열린 GitHub 작업입니다."
       }${
         input.focusMatched
           ? " 사용자가 입력한 이번 주 결과와 텍스트가 직접 겹칩니다."
@@ -815,6 +837,79 @@ function buildGitHubCandidate(input: {
       sourceUpdatedAt: input.signal.sourceUpdatedAt
     })
   };
+}
+
+function githubCandidateReasonCodes(
+  signal: GitHubWorkItemSignal
+): ActiveAttentionCandidate["reasonCodes"] {
+  if (signal.facts.taskKind === "assigned_issue") {
+    return ["CANDIDATE_GITHUB_ASSIGNED_ISSUE"];
+  }
+  if (signal.facts.taskKind === "review_requested_pull_request") {
+    return ["CANDIDATE_GITHUB_REVIEW_STATUS_CHECK"];
+  }
+  const reasons = signal.facts.actionability?.actionRequiredReasons ?? [];
+  return reasons.map((reason) => {
+    switch (reason) {
+      case "checks_failed":
+        return "CANDIDATE_GITHUB_AUTHORED_PR_CHECKS_FAILED" as const;
+      case "changes_requested":
+        return "CANDIDATE_GITHUB_AUTHORED_PR_CHANGES_REQUESTED" as const;
+      case "merge_conflict":
+        return "CANDIDATE_GITHUB_AUTHORED_PR_MERGE_CONFLICT" as const;
+    }
+  });
+}
+
+function githubAuthoredWhyNowReasonCodes(
+  signal: GitHubWorkItemSignal
+): ActiveAttentionCandidate["whyNowReasonCodes"] {
+  return (signal.facts.actionability?.actionRequiredReasons ?? []).map(
+    (reason) => {
+      switch (reason) {
+        case "checks_failed":
+          return "WHY_NOW_AUTHORED_PR_CHECKS_FAILED" as const;
+        case "changes_requested":
+          return "WHY_NOW_AUTHORED_PR_CHANGES_REQUESTED" as const;
+        case "merge_conflict":
+          return "WHY_NOW_AUTHORED_PR_MERGE_CONFLICT" as const;
+      }
+    }
+  );
+}
+
+function authoredPullRequestFirstStep(
+  signal: GitHubWorkItemSignal
+): string {
+  const reasons = new Set(
+    signal.facts.actionability?.actionRequiredReasons ?? []
+  );
+  if (reasons.has("merge_conflict")) {
+    return `GitHub PR #${signal.facts.number}을 열어 충돌 파일과 base branch 변경을 확인합니다.`;
+  }
+  if (reasons.has("changes_requested")) {
+    return `GitHub PR #${signal.facts.number}을 열어 요청된 변경 사항을 확인합니다.`;
+  }
+  return `GitHub PR #${signal.facts.number}을 열어 실패한 check를 확인합니다.`;
+}
+
+function authoredPullRequestExplanation(
+  signal: GitHubWorkItemSignal
+): string {
+  const reasons = signal.facts.actionability?.actionRequiredReasons ?? [];
+  const labels = reasons.map((reason) => {
+    switch (reason) {
+      case "checks_failed":
+        return "실패한 check";
+      case "changes_requested":
+        return "변경 요청";
+      case "merge_conflict":
+        return "merge conflict";
+    }
+  });
+  return `사용자가 작성한 열린 PR에서 ${labels.join(
+    ", "
+  )} 상태가 GitHub 현재 데이터로 확인됐습니다.`;
 }
 
 function buildManagedFailureCandidate(input: {

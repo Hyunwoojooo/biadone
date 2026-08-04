@@ -47,7 +47,9 @@ export function issuesFromAssessment(
       code === "SNAPSHOT_FROM_FUTURE" ||
       code === "SNAPSHOT_TRUNCATED" ||
       code === "GITHUB_ACTIVITIES_PARTIAL" ||
-      code === "GITHUB_ACTIVITIES_UNAVAILABLE"
+      code === "GITHUB_ACTIVITIES_UNAVAILABLE" ||
+      code === "GITHUB_ACTIONABILITY_PARTIAL" ||
+      code === "GITHUB_ACTIONABILITY_UNAVAILABLE"
     ) {
       issues.push({
         code,

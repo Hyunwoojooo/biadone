@@ -138,7 +138,7 @@ GitHub 연결도 로컬 개발 서버에서만 활성화됩니다. 사용자가 
 선택한 저장소만 대상으로 담당 이슈, 리뷰 요청, 본인이 연 PR의 제목과 상태를
 확인하고, 사용자 본인의 push·브랜치·이슈·PR·리뷰 활동을 읽기 전용으로
 수집합니다. 코드·commit 내용·이슈/PR 본문·댓글 본문은 저장하지 않으며, 제안
-엔진 입력에는 아직 GitHub 데이터를 사용하지 않습니다.
+엔진은 담당 이슈·리뷰 요청과 본인이 연 PR의 검증된 actionability만 사용합니다.
 
 1. GitHub의 `Settings > Developer settings > GitHub Apps`에서
    `New GitHub App`을 선택합니다.
@@ -157,8 +157,10 @@ Setup URL: http://localhost:3102/api/connectors/github/installed
    동기화하기 위한 설정입니다.
 4. 이 로컬 프로토타입은 webhook을 사용하지 않으므로 Webhook의 `Active`를
    끕니다.
-5. Repository permissions는 `Metadata`, `Issues`, `Pull requests`만
-   `Read-only`로 두고 나머지 권한은 `No access`로 둡니다.
+5. Repository permissions는 `Metadata`, `Issues`, `Pull requests`, `Checks`,
+   `Commit statuses`를 `Read-only`로 두고 나머지 권한은 `No access`로 둡니다.
+   Checks와 Commit statuses는 본인이 연 PR의 실패한 검사 여부만 집계하기 위한
+   권한입니다.
 6. Account permissions의 `Events`를 `Read-only`로 둡니다. 선택한 저장소와
    교집합인 사용자 활동을 확인하기 위한 권한이며, `Contents` 권한은 요청하지
    않습니다.
@@ -187,7 +189,10 @@ GitHub의 `Settings > Applications > Installed GitHub Apps`에서 별도로
 uninstall해야 합니다. 기존 App에 `Events: Read-only`를 나중에 추가했다면
 기존 설치와 사용자 승인을 다시 확인해야 할 수 있습니다. GitHub Events API는
 실시간 스트림이 아니며 최대 최근 30일·300개 범위에서 지연되어 반영될 수
-있습니다.
+있습니다. 기존 App에 `Checks`나 `Commit statuses`를 추가했다면 설치 소유자가
+변경 권한을 다시 승인해야 합니다. 승인 전에는 PR actionability가 partial 또는
+unavailable로 표시되며 unknown 상태를 추천으로 추정하지 않습니다. check 이름과
+출력, reviewer identity, commit SHA와 branch는 로컬 snapshot에 저장하지 않습니다.
 
 ## Codex 로컬 연결
 
@@ -204,14 +209,15 @@ App Server를 로컬 프로세스로 실행해 최근 30일 동안 활동한 프
 200자로 줄여 민감정보 패턴을 가린 뒤 로컬 snapshot과 타임라인에 저장합니다.
 이 문구는 작업 요청의 단서이며 완료 결과를 뜻하지 않습니다.
 
-Codex 프롬프트 전체와 응답, 코드, 명령 및 출력을 담은 세션 상세
-`thread/read`는 호출하지 않습니다. Git 브랜치와 remote 정보도 저장하지
-않습니다. 연결 뒤에도 카드의 `작업 설명 표시 켜기/끄기`로 범위를 바로 바꿀 수
-있습니다. 작업 설명 표시를 끄면 기존 로컬 snapshot의 설명 문구를 즉시
-제거하고, 연결 해제 시 설정과 snapshot 전체를 삭제합니다. App Server의 로드
-상태는 다른 Codex 프로세스의 전역 실시간 실행·승인 대기 상태를 뜻하지 않으므로
-업무 상태로 해석하지 않습니다. 제안 엔진 입력에는 아직 Codex 데이터를
-사용하지 않습니다.
+기본 모드는 세션 메타데이터만 수집합니다. 사용자가
+`conversation_and_execution` 범위와 7일 보관에 명시적으로 동의한 경우에만
+`thread/read`로 bounded prompt·answer·execution manifest를 만들며 reasoning,
+원문 명령 출력과 전체 파일 diff는 제외합니다. 동의를 철회하거나 7일이 지나면
+conversation store와 snapshot excerpt를 제거합니다. App Server의 로드 상태는
+다른 Codex 프로세스의 전역 실시간 실행·승인 대기 상태를 뜻하지 않으므로 업무
+상태로 해석하지 않습니다. 제안 엔진은 이 과거 내용을 현재 행동으로 사용하지
+않고 OpenLoopClaim 맥락으로만 보관하며, 현재성 검증 전에는 후보 자격 단계에서
+제외합니다.
 
 Codex 실행 파일은 `PATH`, `~/.local/bin`, 일반적인 Homebrew 경로, macOS Codex
 앱 경로에서 자동으로 찾습니다. 특수한 위치에 설치해 자동 탐색이 실패할 때만

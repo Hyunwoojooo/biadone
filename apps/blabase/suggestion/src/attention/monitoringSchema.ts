@@ -17,6 +17,7 @@ import {
   type ActiveAttentionResult
 } from "../attentionDecision/contracts";
 import type { AttentionEligibilityShadowProjection } from "../eligibility/contracts";
+import type { DeveloperRuntimePublicSummary } from "../developerSignals/runtimeProjection";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
 import {
   ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION,
@@ -24,6 +25,11 @@ import {
   ACTIVE_ATTENTION_INPUT_CONTRACT,
   ACTIVE_ATTENTION_LANE_POLICY_VERSION,
   ACTIVE_ATTENTION_POLICY_VERSION,
+  ACTIVE_ATTENTION_PREVIOUS_CANDIDATE_RULE_VERSION,
+  ACTIVE_ATTENTION_PREVIOUS_POLICY_VERSION,
+  ACTIVE_ATTENTION_PREVIOUS_RANKING_POLICY_VERSION,
+  ACTIVE_ATTENTION_PREVIOUS_RESOLVER_VERSION,
+  ACTIVE_ATTENTION_PREVIOUS_RESULT_CONTRACT,
   ACTIVE_ATTENTION_RANKING_POLICY_VERSION,
   ACTIVE_ATTENTION_RESOLVER_VERSION,
   ACTIVE_ATTENTION_RESULT_CONTRACT,
@@ -38,16 +44,19 @@ import {
   ATTENTION_FEEDBACK_CONTRACT,
   ATTENTION_LIVE_FRESHNESS_POLICY_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
+  ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_VERSION,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
   ATTENTION_MONITOR_FAILURE_LEGACY_CONTRACT,
   ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_V02_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
   ATTENTION_MONITOR_PREVIEW_CONTRACT,
   ATTENTION_MONITOR_RUN_CONTRACT,
   ATTENTION_MONITOR_RUN_LEGACY_CONTRACT,
   ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_RUN_V03_CONTRACT,
   ATTENTION_MONITOR_RUN_V02_CONTRACT,
   ATTENTION_REPLAY_INPUT_CONTRACT,
   ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
@@ -433,6 +442,7 @@ const attentionMonitorRunStrictSchema = z
       ATTENTION_MONITOR_PREVIEW_CONTRACT,
       ATTENTION_MONITOR_RUN_LEGACY_CONTRACT,
       ATTENTION_MONITOR_RUN_V02_CONTRACT,
+      ATTENTION_MONITOR_RUN_V03_CONTRACT,
       ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
       ATTENTION_MONITOR_RUN_CONTRACT
     ]),
@@ -466,6 +476,7 @@ const attentionMonitorRunStrictSchema = z
     replayArtifactSha256: sha256Schema.nullable().default(null),
     orchestratorVersion: z.enum([
       ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_VERSION
     ]),
@@ -608,7 +619,8 @@ const attentionMonitorRunStrictSchema = z
     }
     if (
       run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
-      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_RUN_V03_CONTRACT
     ) {
       if (
         run.analysisId === null ||
@@ -697,15 +709,23 @@ const attentionMonitorRunStrictSchema = z
           "Only suggested runs can retain a top candidate identifier."
       });
     }
-    const activeRun =
+    const currentActiveRun =
       run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
       run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT;
+    const previousActiveRun =
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT;
+    const activeRun = currentActiveRun || previousActiveRun;
     if (
-      (activeRun &&
+      (currentActiveRun &&
         run.orchestratorVersion !==
           ATTENTION_LIVE_ORCHESTRATOR_VERSION) ||
+      (previousActiveRun &&
+        run.orchestratorVersion !==
+          ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION) ||
       (!activeRun &&
-        run.orchestratorVersion === ATTENTION_LIVE_ORCHESTRATOR_VERSION)
+        (run.orchestratorVersion === ATTENTION_LIVE_ORCHESTRATOR_VERSION ||
+          run.orchestratorVersion ===
+            ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -714,7 +734,7 @@ const attentionMonitorRunStrictSchema = z
           "Monitor orchestrator version must match its contract generation."
       });
     }
-    const activeVersionsMatch =
+    const currentActiveVersionsMatch =
       run.policyVersion === ACTIVE_ATTENTION_POLICY_VERSION &&
       run.candidateRuleVersion ===
         ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION &&
@@ -722,6 +742,15 @@ const attentionMonitorRunStrictSchema = z
       run.rankingPolicyVersion ===
         ACTIVE_ATTENTION_RANKING_POLICY_VERSION &&
       run.resolverVersion === ACTIVE_ATTENTION_RESOLVER_VERSION &&
+      run.idPolicyVersion === ACTIVE_ATTENTION_ID_POLICY_VERSION;
+    const previousActiveVersionsMatch =
+      run.policyVersion === ACTIVE_ATTENTION_PREVIOUS_POLICY_VERSION &&
+      run.candidateRuleVersion ===
+        ACTIVE_ATTENTION_PREVIOUS_CANDIDATE_RULE_VERSION &&
+      run.lanePolicyVersion === ACTIVE_ATTENTION_LANE_POLICY_VERSION &&
+      run.rankingPolicyVersion ===
+        ACTIVE_ATTENTION_PREVIOUS_RANKING_POLICY_VERSION &&
+      run.resolverVersion === ACTIVE_ATTENTION_PREVIOUS_RESOLVER_VERSION &&
       run.idPolicyVersion === ACTIVE_ATTENTION_ID_POLICY_VERSION;
     const legacyVersionsMatch =
       run.githubCandidateRuleVersion !== null &&
@@ -732,8 +761,12 @@ const attentionMonitorRunStrictSchema = z
       run.resolverVersion === null &&
       run.idPolicyVersion === null;
     if (
-      (activeRun &&
-        (!activeVersionsMatch ||
+      (currentActiveRun &&
+        (!currentActiveVersionsMatch ||
+          run.githubCandidateRuleVersion !== null ||
+          run.codexOverviewRuleVersion !== null)) ||
+      (previousActiveRun &&
+        (!previousActiveVersionsMatch ||
           run.githubCandidateRuleVersion !== null ||
           run.codexOverviewRuleVersion !== null)) ||
       (!activeRun && !legacyVersionsMatch)
@@ -746,8 +779,11 @@ const attentionMonitorRunStrictSchema = z
       });
     }
     if (
-      (activeRun &&
+      (currentActiveRun &&
         (run.resultContract !== ACTIVE_ATTENTION_RESULT_CONTRACT ||
+          !activeResultIdSchema.safeParse(run.resultId).success)) ||
+      (previousActiveRun &&
+        (run.resultContract !== ACTIVE_ATTENTION_PREVIOUS_RESULT_CONTRACT ||
           !activeResultIdSchema.safeParse(run.resultId).success)) ||
       (!activeRun &&
         !stableIdSchema.safeParse(run.resultId).success)
@@ -1103,6 +1139,28 @@ const previousAttentionMonitorFailureRecordSchema = z
     ...attentionMonitorFailureCommonShape,
     contract: z.literal(ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT),
     engineVersion: z.literal(
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION
+    ),
+    inputSchemaVersion: z.literal(ACTIVE_ATTENTION_INPUT_CONTRACT),
+    resultSchemaVersion: z.literal(ACTIVE_ATTENTION_PREVIOUS_RESULT_CONTRACT),
+    policyVersion: z.literal(ACTIVE_ATTENTION_PREVIOUS_POLICY_VERSION),
+    candidateRuleVersion: z.literal(
+      ACTIVE_ATTENTION_PREVIOUS_CANDIDATE_RULE_VERSION
+    ),
+    lanePolicyVersion: z.literal(ACTIVE_ATTENTION_LANE_POLICY_VERSION),
+    rankingPolicyVersion: z.literal(
+      ACTIVE_ATTENTION_PREVIOUS_RANKING_POLICY_VERSION
+    ),
+    resolverVersion: z.literal(ACTIVE_ATTENTION_PREVIOUS_RESOLVER_VERSION),
+    idPolicyVersion: z.literal(ACTIVE_ATTENTION_ID_POLICY_VERSION)
+  })
+  .strict();
+
+const v02AttentionMonitorFailureRecordSchema = z
+  .object({
+    ...attentionMonitorFailureCommonShape,
+    contract: z.literal(ATTENTION_MONITOR_FAILURE_V02_CONTRACT),
+    engineVersion: z.literal(
       ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION
     ),
     inputSchemaVersion: z.literal(PHASE2_ATTENTION_INPUT_CONTRACT),
@@ -1121,6 +1179,7 @@ const attentionMonitorFailureRecordStrictSchema = z
   .discriminatedUnion("contract", [
     currentAttentionMonitorFailureRecordSchema,
     previousAttentionMonitorFailureRecordSchema,
+    v02AttentionMonitorFailureRecordSchema,
     legacyAttentionMonitorFailureRecordSchema
   ])
   .superRefine((failure, context) => {
@@ -1275,6 +1334,7 @@ export type AttentionReadyResponse = {
   result: ActiveAttentionResult;
   baseResult: Phase2AttentionResult;
   eligibilityProjection: AttentionEligibilityShadowProjection;
+  developerSignals: DeveloperRuntimePublicSummary;
   run: AttentionMonitorRun;
   monitoring: {
     state: "preview" | "recorded" | "degraded";

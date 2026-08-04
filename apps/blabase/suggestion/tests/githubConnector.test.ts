@@ -283,11 +283,18 @@ describe("GitHub local connector", () => {
 
     expect(snapshot.user).toEqual({ id: 7, login: "nika" });
     expect(snapshot).toMatchObject({
-      schemaVersion: "github-snapshot-v2",
+      schemaVersion: "github-snapshot-v3",
       activityWindowStart: "2026-06-25T01:00:00.000Z",
       activitiesState: "available",
       activitiesTruncated: false,
-      activities: []
+      activities: [],
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 1,
+        attemptedCount: 1,
+        collectedCount: 0,
+        truncated: false
+      }
     });
     expect(snapshot.repositories.map((repository) => repository.fullName)).toEqual([
       "acme/alpha",
@@ -359,6 +366,172 @@ describe("GitHub local connector", () => {
     expect(
       (await stat(join(directory, "snapshot.json"))).mode & 0o777
     ).toBe(0o600);
+  });
+
+  it("stores REST-verified authored PR actionability without raw review or CI content", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredGitHubTokens(storedTokens(), cwd);
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/user") {
+        return jsonResponse({ id: 7, login: "nika" });
+      }
+      if (url.pathname === "/user/installations") {
+        return jsonResponse({
+          total_count: 1,
+          installations: [
+            {
+              id: 10,
+              account: { login: "acme", type: "Organization" },
+              repository_selection: "selected",
+              suspended_at: null
+            }
+          ]
+        });
+      }
+      if (url.pathname === "/user/installations/10/repositories") {
+        return jsonResponse({
+          total_count: 1,
+          repositories: [repositoryResponse(101, "acme/alpha")]
+        });
+      }
+      if (url.pathname === "/issues") return jsonResponse([]);
+      if (url.pathname === "/search/issues") {
+        const query = url.searchParams.get("q") ?? "";
+        return query.includes("author:nika")
+          ? searchResponse([
+              taskResponse(401, "acme/alpha", 31, "내 열린 PR", {
+                html_url: "https://github.com/acme/alpha/pull/31",
+                pull_request: {},
+                body: "SECRET_PR_BODY"
+              })
+            ])
+          : searchResponse([]);
+      }
+      if (url.pathname === "/repos/acme/alpha/pulls/31") {
+        return jsonResponse({
+          draft: false,
+          mergeable: false,
+          mergeable_state: "dirty",
+          requested_reviewers: [
+            { login: "SECRET_REQUESTED_REVIEWER" }
+          ],
+          requested_teams: [],
+          head: { sha: "SECRET_HEAD_SHA" },
+          body: "SECRET_PR_DETAIL_BODY"
+        });
+      }
+      if (url.pathname === "/repos/acme/alpha/pulls/31/reviews") {
+        return jsonResponse([
+          {
+            id: 901,
+            state: "CHANGES_REQUESTED",
+            submitted_at: "2026-07-24T10:00:00.000Z",
+            user: { id: 88, login: "SECRET_REVIEWER" },
+            body: "SECRET_REVIEW_BODY"
+          }
+        ]);
+      }
+      if (
+        url.pathname ===
+        "/repos/acme/alpha/commits/SECRET_HEAD_SHA/check-runs"
+      ) {
+        expect(url.searchParams.get("filter")).toBe("latest");
+        return jsonResponse({
+          total_count: 1,
+          check_runs: [
+            {
+              status: "completed",
+              conclusion: "success",
+              name: "SECRET_SUCCESS_CHECK"
+            }
+          ]
+        });
+      }
+      if (
+        url.pathname ===
+        "/repos/acme/alpha/commits/SECRET_HEAD_SHA/status"
+      ) {
+        return jsonResponse({
+          state: "failure",
+          total_count: 1,
+          statuses: [
+            {
+              state: "failure",
+              context: "SECRET_FAILED_STATUS",
+              target_url: "SECRET_STATUS_URL"
+            }
+          ]
+        });
+      }
+      if (url.pathname === "/users/nika/events") {
+        return jsonResponse([]);
+      }
+      throw new Error(`unexpected URL: ${url.toString()}`);
+    });
+
+    const snapshot = await fetchAndStoreGitHubSnapshot(testConfig(), {
+      now: new Date("2026-07-25T01:00:00.000Z"),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      cwd
+    });
+
+    expect(snapshot).toMatchObject({
+      schemaVersion: "github-snapshot-v3",
+      actionabilityCoverage: {
+        state: "complete",
+        authoredPullRequestCount: 1,
+        attemptedCount: 1,
+        collectedCount: 1,
+        truncated: false
+      },
+      tasks: [
+        {
+          kind: "authored_pull_request",
+          actionability: {
+            collectionState: "complete",
+            draft: false,
+            reviewDecision: "changes_requested",
+            checksSummary: {
+              collectionState: "complete",
+              state: "failing",
+              totalCount: 2,
+              completedCount: 2,
+              failedCount: 1,
+              pendingCount: 0,
+              truncated: false
+            },
+            mergeable: false,
+            mergeConflict: true,
+            unresolvedChangeRequestCount: 1,
+            requestedReviewerCount: 1,
+            actionRequired: true,
+            actionRequiredReasons: [
+              "checks_failed",
+              "changes_requested",
+              "merge_conflict"
+            ]
+          }
+        }
+      ]
+    });
+    const stored = await readFile(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      "utf8"
+    );
+    for (const secret of [
+      "SECRET_PR_BODY",
+      "SECRET_REQUESTED_REVIEWER",
+      "SECRET_HEAD_SHA",
+      "SECRET_PR_DETAIL_BODY",
+      "SECRET_REVIEWER",
+      "SECRET_REVIEW_BODY",
+      "SECRET_SUCCESS_CHECK",
+      "SECRET_FAILED_STATUS",
+      "SECRET_STATUS_URL"
+    ]) {
+      expect(stored).not.toContain(secret);
+    }
   });
 
   it("stores only selected-repository activity metadata for the authenticated actor", async () => {
@@ -779,10 +952,17 @@ describe("GitHub local connector", () => {
     });
 
     expect(snapshot).toMatchObject({
-      schemaVersion: "github-snapshot-v2",
+      schemaVersion: "github-snapshot-v3",
       activitiesState: "unavailable",
       activitiesTruncated: false,
-      activities: []
+      activities: [],
+      actionabilityCoverage: {
+        state: "complete",
+        authoredPullRequestCount: 0,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: false
+      }
     });
     expect(snapshot.repositories).toHaveLength(1);
     expect(snapshot.tasks).toEqual([
