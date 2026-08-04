@@ -9,6 +9,8 @@ import {
   useState,
 } from "react";
 
+import { stateNoteItemKey } from "@/lib/note-state/item-key";
+
 type ViewKey = "all" | "favorites" | "archive" | "trash";
 type MobilePane = "navigation" | "list" | "detail";
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -66,7 +68,38 @@ type StateChangeItem = StateEvidenceText & {
   reason?: string;
 };
 
+type StateNoteUserCorrection = {
+  itemKey: string;
+  textOverride?: string;
+  hidden?: true;
+  updatedAt: string;
+};
+
+type StateNoteCorrectionOperation =
+  | {
+      itemKey: string;
+      operation: "override_text";
+      text: string;
+    }
+  | {
+      itemKey: string;
+      operation: "hide" | "restore";
+    };
+
+type StateNoteItemSection =
+  | "primaryGoal"
+  | "currentState"
+  | "confirmedDecisions"
+  | "completedResults"
+  | "openActions"
+  | "unresolvedQuestions"
+  | "activeConstraints"
+  | "activeProposals"
+  | "keyInsights"
+  | "stateChanges";
+
 type NoteStateV3 = {
+  schemaVersion: typeof STATE_NOTE_SCHEMA_VERSION;
   title: StateEvidenceText;
   primaryGoal: StateEvidenceText | null;
   currentState: StateEvidenceText;
@@ -78,6 +111,7 @@ type NoteStateV3 = {
   activeProposals: StateProposalItem[];
   keyInsights: StateEvidenceText[];
   stateChanges: StateChangeItem[];
+  userCorrections: StateNoteUserCorrection[];
 };
 
 type SummaryOutcome = SummaryEvidenceText & {
@@ -158,10 +192,10 @@ const viewMeta: Record<
   ViewKey,
   { label: string; eyebrow: string; symbol: string }
 > = {
-  all: { label: "All Notes", eyebrow: "Your library", symbol: "▤" },
-  favorites: { label: "Favorites", eyebrow: "Saved for later", symbol: "♡" },
-  archive: { label: "Archive", eyebrow: "Out of the way", symbol: "□" },
-  trash: { label: "Trash", eyebrow: "Recently removed", symbol: "⌫" },
+  all: { label: "모든 노트", eyebrow: "내 노트", symbol: "▤" },
+  favorites: { label: "즐겨찾기", eyebrow: "다시 볼 노트", symbol: "♡" },
+  archive: { label: "보관함", eyebrow: "보관한 노트", symbol: "□" },
+  trash: { label: "휴지통", eyebrow: "최근 삭제한 노트", symbol: "⌫" },
 };
 
 function createOwnerKey() {
@@ -231,8 +265,15 @@ function formatDate(value: string) {
 }
 
 function notePreview(note: NoteRecord) {
+  const currentState = note.stateNote
+    ? presentStateItem(
+        note.stateNote,
+        "currentState",
+        note.stateNote.currentState,
+      ).displayText
+    : "";
   return (
-    note.stateNote?.currentState.text ||
+    currentState ||
     note.summary?.oneLineSummary.text ||
     note.overview ||
     note.sections.find((section) => section.body.trim())?.body ||
@@ -247,7 +288,12 @@ function noteTitle(note: NoteRecord) {
 }
 
 function noteHasDecision(note: NoteRecord) {
-  if (note.stateNote) return note.stateNote.confirmedDecisions.length > 0;
+  const stateNote = note.stateNote;
+  if (stateNote) {
+    return stateNote.confirmedDecisions.some(
+      (item) => !presentStateItem(stateNote, "confirmedDecisions", item).hidden,
+    );
+  }
   return (
     note.summary?.outcomes.some((outcome) => outcome.kind === "decision") ??
     false
@@ -255,12 +301,31 @@ function noteHasDecision(note: NoteRecord) {
 }
 
 function noteHasActionItems(note: NoteRecord) {
-  if (note.stateNote) return note.stateNote.openActions.length > 0;
+  const stateNote = note.stateNote;
+  if (stateNote) {
+    return stateNote.openActions.some(
+      (item) => !presentStateItem(stateNote, "openActions", item).hidden,
+    );
+  }
   return Boolean(note.summary?.actionItems.length);
 }
 
 function noteHasUnresolved(note: NoteRecord) {
-  return Boolean(note.stateNote?.unresolvedQuestions.length);
+  const stateNote = note.stateNote;
+  if (!stateNote) return false;
+  return stateNote.unresolvedQuestions.some(
+    (item) => !presentStateItem(stateNote, "unresolvedQuestions", item).hidden,
+  );
+}
+
+function visibleStateItemCount(
+  stateNote: NoteStateV3,
+  section: StateNoteItemSection,
+  items: StateEvidenceText[],
+) {
+  return presentStateItems(stateNote, section, items).filter(
+    (entry) => !entry.hidden,
+  ).length;
 }
 
 function normalizeSummary(value: unknown): NoteSummaryV2 | null {
@@ -323,6 +388,7 @@ function normalizeSummary(value: unknown): NoteSummaryV2 | null {
 function normalizeStateNote(value: unknown): NoteStateV3 | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== STATE_NOTE_SCHEMA_VERSION) return null;
   const title = normalizeStateEvidenceText(record.title);
   const primaryGoal =
     record.primaryGoal === null
@@ -343,6 +409,7 @@ function normalizeStateNote(value: unknown): NoteStateV3 | null {
   const activeProposals = normalizeStateEvidenceArray(record.activeProposals);
   const keyInsights = normalizeStateEvidenceArray(record.keyInsights);
   const stateChanges = normalizeStateEvidenceArray(record.stateChanges);
+  const userCorrections = normalizeStateNoteCorrections(record.userCorrections);
   if (
     !confirmedDecisions ||
     !completedResults ||
@@ -351,12 +418,14 @@ function normalizeStateNote(value: unknown): NoteStateV3 | null {
     !activeConstraints ||
     !activeProposals ||
     !keyInsights ||
-    !stateChanges
+    !stateChanges ||
+    !userCorrections
   ) {
     return null;
   }
 
   return {
+    schemaVersion: STATE_NOTE_SCHEMA_VERSION,
     title,
     primaryGoal,
     currentState,
@@ -445,7 +514,46 @@ function normalizeStateNote(value: unknown): NoteStateV3 | null {
         ...(typeof detail.reason === "string" ? { reason: detail.reason } : {}),
       };
     }),
+    userCorrections,
   };
+}
+
+function normalizeStateNoteCorrections(
+  value: unknown,
+): StateNoteUserCorrection[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const corrections: StateNoteUserCorrection[] = [];
+  const keys = new Set<string>();
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return null;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.itemKey !== "string" ||
+      !record.itemKey.trim() ||
+      typeof record.updatedAt !== "string" ||
+      !record.updatedAt.trim() ||
+      keys.has(record.itemKey)
+    ) {
+      return null;
+    }
+    const textOverride =
+      typeof record.textOverride === "string" && record.textOverride.trim()
+        ? record.textOverride.trim()
+        : undefined;
+    const hidden = record.hidden === true;
+    if (!textOverride && !hidden) return null;
+    keys.add(record.itemKey);
+    corrections.push({
+      itemKey: record.itemKey,
+      updatedAt: record.updatedAt,
+      ...(textOverride ? { textOverride } : {}),
+      ...(hidden ? { hidden: true as const } : {}),
+    });
+  }
+  return corrections;
 }
 
 function normalizeStateArtifact(
@@ -708,13 +816,13 @@ export function GPTMemoryApp() {
             나
           </span>
           <span>
-            <strong>My conversations</strong>
+            <strong>내 대화</strong>
             <small>이 브라우저의 개인 노트</small>
           </span>
         </div>
 
-        <nav className="nav-block" aria-label="빠른 링크">
-          <p className="nav-label">Quick links</p>
+        <nav className="nav-block" aria-label="빠른 메뉴">
+          <p className="nav-label">빠른 메뉴</p>
           {(Object.keys(viewMeta) as ViewKey[]).map((key) => (
             <button
               className={`nav-item ${view === key && !activeTag ? "active" : ""}`}
@@ -736,7 +844,7 @@ export function GPTMemoryApp() {
 
         <div className="nav-block tag-block">
           <div className="nav-label-row">
-            <p className="nav-label">Tags</p>
+            <p className="nav-label">태그</p>
             {activeTag ? (
               <button type="button" onClick={() => chooseTag(null)}>
                 지우기
@@ -789,7 +897,7 @@ export function GPTMemoryApp() {
             <input
               value={queryInput}
               onChange={(event) => changeQuery(event.target.value)}
-              placeholder="Search notes"
+              placeholder="노트 검색"
               type="search"
             />
             {queryInput ? (
@@ -815,10 +923,10 @@ export function GPTMemoryApp() {
 
         <header className="list-heading">
           <div>
-            <p>{activeTag ? "Tagged notes" : viewMeta[view].eyebrow}</p>
+            <p>{activeTag ? "태그 노트" : viewMeta[view].eyebrow}</p>
             <h1>{activeTag ? `#${activeTag}` : viewMeta[view].label}</h1>
           </div>
-          <span>{loading ? "…" : `${notes.length} notes`}</span>
+          <span>{loading ? "…" : `${notes.length}개 노트`}</span>
         </header>
 
         <div className="note-list" aria-live="polite" aria-busy={loading}>
@@ -854,13 +962,24 @@ export function GPTMemoryApp() {
                   {noteHasActionItems(note) ? (
                     <span className="note-card-signal action">
                       {note.stateNote
-                        ? `열린 작업 ${note.stateNote.openActions.length}`
+                        ? `열린 작업 ${visibleStateItemCount(
+                            note.stateNote,
+                            "openActions",
+                            note.stateNote.openActions,
+                          )}`
                         : "할 일 있음"}
                     </span>
                   ) : null}
                   {noteHasUnresolved(note) ? (
                     <span className="note-card-signal unresolved">
-                      미해결 {note.stateNote?.unresolvedQuestions.length}
+                      미해결{" "}
+                      {note.stateNote
+                        ? visibleStateItemCount(
+                            note.stateNote,
+                            "unresolvedQuestions",
+                            note.stateNote.unresolvedQuestions,
+                          )
+                        : 0}
                     </span>
                   ) : null}
                   <time dateTime={note.updatedAt}>
@@ -911,7 +1030,6 @@ export function GPTMemoryApp() {
           />
         ) : (
           <EmptyDetail
-            onImport={() => setImportOpen(true)}
             onBack={() => setMobilePane("list")}
           />
         )}
@@ -959,10 +1077,8 @@ function ListSkeleton() {
 }
 
 function EmptyDetail({
-  onImport,
   onBack,
 }: {
-  onImport: () => void;
   onBack: () => void;
 }) {
   return (
@@ -978,15 +1094,12 @@ function EmptyDetail({
       <div className="paper-orbit" aria-hidden="true">
         <span>“</span>
       </div>
-      <p className="detail-eyebrow">A clear view of every conversation</p>
-      <h2>10초 안에 현재 상태를<br />다시 이어갈 수 있도록.</h2>
+      <p className="detail-eyebrow">대화를 다시 이어가는 노트</p>
+      <h2>가져온 노트가<br />여기에 열립니다.</h2>
       <p>
-        공개 ChatGPT 공유 링크를 붙여 넣으면 현재 상태, 확정된 결정,
-        완료된 결과와 남은 판단을 재개 가능한 노트로 보여줍니다.
+        가운데의 대화 가져오기를 사용하거나, 기존 노트를 선택해 현재 상태와
+        다음 판단을 확인하세요.
       </p>
-      <button className="primary-action" type="button" onClick={onImport}>
-        첫 대화 가져오기 <span aria-hidden="true">→</span>
-      </button>
     </div>
   );
 }
@@ -1119,6 +1232,28 @@ function NoteDetail({
     }
   };
 
+  const saveStateNoteCorrection = async (
+    correction: StateNoteCorrectionOperation,
+  ) => {
+    setSaveState("saving");
+    setActionError("");
+    try {
+      await patchNote({
+        expectedUpdatedAt: note.updatedAt,
+        stateNoteCorrection: correction,
+      });
+      setSaveState("saved");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "사용자 수정을 저장하지 못했습니다.";
+      setSaveState("error");
+      setActionError(message);
+      throw error;
+    }
+  };
+
   const moveToTrash = async () => {
     setActionError("");
     try {
@@ -1227,35 +1362,44 @@ function NoteDetail({
         </button>
         <div className="detail-source">
           <span className="source-pulse" aria-hidden="true" />
-          <span>ChatGPT conversation</span>
+          <span>ChatGPT 대화</span>
         </div>
         <div className="toolbar-actions">
           {view === "trash" ? (
             <>
               <button
+                className="toolbar-primary-button"
                 type="button"
                 onClick={() => void restore()}
                 disabled={permanentlyDeleting}
               >
                 복원
               </button>
-              <button
-                ref={permanentDeleteTriggerRef}
-                className="danger-toolbar-button"
-                type="button"
-                onClick={() => {
-                  setPermanentDeleteError("");
-                  setPermanentDeleteOpen(true);
-                }}
-                disabled={permanentlyDeleting}
-              >
-                영구 삭제
-              </button>
+              <details className="toolbar-overflow">
+                <summary aria-label="노트 작업 더 보기" title="노트 작업 더 보기">
+                  ···
+                </summary>
+                <div className="toolbar-overflow-menu">
+                  <button
+                    ref={permanentDeleteTriggerRef}
+                    className="danger-toolbar-button"
+                    type="button"
+                    onClick={() => {
+                      setPermanentDeleteError("");
+                      setPermanentDeleteOpen(true);
+                    }}
+                    disabled={permanentlyDeleting}
+                  >
+                    영구 삭제
+                  </button>
+                </div>
+              </details>
             </>
           ) : (
             <>
               {note.sourceUrl ? (
                 <a
+                  className="toolbar-source-link"
                   href={note.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -1265,7 +1409,7 @@ function NoteDetail({
                 </a>
               ) : null}
               <button
-                className={note.favorite ? "active" : ""}
+                className={`toolbar-favorite-button ${note.favorite ? "active" : ""}`}
                 type="button"
                 onClick={() => void runAction({ favorite: !note.favorite })}
                 aria-label={note.favorite ? "즐겨찾기 해제" : "즐겨찾기에 추가"}
@@ -1273,22 +1417,26 @@ function NoteDetail({
               >
                 {note.favorite ? "♥" : "♡"}
               </button>
-              <button
-                type="button"
-                onClick={() => void runAction({ archived: !note.archived })}
-                aria-label={note.archived ? "보관 해제" : "보관"}
-                title={note.archived ? "보관 해제" : "보관"}
-              >
-                {note.archived ? "보관 해제" : "보관"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void moveToTrash()}
-                aria-label="휴지통으로 이동"
-                title="휴지통으로 이동"
-              >
-                ⌫
-              </button>
+              <details className="toolbar-overflow">
+                <summary aria-label="노트 작업 더 보기" title="노트 작업 더 보기">
+                  ···
+                </summary>
+                <div className="toolbar-overflow-menu">
+                  <button
+                    type="button"
+                    onClick={() => void runAction({ archived: !note.archived })}
+                  >
+                    {note.archived ? "보관함에서 꺼내기" : "보관함으로 이동"}
+                  </button>
+                  <button
+                    className="danger-toolbar-button"
+                    type="button"
+                    onClick={() => void moveToTrash()}
+                  >
+                    휴지통으로 이동
+                  </button>
+                </div>
+              </details>
             </>
           )}
         </div>
@@ -1323,7 +1471,7 @@ function NoteDetail({
         {editing && !note.summary && !note.stateNote ? (
           <div className="note-editor">
             <label>
-              <span>Title</span>
+              <span>제목</span>
               <input
                 value={draft.title}
                 onChange={(event) =>
@@ -1332,7 +1480,7 @@ function NoteDetail({
               />
             </label>
             <label>
-              <span>Overview</span>
+              <span>개요</span>
               <textarea
                 value={draft.overview}
                 rows={4}
@@ -1346,7 +1494,7 @@ function NoteDetail({
                 <div className="section-editor" key={section.id}>
                   <span className="section-index">{index + 1}</span>
                   <label>
-                    <span>Section heading</span>
+                    <span>구간 제목</span>
                     <input
                       value={section.heading}
                       onChange={(event) => {
@@ -1360,7 +1508,7 @@ function NoteDetail({
                     />
                   </label>
                   <label>
-                    <span>Section body</span>
+                    <span>구간 내용</span>
                     <textarea
                       value={section.body}
                       rows={7}
@@ -1378,7 +1526,7 @@ function NoteDetail({
               ))}
             </div>
             <label>
-              <span>Tags · 쉼표로 구분</span>
+              <span>태그 · 쉼표로 구분</span>
               <input
                 value={draft.tags.join(", ")}
                 onChange={(event) =>
@@ -1412,6 +1560,9 @@ function NoteDetail({
                 stateNote={note.stateNote}
                 overview={note.overview}
                 sections={note.sections}
+                onCorrect={
+                  view === "trash" ? undefined : saveStateNoteCorrection
+                }
               />
             ) : note.summary ? (
               <V2Summary
@@ -1443,7 +1594,7 @@ function NoteDetail({
           type="button"
           onClick={() => setEditing(true)}
         >
-          <span aria-hidden="true">✎</span> Edit note
+          <span aria-hidden="true">✎</span> 노트 편집
         </button>
       ) : null}
 
@@ -1482,7 +1633,7 @@ function NoteDetail({
             <span className="permanent-delete-symbol" aria-hidden="true">
               !
             </span>
-            <p className="dialog-kicker">Permanent deletion</p>
+            <p className="dialog-kicker">영구 삭제</p>
             <h2 id="permanent-delete-title">이 노트를 완전히 삭제할까요?</h2>
             <p
               className="permanent-delete-description"
@@ -1522,62 +1673,177 @@ function NoteDetail({
   );
 }
 
+type StateItemPresentation<T extends StateEvidenceText = StateEvidenceText> = {
+  item: T;
+  itemKey: string;
+  generatedText: string;
+  displayText: string;
+  hidden: boolean;
+  isUserOverridden: boolean;
+};
+
+type StateCorrectionHandler = (
+  correction: StateNoteCorrectionOperation,
+) => Promise<void>;
+
+function presentStateItem<T extends StateEvidenceText>(
+  stateNote: NoteStateV3,
+  section: StateNoteItemSection,
+  item: T,
+): StateItemPresentation<T> {
+  const itemKey = stateNoteItemKey(section, item);
+  const correction = stateNote.userCorrections.find(
+    (candidate) => candidate.itemKey === itemKey,
+  );
+  return {
+    item,
+    itemKey,
+    generatedText: item.text,
+    displayText: correction?.textOverride ?? item.text,
+    hidden: correction?.hidden === true,
+    isUserOverridden: correction?.textOverride !== undefined,
+  };
+}
+
+function presentStateItems<T extends StateEvidenceText>(
+  stateNote: NoteStateV3,
+  section: StateNoteItemSection,
+  items: T[],
+) {
+  return items.map((item) => presentStateItem(stateNote, section, item));
+}
+
 function V3StateNote({
   stateNote,
   overview,
   sections,
+  onCorrect,
 }: {
   stateNote: NoteStateV3;
   overview: string;
   sections: NoteSection[];
+  onCorrect?: StateCorrectionHandler;
 }) {
+  const currentState = presentStateItem(
+    stateNote,
+    "currentState",
+    stateNote.currentState,
+  );
+  const decisions = presentStateItems(
+    stateNote,
+    "confirmedDecisions",
+    stateNote.confirmedDecisions,
+  );
+  const actions = presentStateItems(
+    stateNote,
+    "openActions",
+    stateNote.openActions,
+  );
+  const unresolved = presentStateItems(
+    stateNote,
+    "unresolvedQuestions",
+    stateNote.unresolvedQuestions,
+  );
+  const visibleDecisions = decisions.filter((entry) => !entry.hidden);
+  const visibleActions = actions.filter((entry) => !entry.hidden);
+  const visibleUnresolved = unresolved.filter((entry) => !entry.hidden);
+  const currentSignalCount =
+    visibleDecisions.length + visibleActions.length + visibleUnresolved.length;
+  const completedResults = presentStateItems(
+    stateNote,
+    "completedResults",
+    stateNote.completedResults,
+  );
+  const visibleCompletedResults = completedResults.filter(
+    (entry) => !entry.hidden,
+  );
+  const hiddenCompletedResults = completedResults.filter(
+    (entry) => entry.hidden,
+  );
+  const primaryCompletedResults = visibleCompletedResults.slice(-3);
+  const additionalCompletedResults = visibleCompletedResults.slice(0, -3);
+  const primaryGoal = stateNote.primaryGoal
+    ? presentStateItem(stateNote, "primaryGoal", stateNote.primaryGoal)
+    : null;
+  const stateChanges = presentStateItems(
+    stateNote,
+    "stateChanges",
+    stateNote.stateChanges,
+  );
+  const visibleStateChanges = stateChanges.filter((entry) => !entry.hidden);
+  const hiddenStateChanges = stateChanges.filter((entry) => entry.hidden);
+
   return (
     <div className="state-note">
       <section className="state-current-card" aria-labelledby="current-state-title">
         <p className="state-kicker" id="current-state-title">
           현재 상태
         </p>
-        <p className="state-current-text">{stateNote.currentState.text}</p>
+        <p className="state-current-text">{currentState.displayText}</p>
+        <StateCorrectionControls
+          presentation={currentState}
+          onCorrect={onCorrect}
+        />
         <EvidenceDetails item={stateNote.currentState} />
-        <div className="state-counts" aria-label="현재 상태 항목 수">
-          <span className={stateNote.confirmedDecisions.length ? "has-items" : ""}>
-            {stateNote.confirmedDecisions.length
-              ? `확정 결정 ${stateNote.confirmedDecisions.length}`
-              : "확인된 결정 없음"}
-          </span>
-          <span className={stateNote.openActions.length ? "has-items action" : ""}>
-            {stateNote.openActions.length
-              ? `열린 작업 ${stateNote.openActions.length}`
-              : "확인된 남은 작업 없음"}
-          </span>
-          <span
-            className={stateNote.unresolvedQuestions.length ? "has-items unresolved" : ""}
-          >
-            {stateNote.unresolvedQuestions.length
-              ? `미해결 ${stateNote.unresolvedQuestions.length}`
-              : "확인된 미해결 없음"}
-          </span>
-        </div>
+        {currentSignalCount ? (
+          <div className="state-counts" aria-label="현재 상태 항목 수">
+            {visibleDecisions.length ? (
+              <span className="has-items">
+                확정 결정 {visibleDecisions.length}
+              </span>
+            ) : null}
+            {visibleActions.length ? (
+              <span className="has-items action">
+                열린 작업 {visibleActions.length}
+              </span>
+            ) : null}
+            {visibleUnresolved.length ? (
+              <span className="has-items unresolved">
+                미해결 {visibleUnresolved.length}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <p className="state-counts-empty">
+            추가로 확인된 결정·남은 작업·미해결 항목 없음
+          </p>
+        )}
       </section>
 
-      {stateNote.primaryGoal ? (
+      {primaryGoal && !primaryGoal.hidden ? (
         <section className="state-goal" aria-labelledby="primary-goal-title">
           <h2 id="primary-goal-title">핵심 문제</h2>
-          <p>{stateNote.primaryGoal.text}</p>
-          <EvidenceDetails item={stateNote.primaryGoal} />
+          <p>{primaryGoal.displayText}</p>
+          <StateCorrectionControls
+            presentation={primaryGoal}
+            allowHide
+            onCorrect={onCorrect}
+          />
+          <EvidenceDetails item={primaryGoal.item} />
+        </section>
+      ) : primaryGoal ? (
+        <section className="state-goal state-goal-hidden">
+          <h2>핵심 문제</h2>
+          <HiddenStateItems items={[primaryGoal]} onCorrect={onCorrect} />
         </section>
       ) : null}
 
       <StateItemSection
         title="확정된 결정"
         className="state-decisions"
+        stateNote={stateNote}
+        section="confirmedDecisions"
         items={stateNote.confirmedDecisions}
+        onCorrect={onCorrect}
       />
 
       <StateItemSection
         title="다음에 할 일"
         className="state-actions"
+        stateNote={stateNote}
+        section="openActions"
         items={stateNote.openActions}
+        onCorrect={onCorrect}
         renderMeta={(item) => {
           const action = item as StateOpenAction;
           return [
@@ -1591,42 +1857,60 @@ function V3StateNote({
       <StateItemSection
         title="미해결 질문"
         className="state-unresolved"
+        stateNote={stateNote}
+        section="unresolvedQuestions"
         items={stateNote.unresolvedQuestions}
+        onCorrect={onCorrect}
       />
 
       {stateNote.completedResults.length ? (
         <section className="state-section state-completed">
           <h2>완료된 결과와 산출물</h2>
-          <ul className="state-item-list">
-            {stateNote.completedResults.map((item, index) => (
-              <li key={`completed-${index}`}>
-                <p>{item.text}</p>
-                {item.artifact ? (
-                  <small className="state-item-meta">
-                    산출물: {item.artifact.label}
-                  </small>
-                ) : null}
-                <EvidenceDetails item={item} />
-              </li>
-            ))}
-          </ul>
+          <CompletedResultList
+            items={primaryCompletedResults}
+            onCorrect={onCorrect}
+          />
+          {additionalCompletedResults.length ? (
+            <details className="state-more-results">
+              <summary>
+                이전 결과 {additionalCompletedResults.length}개 보기
+              </summary>
+              <CompletedResultList
+                items={additionalCompletedResults}
+                onCorrect={onCorrect}
+              />
+            </details>
+          ) : null}
+          <HiddenStateItems
+            items={hiddenCompletedResults}
+            onCorrect={onCorrect}
+          />
         </section>
       ) : null}
 
       <StateItemSection
         title="현재 유효한 제약"
         className="state-constraints"
+        stateNote={stateNote}
+        section="activeConstraints"
         items={stateNote.activeConstraints}
+        onCorrect={onCorrect}
       />
       <StateItemSection
         title="핵심 인사이트"
         className="state-insights"
+        stateNote={stateNote}
+        section="keyInsights"
         items={stateNote.keyInsights}
+        onCorrect={onCorrect}
       />
       <StateItemSection
         title="검토 중인 제안"
         className="state-proposals"
+        stateNote={stateNote}
+        section="activeProposals"
         items={stateNote.activeProposals}
+        onCorrect={onCorrect}
         renderMeta={(item) => {
           const proposal = item as StateProposalItem;
           return proposal.proposedBy
@@ -1635,23 +1919,34 @@ function V3StateNote({
         }}
       />
 
-      {stateNote.stateChanges.length ? (
+      {stateChanges.length ? (
         <details className="state-history-details">
           <summary>변경·보류·대체된 방향</summary>
-          <ul className="state-item-list state-change-list">
-            {stateNote.stateChanges.map((item, index) => (
-              <li key={`state-change-${index}`}>
-                <p>{item.text}</p>
-                {item.from !== undefined || item.to ? (
-                  <small className="state-item-meta">
-                    {item.from ? `${item.from} → ` : ""}
-                    {item.to ?? ""}
-                  </small>
-                ) : null}
-                <EvidenceDetails item={item} />
-              </li>
-            ))}
-          </ul>
+          {visibleStateChanges.length ? (
+            <ul className="state-item-list state-change-list">
+              {visibleStateChanges.map((entry) => (
+                <li key={entry.itemKey}>
+                  <p>{entry.displayText}</p>
+                  {entry.item.from !== undefined || entry.item.to ? (
+                    <small className="state-item-meta">
+                      {entry.item.from ? `${entry.item.from} → ` : ""}
+                      {entry.item.to ?? ""}
+                    </small>
+                  ) : null}
+                  <StateCorrectionControls
+                    presentation={entry}
+                    allowHide
+                    onCorrect={onCorrect}
+                  />
+                  <EvidenceDetails item={entry.item} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <HiddenStateItems
+            items={hiddenStateChanges}
+            onCorrect={onCorrect}
+          />
         </details>
       ) : null}
 
@@ -1667,36 +1962,291 @@ function V3StateNote({
   );
 }
 
+function CompletedResultList({
+  items,
+  onCorrect,
+}: {
+  items: StateItemPresentation<StateCompletedResult>[];
+  onCorrect?: StateCorrectionHandler;
+}) {
+  if (!items.length) return null;
+  return (
+    <ul className="state-item-list">
+      {items.map((entry) => (
+        <li key={entry.itemKey}>
+          <p>{entry.displayText}</p>
+          {entry.item.artifact ? (
+            <small className="state-item-meta">
+              산출물: {entry.item.artifact.label}
+            </small>
+          ) : null}
+          <StateCorrectionControls
+            presentation={entry}
+            allowHide
+            onCorrect={onCorrect}
+          />
+          <EvidenceDetails item={entry.item} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function StateItemSection({
   title,
   className,
+  stateNote,
+  section,
   items,
+  onCorrect,
   renderMeta,
 }: {
   title: string;
   className: string;
+  stateNote: NoteStateV3;
+  section: StateNoteItemSection;
   items: StateEvidenceText[];
+  onCorrect?: StateCorrectionHandler;
   renderMeta?: (item: StateEvidenceText) => string[];
 }) {
   if (!items.length) return null;
+  const presented = presentStateItems(stateNote, section, items);
+  const visibleItems = presented.filter((entry) => !entry.hidden);
+  const hiddenItems = presented.filter((entry) => entry.hidden);
   return (
     <section className={`state-section ${className}`}>
       <h2>{title}</h2>
-      <ul className="state-item-list">
-        {items.map((item, index) => {
-          const metadata = renderMeta?.(item) ?? [];
-          return (
-            <li key={`${className}-${index}`}>
-              <p>{item.text}</p>
-              {metadata.length ? (
-                <small className="state-item-meta">{metadata.join(" · ")}</small>
-              ) : null}
-              <EvidenceDetails item={item} />
-            </li>
-          );
-        })}
-      </ul>
+      {visibleItems.length ? (
+        <ul className="state-item-list">
+          {visibleItems.map((entry) => {
+            const metadata = renderMeta?.(entry.item) ?? [];
+            return (
+              <li key={entry.itemKey}>
+                <p>{entry.displayText}</p>
+                {metadata.length ? (
+                  <small className="state-item-meta">
+                    {metadata.join(" · ")}
+                  </small>
+                ) : null}
+                <StateCorrectionControls
+                  presentation={entry}
+                  allowHide
+                  onCorrect={onCorrect}
+                />
+                <EvidenceDetails item={entry.item} />
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <HiddenStateItems items={hiddenItems} onCorrect={onCorrect} />
     </section>
+  );
+}
+
+function StateCorrectionControls({
+  presentation,
+  allowHide = false,
+  onCorrect,
+}: {
+  presentation: StateItemPresentation;
+  allowHide?: boolean;
+  onCorrect?: StateCorrectionHandler;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState(presentation.displayText);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const apply = async (correction: StateNoteCorrectionOperation) => {
+    if (!onCorrect || saving) return false;
+    setSaving(true);
+    setError("");
+    try {
+      await onCorrect(correction);
+      return true;
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "사용자 수정을 저장하지 못했습니다.",
+      );
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveText = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const text = draftText.trim();
+    if (!text) {
+      setError("수정할 내용을 입력해 주세요.");
+      return;
+    }
+    const saved = await apply(
+      text === presentation.generatedText
+        ? { itemKey: presentation.itemKey, operation: "restore" }
+        : {
+            itemKey: presentation.itemKey,
+            operation: "override_text",
+            text,
+          },
+    );
+    if (saved) setEditing(false);
+  };
+
+  if (editing && onCorrect) {
+    return (
+      <form className="state-correction-editor" onSubmit={saveText}>
+        <label>
+          <span className="sr-only">항목 내용 수정</span>
+          <textarea
+            value={draftText}
+            maxLength={200}
+            rows={3}
+            autoFocus
+            onChange={(event) => setDraftText(event.target.value)}
+            disabled={saving}
+          />
+        </label>
+        <div className="state-correction-actions">
+          <button type="submit" disabled={saving || !draftText.trim()}>
+            {saving ? "저장 중…" : "저장"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftText(presentation.displayText);
+              setEditing(false);
+              setError("");
+            }}
+            disabled={saving}
+          >
+            취소
+          </button>
+        </div>
+        {error ? (
+          <p className="state-correction-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    );
+  }
+
+  if (!onCorrect && !presentation.isUserOverridden) return null;
+  return (
+    <div className="state-correction-controls">
+      {presentation.isUserOverridden ? (
+        <span className="state-user-override">사용자 수정</span>
+      ) : null}
+      {onCorrect ? (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setDraftText(presentation.displayText);
+              setEditing(true);
+              setError("");
+            }}
+            disabled={saving}
+          >
+            수정
+          </button>
+          {presentation.isUserOverridden ? (
+            <button
+              type="button"
+              onClick={() =>
+                void apply({
+                  itemKey: presentation.itemKey,
+                  operation: "restore",
+                })
+              }
+              disabled={saving}
+            >
+              원문으로 복원
+            </button>
+          ) : null}
+          {allowHide ? (
+            <button
+              type="button"
+              onClick={() =>
+                void apply({
+                  itemKey: presentation.itemKey,
+                  operation: "hide",
+                })
+              }
+              disabled={saving}
+            >
+              숨기기
+            </button>
+          ) : null}
+        </>
+      ) : null}
+      {error ? (
+        <span className="state-correction-error" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function HiddenStateItems({
+  items,
+  onCorrect,
+}: {
+  items: StateItemPresentation[];
+  onCorrect?: StateCorrectionHandler;
+}) {
+  const [restoringKey, setRestoringKey] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  if (!items.length) return null;
+
+  const restore = async (itemKey: string) => {
+    if (!onCorrect || restoringKey) return;
+    setRestoringKey(itemKey);
+    setError("");
+    try {
+      await onCorrect({ itemKey, operation: "restore" });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "숨긴 항목을 복원하지 못했습니다.",
+      );
+    } finally {
+      setRestoringKey(null);
+    }
+  };
+
+  return (
+    <details className="state-hidden-items">
+      <summary>숨긴 항목 {items.length}개</summary>
+      <ul>
+        {items.map((entry) => (
+          <li key={entry.itemKey}>
+            <div>
+              <span>숨김</span>
+              <p>{entry.displayText}</p>
+            </div>
+            {onCorrect ? (
+              <button
+                type="button"
+                onClick={() => void restore(entry.itemKey)}
+                disabled={restoringKey !== null}
+              >
+                {restoringKey === entry.itemKey ? "복원 중…" : "원문으로 복원"}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {error ? (
+        <p className="state-correction-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </details>
   );
 }
 
@@ -1704,7 +2254,9 @@ function EvidenceDetails({ item }: { item: StateEvidenceText }) {
   if (!item.evidenceSnippets?.length) return null;
   return (
     <details className="state-evidence">
-      <summary>근거 보기</summary>
+      <summary aria-label={`근거 보기: ${item.text.slice(0, 60)}`}>
+        근거 보기
+      </summary>
       <ul>
         {item.evidenceSnippets.map((snippet, index) => (
           <li key={`${snippet.sourceMessageId}-${index}`}>
@@ -2005,7 +2557,7 @@ function ImportDialog({
         >
           ×
         </button>
-        <span className="dialog-kicker">New conversation note</span>
+        <span className="dialog-kicker">새 대화 노트</span>
         <h2 id="import-title">대화를 노트로 가져오기</h2>
         <p className="dialog-intro" id="import-description">
           ChatGPT의 공개 공유 링크를 붙여 넣으세요. 현재 상태와 확정된 결정,

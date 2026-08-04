@@ -17,10 +17,10 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   assert.match(page, /대화가 도달한 상태를 10초 안에/);
   assert.match(layout, /lang="ko"/);
   assert.match(layout, /GPTMemory/);
-  assert.match(component, /All Notes/);
-  assert.match(component, /Favorites/);
-  assert.match(component, /Archive/);
-  assert.match(component, /Trash/);
+  assert.match(component, /모든 노트/);
+  assert.match(component, /즐겨찾기/);
+  assert.match(component, /보관함/);
+  assert.match(component, /휴지통/);
   assert.match(component, /\/api\/notes\/import/);
   assert.match(component, /공개 공유 링크만 지원합니다/);
   assert.match(component, /Google Gemini API로/);
@@ -47,9 +47,9 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
   assert.match(component, /summarySchemaVersion/);
   assert.match(component, /note\.stateNote\?\.title\.text/);
   assert.match(component, /note\.summary\?\.title\.text/);
-  assert.match(component, /note\.stateNote\.confirmedDecisions\.length/);
-  assert.match(component, /note\.stateNote\.openActions\.length/);
-  assert.match(component, /note\.stateNote\?\.unresolvedQuestions\.length/);
+  assert.match(component, /presentStateItem\(stateNote, "confirmedDecisions"/);
+  assert.match(component, /visibleStateItemCount\(/);
+  assert.match(component, /presentStateItem\(stateNote, "unresolvedQuestions"/);
   assert.match(
     component,
     /outcomes\.some\(\(outcome\) => outcome\.kind === "decision"\)/,
@@ -96,6 +96,43 @@ test("replaces the starter preview with the GPTMemory product shell", async () =
 
   await assert.rejects(
     access(new URL("app/_sites-preview/SkeletonPreview.tsx", root)),
+  );
+});
+
+test("renders evidence-preserving v3 corrections and compact mobile controls", async () => {
+  const [component, styles, itemKey] = await Promise.all([
+    readFile(new URL("components/GPTMemoryApp.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+    readFile(new URL("lib/note-state/item-key.ts", root), "utf8"),
+  ]);
+
+  assert.match(component, /stateNoteItemKey/);
+  assert.match(component, /userCorrections/);
+  assert.match(component, /expectedUpdatedAt:\s*note\.updatedAt/);
+  assert.match(component, /stateNoteCorrection:\s*correction/);
+  assert.match(component, /operation:\s*"override_text"/);
+  assert.match(component, /operation:\s*"hide"/);
+  assert.match(component, /operation:\s*"restore"/);
+  assert.match(component, /사용자 수정/);
+  assert.match(component, /원문으로 복원/);
+  assert.match(component, /숨긴 항목 \{items\.length\}개/);
+  assert.match(component, /visibleCompletedResults\.slice\(-3\)/);
+  assert.match(component, /visibleCompletedResults\.slice\(0, -3\)/);
+  assert.match(component, /이전 결과 \{additionalCompletedResults\.length\}개 보기/);
+  assert.match(component, /추가로 확인된 결정·남은 작업·미해결 항목 없음/);
+  assert.match(component, /view === "trash" \? undefined : saveStateNoteCorrection/);
+
+  assert.match(itemKey, /Browser-safe stable identity/);
+  assert.match(itemKey, /stateNoteItemKey/);
+  assert.doesNotMatch(itemKey, /process\.env|GEMINI_API_KEY/);
+
+  assert.match(styles, /state-correction-controls/);
+  assert.match(styles, /state-correction-editor/);
+  assert.match(styles, /state-hidden-items/);
+  assert.match(styles, /:where\(button, a, summary, input, textarea\):focus-visible/);
+  assert.match(
+    styles,
+    /@media \(max-width:\s*900px\)[\s\S]*state-correction-controls button,[\s\S]*min-height:\s*44px/,
   );
 });
 

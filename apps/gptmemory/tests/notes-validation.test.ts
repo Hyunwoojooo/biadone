@@ -126,6 +126,88 @@ test("validates list views and patch restore semantics", () => {
   }
 });
 
+test("validates state-note correction PATCH payloads and stale-write preconditions", () => {
+  const itemKey = "v3:confirmedDecisions:0123456789abcdef";
+  const expectedUpdatedAt = "2026-08-04T01:00:00.000Z";
+  assert.deepEqual(
+    parsePatchNoteInput({
+      expectedUpdatedAt,
+      stateNoteCorrection: {
+        itemKey,
+        operation: "override_text",
+        text: "사용자가 바로잡은 결정",
+      },
+    }),
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: {
+        itemKey,
+        operation: "override_text",
+        text: "사용자가 바로잡은 결정",
+      },
+    },
+  );
+  assert.deepEqual(
+    parsePatchNoteInput({
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey, operation: "hide" },
+    }),
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey, operation: "hide" },
+    },
+  );
+  assert.deepEqual(
+    parsePatchNoteInput({
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey, operation: "restore" },
+    }),
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey, operation: "restore" },
+    },
+  );
+
+  for (const invalid of [
+    {
+      stateNoteCorrection: { itemKey, operation: "hide" },
+    },
+    {
+      expectedUpdatedAt,
+    },
+    {
+      expectedUpdatedAt,
+      favorite: true,
+      stateNoteCorrection: { itemKey, operation: "hide" },
+    },
+    {
+      expectedUpdatedAt: "not-a-date",
+      stateNoteCorrection: { itemKey, operation: "hide" },
+    },
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: {
+        itemKey,
+        operation: "override_text",
+        text: "",
+      },
+    },
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey: "title:0", operation: "hide" },
+    },
+    {
+      expectedUpdatedAt,
+      stateNoteCorrection: { itemKey, operation: "hide", text: "unexpected" },
+    },
+  ]) {
+    assert.throws(
+      () => parsePatchNoteInput(invalid),
+      (error: unknown) => error instanceof ApiRequestError,
+    );
+  }
+});
+
 test("keeps v1 rows readable when stored v2 summary metadata is absent or malformed", () => {
   assert.equal(parseStoredConversationSummary(null, null), null);
   assert.equal(

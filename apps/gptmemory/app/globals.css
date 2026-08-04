@@ -55,6 +55,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+:where(button, a, summary, input, textarea):focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 3px;
+}
+
 ::selection {
   background: #efd0c4;
 }
@@ -96,6 +101,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   padding: 20px 15px 16px;
+  overflow-y: auto;
   background: #f8f6f1;
   border-right: 1px solid var(--line);
 }
@@ -326,7 +332,7 @@ button:disabled {
   gap: 8px;
   padding: 12px 10px 0;
   margin-top: auto;
-  color: #9c958b;
+  color: #6f675f;
   border-top: 1px solid #ebe5dc;
 }
 
@@ -337,7 +343,7 @@ button:disabled {
 
 .privacy-note p {
   margin: 0;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -388,7 +394,7 @@ button:disabled {
   background: transparent;
   border: 0;
   outline: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .search-field input::placeholder {
@@ -446,7 +452,7 @@ button:disabled {
 .dialog-kicker {
   margin: 0 0 5px;
   color: var(--accent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -462,8 +468,8 @@ button:disabled {
 .list-heading > span {
   align-self: flex-end;
   padding-bottom: 2px;
-  color: #aaa39a;
-  font-size: 9px;
+  color: #746d65;
+  font-size: 10px;
 }
 
 .note-list {
@@ -524,8 +530,8 @@ button:disabled {
   display: -webkit-box;
   margin: 7px 0 11px;
   overflow: hidden;
-  color: #8a837a;
-  font-size: 10px;
+  color: #746d65;
+  font-size: 11px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -535,8 +541,8 @@ button:disabled {
   min-height: 18px;
   flex-wrap: wrap;
   gap: 5px;
-  color: #aaa39a;
-  font-size: 8px;
+  color: #6f675f;
+  font-size: 10px;
 }
 
 .note-card-meta time {
@@ -688,8 +694,8 @@ button:disabled {
 
 .detail-source {
   gap: 8px;
-  color: #918a81;
-  font-size: 9px;
+  color: #6f675f;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -703,24 +709,84 @@ button:disabled {
 }
 
 .toolbar-actions {
+  position: relative;
   gap: 5px;
 }
 
-.toolbar-actions button,
-.toolbar-actions a {
-  min-height: 30px;
-  padding: 0 9px;
-  color: #858078;
+.toolbar-actions > button,
+.toolbar-actions > a,
+.toolbar-overflow > summary {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  color: #6f675f;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
-  font-size: 9px;
+  font-size: 11px;
   text-decoration: none;
 }
 
-.toolbar-actions button:hover,
-.toolbar-actions a:hover,
-.toolbar-actions button.active {
+.toolbar-favorite-button,
+.toolbar-overflow > summary {
+  width: 36px;
+  padding: 0;
+}
+
+.toolbar-overflow {
+  position: relative;
+}
+
+.toolbar-overflow > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.toolbar-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.toolbar-overflow-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  min-width: 168px;
+  gap: 2px;
+  padding: 6px;
+  background: #fffdf9;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  box-shadow: 0 15px 36px rgb(56 45 32 / 15%);
+}
+
+.toolbar-overflow-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 11px;
+  color: #5f5851;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.toolbar-actions > button:hover,
+.toolbar-actions > a:hover,
+.toolbar-actions > button.active,
+.toolbar-overflow > summary:hover,
+.toolbar-overflow[open] > summary,
+.toolbar-overflow-menu button:hover {
   color: var(--accent-deep);
   background: var(--accent-soft);
   border-color: #edd4cb;
@@ -749,8 +815,8 @@ button:disabled {
 .note-meta-row {
   gap: 7px;
   margin-bottom: 18px;
-  color: #9b948b;
-  font-size: 9px;
+  color: #6f675f;
+  font-size: 11px;
   letter-spacing: 0.025em;
 }
 
@@ -812,8 +878,8 @@ button:disabled {
 .state-section h2,
 .state-goal h2 {
   margin: 0 0 10px;
-  color: #8f766d;
-  font-size: 9px;
+  color: #715b53;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -838,11 +904,20 @@ button:disabled {
 
 .state-counts span {
   padding: 5px 8px;
-  color: #9a9289;
+  color: #6f675f;
   background: #f2eee8;
   border-radius: 99px;
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 700;
+}
+
+.state-counts-empty {
+  padding-top: 14px;
+  margin: 16px 0 0;
+  color: #6f675f;
+  border-top: 1px solid #eadfd6;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .state-counts span.has-items {
@@ -870,7 +945,7 @@ button:disabled {
 .state-goal p {
   margin: 0;
   color: #514c46;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -896,7 +971,7 @@ button:disabled {
 .state-item-list p {
   margin: 0;
   color: #4d4842;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.68;
 }
 
@@ -928,9 +1003,156 @@ button:disabled {
 .state-item-meta {
   display: block;
   margin-top: 5px;
-  color: #928a81;
-  font-size: 9px;
+  color: #6f675f;
+  font-size: 11px;
   line-height: 1.55;
+}
+
+.state-correction-controls {
+  display: flex;
+  min-height: 32px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 9px;
+  margin-top: 6px;
+}
+
+.state-correction-controls button,
+.state-correction-actions button,
+.state-hidden-items button {
+  min-height: 32px;
+  padding: 0 5px;
+  color: #6f675f;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.state-correction-controls button:hover:not(:disabled),
+.state-correction-actions button:hover:not(:disabled),
+.state-hidden-items button:hover:not(:disabled) {
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.state-user-override {
+  padding: 3px 7px;
+  color: #735447;
+  background: #f3e1da;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.state-correction-editor {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  margin-top: 9px;
+  background: rgb(255 255 255 / 70%);
+  border: 1px solid #e5d9ce;
+  border-radius: 9px;
+}
+
+.state-correction-editor label,
+.state-correction-editor textarea {
+  display: block;
+  width: 100%;
+}
+
+.state-correction-editor textarea {
+  min-height: 74px;
+  resize: vertical;
+  padding: 9px 10px;
+  color: #403a35;
+  background: #fffdf9;
+  border: 1px solid #d9cec2;
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.state-correction-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.state-correction-actions button:first-child {
+  padding-inline: 12px;
+  color: #fff;
+  background: var(--accent-deep);
+}
+
+.state-correction-actions button:first-child:hover:not(:disabled) {
+  color: #fff;
+  background: #8f5042;
+}
+
+.state-correction-error {
+  margin: 2px 0 0;
+  color: #a7463f;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.state-hidden-items {
+  margin-top: 8px;
+  border-top: 1px dashed #ddd3c8;
+}
+
+.state-hidden-items > summary {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 5px;
+  color: #746c64;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.state-hidden-items ul {
+  display: grid;
+  gap: 6px;
+  padding: 0 0 4px;
+  margin: 0;
+  list-style: none;
+}
+
+.state-hidden-items li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  color: #6f675f;
+  background: #f3f0eb;
+  border-radius: 8px;
+}
+
+.state-hidden-items li > div {
+  min-width: 0;
+}
+
+.state-hidden-items li span {
+  color: #8a8178;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.state-hidden-items li p {
+  margin: 2px 0 0;
+  color: #6f675f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.state-hidden-items li button {
+  flex: 0 0 auto;
 }
 
 .state-evidence {
@@ -938,10 +1160,14 @@ button:disabled {
 }
 
 .state-evidence > summary {
+  display: inline-flex;
   width: fit-content;
-  color: #947063;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 4px;
+  color: #76574c;
   cursor: pointer;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -957,16 +1183,16 @@ button:disabled {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
-  color: #706860;
-  font-size: 9px;
+  color: #5f5851;
+  font-size: 11px;
   line-height: 1.55;
 }
 
 .state-evidence li span {
   max-width: 120px;
-  color: #aaa197;
+  color: #6f675f;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 7px;
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
@@ -989,6 +1215,25 @@ button:disabled {
 
 .state-history-details .state-item-list {
   padding-bottom: 10px;
+}
+
+.state-more-results {
+  margin-top: 8px;
+}
+
+.state-more-results > summary {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 5px;
+  color: #5f6f5b;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.state-more-results > .state-item-list {
+  margin-top: 8px;
 }
 
 .summary-lede {
@@ -1838,8 +2083,8 @@ button:disabled {
   .mobile-nav-button,
   .detail-back-button {
     display: grid;
-    width: 34px;
-    height: 34px;
+    width: 44px;
+    height: 44px;
     flex: 0 0 auto;
     place-items: center;
     color: #746d65;
@@ -1849,6 +2094,39 @@ button:disabled {
 
   .detail-toolbar {
     padding: 0 14px;
+  }
+
+  .toolbar-actions > button,
+  .toolbar-actions > a,
+  .toolbar-overflow > summary {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  .toolbar-overflow > summary {
+    font-size: 18px;
+  }
+
+  .toolbar-overflow-menu button {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .state-evidence > summary,
+  .state-more-results > summary,
+  .state-hidden-items > summary,
+  .state-history-details > summary {
+    min-height: 44px;
+  }
+
+  .state-correction-controls button,
+  .state-correction-actions button,
+  .state-hidden-items button {
+    min-width: 44px;
+    min-height: 44px;
+    padding-inline: 10px;
+    font-size: 12px;
   }
 
   .detail-source {
@@ -1876,6 +2154,15 @@ button:disabled {
 
   .note-list {
     padding-inline: 8px;
+  }
+
+  .search-field input {
+    font-size: 16px;
+  }
+
+  .import-button {
+    width: 44px;
+    height: 44px;
   }
 
   .note-paper {
@@ -1910,12 +2197,12 @@ button:disabled {
   }
 
   .toolbar-actions {
-    gap: 1px;
+    gap: 3px;
   }
 
-  .toolbar-actions button,
-  .toolbar-actions a {
-    padding: 0 6px;
+  .toolbar-actions > button,
+  .toolbar-actions > a {
+    padding: 0 8px;
   }
 
   .import-dialog {

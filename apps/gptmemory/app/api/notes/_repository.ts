@@ -10,12 +10,15 @@ import {
   type ConversationSummaryV2,
 } from "@/lib/note-summary";
 import {
+  applyStateNoteCorrection,
   parseConversationStateNoteV3,
+  StateNoteCorrectionError,
   STATE_NOTE_SCHEMA_VERSION,
   type ConversationStateNoteV3,
 } from "@/lib/note-state";
 
 import {
+  ApiRequestError,
   parseCreateNoteInput,
   parseStoredConversationStateNote,
   parseStoredConversationSummary,
@@ -303,6 +306,10 @@ export async function patchNote(
   id: string,
   patch: PatchNoteInput,
 ): Promise<PublicNote | null> {
+  if (patch.stateNoteCorrection) {
+    return patchStateNoteCorrection(ownerKey, id, patch);
+  }
+
   const database = await getNotesDatabase();
   const assignments: string[] = [];
   const bindings: unknown[] = [];
@@ -351,6 +358,91 @@ export async function patchNote(
     .first<NoteDbRow>();
 
   return note ? toPublicNote(note) : null;
+}
+
+async function patchStateNoteCorrection(
+  ownerKey: string,
+  id: string,
+  patch: PatchNoteInput,
+): Promise<PublicNote | null> {
+  const expectedUpdatedAt = patch.expectedUpdatedAt;
+  const correction = patch.stateNoteCorrection;
+  if (!expectedUpdatedAt || !correction) {
+    throw new ApiRequestError(
+      "INVALID_CORRECTION_PATCH",
+      "State-note corrections require expectedUpdatedAt.",
+      400,
+    );
+  }
+
+  const current = await getNote(ownerKey, id);
+  if (!current) return null;
+  if (current.updatedAt !== expectedUpdatedAt) {
+    throw staleCorrectionWrite(current.updatedAt);
+  }
+  if (
+    current.summarySchemaVersion !== STATE_NOTE_SCHEMA_VERSION ||
+    !current.stateNote
+  ) {
+    throw new ApiRequestError(
+      "STATE_NOTE_CORRECTION_UNSUPPORTED",
+      "Only valid v3 state notes support item corrections.",
+      409,
+    );
+  }
+
+  const updatedAt = nextUpdatedAt(expectedUpdatedAt);
+  let corrected: ConversationStateNoteV3;
+  try {
+    corrected = applyStateNoteCorrection(
+      current.stateNote,
+      correction,
+      updatedAt,
+    );
+  } catch (error) {
+    if (error instanceof StateNoteCorrectionError) {
+      throw new ApiRequestError(error.code, error.message, 400);
+    }
+    throw error;
+  }
+
+  const database = await getNotesDatabase();
+  const note = await database
+    .prepare(
+      `
+        UPDATE notes
+        SET summary_json = ?, updated_at = ?
+        WHERE id = ?
+          AND owner_key = ?
+          AND summary_schema_version = ?
+          AND updated_at = ?
+        RETURNING ${PUBLIC_NOTE_COLUMNS}
+      `,
+    )
+    .bind(
+      JSON.stringify(corrected),
+      updatedAt,
+      id,
+      ownerKey,
+      STATE_NOTE_SCHEMA_VERSION,
+      expectedUpdatedAt,
+    )
+    .first<NoteDbRow>();
+
+  if (!note) {
+    const latest = await getNote(ownerKey, id);
+    throw staleCorrectionWrite(latest?.updatedAt);
+  }
+  return toPublicNote(note);
+}
+
+function staleCorrectionWrite(currentUpdatedAt?: string): ApiRequestError {
+  return new ApiRequestError(
+    "STALE_WRITE",
+    "The note changed before this correction could be saved.",
+    409,
+    currentUpdatedAt ? { currentUpdatedAt } : undefined,
+  );
 }
 
 export async function softDeleteNote(

@@ -4,9 +4,13 @@ import test from "node:test";
 import {
   DEFAULT_GEMINI_STATE_MODEL,
   STATE_NOTE_SCHEMA_VERSION,
+  StateNoteCorrectionError,
   StateNoteGenerationError,
+  applyStateNoteCorrection,
   createGeminiConversationStateNote,
+  listConversationStateNoteItems,
   parseConversationStateNoteV3,
+  resolveStateNoteItemPresentation,
 } from "./index.ts";
 
 const NULL_EVENT_FIELDS = {
@@ -62,6 +66,122 @@ function evidenceId(prompt, sourceMessageId, quotePart) {
   assert.ok(entry, `missing evidence ${sourceMessageId}: ${quotePart}`);
   return entry.evidenceId;
 }
+
+function stateNoteFixture() {
+  const evidence = (text, sourceMessageId = "u1") => ({
+    text,
+    sourceMessageIds: [sourceMessageId],
+    evidenceSnippets: [{ sourceMessageId, quote: text }],
+  });
+  return {
+    schemaVersion: STATE_NOTE_SCHEMA_VERSION,
+    title: evidence("상태 노트"),
+    primaryGoal: evidence("현재 상태를 정확히 보존한다."),
+    currentState: evidence("결정 하나가 확정된 상태다."),
+    confirmedDecisions: [
+      {
+        ...evidence("State Note v3를 사용한다."),
+        basis: "conversation_explicit",
+      },
+    ],
+    completedResults: [],
+    openActions: [],
+    unresolvedQuestions: [],
+    activeConstraints: [],
+    activeProposals: [],
+    keyInsights: [],
+    stateChanges: [],
+  };
+}
+
+test("applies text, hide, and restore corrections without mutating generated evidence", () => {
+  const original = parseConversationStateNoteV3(stateNoteFixture());
+  const decision = listConversationStateNoteItems(original).find(
+    (entry) => entry.section === "confirmedDecisions",
+  );
+  assert.ok(decision);
+  const generatedBefore = structuredClone(original.confirmedDecisions[0]);
+
+  const overridden = applyStateNoteCorrection(
+    original,
+    {
+      itemKey: decision.itemKey,
+      operation: "override_text",
+      text: "State Note v3를 기본 노트로 사용한다.",
+    },
+    "2026-08-04T01:00:00.000Z",
+  );
+  assert.deepEqual(overridden.confirmedDecisions[0], generatedBefore);
+  assert.equal(
+    listConversationStateNoteItems(overridden).find(
+      (entry) => entry.section === "confirmedDecisions",
+    )?.itemKey,
+    decision.itemKey,
+  );
+  assert.deepEqual(
+    resolveStateNoteItemPresentation(
+      overridden,
+      decision.itemKey,
+      generatedBefore.text,
+    ),
+    {
+      generatedText: "State Note v3를 사용한다.",
+      displayText: "State Note v3를 기본 노트로 사용한다.",
+      hidden: false,
+      isUserOverridden: true,
+    },
+  );
+
+  const hidden = applyStateNoteCorrection(
+    overridden,
+    { itemKey: decision.itemKey, operation: "hide" },
+    "2026-08-04T01:01:00.000Z",
+  );
+  assert.equal(hidden.userCorrections[0].hidden, true);
+  assert.equal(hidden.userCorrections[0].textOverride, "State Note v3를 기본 노트로 사용한다.");
+
+  const restored = applyStateNoteCorrection(
+    hidden,
+    { itemKey: decision.itemKey, operation: "restore" },
+    "2026-08-04T01:02:00.000Z",
+  );
+  assert.equal(restored.userCorrections, undefined);
+  assert.deepEqual(restored.confirmedDecisions[0], generatedBefore);
+});
+
+test("rejects corrections for unknown items and malformed stored metadata", () => {
+  const note = parseConversationStateNoteV3(stateNoteFixture());
+  assert.throws(
+    () =>
+      applyStateNoteCorrection(
+        note,
+        { itemKey: "v3:title:0000000000000000", operation: "hide" },
+        "2026-08-04T01:00:00.000Z",
+      ),
+    (error) =>
+      error instanceof StateNoteCorrectionError &&
+      error.code === "STATE_NOTE_ITEM_NOT_FOUND",
+  );
+
+  const titleKey = listConversationStateNoteItems(note)[0].itemKey;
+  assert.throws(
+    () =>
+      parseConversationStateNoteV3({
+        ...stateNoteFixture(),
+        userCorrections: [
+          {
+            itemKey: titleKey,
+            textOverride: "사용자 정정",
+            hidden: false,
+            updatedAt: "2026-08-04T01:00:00.000Z",
+          },
+        ],
+      }),
+    (error) =>
+      error instanceof StateNoteGenerationError &&
+      error.code === "STATE_INVALID_STRUCTURE",
+  );
+});
 
 test("uses stateless Gemini structured event extraction and folds a fulfilled request", async () => {
   const messages = [

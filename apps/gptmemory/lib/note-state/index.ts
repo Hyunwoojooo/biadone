@@ -7,6 +7,10 @@
  * projects the public note that can be stored.
  */
 
+import { stateNoteItemKey } from "./item-key.ts";
+
+export { stateNoteItemKey } from "./item-key.ts";
+
 export const STATE_NOTE_SCHEMA_VERSION = "gptmemory.state-note.v3" as const;
 export const STATE_NOTE_ENGINE_VERSION = "gptmemory-note-state.v3" as const;
 export const STATE_NOTE_PROMPT_VERSION = "gptmemory-state-prompt.v3" as const;
@@ -30,6 +34,8 @@ const MAX_PUBLIC_TEXT = 1_200;
 const MAX_PRIMARY_ITEMS = 5;
 const MAX_STATE_CHANGES = 4;
 const MAX_EVENTS_PER_CHUNK = 80;
+export const MAX_STATE_NOTE_CORRECTIONS = 64;
+export const MAX_STATE_NOTE_CORRECTION_TEXT = MAX_ITEM_TEXT;
 
 export type StateMessageRole = "user" | "assistant";
 
@@ -107,6 +113,27 @@ export type StateChange = StateEvidenceText & {
   reason?: string;
 };
 
+export type StateNoteItemCorrection = {
+  /** Deterministic key of the generated item; generated evidence is untouched. */
+  itemKey: string;
+  /** User-authored display text. The generated `text` remains the evidence-backed source. */
+  textOverride?: string;
+  /** Hidden items remain in the generated state note and can be restored. */
+  hidden?: true;
+  updatedAt: string;
+};
+
+export type StateNoteCorrectionOperation =
+  | {
+      itemKey: string;
+      operation: "override_text";
+      text: string;
+    }
+  | {
+      itemKey: string;
+      operation: "hide" | "restore";
+    };
+
 export type ConversationStateNoteV3 = {
   schemaVersion: typeof STATE_NOTE_SCHEMA_VERSION;
   title: StateEvidenceText;
@@ -120,7 +147,52 @@ export type ConversationStateNoteV3 = {
   activeProposals: StateProposal[];
   keyInsights: StateEvidenceText[];
   stateChanges: StateChange[];
+  /** Optional so state notes written before correction support stay readable. */
+  userCorrections?: StateNoteItemCorrection[];
 };
+
+export type StateNoteItemSection =
+  | "title"
+  | "primaryGoal"
+  | "currentState"
+  | "confirmedDecisions"
+  | "completedResults"
+  | "openActions"
+  | "unresolvedQuestions"
+  | "activeConstraints"
+  | "activeProposals"
+  | "keyInsights"
+  | "stateChanges";
+
+export type StateNoteItemEntry = {
+  itemKey: string;
+  section: StateNoteItemSection;
+  index: number | null;
+  item: StateEvidenceText;
+};
+
+export type StateNoteItemPresentation = {
+  generatedText: string;
+  displayText: string;
+  hidden: boolean;
+  isUserOverridden: boolean;
+};
+
+export class StateNoteCorrectionError extends Error {
+  readonly code:
+    | "STATE_NOTE_ITEM_NOT_FOUND"
+    | "STATE_NOTE_CORRECTION_LIMIT"
+    | "STATE_NOTE_CORRECTION_INVALID";
+
+  constructor(
+    code: StateNoteCorrectionError["code"],
+    message: string,
+  ) {
+    super(message);
+    this.name = "StateNoteCorrectionError";
+    this.code = code;
+  }
+}
 
 export type GeminiConversationStateOptions = {
   apiKey?: string;
@@ -424,24 +496,28 @@ export async function createGeminiConversationStateNote(
 export function parseConversationStateNoteV3(
   value: unknown,
 ): ConversationStateNoteV3 {
-  const record = strictRecord(
-    value,
-    [
-      "schemaVersion",
-      "title",
-      "primaryGoal",
-      "currentState",
-      "confirmedDecisions",
-      "completedResults",
-      "openActions",
-      "unresolvedQuestions",
-      "activeConstraints",
-      "activeProposals",
-      "keyInsights",
-      "stateChanges",
-    ],
-    "stateNote",
-  );
+  const requiredKeys = [
+    "schemaVersion",
+    "title",
+    "primaryGoal",
+    "currentState",
+    "confirmedDecisions",
+    "completedResults",
+    "openActions",
+    "unresolvedQuestions",
+    "activeConstraints",
+    "activeProposals",
+    "keyInsights",
+    "stateChanges",
+  ] as const;
+  const record = plainRecord(value);
+  if (!record) throw invalidStructure("stateNote must be an object.");
+  rejectUnknownKeys(record, [...requiredKeys, "userCorrections"], "stateNote");
+  for (const key of requiredKeys) {
+    if (!Object.hasOwn(record, key)) {
+      throw invalidStructure(`stateNote.${key} is required.`);
+    }
+  }
   if (record.schemaVersion !== STATE_NOTE_SCHEMA_VERSION) {
     throw invalidStructure("stateNote.schemaVersion is not supported.");
   }
@@ -476,6 +552,10 @@ export function parseConversationStateNoteV3(
     stateChanges: parseStateChanges(record.stateChanges),
   };
 
+  if (record.userCorrections !== undefined) {
+    note.userCorrections = parseStateNoteCorrections(record.userCorrections);
+  }
+
   rejectDuplicateText(note.confirmedDecisions, "confirmedDecisions");
   rejectDuplicateText(note.completedResults, "completedResults");
   rejectDuplicateText(note.openActions, "openActions");
@@ -483,10 +563,160 @@ export function parseConversationStateNoteV3(
   rejectDuplicateText(note.activeConstraints, "activeConstraints");
   rejectDuplicateText(note.activeProposals, "activeProposals");
   rejectDuplicateText(note.keyInsights, "keyInsights");
+  if (note.userCorrections) {
+    const validKeys = new Set(
+      listConversationStateNoteItems(note).map((entry) => entry.itemKey),
+    );
+    if (note.userCorrections.some((correction) => !validKeys.has(correction.itemKey))) {
+      throw invalidStructure("stateNote.userCorrections contains an unknown itemKey.");
+    }
+  }
   if (publicTextLength(note) > MAX_PUBLIC_TEXT) {
     throw invalidStructure(`The public state note exceeds ${MAX_PUBLIC_TEXT} characters.`);
   }
   return note;
+}
+
+/**
+ * Returns stable keys for every generated item in a persisted v3 note.
+ * Corrections never participate in key generation, so editing or hiding an
+ * item cannot change its key.
+ */
+export function listConversationStateNoteItems(
+  note: ConversationStateNoteV3,
+): StateNoteItemEntry[] {
+  const entries: StateNoteItemEntry[] = [];
+  const add = (
+    section: StateNoteItemSection,
+    item: StateEvidenceText,
+    index: number | null,
+  ) => {
+    entries.push({
+      itemKey: stateNoteItemKey(section, item),
+      section,
+      index,
+      item,
+    });
+  };
+
+  add("title", note.title, null);
+  if (note.primaryGoal) add("primaryGoal", note.primaryGoal, null);
+  add("currentState", note.currentState, null);
+  const arrays: Array<
+    readonly [StateNoteItemSection, readonly StateEvidenceText[]]
+  > = [
+    ["confirmedDecisions", note.confirmedDecisions],
+    ["completedResults", note.completedResults],
+    ["openActions", note.openActions],
+    ["unresolvedQuestions", note.unresolvedQuestions],
+    ["activeConstraints", note.activeConstraints],
+    ["activeProposals", note.activeProposals],
+    ["keyInsights", note.keyInsights],
+    ["stateChanges", note.stateChanges],
+  ];
+  for (const [section, items] of arrays) {
+    items.forEach((item, index) => add(section, item, index));
+  }
+
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    if (keys.has(entry.itemKey)) {
+      throw invalidStructure(
+        `stateNote has colliding generated item keys in ${entry.section}.`,
+      );
+    }
+    keys.add(entry.itemKey);
+  }
+  return entries;
+}
+
+export function resolveStateNoteItemPresentation(
+  note: ConversationStateNoteV3,
+  itemKey: string,
+  generatedText: string,
+): StateNoteItemPresentation {
+  const correction = note.userCorrections?.find(
+    (candidate) => candidate.itemKey === itemKey,
+  );
+  return {
+    generatedText,
+    displayText: correction?.textOverride ?? generatedText,
+    hidden: correction?.hidden === true,
+    isUserOverridden: correction?.textOverride !== undefined,
+  };
+}
+
+/** Apply a user correction while preserving every generated state item. */
+export function applyStateNoteCorrection(
+  note: ConversationStateNoteV3,
+  operation: StateNoteCorrectionOperation,
+  updatedAt: string,
+): ConversationStateNoteV3 {
+  const parsed = parseConversationStateNoteV3(note);
+  const validKeys = new Set(
+    listConversationStateNoteItems(parsed).map((entry) => entry.itemKey),
+  );
+  if (!validKeys.has(operation.itemKey)) {
+    throw new StateNoteCorrectionError(
+      "STATE_NOTE_ITEM_NOT_FOUND",
+      "The generated state-note item no longer exists.",
+    );
+  }
+  if (!isIsoTimestamp(updatedAt)) {
+    throw new StateNoteCorrectionError(
+      "STATE_NOTE_CORRECTION_INVALID",
+      "Correction updatedAt must be an ISO timestamp.",
+    );
+  }
+
+  const corrections = [...(parsed.userCorrections ?? [])];
+  const existingIndex = corrections.findIndex(
+    (candidate) => candidate.itemKey === operation.itemKey,
+  );
+  if (operation.operation === "restore") {
+    if (existingIndex >= 0) corrections.splice(existingIndex, 1);
+  } else {
+    if (existingIndex < 0 && corrections.length >= MAX_STATE_NOTE_CORRECTIONS) {
+      throw new StateNoteCorrectionError(
+        "STATE_NOTE_CORRECTION_LIMIT",
+        `A state note can contain at most ${MAX_STATE_NOTE_CORRECTIONS} corrections.`,
+      );
+    }
+    const existing =
+      existingIndex >= 0 ? corrections[existingIndex] : undefined;
+    const next: StateNoteItemCorrection = {
+      itemKey: operation.itemKey,
+      ...(existing?.textOverride !== undefined
+        ? { textOverride: existing.textOverride }
+        : {}),
+      ...(existing?.hidden ? { hidden: true as const } : {}),
+      updatedAt,
+    };
+    if (operation.operation === "override_text") {
+      const textOverride = normalizeText(operation.text);
+      if (
+        !textOverride ||
+        [...textOverride].length > MAX_STATE_NOTE_CORRECTION_TEXT
+      ) {
+        throw new StateNoteCorrectionError(
+          "STATE_NOTE_CORRECTION_INVALID",
+          `Correction text must contain 1 to ${MAX_STATE_NOTE_CORRECTION_TEXT} characters.`,
+        );
+      }
+      next.textOverride = textOverride;
+    } else {
+      next.hidden = true;
+    }
+    if (existingIndex >= 0) corrections[existingIndex] = next;
+    else corrections.push(next);
+  }
+
+  const corrected: ConversationStateNoteV3 = {
+    ...parsed,
+    ...(corrections.length > 0 ? { userCorrections: corrections } : {}),
+  };
+  if (corrections.length === 0) delete corrected.userCorrections;
+  return parseConversationStateNoteV3(corrected);
 }
 
 function normalizeMessages(
@@ -1653,6 +1883,62 @@ function parseStateChanges(value: unknown): StateChange[] {
   });
 }
 
+function parseStateNoteCorrections(value: unknown): StateNoteItemCorrection[] {
+  const corrections = boundedArray(
+    value,
+    "stateNote.userCorrections",
+    0,
+    MAX_STATE_NOTE_CORRECTIONS,
+  ).map((item, index) => {
+    const path = `stateNote.userCorrections[${index}]`;
+    const record = plainRecord(item);
+    if (!record) throw invalidStructure(`${path} must be an object.`);
+    rejectUnknownKeys(
+      record,
+      ["itemKey", "textOverride", "hidden", "updatedAt"],
+      path,
+    );
+    for (const key of ["itemKey", "updatedAt"]) {
+      if (!Object.hasOwn(record, key)) {
+        throw invalidStructure(`${path}.${key} is required.`);
+      }
+    }
+    const correction: StateNoteItemCorrection = {
+      itemKey: generatedString(record.itemKey, `${path}.itemKey`, 180),
+      updatedAt: generatedString(record.updatedAt, `${path}.updatedAt`, 64),
+    };
+    if (!/^v3:[A-Za-z]+:[0-9a-f]{16}$/.test(correction.itemKey)) {
+      throw invalidStructure(`${path}.itemKey is invalid.`);
+    }
+    if (!isIsoTimestamp(correction.updatedAt)) {
+      throw invalidStructure(`${path}.updatedAt must be an ISO timestamp.`);
+    }
+    if (record.textOverride !== undefined) {
+      correction.textOverride = generatedString(
+        record.textOverride,
+        `${path}.textOverride`,
+        MAX_STATE_NOTE_CORRECTION_TEXT,
+      );
+    }
+    if (record.hidden !== undefined) {
+      if (record.hidden !== true) {
+        throw invalidStructure(`${path}.hidden must be true when present.`);
+      }
+      correction.hidden = true;
+    }
+    if (correction.textOverride === undefined && correction.hidden !== true) {
+      throw invalidStructure(
+        `${path} must contain textOverride or hidden.`,
+      );
+    }
+    return correction;
+  });
+  if (new Set(corrections.map((item) => item.itemKey)).size !== corrections.length) {
+    throw invalidStructure("stateNote.userCorrections contains duplicate itemKey values.");
+  }
+  return corrections;
+}
+
 function parseEventEvidence(
   value: unknown,
   path: string,
@@ -1739,6 +2025,11 @@ function enumOrNull<const T extends string>(value: unknown, allowed: readonly T[
 
 function normalizeText(value: string): string {
   return value.normalize("NFKC").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim();
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function normalizeSourceTitle(value: string | null): string | null {

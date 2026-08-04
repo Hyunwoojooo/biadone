@@ -7,6 +7,7 @@ import {
   parseConversationStateNoteV3,
   STATE_NOTE_SCHEMA_VERSION,
   type ConversationStateNoteV3,
+  type StateNoteCorrectionOperation,
 } from "../../../lib/note-state/index.ts";
 
 export const OWNER_HEADER = "x-gptmemory-owner";
@@ -32,6 +33,8 @@ const PATCH_FIELDS = new Set([
   "favorite",
   "archived",
   "deletedAt",
+  "expectedUpdatedAt",
+  "stateNoteCorrection",
 ]);
 
 export type NoteView = (typeof NOTE_VIEWS)[number];
@@ -78,6 +81,8 @@ export type PatchNoteInput = Partial<
   >
 > & {
   deletedAt?: null;
+  expectedUpdatedAt?: string;
+  stateNoteCorrection?: StateNoteCorrectionOperation;
 };
 
 export type ListNotesInput = {
@@ -204,6 +209,47 @@ export function parsePatchNoteInput(value: unknown): PatchNoteInput {
       throw invalidField("deletedAt", "must be null to restore a note");
     }
     patch.deletedAt = null;
+  }
+  if ("expectedUpdatedAt" in body) {
+    const expectedUpdatedAt = requiredTrimmedString(
+      body.expectedUpdatedAt,
+      "expectedUpdatedAt",
+      64,
+    );
+    if (!isIsoTimestamp(expectedUpdatedAt)) {
+      throw invalidField("expectedUpdatedAt", "must be an ISO timestamp");
+    }
+    patch.expectedUpdatedAt = expectedUpdatedAt;
+  }
+  if ("stateNoteCorrection" in body) {
+    patch.stateNoteCorrection = validateStateNoteCorrection(
+      body.stateNoteCorrection,
+    );
+  }
+
+  if (patch.stateNoteCorrection) {
+    if (!patch.expectedUpdatedAt) {
+      throw invalidField(
+        "expectedUpdatedAt",
+        "is required for a state-note correction",
+      );
+    }
+    const correctionFields = new Set([
+      "expectedUpdatedAt",
+      "stateNoteCorrection",
+    ]);
+    if (Object.keys(body).some((field) => !correctionFields.has(field))) {
+      throw new ApiRequestError(
+        "INVALID_CORRECTION_PATCH",
+        "A state-note correction cannot be combined with other note changes.",
+        400,
+      );
+    }
+  } else if (patch.expectedUpdatedAt) {
+    throw invalidField(
+      "stateNoteCorrection",
+      "is required when expectedUpdatedAt is provided",
+    );
   }
 
   if (Object.keys(patch).length === 0) {
@@ -473,6 +519,54 @@ function validateTags(value: unknown): string[] {
     }
   }
   return result;
+}
+
+function validateStateNoteCorrection(
+  value: unknown,
+): StateNoteCorrectionOperation {
+  const record = requireObject(value);
+  const operation = requiredTrimmedString(
+    record.operation,
+    "stateNoteCorrection.operation",
+    32,
+  );
+  const itemKey = requiredTrimmedString(
+    record.itemKey,
+    "stateNoteCorrection.itemKey",
+    180,
+  );
+  if (!/^v3:[A-Za-z]+:[0-9a-f]{16}$/.test(itemKey)) {
+    throw invalidField(
+      "stateNoteCorrection.itemKey",
+      "must be a valid v3 item key",
+    );
+  }
+
+  if (operation === "override_text") {
+    rejectUnknownFields(record, new Set(["itemKey", "operation", "text"]));
+    return {
+      itemKey,
+      operation,
+      text: requiredTrimmedString(
+        record.text,
+        "stateNoteCorrection.text",
+        200,
+      ),
+    };
+  }
+  if (operation === "hide" || operation === "restore") {
+    rejectUnknownFields(record, new Set(["itemKey", "operation"]));
+    return { itemKey, operation };
+  }
+  throw invalidField(
+    "stateNoteCorrection.operation",
+    "must be override_text, hide, or restore",
+  );
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function invalidField(field: string, reason: string): ApiRequestError {
