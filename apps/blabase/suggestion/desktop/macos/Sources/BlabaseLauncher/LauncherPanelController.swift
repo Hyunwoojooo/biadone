@@ -6,7 +6,10 @@ final class LauncherPanelController {
     private let viewModel: LauncherViewModel
     private let panel: LauncherPanel
 
-    init(viewModel: LauncherViewModel) {
+    init(
+        viewModel: LauncherViewModel,
+        openSettings: @escaping () -> Void
+    ) {
         self.viewModel = viewModel
         panel = LauncherPanel(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 430),
@@ -15,7 +18,10 @@ final class LauncherPanelController {
             defer: false
         )
         panel.contentViewController = NSHostingController(
-            rootView: LauncherView(viewModel: viewModel)
+            rootView: LauncherView(
+                viewModel: viewModel,
+                openSettings: openSettings
+            )
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -34,11 +40,13 @@ final class LauncherPanelController {
         panel.isVisible ? hide() : show()
     }
 
-    func show() {
+    func show(loadsAttention: Bool = true) {
         positionOnActiveScreen()
         NSApplication.shared.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        viewModel.load(refresh: false)
+        if loadsAttention {
+            viewModel.load(refresh: false)
+        }
     }
 
     func hide() {

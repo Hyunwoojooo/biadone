@@ -9,6 +9,7 @@ final class LauncherAgentClient: @unchecked Sendable {
 
     private let configurationResolver: () throws -> LauncherRuntimeConfiguration
     private let processFactory: () -> Process
+    private let logHandleFactory: () throws -> FileHandle
     private let requestTimeoutNanoseconds: UInt64
     private let writeQueue = DispatchQueue(
         label: "com.biadone.blabase.launcher-agent-writer"
@@ -23,16 +24,21 @@ final class LauncherAgentClient: @unchecked Sendable {
     private var restartTask: Task<Void, Never>?
     private var isShuttingDown = false
     private var generation = UUID()
+    private var stoppingProcess: Process?
 
     init(
         configurationResolver: @escaping () throws -> LauncherRuntimeConfiguration = {
             try LauncherRuntimeConfiguration.resolve()
         },
         processFactory: @escaping () -> Process = Process.init,
+        logHandleFactory: @escaping () throws -> FileHandle = {
+            try LauncherAgentClient.openLogHandle()
+        },
         requestTimeoutNanoseconds: UInt64 = 20_000_000_000
     ) {
         self.configurationResolver = configurationResolver
         self.processFactory = processFactory
+        self.logHandleFactory = logHandleFactory
         self.requestTimeoutNanoseconds = requestTimeoutNanoseconds
     }
 
@@ -67,20 +73,35 @@ final class LauncherAgentClient: @unchecked Sendable {
     }
 
     func shutdown() {
-        isShuttingDown = true
-        restartTask?.cancel()
-        restartTask = nil
-        failAllPending(with: LauncherAgentError.disconnected)
-        outputPipe?.fileHandleForReading.readabilityHandler = nil
-        try? inputHandle?.close()
-        if let process, process.isRunning {
-            process.terminate()
+        let previousProcess = stoppingProcess ?? detachProcess()
+        stoppingProcess = nil
+        if let previousProcess, previousProcess.isRunning {
+            previousProcess.terminate()
         }
-        process = nil
-        inputHandle = nil
-        outputPipe = nil
-        try? errorHandle?.close()
-        errorHandle = nil
+    }
+
+    func stopForReconfiguration() async throws {
+        let previousProcess = stoppingProcess ?? detachProcess()
+        guard let previousProcess, previousProcess.isRunning else {
+            stoppingProcess = nil
+            resetAfterConfigurationStop()
+            return
+        }
+        stoppingProcess = previousProcess
+        previousProcess.terminate()
+        for _ in 0..<40 {
+            if !previousProcess.isRunning {
+                stoppingProcess = nil
+                resetAfterConfigurationStop()
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !previousProcess.isRunning else {
+            throw LauncherAgentError.invalidRuntime("agent stop timeout")
+        }
+        stoppingProcess = nil
+        resetAfterConfigurationStop()
     }
 
     private func request<Parameters: Encodable, Result: Decodable>(
@@ -155,6 +176,10 @@ final class LauncherAgentClient: @unchecked Sendable {
     }
 
     private func startIfNeeded() throws {
+        if let stoppingProcess, stoppingProcess.isRunning {
+            throw LauncherAgentError.invalidRuntime("agent still stopping")
+        }
+        stoppingProcess = nil
         if let process, process.isRunning { return }
         isShuttingDown = false
         restartTask?.cancel()
@@ -163,7 +188,7 @@ final class LauncherAgentClient: @unchecked Sendable {
         let nextProcess = processFactory()
         let input = Pipe()
         let output = Pipe()
-        let logHandle = try openLogHandle()
+        let logHandle = try logHandleFactory()
         let nextGeneration = UUID()
 
         nextProcess.executableURL = configuration.executableURL
@@ -201,6 +226,29 @@ final class LauncherAgentClient: @unchecked Sendable {
         outputPipe = output
         errorHandle = logHandle
         outputBuffer.removeAll(keepingCapacity: true)
+    }
+
+    private func detachProcess() -> Process? {
+        isShuttingDown = true
+        generation = UUID()
+        restartTask?.cancel()
+        restartTask = nil
+        failAllPending(with: LauncherAgentError.disconnected)
+        outputPipe?.fileHandleForReading.readabilityHandler = nil
+        try? inputHandle?.close()
+        let previousProcess = process
+        process = nil
+        inputHandle = nil
+        outputPipe = nil
+        try? errorHandle?.close()
+        errorHandle = nil
+        outputBuffer.removeAll(keepingCapacity: false)
+        return previousProcess
+    }
+
+    private func resetAfterConfigurationStop() {
+        restartPolicy = SupervisorRestartPolicy()
+        isShuttingDown = false
     }
 
     private func receive(_ data: Data, generation: UUID) {
@@ -324,7 +372,7 @@ final class LauncherAgentClient: @unchecked Sendable {
         _ = status
     }
 
-    private func openLogHandle() throws -> FileHandle {
+    nonisolated private static func openLogHandle() throws -> FileHandle {
         let fileManager = FileManager.default
         guard let logs = fileManager.urls(
             for: .libraryDirectory,

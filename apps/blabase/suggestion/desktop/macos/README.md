@@ -1,6 +1,6 @@
 # Blabase macOS Launcher packaging
 
-이 디렉터리는 Phase 4C의 첫 설치형 macOS 개발 beta를 만든다. Swift/AppKit
+이 디렉터리는 Phase 4C.1의 첫 설치형 macOS 개발 beta를 만든다. Swift/AppKit
 launcher와 JSON Lines Local Agent만 `.app`에 포함하며, Next.js Work Cockpit이나
 source checkout 전체를 desktop bundle에 넣지 않는다.
 
@@ -85,9 +85,37 @@ bytes의 hash와 manifest가 다르면 `.app`을 거부한다. release host는 a
 이 기본 root에서는 bundle된 Agent가 `managed` source mode의 유일한 source sync
 writer와 scheduler다.
 
-기존 store 함수는 전달된 root 아래 `.local/`을 사용한다. 개발자가 기존 source
-checkout의 local store를 확인하려는 경우에만 앱 시작 환경에 절대 경로를
-지정한다. 값은 `.local` 자체가 아니라 `suggestion/` root다.
+fresh install에서는 사용자가 설정 화면에서 다음 중 하나를 확인하고 명시적으로
+first-run 완료를 선택한다.
+
+1. 기본 Application Support root를 `managed` mode로 사용한다.
+2. 이미 존재하는 Blabase data folder를 직접 선택하고 `read_only` mode로 사용한다.
+
+창을 닫거나 launcher panel을 열었다는 사실만으로 first-run을 완료 처리하지 않는다.
+기존 root를 선택할 때는 `.local` 자체가 아니라 이를 포함하는 Blabase data root를
+고른다. 런처는 선택한 root의 token, OAuth credential, snapshot 또는 source data를
+기본 root로 자동 복사·이동·병합하지 않는다. fresh snapshot과 source history는 그
+root를 소유한 웹 dashboard의 `SourceSyncCoordinator`가 갱신한다.
+
+설정 화면은 effective data root와 source mode, projection이 보고한 source 가용
+상태를 표시한다. source 상태는 관찰 가능한 범위를 설명하기 위한 것이며 Swift가
+후보를 필터링하거나 순서를 바꾸는 입력으로 사용하지 않는다. data root가 바뀌면
+이전 Local Agent의 실제 종료를 기다린 뒤 새 root로 시작하고 현재 snapshot을 다시
+평가한다. dashboard endpoint만 바뀌면 Agent를 재시작하지 않는다.
+
+dashboard endpoint preference에는 HTTPS Blabase Cloud 또는 HTTP
+`localhost`/`127.0.0.1` URL만 저장할 수 있다. credential, fragment, 다른 scheme이나
+임의 host가 포함된 URL은 거부한다. preference에는 선택 path와 허용된 URL만
+기록하고 source 원문이나 credential은 저장하지 않는다.
+
+현재 dashboard URL은 화면을 여는 주소이며 data-root handshake는 아니다. local Work
+Cockpit은 선택한 root를 소유한 프로세스로 실행해야 한다. Cloud/local data bridge와
+절대 경로를 노출하지 않는 opaque root identity + snapshot revision handshake는 후속
+release gate다.
+
+기존 store 함수는 전달된 root 아래 `.local/`을 사용한다. 예전 개발 beta에서 앱
+시작 환경에 절대 경로를 지정했다면 fresh install 설정 화면이 이를 legacy candidate로
+보여준다. 값은 `.local` 자체가 아니라 `suggestion/` root다.
 
 ```bash
 launchctl setenv BLABASE_LAUNCHER_DATA_ROOT /absolute/path/to/suggestion
@@ -99,6 +127,16 @@ override root는 자동으로 `read_only` source mode가 된다. 이때 새로�
 `SourceSyncCoordinator`에서 먼저 동기화한다. 한 data root에 두 source sync writer를
 동시에 실행하지 않는다.
 
+`read_only`는 source ownership mode다. Codex 작업 이어가기에 필요한 Companion
+queue, heartbeat와 만료 command 정리는 같은 root에 제한적으로 기록될 수 있으므로
+연결 root는 읽기와 이 runtime state 쓰기가 가능해야 한다. source snapshot 자체를
+런처가 갱신한다는 뜻은 아니다.
+
+`BLABASE_LAUNCHER_DATA_ROOT`와 `BLABASE_DASHBOARD_URL`은 저장된 설정이 없는 최초
+실행에서만 candidate로 읽는다. data-root candidate는 안전한 기존 store 검증을
+통과해야 하고 사용자가 설정 저장을 눌러야 적용된다. 저장 이후에는 versioned 사용자
+preference가 우선하며 남아 있는 `launchctl` 값이 UI 변경을 몰래 덮어쓰지 않는다.
+
 확인이 끝나면 override를 제거한다.
 
 ```bash
@@ -107,6 +145,29 @@ launchctl unsetenv BLABASE_LAUNCHER_DATA_ROOT
 
 `BLABASE_LAUNCHER_DATA_ROOT` 값, `.local`, `.env*`, token, OAuth credential과
 production record는 `.app`이나 DMG에 복사하지 않는다.
+
+## First-run targeted verification
+
+Phase 4C.1 selector는 Active Attention의 input schema, 후보 eligibility, lane,
+ranking, filtering, ordering과 explanation 의미를 바꾸지 않는다. 기존 store를
+선택하는 UI/configuration-only boundary이므로 이 변경만으로 Golden Dataset이나
+Phase 4B semantic baseline을 다시 실행하지 않는다. 대신 구현과 packaging에서
+다음을 targeted test로 고정한다.
+
+- fresh install은 명시적인 완료 전까지 first-run 상태를 유지하고 완료 선택은
+  relaunch 뒤에도 보존한다.
+- 기본 Application Support root는 `managed`, 사용자 선택 root와 환경변수 override
+  root는 `read_only`다.
+- legacy 환경변수는 최초 실행 candidate로만 제시되고 명시적인 저장 뒤 versioned
+  preference가 우선한다.
+- data root 변경 시 기존 Agent request를 정리하고 실제 종료를 기다린 뒤 새 Agent로
+  현재 snapshot을 다시 평가한다. dashboard-only 변경은 Agent를 재시작하지 않는다.
+- HTTPS Blabase Cloud와 HTTP localhost endpoint만 저장·열고 나머지는 fail closed로
+  거부한다.
+- folder 선택과 설정 변경이 token, credential, snapshot과 source data를
+  복사·이동·병합하지 않는다.
+- source 상태 표시는 projection을 그대로 반영하며 추천 filtering/ordering을
+  변경하지 않는다.
 
 ## Development beta build
 

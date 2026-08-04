@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import BlabaseLauncher
 
+@MainActor
 final class LauncherModelsTests: XCTestCase {
     func testUsesShiftSpaceAsTheGlobalShortcut() throws {
         XCTAssertEqual(LauncherShortcut.displayName, "⇧ Space")
@@ -33,6 +34,9 @@ final class LauncherModelsTests: XCTestCase {
             "DYLD_INSERT_LIBRARIES": "/tmp/untrusted.dylib",
             "LD_PRELOAD": "/tmp/untrusted.dylib",
             "BLABASE_LAUNCHER_AGENT_EXECUTABLE": "/tmp/untrusted",
+            "BLABASE_LAUNCHER_DATA_ROOT": "/tmp/private-root",
+            "BLABASE_DASHBOARD_URL": "http://localhost:3102",
+            "BLABASE_SHOW_ON_LAUNCH": "1",
             "BLABASE_LAUNCHER_SOURCE_MODE": "managed",
             "BLABASE_CODE_COMMIT_SHA": String(repeating: "a", count: 40),
             "BLABASE_CODE_FINGERPRINT_SHA256": String(repeating: "b", count: 64),
@@ -51,6 +55,9 @@ final class LauncherModelsTests: XCTestCase {
         XCTAssertNil(environment["DYLD_INSERT_LIBRARIES"])
         XCTAssertNil(environment["LD_PRELOAD"])
         XCTAssertNil(environment["BLABASE_LAUNCHER_AGENT_EXECUTABLE"])
+        XCTAssertNil(environment["BLABASE_LAUNCHER_DATA_ROOT"])
+        XCTAssertNil(environment["BLABASE_DASHBOARD_URL"])
+        XCTAssertNil(environment["BLABASE_SHOW_ON_LAUNCH"])
         XCTAssertNil(environment["BLABASE_LAUNCHER_SOURCE_MODE"])
         XCTAssertNil(environment["BLABASE_CODE_COMMIT_SHA"])
         XCTAssertNil(environment["BLABASE_CODE_FINGERPRINT_SHA256"])
@@ -146,6 +153,81 @@ final class LauncherModelsTests: XCTestCase {
                     "BLABASE_LAUNCHER_DATA_ROOT": dataRoot.path,
                     "BLABASE_LAUNCHER_AGENT_EXECUTABLE": "/usr/bin/true"
                 ],
+                fileManager: fileManager
+            )
+        )
+    }
+
+    func testExplicitStoredChoiceWinsOverLegacyEnvironmentOverride() throws {
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "blabase-launcher-choice-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let selectedRoot = temporaryRoot.appendingPathComponent(
+            "selected",
+            isDirectory: true
+        )
+        let legacyRoot = temporaryRoot.appendingPathComponent(
+            "legacy",
+            isDirectory: true
+        )
+        let marker = selectedRoot.appendingPathComponent(
+            ".local/sync/latest.json"
+        )
+        try fileManager.createDirectory(
+            at: marker.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(fileManager.createFile(atPath: marker.path, contents: Data()))
+        defer { try? fileManager.removeItem(at: temporaryRoot) }
+
+        let configuration = try LauncherRuntimeConfiguration.resolve(
+            dataRootChoice: .existingReadOnly(path: selectedRoot.path),
+            environment: [
+                "BLABASE_LAUNCHER_DATA_ROOT": legacyRoot.path,
+                "BLABASE_LAUNCHER_AGENT_EXECUTABLE": "/usr/bin/true"
+            ],
+            fileManager: fileManager
+        )
+
+        XCTAssertEqual(
+            configuration.dataRootURL,
+            selectedRoot.resolvingSymlinksInPath().standardizedFileURL
+        )
+        XCTAssertFalse(fileManager.fileExists(atPath: legacyRoot.path))
+        XCTAssertEqual(
+            configuration.environment["BLABASE_LAUNCHER_SOURCE_MODE"],
+            "read_only"
+        )
+    }
+
+    func testRecognizesExistingStoreAndRejectsLocalFolderItself() throws {
+        let fileManager = FileManager.default
+        let dataRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "blabase-launcher-store-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let marker = dataRoot.appendingPathComponent(
+            ".local/connectors/codex/snapshot.json"
+        )
+        try fileManager.createDirectory(
+            at: marker.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        XCTAssertTrue(fileManager.createFile(atPath: marker.path, contents: Data()))
+        defer { try? fileManager.removeItem(at: dataRoot) }
+
+        XCTAssertEqual(
+            try LauncherDataRootPolicy.validateExistingRoot(
+                path: dataRoot.path,
+                fileManager: fileManager
+            ),
+            dataRoot.resolvingSymlinksInPath().standardizedFileURL
+        )
+        XCTAssertThrowsError(
+            try LauncherDataRootPolicy.validateExistingRoot(
+                path: dataRoot.appendingPathComponent(".local").path,
                 fileManager: fileManager
             )
         )
@@ -262,6 +344,37 @@ final class LauncherModelsTests: XCTestCase {
                 baseURL: URL(string: "http://localhost:3102")!
             )?.absoluteString,
             "http://localhost:3102/attention-lab"
+        )
+        XCTAssertEqual(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "http://127.0.0.1:3102/"
+            )?.absoluteString,
+            "http://127.0.0.1:3102"
+        )
+        XCTAssertNil(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com/private"
+            )
+        )
+        XCTAssertNil(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com?token=private"
+            )
+        )
+        XCTAssertNil(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "http://app.blabase.com"
+            )
+        )
+        XCTAssertNil(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://user:password@app.blabase.com"
+            )
+        )
+        XCTAssertNil(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com#private"
+            )
         )
     }
 

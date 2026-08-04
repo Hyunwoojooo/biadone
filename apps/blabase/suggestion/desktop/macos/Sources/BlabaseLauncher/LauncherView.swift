@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LauncherView: View {
     @ObservedObject var viewModel: LauncherViewModel
+    let openSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +30,11 @@ struct LauncherView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("지금 개입할 한 가지")
                     .font(.headline)
-                Text("Work Cockpit · 연결되고 갱신된 범위")
+                Text(
+                    viewModel.sourceMode == .managed
+                        ? "Work Cockpit · 연결되고 갱신된 범위"
+                        : "Work Cockpit · 저장된 snapshot 평가 범위"
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -44,7 +49,11 @@ struct LauncherView: View {
                 }
             }
             .buttonStyle(.plain)
-            .help("연결된 source를 새로고침한 뒤 다시 평가")
+            .help(
+                viewModel.sourceMode == .managed
+                    ? "연결된 source를 새로고침한 뒤 다시 평가"
+                    : "저장된 source snapshot을 다시 평가"
+            )
             .disabled(viewModel.isRefreshing)
         }
         .padding(.horizontal, 22)
@@ -54,6 +63,15 @@ struct LauncherView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.state {
+        case .setupRequired(let message):
+            stateMessage(
+                icon: "externaldrive.badge.plus",
+                title: "작업 데이터를 먼저 연결해주세요.",
+                detail: message
+                    ?? "Blabase 전용 저장소를 사용하거나 기존 데이터를 소스 읽기 전용으로 연결할 수 있습니다.",
+                buttonTitle: "시작 설정 열기",
+                action: openSettings
+            )
         case .loading:
             VStack(spacing: 12) {
                 ProgressView()
@@ -207,6 +225,11 @@ struct LauncherView: View {
         HStack(spacing: 14) {
             Button("대시보드 열기") {
                 viewModel.openDashboard()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            Button("설정") {
+                openSettings()
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)

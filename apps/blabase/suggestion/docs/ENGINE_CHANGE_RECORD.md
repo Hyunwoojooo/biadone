@@ -2792,3 +2792,157 @@
   - production server-authoritative recommendation transport와 multi-device sync
   - pre-audit resolver v0.2 monitor/failure record migration 또는 안전한 invalidation
   - Windows native host
+
+## 2026-08-04 Phase 4C.1 first-run data setup and persisted launcher configuration
+
+- Date: 2026-08-04
+- Owner: Codex with human direction
+- Goal:
+  - 설치 직후 어떤 Blabase store를 평가할지 사용자가 명시적으로 확인하기 전에는
+    Local Agent를 시작하지 않음
+  - 기본 Application Support store와 기존 Blabase store 연결을 안전하게 구분하고,
+    기존 store에는 source `read_only` ownership을 강제
+  - 별도 웹 Work Cockpit URL, 현재 source 평가 범위와 설정 복구 상태를 native
+    settings UI에서 확인
+- This record supersedes:
+  - 위 Phase 4C record의 `first-run connector/data-root migration 및 설정 UI`
+    follow-up. Active Attention/Work Resumption의 semantic baseline과 결과 계약은
+    변경하지 않는다.
+- Affected pipeline stages:
+  - macOS launcher startup gate와 child Agent lifecycle
+  - runtime data-root/source-mode configuration selector
+  - launcher dashboard navigation preference와 source availability display
+  - UserDefaults configuration persistence, legacy environment migration과 recovery
+- Behavior before:
+  - 앱 시작 즉시 Agent를 load하고 기본 Application Support root를 만들거나
+    `BLABASE_LAUNCHER_DATA_ROOT` 환경변수를 사용
+  - data root와 dashboard URL은 환경변수 기반이며 native Settings scene은 비어 있음
+  - 설정 변경용 Agent stop/wait/restart transaction과 persisted schema가 없음
+- Behavior after:
+  - versioned 설정을 명시적으로 완료하기 전에는 Agent request/process와 managed data
+    root 생성을 시작하지 않고 first-run window를 표시
+  - `managed_default`는 physical
+    `~/Library/Application Support/Blabase`의 non-symlink directory만 허용하고
+    유일한 source writer로 시작
+  - `existing_read_only`는 사용자가 `.local`의 부모 root를 선택해야 하며 physical
+    path, readable/writable `.local`과 알려진 regular store marker를 검증한 뒤 source
+    sync/scheduler/Attention monitor write를 차단
+  - `read_only`는 filesystem 전체 불변이 아니라 source ownership mode다. Codex
+    Work Resumption queue, heartbeat와 만료 command 정리는 같은 root에 제한적으로
+    기록될 수 있음
+  - 설정에는 schema/revision, data-root choice/physical path, allowlisted dashboard
+    origin과 onboarding 완료 상태만 저장. source mode 문자열, token, credential,
+    snapshot 내용은 저장하지 않음
+  - 손상/unknown schema, 사라진 root, identity/symlink 변경과 exhausted revision은
+    managed root로 fallback하지 않고 setup-required로 복귀
+  - 이전 `BLABASE_LAUNCHER_DATA_ROOT`/`BLABASE_DASHBOARD_URL`은 설정이 전혀 없는
+    first-run candidate로만 표시하고 자동 적용하지 않음. 명시적으로 저장된
+    preference가 이후 ambient environment보다 우선
+  - root 변경은 pending UI work와 supervisor restart를 취소하고 이전 Agent의 실제
+    종료를 bounded wait로 확인한 뒤 `activate → persist → load` 순서로 적용. stop이나
+    activation 실패 시 새 설정을 저장하거나 동시 Agent를 시작하지 않음
+  - configuration generation이 오래된 load/action response가 새 화면을 덮어쓰지
+    못하게 함. dashboard-only 변경은 Agent를 재시작하지 않음
+  - dashboard origin은 `https://app.blabase.com`과
+    `http://localhost|127.0.0.1[:port]`만 저장·열 수 있음
+  - 설정 화면은 root draft와 현재 projection을 섞지 않고 loading/error/setup/
+    unavailable source 상태를 구분해 표시
+- Versions before:
+  - launcher settings schema/data-root policy: 없음
+  - local launcher contract: Phase 4C v0.1
+  - launcher IPC/attention/execution/runtime manifest: v1 유지
+- Versions after:
+  - launcher settings schema: `launcher-settings-schema-v1`
+  - settings storage key: `com.biadone.blabase.launcher.settings.v1`
+  - data-root selector policy: `launcher-data-root-policy-v0.2`
+  - local launcher contract: Phase 4C.1 v0.2
+  - launcher IPC/attention/execution/runtime manifest: 변경 없음
+  - Active Attention input/result/policy/ranking/resolver: 변경 없음
+- Code commit:
+  - suggestion base commit:
+    `3d5969d2dcb791f62e69f64066f8b8032ac6ad3c`
+  - base subject: `feat(blabase): add native macOS attention launcher`
+  - implementation state: `dirty_worktree`
+  - packaged runtime code fingerprint:
+    `503fed8f56dd14aaaece7404d42803a31c6661aff328593982c75ac6c22ec321`
+  - implementation commit:
+    `feat(blabase): add first-run launcher data setup` (이 change record를 포함한 commit)
+- Evaluation dataset and run:
+  - 새 dataset, candidate run ID와 comparison run ID 없음
+  - 선택한 store가 runtime `cwd`/snapshot input source를 바꿀 수 있어 이 Engine
+    Change Record는 남기지만, candidate eligibility, lane, filtering, ordering,
+    selection과 explanation 의미는 변경하지 않음
+  - frozen Golden과 Phase 4B semantic baseline은 재실행하지 않음. 기존 mutable
+    synthetic Dev Candidate나 production 결과를 Gold로 재분류하지 않음
+- Commands executed:
+  - full `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - Swift debug/release build with MacOSX15.4 SDK and sandbox compatibility override
+  - `launcher:swift:smoke` equivalent script
+  - `swift test` attempt
+  - `.app` build, ad-hoc nested/outer `codesign` verification
+  - DMG create, checksum, read-only mount와 mounted app verification
+  - actual app first-run accessibility tree/screenshot inspection and quit
+  - `git diff --check`
+- Verification and metrics:
+  - full Vitest: `83/83` files, `702/702` tests passed
+  - typecheck, lint, Next.js production build: passed
+  - Swift debug and release build: passed
+  - XCTest-independent smoke: settings codec/fresh setup/persisted precedence,
+    root/marker/URL rejection, revision overflow, transaction order/stop failure,
+    actual `/bin/sh` child pending disconnect/stop/restart passed
+  - Swift XCTest source를 settings round-trip, missing-root fail-closed, legacy candidate,
+    dashboard/root apply plan과 privacy assertion으로 확장. 현재 Command Line Tools에
+    `XCTest` module이 없어 실행은 full Xcode CI로 보류
+  - final development DMG: 약 `40 MB`, SHA-256
+    `72a0b54fea3da692a5786465267ab226e9c36688f4aaeb16f8544640df81f67c`
+  - app/DMG signature, runtime manifest/Agent hash, checksum와 mounted layout: passed
+  - actual first-run UI: Agent 시작 전 managed/existing choice, dashboard URL,
+    네 source의 `저장 후 확인`, fixed bottom `설정 저장 및 시작` button과 dashboard
+    accessibility label 확인
+  - provider/model/prompt/token usage: `not_applicable`; deterministic local config/UI
+- Regressions or accepted exceptions:
+  - dashboard URL은 navigation destination이며 선택한 data root와 동일한 snapshot을
+    본다는 handshake가 아직 없음. local Work Cockpit은 선택 root를 소유한 process로
+    실행해야 하며 Cloud/local data bridge도 후속
+  - source `read_only`는 Work Resumption runtime state write까지 차단하지 않음
+  - 실제 filesystem integration에서 connector snapshot/Attention monitor 불변과
+    Resumption-only write set을 함께 hash하는 테스트는 후속
+  - full Xcode/XCUITest가 없어 NSOpenPanel, relaunch와 deterministic first-run UI
+    automation은 보류
+  - Developer ID/notarization credential이 없어 ad-hoc local beta만 생성
+- Privacy and retention impact:
+  - UserDefaults에는 physical absolute path와 allowlisted dashboard origin이 저장될 수
+    있으나 네트워크, IPC projection, log, Git과 DMG에는 포함하지 않음
+  - path selection은 marker의 존재/regular-file/readability만 확인하고 파일 내용을
+    읽거나 token, OAuth credential, snapshot을 복사·이동·병합하지 않음
+  - raw prompt/answer/reasoning, command/output/diff와 native Codex identity의 기존
+    private retention 및 IPC exclusion 계약은 변경하지 않음
+  - 새 cloud telemetry, remote retention, source mutation, approval 응답 또는 Codex
+    retry를 추가하지 않음
+- Compatibility:
+  - Phase 4C launcher IPC/projection/execution과 Phase 4B Active Attention public
+    contracts 유지
+  - legacy environment는 fresh first-run migration candidate로만 호환하고 저장 뒤에는
+    versioned preference가 우선해 UI/effective config 불일치를 방지
+  - settings 변경 전 시작된 response는 generation mismatch로 폐기
+- Release decision:
+  - 이 Mac의 local development `.app`/DMG에서 first-run beta 사용: 허용
+  - external beta: full Xcode tests, Developer ID signing/notarization과 dashboard/root
+    handshake 전까지 보류
+  - Golden/production quality claim: 변경 없음, 허용하지 않음
+- Rollback method:
+  - Phase 4C.1 settings window/store/policy를 제거하고 Phase 4C의 env/default runtime
+    resolution으로 복귀
+  - 저장된 UserDefaults Data는 inert local preference이며 source store나 connector
+    data migration/backfill이 없어 보존하거나 사용자가 앱 설정을 초기화할 때 제거 가능
+  - 선택한 기존 root의 source snapshot과 credential에는 migration을 수행하지 않아
+    별도 복구가 필요 없음
+- Follow-up work:
+  - dashboard status API의 opaque root identity + snapshot revision handshake
+  - shared-root filesystem integration: source/monitor 불변과 Resumption write set 검증
+  - full Xcode Swift XCTest/XCUITest에서 folder picker, relaunch와 Agent lifecycle E2E
+  - Developer ID hardened-runtime signing, Terminal automation permission와 notarization
+  - server-authoritative recommendation/data bridge와 multi-device sync

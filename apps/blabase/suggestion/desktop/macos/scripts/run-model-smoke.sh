@@ -32,6 +32,9 @@ mkdir -p -- "$MODULE_CACHE"
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/GlobalHotKey.swift" \
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherIPC.swift" \
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherAttentionProjection.swift" \
+  "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherAgentClient.swift" \
+  "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherDataRootPolicy.swift" \
+  "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherSettingsStore.swift" \
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/LauncherRuntimeConfiguration.swift" \
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/SafeURLPolicy.swift" \
   "${BLABASE_MACOS_ROOT}/Sources/BlabaseLauncher/SupervisorRestartPolicy.swift" \

@@ -1,8 +1,9 @@
 import Foundation
 
 @main
+@MainActor
 enum LauncherModelSmoke {
-    static func main() throws {
+    static func main() async throws {
         try expect(
             LauncherShortcut.displayName == "⇧ Space",
             "Shift-Space shortcut"
@@ -34,6 +35,279 @@ enum LauncherModelSmoke {
             ) == nil,
             "dashboard host rejection"
         )
+        try expect(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "http://localhost:3102"
+            )?.absoluteString == "http://localhost:3102",
+            "local dashboard base"
+        )
+        try expect(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com/private"
+            ) == nil,
+            "dashboard base path rejection"
+        )
+        try expect(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com?token=private"
+            ) == nil,
+            "dashboard base query rejection"
+        )
+        try expect(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://user:password@app.blabase.com"
+            ) == nil,
+            "dashboard credential rejection"
+        )
+        try expect(
+            SafeURLPolicy.dashboardBaseURL(
+                from: "https://app.blabase.com#private"
+            ) == nil,
+            "dashboard fragment rejection"
+        )
+
+        let settings = LauncherSettingsSnapshot(
+            schemaVersion: LauncherSettingsSnapshot.currentSchemaVersion,
+            revision: 1,
+            dataRootChoice: .existingReadOnly(
+                path: "/private/tmp/blabase-existing"
+            ),
+            dashboardBaseURLString: "https://app.blabase.com",
+            onboardingCompleted: true
+        )
+        let decodedSettings = try LauncherSettingsStore.decode(
+            LauncherSettingsStore.encode(settings)
+        )
+        try expect(decodedSettings == settings, "settings round trip")
+        try expectThrows("unknown settings version") {
+            _ = try LauncherSettingsStore.decode(
+                LauncherSettingsStore.encode(
+                    LauncherSettingsSnapshot(
+                        schemaVersion: 99,
+                        revision: 1,
+                        dataRootChoice: .managedDefault,
+                        dashboardBaseURLString: "https://app.blabase.com",
+                        onboardingCompleted: true
+                    )
+                )
+            )
+        }
+
+        let fileManager = FileManager.default
+        let dataRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "blabase-launcher-smoke-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let marker = dataRoot.appendingPathComponent(
+            ".local/connectors/github/snapshot.json"
+        )
+        try fileManager.createDirectory(
+            at: marker.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        guard fileManager.createFile(atPath: marker.path, contents: Data()) else {
+            throw SmokeError.failed("data root marker")
+        }
+        defer { try? fileManager.removeItem(at: dataRoot) }
+        let validatedDataRoot = try LauncherDataRootPolicy.validateExistingRoot(
+            path: dataRoot.path,
+            fileManager: fileManager
+        )
+        try expect(
+            validatedDataRoot ==
+                dataRoot.resolvingSymlinksInPath().standardizedFileURL,
+            "existing data root"
+        )
+        try expectThrows("direct local selection") {
+            _ = try LauncherDataRootPolicy.validateExistingRoot(
+                path: dataRoot.appendingPathComponent(".local").path,
+                fileManager: fileManager
+            )
+        }
+        let invalidMarkerRoot = fileManager.temporaryDirectory
+            .appendingPathComponent(
+                "blabase-launcher-invalid-marker-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let invalidMarker = invalidMarkerRoot.appendingPathComponent(
+            ".local/sync/latest.json",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: invalidMarker,
+            withIntermediateDirectories: true
+        )
+        defer { try? fileManager.removeItem(at: invalidMarkerRoot) }
+        try expectThrows("directory store marker") {
+            _ = try LauncherDataRootPolicy.validateExistingRoot(
+                path: invalidMarkerRoot.path,
+                fileManager: fileManager
+            )
+        }
+
+        let settingsPersistence = InMemorySettingsPersistence()
+        let settingsStore = LauncherSettingsStore(
+            persistence: settingsPersistence,
+            environment: [:],
+            fileManager: fileManager
+        )
+        try expect(settingsStore.requiresSetup, "fresh setup required")
+        settingsStore.persist(
+            try settingsStore.prepare(
+                dataRootChoice: .existingReadOnly(path: dataRoot.path),
+                dashboardBaseURLText: "http://localhost:3102/"
+            )
+        )
+        let reloadedSettings = LauncherSettingsStore(
+            persistence: settingsPersistence,
+            environment: [
+                "BLABASE_LAUNCHER_DATA_ROOT":
+                    dataRoot.appendingPathComponent("legacy").path
+            ],
+            fileManager: fileManager
+        )
+        try expect(!reloadedSettings.requiresSetup, "settings persistence")
+        try expect(
+            reloadedSettings.currentDataRootChoice ==
+                .existingReadOnly(path: validatedDataRoot.path),
+            "persisted root precedence"
+        )
+        try expect(
+            LauncherSettingsApplyPlan.make(
+                previousChoice: .managedDefault,
+                nextChoice: .managedDefault,
+                isAgentActive: true
+            ) == LauncherSettingsApplyPlan(
+                stopCurrentAgent: false,
+                loadAttention: false
+            ),
+            "dashboard-only apply plan"
+        )
+        try expect(
+            LauncherSettingsApplyPlan.make(
+                previousChoice: .managedDefault,
+                nextChoice: .existingReadOnly(path: validatedDataRoot.path),
+                isAgentActive: true
+            ) == LauncherSettingsApplyPlan(
+                stopCurrentAgent: true,
+                loadAttention: true
+            ),
+            "data-root apply plan"
+        )
+        var transactionEvents: [String] = []
+        try await LauncherSettingsTransaction.run(
+            plan: LauncherSettingsApplyPlan(
+                stopCurrentAgent: true,
+                loadAttention: true
+            ),
+            isTerminating: { false },
+            stopAgent: { transactionEvents.append("stop") },
+            activateDataRoot: { transactionEvents.append("activate") },
+            persist: { transactionEvents.append("persist") },
+            loadAttention: { transactionEvents.append("load") }
+        )
+        try expect(
+            transactionEvents == ["stop", "activate", "persist", "load"],
+            "settings transaction order"
+        )
+        transactionEvents.removeAll()
+        do {
+            try await LauncherSettingsTransaction.run(
+                plan: LauncherSettingsApplyPlan(
+                    stopCurrentAgent: true,
+                    loadAttention: true
+                ),
+                isTerminating: { false },
+                stopAgent: {
+                    transactionEvents.append("stop")
+                    throw SmokeError.failed("expected stop failure")
+                },
+                activateDataRoot: { transactionEvents.append("activate") },
+                persist: { transactionEvents.append("persist") },
+                loadAttention: { transactionEvents.append("load") }
+            )
+            throw SmokeError.failed("settings stop failure")
+        } catch SmokeError.failed(let label) where label == "expected stop failure" {
+            try expect(
+                transactionEvents == ["stop"],
+                "settings failure remains unpersisted"
+            )
+        }
+
+        let exhaustedPersistence = InMemorySettingsPersistence()
+        exhaustedPersistence.set(
+            try LauncherSettingsStore.encode(
+                LauncherSettingsSnapshot(
+                    schemaVersion: LauncherSettingsSnapshot.currentSchemaVersion,
+                    revision: LauncherSettingsSnapshot.maximumRevision,
+                    dataRootChoice: .existingReadOnly(
+                        path: validatedDataRoot.path
+                    ),
+                    dashboardBaseURLString: "https://app.blabase.com",
+                    onboardingCompleted: true
+                )
+            ),
+            forKey: LauncherSettingsStore.storageKey
+        )
+        let exhaustedStore = LauncherSettingsStore(
+            persistence: exhaustedPersistence,
+            environment: [:],
+            fileManager: fileManager
+        )
+        try expectThrows("settings revision exhaustion") {
+            _ = try exhaustedStore.prepare(
+                dataRootChoice: .existingReadOnly(path: validatedDataRoot.path),
+                dashboardBaseURLText: "https://app.blabase.com"
+            )
+        }
+
+        let agentLog = dataRoot.appendingPathComponent("agent-smoke.log")
+        guard fileManager.createFile(atPath: agentLog.path, contents: Data()) else {
+            throw SmokeError.failed("agent log")
+        }
+        var launchCount = 0
+        let agentClient = LauncherAgentClient(
+            configurationResolver: {
+                launchCount += 1
+                return LauncherRuntimeConfiguration(
+                    executableURL: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: [
+                        "-c",
+                        "while IFS= read -r line; do :; done"
+                    ],
+                    dataRootURL: dataRoot,
+                    environment: ["PATH": "/usr/bin:/bin"]
+                )
+            },
+            logHandleFactory: {
+                try FileHandle(forWritingTo: agentLog)
+            },
+            requestTimeoutNanoseconds: 5_000_000_000
+        )
+        let firstRequest = Task {
+            try await agentClient.getAttention(refresh: false)
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try await agentClient.stopForReconfiguration()
+        do {
+            _ = try await firstRequest.value
+            throw SmokeError.failed("pending request cancellation")
+        } catch is SmokeError {
+            throw SmokeError.failed("pending request cancellation")
+        } catch {
+            try expect(
+                error as? LauncherAgentError == .disconnected,
+                "pending request disconnected"
+            )
+        }
+        let secondRequest = Task {
+            try await agentClient.getAttention(refresh: false)
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try await agentClient.stopForReconfiguration()
+        _ = try? await secondRequest.value
+        try expect(launchCount == 2, "agent restart after configuration")
+        agentClient.shutdown()
         let validProjectionString = #"""
         {
           "contract":"blabase-launcher-attention-v1",
@@ -96,6 +370,10 @@ enum LauncherModelSmoke {
         try expect(
             childEnvironment["GITHUB_SHA"] == nil,
             "ambient CI provenance injection"
+        )
+        try expect(
+            childEnvironment["BLABASE_LAUNCHER_DATA_ROOT"] == nil,
+            "data-root environment removal"
         )
 
         let manifest = Data(
@@ -161,4 +439,17 @@ enum LauncherModelSmoke {
 
 private enum SmokeError: Error {
     case failed(String)
+}
+
+@MainActor
+private final class InMemorySettingsPersistence: LauncherSettingsPersistence {
+    private var values: [String: Any] = [:]
+
+    func object(forKey defaultName: String) -> Any? {
+        values[defaultName]
+    }
+
+    func set(_ value: Any?, forKey defaultName: String) {
+        values[defaultName] = value
+    }
 }

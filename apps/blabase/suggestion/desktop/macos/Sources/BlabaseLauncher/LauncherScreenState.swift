@@ -1,6 +1,7 @@
 import Foundation
 
 enum LauncherScreenState: Equatable, Sendable {
+    case setupRequired(String?)
     case loading
     case projection(
         LauncherAttentionProjection,

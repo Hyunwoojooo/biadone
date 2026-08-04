@@ -1,6 +1,6 @@
 # Blabase Local Launcher Contract
 
-상태: Phase 4C macOS local beta v0.1
+상태: Phase 4C.1 macOS local beta v0.2
 
 ## 1. 목적
 
@@ -9,8 +9,9 @@ Blabase macOS 앱은 메뉴바에 상주하고 전역 단축키로 현재 Active
 추론하지 않는다. Phase 4B resolver의 현재 top suggestion을 작은 표시 계약으로
 투영하고, 사용자가 명시적으로 실행한 안전한 동작만 Local Agent에 요청한다.
 
-전체 Work Cockpit과 설정 화면은 런처에 내장하지 않고 별도 웹 대시보드에서
-연다.
+전체 Work Cockpit은 런처에 내장하지 않고 별도 웹 대시보드에서 연다. 런처에는
+추천 엔진 설정이 아니라 first-run data root와 dashboard endpoint를 선택하고
+source 가용 상태를 확인하는 최소 설정 화면만 둔다.
 
 ```text
 ⇧ Space
@@ -31,6 +32,11 @@ Blabase macOS 앱은 메뉴바에 상주하고 전역 단축키로 현재 Active
 - `SMAppService`로 로그인 시 실행을 등록하며 실패는 사용자에게 표시한다.
 - GitHub와 dashboard URL은 허용된 scheme/host를 확인한 뒤 `NSWorkspace`로 연다.
 - `⇧ Space` 등록 실패는 launcher footer와 메뉴에 충돌 상태로 표시한다.
+- first-run과 이후 설정 화면에서 기존 Blabase data root를 사용자가 직접 선택하고,
+  허용된 dashboard URL과 source 가용 상태를 표시한다.
+- data root 변경을 저장하면 실행 중인 Local Agent의 실제 종료를 기다린 뒤 새
+  root로 시작하고 현재 snapshot을 재평가한다. dashboard-only 변경은 Agent를
+  재시작하지 않는다. Swift가 재평가 결과를 보정하거나 다시 순위화하지 않는다.
 - prompt, shell command, native Codex thread ID 또는 local cwd를 만들거나 IPC로
   전달하지 않는다.
 
@@ -49,8 +55,11 @@ Blabase macOS 앱은 메뉴바에 상주하고 전역 단축키로 현재 Active
 ### 서버와 웹 대시보드
 
 - Phase 4C local beta의 추천 계산과 Codex 실행 관찰은 Local Agent에서 수행한다.
-- 웹 대시보드 URL은 런처 설정으로 교체 가능하다. 개발 기본값은 현재 local Work
-  Cockpit이다.
+- 웹 대시보드 URL은 런처 설정으로 교체 가능하다. 기본값은 Blabase Cloud이고
+  개발용 local Work Cockpit은 설정 preset으로 제공한다.
+- 저장 가능한 endpoint는 HTTPS Blabase Cloud와 HTTP localhost 계열로 제한한다.
+  임의 외부 host, credential이 들어간 URL, 지원하지 않는 scheme은 저장하거나
+  열지 않는다.
 - 장기적으로 server-authoritative 추천으로 이전하더라도 Swift UI 계약을
   유지하고 Local Agent가 transport와 local execution boundary를 담당한다.
 
@@ -171,20 +180,60 @@ Blabase.app/Contents/
    └─ launcher-agent.mjs
 ```
 
-기본 data root는 `~/Library/Application Support/Blabase`다. connector token,
-snapshot, monitor, replay와 Work Resumption state는 기존 store 계약에 따라 그
-아래 `.local/`에 저장한다. `.local`, `.env*`, credential, production record는
-앱 bundle이나 DMG에 포함하지 않는다.
+기본 data root는 `~/Library/Application Support/Blabase`다. first-run에서
+사용자가 별도 root를 고르지 않으면 이 root를 사용하며 bundle Agent가 `managed`
+mode의 유일한 source sync writer가 된다. connector token, snapshot, monitor,
+replay와 Work Resumption state는 기존 store 계약에 따라 그 아래 `.local/`에
+저장한다. `.local`, `.env*`, credential, production record는 앱 bundle이나 DMG에
+포함하지 않는다.
 
-기본 root의 bundle Agent는 `managed` mode의 유일한 source sync writer다.
-`BLABASE_LAUNCHER_DATA_ROOT` override를 사용하면 host가 Agent를 강제로
-`read_only` mode로 시작한다. 이 모드의 `refresh: true`는 기존 snapshot만 다시
-평가하고 source scheduler, explicit source sync와 monitor history write를 하지
-않는다. override root에 fresh data가 필요하면 그 root를 소유한 웹
-`SourceSyncCoordinator`가 동기화하며, 같은 root에서 두 coordinator를 실행하지
+사용자가 설정 화면에서 기존 Blabase data folder를 명시적으로 선택하면 host는
+physical absolute path를 저장하고 해당 root를 항상 `read_only` mode로 연다. 사용자는
+`.local` 자체가 아니라 그 부모 Blabase data root를 선택한다. 이 모드의
+`refresh: true`는 기존 snapshot만 다시 평가하고 source scheduler, explicit source
+sync와 monitor history write를 하지 않는다. 선택 root에 fresh data가 필요하면 그
+root를 소유한 웹 `SourceSyncCoordinator`가 동기화하며, 같은 root에서 두
+coordinator를 실행하지 않는다. 런처는 선택 과정에서 token, OAuth credential,
+snapshot 또는 다른 data를 기본 root와 선택 root 사이에 자동 복사·이동·병합하지
 않는다.
 
-개발자가 기존 local fixture/store를 확인할 때만
+여기서 `read_only`는 **source snapshot 갱신과 Attention history write를 막는 source
+ownership mode**이며 파일시스템 전체를 불변으로 만드는 뜻이 아니다. Codex
+`focus_or_resume`를 위해 Companion queue, heartbeat와 만료 command 정리 상태는 같은
+root 아래에 기록될 수 있다. 따라서 선택 root는 읽기와 이 제한된 runtime state
+쓰기가 가능해야 하며, UI에는 `소스 읽기 전용`으로 표시한다.
+
+first-run은 창을 닫거나 기본 화면을 한 번 열었다는 이유로 완료되지 않는다.
+사용자가 기본 managed root 또는 기존 read-only root와 dashboard endpoint를 확인한
+뒤 완료 동작을 명시적으로 실행했을 때만 완료 상태를 저장한다. 설정 화면은 현재
+effective root/mode와 projection의 `unavailableSources`를 source 상태로 보여준다.
+이는 가용성 표시일 뿐 후보 eligibility나 source 의미를 새로 해석하지 않는다.
+
+저장된 dashboard endpoint는 HTTPS Blabase Cloud 또는 HTTP
+`localhost`/`127.0.0.1`만 허용한다. username/password, fragment와 허용되지 않은
+host/scheme을 포함한 URL은 fail closed로 거부한다. dashboard URL과 선택 data root는
+local preference에 경로/URL만 저장하며 credential이나 source 원문은 preference에
+저장하지 않는다.
+
+Phase 4C.1의 dashboard URL은 navigation destination일 뿐 선택한 local data root와
+같은 snapshot을 사용한다는 handshake가 아니다. local Work Cockpit은 사용자가
+선택한 root를 `cwd`로 소유한 `SourceSyncCoordinator`여야 한다. Cloud와 local Agent
+사이의 data bridge도 아직 이 계약에 포함되지 않는다. 후속 단계에서는 dashboard
+status API가 opaque root identity와 snapshot revision을 반환하고 런처가 이를
+비교하되 절대 경로를 네트워크로 전송하지 않는 handshake를 추가한다.
+
+기존 beta의 `BLABASE_LAUNCHER_DATA_ROOT`와 `BLABASE_DASHBOARD_URL` 값은 저장된 설정이
+없는 최초 실행에서만 legacy candidate로 읽는다. 안전한 root/URL 검증 뒤 설정 화면에
+미리 채우되 자동 적용하거나 저장하지 않는다. 사용자가 완료 동작을 실행하면
+versioned preference를 저장하고 이후에는 이 명시적인 선택이 남아 있는 환경변수보다
+우선한다. 따라서 UI에서 바꾼 값과 실제 실행 값이 조용히 달라지지 않는다.
+
+data root가 바뀌면 host는 Local Agent의 pending request와 자동 restart를 정리하고
+이전 프로세스의 실제 종료를 bounded wait로 확인한 뒤에만 새 설정을 저장·실행한다.
+종료를 확인하지 못하면 새 Agent를 동시에 시작하지 않는다. dashboard endpoint만
+바뀌면 Agent input이나 source ownership이 달라지지 않으므로 재시작하지 않는다.
+
+개발자가 기존 local fixture/store를 확인할 때는
 `BLABASE_LAUNCHER_DATA_ROOT`로 명시적인 절대 경로를 전달할 수 있다. 배포
 artifact는 build machine의 data path를 기록하지 않는다. data root는 symlink를
 해소한 뒤 `/`와 사용자 HOME을 다시 거부한다. 임의 Agent executable/argument
@@ -211,6 +260,12 @@ Phase 4C는 기존 Active Attention input, candidate, eligibility, lane, ranking
 selection과 explanation을 바꾸지 않는다. 따라서 frozen Golden이나 Phase 4B
 baseline을 새로 실행하지 않는다. 대신 다음을 targeted regression으로 고정한다.
 
+Phase 4C.1 first-run selector도 engine input schema, snapshot 내용, 후보 filtering,
+ordering 또는 결과 의미를 바꾸지 않는다. 사용자가 어느 기존 store를 읽을지
+명시하는 UI/configuration-only boundary이며, engine 결과를 조합하거나 번역하지
+않는다. 이 변경만으로 Golden Dataset 또는 semantic baseline을 다시 실행할 필요는
+없다.
+
 - 네 decision status와 top suggestion이 손실 없이 projection되는지
 - launcher가 top suggestion filtering/ordering을 바꾸지 않는지
 - raw/private field가 projection과 stdout log에 나오지 않는지
@@ -223,3 +278,19 @@ baseline을 새로 실행하지 않는다. 대신 다음을 targeted regression�
   managed candidate는 계산 당시 binding/execution identity까지 일치하는지
 - Swift decoder, URL allowlist, supervisor crash/restart가 fail closed하는지
 - `.app`, Info.plist, signature와 DMG layout이 검증되는지
+- fresh install에서 first-run이 자동 완료되지 않고 명시적인 완료 뒤에만 relaunch
+  시 완료 상태가 유지되는지
+- 기본 Application Support root는 `managed`, 사용자가 선택한 기존 root와 환경변수
+  override root는 항상 `read_only`인지
+- legacy 환경변수는 최초 실행 candidate로만 제시되고 저장 뒤 versioned preference가
+  우선하는지
+- root 변경은 이전 Agent 종료 뒤 재시작·재평가하고 dashboard-only 변경은 Agent를
+  재시작하지 않는지
+- HTTPS Blabase Cloud와 HTTP localhost만 dashboard endpoint로 저장·열 수 있는지
+- root 선택 중 credential, snapshot과 source data가 복사·이동·병합되지 않는지
+- shared root에서 source sync와 Attention monitor write는 차단되지만 Work
+  Resumption queue/heartbeat의 제한된 write는 계속 가능한지
+- projection의 source unavailable 상태가 표시되지만 추천 순위나 의미에는 영향을
+  추가하지 않는지
+- 후속: dashboard status의 opaque root identity/snapshot revision handshake로 서로
+  다른 store를 보는 launcher와 Work Cockpit을 감지하는지

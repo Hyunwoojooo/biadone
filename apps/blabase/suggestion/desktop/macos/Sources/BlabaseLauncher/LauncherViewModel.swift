@@ -10,11 +10,30 @@ final class LauncherViewModel: ObservableObject {
     @Published private(set) var actionMessage: String?
 
     private let client: LauncherAgentClient
+    private let dashboardBaseURLProvider: () -> URL?
+    private let sourceModeProvider: () -> LauncherSourceMode
     private var loadTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
+    private var configurationGeneration = UUID()
 
-    init(client: LauncherAgentClient = LauncherAgentClient()) {
+    init(
+        client: LauncherAgentClient = LauncherAgentClient(),
+        dashboardBaseURLProvider: @escaping () -> URL? = {
+            let configured = ProcessInfo.processInfo.environment[
+                "BLABASE_DASHBOARD_URL"
+            ]
+            return configured.flatMap(SafeURLPolicy.dashboardBaseURL)
+                ?? SafeURLPolicy.defaultDashboardBaseURL
+        },
+        sourceModeProvider: @escaping () -> LauncherSourceMode = {
+            ProcessInfo.processInfo.environment[
+                "BLABASE_LAUNCHER_DATA_ROOT"
+            ] == nil ? .managed : .readOnly
+        }
+    ) {
         self.client = client
+        self.dashboardBaseURLProvider = dashboardBaseURLProvider
+        self.sourceModeProvider = sourceModeProvider
     }
 
     func load(refresh: Bool) {
@@ -25,19 +44,30 @@ final class LauncherViewModel: ObservableObject {
             state = .loading
         }
         actionMessage = nil
+        let generation = configurationGeneration
         loadTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if generation == self.configurationGeneration {
+                    self.isRefreshing = false
+                }
+            }
             do {
                 let projection = try await self.client.getAttention(
                     refresh: refresh
                 )
-                guard !Task.isCancelled else { return }
+                guard
+                    !Task.isCancelled,
+                    generation == self.configurationGeneration
+                else { return }
                 self.state = LauncherScreenReducer.loaded(projection)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard
+                    !Task.isCancelled,
+                    generation == self.configurationGeneration
+                else { return }
                 self.state = .error(Self.message(for: error))
             }
-            self.isRefreshing = false
         }
     }
 
@@ -70,10 +100,10 @@ final class LauncherViewModel: ObservableObject {
 
     func openDashboard() {
         let path = currentProjection?.dashboardPath ?? "/"
-        let environment = ProcessInfo.processInfo.environment
-        let configured = environment["BLABASE_DASHBOARD_URL"]
-            .flatMap(URL.init(string:))
-        let baseURL = configured ?? URL(string: "https://app.blabase.com")!
+        guard let baseURL = dashboardBaseURLProvider() else {
+            actionMessage = "허용된 Blabase 대시보드 주소가 아닙니다."
+            return
+        }
         guard let url = SafeURLPolicy.dashboardURL(
             path: path,
             baseURL: baseURL
@@ -82,6 +112,22 @@ final class LauncherViewModel: ObservableObject {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    func markSetupRequired(_ message: String?) {
+        invalidateCurrentWork()
+        state = .setupRequired(message)
+    }
+
+    func stopForConfigurationChange() async throws {
+        invalidateCurrentWork()
+        state = .loading
+        try await client.stopForReconfiguration()
+    }
+
+    func loadAfterConfigurationChange() {
+        state = .loading
+        load(refresh: false)
     }
 
     func shutdown() {
@@ -95,18 +141,30 @@ final class LauncherViewModel: ObservableObject {
         return projection
     }
 
+    var sourceMode: LauncherSourceMode {
+        sourceModeProvider()
+    }
+
     private func execute(resultId: String, candidateId: String) {
         guard !isPerformingAction else { return }
         isPerformingAction = true
         actionMessage = "Codex 작업을 여는 중입니다."
+        let generation = configurationGeneration
         actionTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isPerformingAction = false }
+            defer {
+                if generation == self.configurationGeneration {
+                    self.isPerformingAction = false
+                }
+            }
             do {
                 var execution = try await self.client.executeAttention(
                     resultId: resultId,
                     candidateId: candidateId
                 )
+                guard generation == self.configurationGeneration else {
+                    return
+                }
                 self.state = LauncherScreenReducer.executing(
                     execution,
                     from: self.state
@@ -118,6 +176,9 @@ final class LauncherViewModel: ObservableObject {
                     execution = try await self.client.getCommand(
                         execution.commandId
                     )
+                    guard generation == self.configurationGeneration else {
+                        return
+                    }
                     self.state = LauncherScreenReducer.executing(
                         execution,
                         from: self.state
@@ -128,9 +189,24 @@ final class LauncherViewModel: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
+                guard
+                    !Task.isCancelled,
+                    generation == self.configurationGeneration
+                else { return }
                 self.actionMessage = Self.message(for: error)
             }
         }
+    }
+
+    private func invalidateCurrentWork() {
+        configurationGeneration = UUID()
+        loadTask?.cancel()
+        loadTask = nil
+        actionTask?.cancel()
+        actionTask = nil
+        isRefreshing = false
+        isPerformingAction = false
+        actionMessage = nil
     }
 
     private static func executionMessage(

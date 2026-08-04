@@ -7,18 +7,20 @@ struct LauncherRuntimeConfiguration: Equatable, Sendable {
     let environment: [String: String]
 
     static func resolve(
+        dataRootChoice: LauncherDataRootChoice? = nil,
         bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) throws -> LauncherRuntimeConfiguration {
         let resolvedDataRoot = try resolveDataRoot(
+            choice: dataRootChoice,
             environment: environment,
             fileManager: fileManager
         )
         let dataRoot = resolvedDataRoot.url
         var childEnvironment = sanitizedChildEnvironment(environment)
         childEnvironment["BLABASE_LAUNCHER_SOURCE_MODE"] =
-            resolvedDataRoot.sourceMode
+            resolvedDataRoot.sourceMode.rawValue
 
 #if DEBUG
         if let executable = environment["BLABASE_LAUNCHER_AGENT_EXECUTABLE"] {
@@ -84,6 +86,9 @@ struct LauncherRuntimeConfiguration: Equatable, Sendable {
                 && !key.hasPrefix("DYLD_")
                 && key != "BLABASE_LAUNCHER_AGENT_EXECUTABLE"
                 && key != "BLABASE_LAUNCHER_AGENT_ARGUMENTS_JSON"
+                && key != "BLABASE_LAUNCHER_DATA_ROOT"
+                && key != "BLABASE_DASHBOARD_URL"
+                && key != "BLABASE_SHOW_ON_LAUNCH"
                 && key != "BLABASE_LAUNCHER_SOURCE_MODE"
                 && key != "BLABASE_CODE_COMMIT_SHA"
                 && key != "BLABASE_CODE_FINGERPRINT_SHA256"
@@ -136,51 +141,45 @@ struct LauncherRuntimeConfiguration: Equatable, Sendable {
     }
 
     private static func resolveDataRoot(
+        choice: LauncherDataRootChoice?,
         environment: [String: String],
         fileManager: FileManager
-    ) throws -> ResolvedDataRoot {
-        let candidateURL: URL
-        let sourceMode: String
-        if let override = environment["BLABASE_LAUNCHER_DATA_ROOT"] {
-            guard override.hasPrefix("/"), override.count <= 1_024 else {
-                throw LauncherAgentError.invalidRuntime("invalid data root")
+    ) throws -> ResolvedLauncherDataRoot {
+        do {
+            if let choice {
+                switch choice {
+                case .managedDefault:
+                    return try LauncherDataRootPolicy.resolveManagedDefault(
+                        fileManager: fileManager
+                    )
+                case .existingReadOnly(let path):
+                    let root = try LauncherDataRootPolicy.validateExistingRoot(
+                        path: path,
+                        fileManager: fileManager
+                    )
+                    return ResolvedLauncherDataRoot(
+                        url: root,
+                        sourceMode: .readOnly
+                    )
+                }
             }
-            candidateURL = URL(fileURLWithPath: override, isDirectory: true)
-                .standardizedFileURL
-            sourceMode = "read_only"
-        } else {
-            guard let applicationSupport = fileManager.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first else {
-                throw LauncherAgentError.invalidRuntime("application support")
+            if let override = environment["BLABASE_LAUNCHER_DATA_ROOT"] {
+                return try LauncherDataRootPolicy.resolveLegacyOverride(
+                    path: override,
+                    fileManager: fileManager
+                )
             }
-            candidateURL = applicationSupport
-                .appendingPathComponent("Blabase", isDirectory: true)
-                .standardizedFileURL
-            sourceMode = "managed"
+            return try LauncherDataRootPolicy.resolveManagedDefault(
+                fileManager: fileManager
+            )
+        } catch let error as LauncherAgentError {
+            throw error
+        } catch {
+            throw LauncherAgentError.invalidRuntime(
+                (error as? LocalizedError)?.errorDescription
+                    ?? "invalid data root"
+            )
         }
-        let home = fileManager.homeDirectoryForCurrentUser
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        let preflightURL = candidateURL
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        guard preflightURL.path != "/", preflightURL != home else {
-            throw LauncherAgentError.invalidRuntime("unsafe data root")
-        }
-        try fileManager.createDirectory(
-            at: candidateURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let resolvedURL = candidateURL
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-        guard resolvedURL.path != "/", resolvedURL != home else {
-            throw LauncherAgentError.invalidRuntime("unsafe data root")
-        }
-        return ResolvedDataRoot(url: resolvedURL, sourceMode: sourceMode)
     }
 
     private static func decodeDevelopmentArguments(
@@ -211,11 +210,6 @@ struct LauncherRuntimeConfiguration: Equatable, Sendable {
             (48...57).contains($0) || (97...102).contains($0)
         }
     }
-}
-
-private struct ResolvedDataRoot {
-    let url: URL
-    let sourceMode: String
 }
 
 private struct LauncherRuntimeManifest: Decodable {

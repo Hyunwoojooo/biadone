@@ -1,6 +1,10 @@
 import Foundation
 
 enum SafeURLPolicy {
+    static let defaultDashboardBaseURL = URL(
+        string: "https://app.blabase.com"
+    )!
+
     static func githubURL(from rawValue: String) -> URL? {
         guard
             let components = URLComponents(string: rawValue),
@@ -46,7 +50,7 @@ enum SafeURLPolicy {
 
     static func dashboardURL(
         path: String,
-        baseURL: URL = URL(string: "https://app.blabase.com")!
+        baseURL: URL = defaultDashboardBaseURL
     ) -> URL? {
         guard path.hasPrefix("/"), !path.hasPrefix("//") else { return nil }
         guard var components = URLComponents(
@@ -76,5 +80,29 @@ enum SafeURLPolicy {
         components.query = nil
         components.fragment = nil
         return components.url
+    }
+
+    static func dashboardBaseURL(from rawValue: String) -> URL? {
+        guard
+            let candidate = URL(string: rawValue),
+            let original = URLComponents(
+                url: candidate,
+                resolvingAgainstBaseURL: false
+            ),
+            original.path.isEmpty || original.path == "/",
+            original.query == nil,
+            original.fragment == nil,
+            let allowed = dashboardURL(path: "/", baseURL: candidate),
+            var normalized = URLComponents(
+                url: allowed,
+                resolvingAgainstBaseURL: false
+            )
+        else {
+            return nil
+        }
+        normalized.path = ""
+        normalized.query = nil
+        normalized.fragment = nil
+        return normalized.url
     }
 }

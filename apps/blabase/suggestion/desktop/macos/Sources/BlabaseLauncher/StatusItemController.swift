@@ -9,17 +9,23 @@ final class StatusItemController: NSObject {
     private let hotKeyRegistered: Bool
     private let togglePanel: () -> Void
     private let openDashboard: () -> Void
+    private let openSettings: () -> Void
+    private let setupRequired: () -> Bool
 
     init(
         loginItemController: LoginItemController,
         hotKeyRegistered: Bool,
         togglePanel: @escaping () -> Void,
-        openDashboard: @escaping () -> Void
+        openDashboard: @escaping () -> Void,
+        openSettings: @escaping () -> Void,
+        setupRequired: @escaping () -> Bool
     ) {
         self.loginItemController = loginItemController
         self.hotKeyRegistered = hotKeyRegistered
         self.togglePanel = togglePanel
         self.openDashboard = openDashboard
+        self.openSettings = openSettings
+        self.setupRequired = setupRequired
         super.init()
         if let button = statusItem.button {
             button.image = NSImage(
@@ -47,7 +53,12 @@ final class StatusItemController: NSObject {
 
     private func showMenu() {
         let menu = NSMenu()
-        menu.addItem(menuItem("지금 할 일 보기", action: #selector(showLauncher)))
+        menu.addItem(
+            menuItem(
+                setupRequired() ? "시작 설정 계속하기" : "지금 할 일 보기",
+                action: #selector(showLauncher)
+            )
+        )
         if !hotKeyRegistered {
             let warning = NSMenuItem(
                 title: "\(LauncherShortcut.displayName)를 등록하지 못했습니다",
@@ -58,6 +69,7 @@ final class StatusItemController: NSObject {
             menu.addItem(warning)
         }
         menu.addItem(menuItem("대시보드 열기", action: #selector(openDashboardItem)))
+        menu.addItem(menuItem("설정…", action: #selector(openSettingsItem)))
         menu.addItem(.separator())
         let loginItem = menuItem(
             loginItemController.statusLabel,
@@ -83,7 +95,15 @@ final class StatusItemController: NSObject {
     }
 
     @objc private func openDashboardItem() {
-        openDashboard()
+        if setupRequired() {
+            openSettings()
+        } else {
+            openDashboard()
+        }
+    }
+
+    @objc private func openSettingsItem() {
+        openSettings()
     }
 
     @objc private func toggleLoginItem() {
