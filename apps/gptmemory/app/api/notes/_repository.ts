@@ -5,6 +5,11 @@ import type {
   NoteImportGenerationMetadata,
 } from "@/lib/note-import";
 import {
+  CONTENT_NOTE_SCHEMA_VERSION,
+  parseConversationContentNoteV4,
+  type ConversationContentNoteV4,
+} from "@/lib/note-content";
+import {
   parseConversationSummaryV2,
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
@@ -20,6 +25,7 @@ import {
 import {
   ApiRequestError,
   parseCreateNoteInput,
+  parseStoredConversationContentNote,
   parseStoredConversationStateNote,
   parseStoredConversationSummary,
   type CreateNoteInput,
@@ -55,6 +61,10 @@ type StoredSummaryWrite =
   | {
       schemaVersion: typeof STATE_NOTE_SCHEMA_VERSION;
       summary: ConversationStateNoteV3;
+    }
+  | {
+      schemaVersion: typeof CONTENT_NOTE_SCHEMA_VERSION;
+      summary: ConversationContentNoteV4;
     };
 
 function validateImportedSummary(input: ImportedNoteWrite): StoredSummaryWrite {
@@ -68,6 +78,12 @@ function validateImportedSummary(input: ImportedNoteWrite): StoredSummaryWrite {
     return {
       schemaVersion: STATE_NOTE_SCHEMA_VERSION,
       summary: parseConversationStateNoteV3(input.summary),
+    };
+  }
+  if (input.summarySchemaVersion === CONTENT_NOTE_SCHEMA_VERSION) {
+    return {
+      schemaVersion: CONTENT_NOTE_SCHEMA_VERSION,
+      summary: parseConversationContentNoteV4(input.summary),
     };
   }
   throw new Error("Imported generated-note version is unsupported.");
@@ -205,7 +221,7 @@ export async function hasReplacementCandidate(input: {
   const match = await database
     .prepare(
       `
-        SELECT 1 AS matches
+        SELECT 1 AS matches, summary_schema_version, summary_json
         FROM notes
         WHERE id = ?
           AND owner_key = ?
@@ -220,9 +236,25 @@ export async function hasReplacementCandidate(input: {
       input.normalizedUrl,
       input.expectedUpdatedAt,
     )
-    .first<{ matches: number }>();
+    .first<{
+      matches: number;
+      summary_schema_version: string | null;
+      summary_json: string | null;
+    }>();
 
-  return Boolean(match?.matches);
+  if (!match?.matches) return false;
+  const stateNote = parseStoredConversationStateNote(
+    match.summary_schema_version,
+    match.summary_json,
+  );
+  if (stateNote?.userCorrections?.length) {
+    throw new ApiRequestError(
+      "REIMPORT_BLOCKED_BY_USER_CORRECTIONS",
+      "사용자가 직접 수정하거나 숨긴 항목이 있어 이 노트는 자동 재생성하지 않았습니다. 기존 노트는 그대로 보존됩니다.",
+      409,
+    );
+  }
+  return true;
 }
 
 export async function createImportedNote(
@@ -488,6 +520,10 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     row.summary_schema_version,
     row.summary_json,
   );
+  const contentNote = parseStoredConversationContentNote(
+    row.summary_schema_version,
+    row.summary_json,
+  );
   return {
     id: row.id,
     title: row.title,
@@ -499,13 +535,16 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     ...(row.source_message_count !== null
       ? { sourceMessageCount: row.source_message_count }
       : {}),
-    summarySchemaVersion: stateNote
-      ? STATE_NOTE_SCHEMA_VERSION
-      : summary
-        ? SUMMARY_SCHEMA_VERSION
-        : null,
+    summarySchemaVersion: contentNote
+      ? CONTENT_NOTE_SCHEMA_VERSION
+      : stateNote
+        ? STATE_NOTE_SCHEMA_VERSION
+        : summary
+          ? SUMMARY_SCHEMA_VERSION
+          : null,
     summary,
     stateNote,
+    contentNote,
     favorite: Boolean(row.favorite),
     archived: Boolean(row.archived),
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),

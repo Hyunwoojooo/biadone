@@ -1,4 +1,9 @@
 import {
+  CONTENT_NOTE_SCHEMA_VERSION,
+  parseConversationContentNoteV4,
+  type ConversationContentNoteV4,
+} from "../../../lib/note-content/index.ts";
+import {
   parseConversationSummaryV2,
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
@@ -52,9 +57,11 @@ export type PublicNote = {
   summarySchemaVersion:
     | typeof SUMMARY_SCHEMA_VERSION
     | typeof STATE_NOTE_SCHEMA_VERSION
+    | typeof CONTENT_NOTE_SCHEMA_VERSION
     | null;
   summary: ConversationSummaryV2 | null;
   stateNote: ConversationStateNoteV3 | null;
+  contentNote: ConversationContentNoteV4 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt?: string;
@@ -349,6 +356,19 @@ export function parseStoredConversationStateNote(
     return parseConversationStateNoteV3(JSON.parse(summaryJson));
   } catch {
     // Corrupt generated state must never make the preserved v1 note unreadable.
+    return null;
+  }
+}
+
+export function parseStoredConversationContentNote(
+  schemaVersion: string | null,
+  summaryJson: string | null,
+): ConversationContentNoteV4 | null {
+  if (schemaVersion !== CONTENT_NOTE_SCHEMA_VERSION || !summaryJson) return null;
+  try {
+    return parseConversationContentNoteV4(JSON.parse(summaryJson));
+  } catch {
+    // Corrupt generated content must never make the preserved v1 note unreadable.
     return null;
   }
 }

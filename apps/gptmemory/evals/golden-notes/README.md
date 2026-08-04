@@ -15,6 +15,8 @@
 
 - `case.json`: 공유 URL, 입력 cutoff, 상태, artifact 경로
 - `teacher-draft.md`: 강한 모델이 만든 기준 노트와 평가 가이드
+- `teacher-content-draft-v4.md`: 내용 우선 v4 의미 정답지 초안. 아직 근거 ID가
+  없으므로 자동 점수화하지 않는다.
 - `review.md`: 사람의 검수 체크리스트와 수정 기록
 
 원문 HTML이나 전체 대화 사본은 저장하지 않는다. 평가 시 `case.json`의 공유
@@ -101,3 +103,7 @@ human reference 승인 전까지 `not_reviewed`와
 ## 현재 사례
 
 사례 목록은 [manifest.json](./manifest.json)에서 관리한다.
+
+v4 초안의 범위, 승인 조건과 다음 평가 작업은
+[Content Note v4 기록](./CONTENT_NOTE_V4_RECORD.md)에 정리한다. 새 초안을 만들 때는
+[Teacher Content Note Prompt v4](./prompts/teacher-content-note-v4.md)를 사용한다.

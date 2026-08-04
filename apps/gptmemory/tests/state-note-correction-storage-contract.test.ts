@@ -48,3 +48,18 @@ test("note PATCH route validates correction payload before repository access", a
   assert.ok(parseIndex >= 0);
   assert.ok(patchIndex > parseIndex);
 });
+
+test("reimport refuses to discard persisted v3 user corrections", async () => {
+  const repositorySource = await readFile(
+    new URL("app/api/notes/_repository.ts", appRoot),
+    "utf8",
+  );
+  const replacementGuard = repositorySource.match(
+    /export async function hasReplacementCandidate[\s\S]*?return true;/,
+  )?.[0];
+  assert.ok(replacementGuard, "replacement guard should be discoverable");
+  assert.match(replacementGuard, /summary_schema_version, summary_json/);
+  assert.match(replacementGuard, /parseStoredConversationStateNote/);
+  assert.match(replacementGuard, /stateNote\?\.userCorrections\?\.length/);
+  assert.match(replacementGuard, /REIMPORT_BLOCKED_BY_USER_CORRECTIONS/);
+});

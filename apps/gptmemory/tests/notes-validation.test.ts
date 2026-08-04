@@ -6,6 +6,7 @@ import {
   parseCreateNoteInput,
   parseListNotesInput,
   parsePatchNoteInput,
+  parseStoredConversationContentNote,
   parseStoredConversationStateNote,
   parseStoredConversationSummary,
   requireOwnerKey,
@@ -288,6 +289,90 @@ test("restores valid v3 state notes and fails back to the preserved legacy note"
     parseStoredConversationStateNote(
       "gptmemory.summary.v2",
       JSON.stringify(stateNote),
+    ),
+    null,
+  );
+});
+
+test("restores valid v4 content notes without changing v1-v3 compatibility", () => {
+  const evidence = (text: string, sourceMessageId = "u1") => ({
+    text,
+    sourceMessageIds: [sourceMessageId],
+    evidenceSnippets: [{ sourceMessageId, quote: text }],
+  });
+  const contentNote = {
+    schemaVersion: "gptmemory.content-note.v4",
+    conversationType: "research",
+    title: evidence("대화 내용을 중심으로 정리하는 방법"),
+    oneLineSummary: evidence(
+      "핵심 내용을 주제별로 먼저 보여주고 상태와 근거를 보조 정보로 둔다.",
+      "a1",
+    ),
+    keyTakeaways: [
+      evidence("대화의 실질적인 내용이 상태 정보보다 먼저 보여야 한다.", "a1"),
+      evidence("주제 구분과 핵심 합성 뒤 결정과 할 일을 분리한다.", "a1"),
+      evidence("원문 근거와 시간순 흐름은 필요할 때 펼쳐 본다.", "a1"),
+    ],
+    topics: [
+      {
+        title: evidence("주제 중심 계층형 요약", "a1"),
+        summary: evidence(
+          "고정된 바깥 구조 안에서 대화에 맞는 주제 제목과 내용을 생성한다.",
+          "a1",
+        ),
+        details: [
+          {
+            ...evidence("내용이 먼저, 상태는 그다음에 배치된다.", "a1"),
+            kind: "rationale",
+          },
+        ],
+      },
+    ],
+    conclusions: [
+      evidence("GPTMemory의 기본 결과를 내용 중심 노트로 바꾼다."),
+    ],
+    confirmedDecisions: [
+      evidence("이 방향으로 수정한다."),
+    ],
+    actionItems: [],
+    openQuestions: [],
+    supportingInfo: {
+      currentState: evidence("v4 내용 노트 구현을 진행하는 상태다."),
+      artifacts: [],
+      activeProposals: [],
+      constraintsAndChanges: [],
+    },
+  };
+
+  assert.deepEqual(
+    parseStoredConversationContentNote(
+      "gptmemory.content-note.v4",
+      JSON.stringify(contentNote),
+    ),
+    contentNote,
+  );
+  assert.equal(
+    parseStoredConversationContentNote("gptmemory.content-note.v4", "{}"),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationContentNote(
+      "gptmemory.state-note.v3",
+      JSON.stringify(contentNote),
+    ),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationSummary(
+      "gptmemory.content-note.v4",
+      JSON.stringify(contentNote),
+    ),
+    null,
+  );
+  assert.equal(
+    parseStoredConversationStateNote(
+      "gptmemory.content-note.v4",
+      JSON.stringify(contentNote),
     ),
     null,
   );

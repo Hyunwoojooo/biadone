@@ -393,7 +393,7 @@ test("folds request completion across chunk boundaries", async () => {
       fetchImpl: async (_url, init) => {
         calls += 1;
         const { prompt } = payloadFromRequest(init);
-        if (prompt.chunk.number === 1) {
+        if (prompt.untrustedConversation.some((message) => message.id === "u1")) {
           const opened = evidenceId(prompt, "u1", "README를 수정해줘");
           return response([
             rawEvent(
@@ -404,6 +404,9 @@ test("folds request completion across chunk boundaries", async () => {
               { requestKind: "artifact_change" },
             ),
           ]);
+        }
+        if (!prompt.untrustedConversation.some((message) => message.id === "a2")) {
+          return response([]);
         }
         const fulfilled = evidenceId(prompt, "a2", "완료됐습니다");
         return response([
@@ -423,11 +426,77 @@ test("folds request completion across chunk boundaries", async () => {
     },
   );
 
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.equal(note.openActions.length, 0);
   assert.deepEqual(note.completedResults.map((item) => item.text), [
     "README 수정이 완료됐다.",
   ]);
+});
+
+test("promotes a contextually accepted assistant proposal to a confirmed decision", async () => {
+  const messages = [
+    { id: "u1", role: "user", text: "개인 데이터 연구 방향을 추천해줘." },
+    { id: "a1", role: "assistant", text: "권리 묶음 접근을 연구 방향으로 제안합니다." },
+    { id: "u2", role: "user", text: "그래, 이 방향으로 수정해봐." },
+  ];
+  const note = await createGeminiConversationStateNote(
+    { messages },
+    {
+      apiKey: "key",
+      fetchImpl: async (_url, init) => {
+        const { prompt } = payloadFromRequest(init);
+        const proposal = evidenceId(prompt, "a1", "연구 방향으로 제안합니다");
+        const acceptance = evidenceId(prompt, "u2", "이 방향으로 수정해봐");
+        return response([
+          rawEvent(
+            "proposal_made",
+            "rights-bundle",
+            "권리 묶음 접근을 연구 방향으로 제안한다.",
+            proposal,
+            { proposedBy: "assistant" },
+          ),
+          rawEvent(
+            "proposal_accepted",
+            "accept-rights-bundle",
+            "권리 묶음 접근을 수락한다.",
+            acceptance,
+            { targetKey: "rights-bundle" },
+          ),
+        ]);
+      },
+    },
+  );
+
+  assert.deepEqual(note.confirmedDecisions.map((item) => item.text), [
+    "권리 묶음 접근을 연구 방향으로 제안한다.",
+  ]);
+  assert.equal(note.activeProposals.length, 0);
+});
+
+test("keeps bounded fallback evidence when a long conversation yields no state events", async () => {
+  const note = await createGeminiConversationStateNote(
+    {
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: `${"같은 연구 배경을 길게 설명한다 ".repeat(1_200)} 마지막 요청을 정리해줘.`,
+        },
+      ],
+    },
+    {
+      apiKey: "key",
+      fetchImpl: async () => response([]),
+    },
+  );
+
+  assert.deepEqual(note.title.sourceMessageIds, ["u1"]);
+  assert.deepEqual(note.currentState.sourceMessageIds, ["u1"]);
+  assert.ok(
+    note.title.evidenceSnippets.every(
+      (snippet) => [...snippet.quote].length <= 420,
+    ),
+  );
 });
 
 test("strict parser rejects a snippet not listed in sourceMessageIds", () => {

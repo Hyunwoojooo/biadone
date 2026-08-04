@@ -114,6 +114,67 @@ type NoteStateV3 = {
   userCorrections: StateNoteUserCorrection[];
 };
 
+type ContentConversationType =
+  | "research"
+  | "decision"
+  | "problem_solving"
+  | "planning"
+  | "learning"
+  | "mixed";
+
+type ContentTopicDetail = StateEvidenceText & {
+  kind:
+    | "finding"
+    | "explanation"
+    | "comparison"
+    | "rationale"
+    | "change"
+    | "example"
+    | "implication"
+    | "tradeoff"
+    | "verification"
+    | "step"
+    | "risk"
+    | "principle";
+};
+
+type ContentTopic = {
+  title: StateEvidenceText;
+  summary: StateEvidenceText;
+  details: ContentTopicDetail[];
+};
+
+type ContentActionItem = StateEvidenceText & {
+  status: "open" | "in_progress" | "blocked" | "deferred";
+  owner?: string;
+  dueAt?: string;
+};
+
+type ContentArtifact = StateEvidenceText & {
+  kind: "file" | "url" | "code" | "document" | "configuration" | "other";
+  label: string;
+  locator?: string;
+};
+
+type NoteContentV4 = {
+  schemaVersion: typeof CONTENT_NOTE_SCHEMA_VERSION;
+  conversationType: ContentConversationType;
+  title: StateEvidenceText;
+  oneLineSummary: StateEvidenceText;
+  keyTakeaways: StateEvidenceText[];
+  topics: ContentTopic[];
+  conclusions: StateEvidenceText[];
+  confirmedDecisions: StateEvidenceText[];
+  actionItems: ContentActionItem[];
+  openQuestions: StateEvidenceText[];
+  supportingInfo: {
+    currentState: StateEvidenceText | null;
+    artifacts: ContentArtifact[];
+    activeProposals: StateEvidenceText[];
+    constraintsAndChanges: StateEvidenceText[];
+  };
+};
+
 type SummaryOutcome = SummaryEvidenceText & {
   kind: "conclusion" | "decision" | "proposal" | "unresolved";
 };
@@ -145,6 +206,7 @@ type NoteRecord = {
   summarySchemaVersion: string | null;
   summary: NoteSummaryV2 | null;
   stateNote: NoteStateV3 | null;
+  contentNote: NoteContentV4 | null;
   favorite: boolean;
   archived: boolean;
   deletedAt: string | null;
@@ -181,6 +243,7 @@ type ImportResponsePayload = {
 const OWNER_KEY_STORAGE = "gptmemory.owner-key.v1";
 const SUMMARY_SCHEMA_VERSION = "gptmemory.summary.v2";
 const STATE_NOTE_SCHEMA_VERSION = "gptmemory.state-note.v3";
+const CONTENT_NOTE_SCHEMA_VERSION = "gptmemory.content-note.v4";
 const OUTCOME_LABELS: Record<SummaryOutcome["kind"], string> = {
   conclusion: "결론",
   decision: "확정된 결정",
@@ -244,6 +307,10 @@ function normalizeNote(input: Partial<NoteRecord>): NoteRecord {
       summarySchemaVersion === STATE_NOTE_SCHEMA_VERSION
         ? normalizeStateNote(input.stateNote)
         : null,
+    contentNote:
+      summarySchemaVersion === CONTENT_NOTE_SCHEMA_VERSION
+        ? normalizeContentNote(input.contentNote)
+        : null,
     favorite: Boolean(input.favorite),
     archived: Boolean(input.archived),
     deletedAt: input.deletedAt ?? null,
@@ -273,6 +340,7 @@ function notePreview(note: NoteRecord) {
       ).displayText
     : "";
   return (
+    note.contentNote?.oneLineSummary.text ||
     currentState ||
     note.summary?.oneLineSummary.text ||
     note.overview ||
@@ -284,10 +352,16 @@ function notePreview(note: NoteRecord) {
 }
 
 function noteTitle(note: NoteRecord) {
-  return note.stateNote?.title.text || note.summary?.title.text || note.title;
+  return (
+    note.contentNote?.title.text ||
+    note.stateNote?.title.text ||
+    note.summary?.title.text ||
+    note.title
+  );
 }
 
 function noteHasDecision(note: NoteRecord) {
+  if (note.contentNote) return note.contentNote.confirmedDecisions.length > 0;
   const stateNote = note.stateNote;
   if (stateNote) {
     return stateNote.confirmedDecisions.some(
@@ -301,6 +375,7 @@ function noteHasDecision(note: NoteRecord) {
 }
 
 function noteHasActionItems(note: NoteRecord) {
+  if (note.contentNote) return note.contentNote.actionItems.length > 0;
   const stateNote = note.stateNote;
   if (stateNote) {
     return stateNote.openActions.some(
@@ -308,24 +383,6 @@ function noteHasActionItems(note: NoteRecord) {
     );
   }
   return Boolean(note.summary?.actionItems.length);
-}
-
-function noteHasUnresolved(note: NoteRecord) {
-  const stateNote = note.stateNote;
-  if (!stateNote) return false;
-  return stateNote.unresolvedQuestions.some(
-    (item) => !presentStateItem(stateNote, "unresolvedQuestions", item).hidden,
-  );
-}
-
-function visibleStateItemCount(
-  stateNote: NoteStateV3,
-  section: StateNoteItemSection,
-  items: StateEvidenceText[],
-) {
-  return presentStateItems(stateNote, section, items).filter(
-    (entry) => !entry.hidden,
-  ).length;
 }
 
 function normalizeSummary(value: unknown): NoteSummaryV2 | null {
@@ -516,6 +573,195 @@ function normalizeStateNote(value: unknown): NoteStateV3 | null {
     }),
     userCorrections,
   };
+}
+
+function normalizeContentNote(value: unknown): NoteContentV4 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.schemaVersion !== CONTENT_NOTE_SCHEMA_VERSION ||
+    !isContentConversationType(record.conversationType)
+  ) {
+    return null;
+  }
+  const title = normalizeStateEvidenceText(record.title);
+  const oneLineSummary = normalizeStateEvidenceText(record.oneLineSummary);
+  const keyTakeaways = normalizeStateEvidenceArray(record.keyTakeaways);
+  const conclusions = normalizeStateEvidenceArray(record.conclusions);
+  const confirmedDecisions = normalizeStateEvidenceArray(
+    record.confirmedDecisions,
+  );
+  const openQuestions = normalizeStateEvidenceArray(record.openQuestions);
+  if (
+    !title ||
+    !oneLineSummary ||
+    !keyTakeaways ||
+    !conclusions ||
+    !confirmedDecisions ||
+    !openQuestions ||
+    !Array.isArray(record.topics) ||
+    !Array.isArray(record.actionItems) ||
+    !record.supportingInfo ||
+    typeof record.supportingInfo !== "object" ||
+    Array.isArray(record.supportingInfo)
+  ) {
+    return null;
+  }
+
+  const topics: ContentTopic[] = [];
+  for (const rawTopic of record.topics) {
+    if (!rawTopic || typeof rawTopic !== "object" || Array.isArray(rawTopic)) {
+      return null;
+    }
+    const topic = rawTopic as Record<string, unknown>;
+    const topicTitle = normalizeStateEvidenceText(topic.title);
+    const topicSummary = normalizeStateEvidenceText(topic.summary);
+    if (!topicTitle || !topicSummary || !Array.isArray(topic.details)) return null;
+    const details: ContentTopicDetail[] = [];
+    for (const rawDetail of topic.details) {
+      const detail = normalizeStateEvidenceText(rawDetail);
+      const kind =
+        rawDetail && typeof rawDetail === "object" && !Array.isArray(rawDetail)
+          ? (rawDetail as Record<string, unknown>).kind
+          : null;
+      if (!detail || !isContentDetailKind(kind)) return null;
+      details.push({ ...detail, kind });
+    }
+    topics.push({ title: topicTitle, summary: topicSummary, details });
+  }
+
+  const actionItems: ContentActionItem[] = [];
+  for (const rawAction of record.actionItems) {
+    const action = normalizeStateEvidenceText(rawAction);
+    const detail =
+      rawAction && typeof rawAction === "object" && !Array.isArray(rawAction)
+        ? (rawAction as Record<string, unknown>)
+        : null;
+    if (!action || !detail || !isContentActionStatus(detail.status)) return null;
+    actionItems.push({
+      ...action,
+      status: detail.status,
+      ...(typeof detail.owner === "string" && detail.owner.trim()
+        ? { owner: detail.owner.trim() }
+        : {}),
+      ...(typeof detail.dueAt === "string" && detail.dueAt.trim()
+        ? { dueAt: detail.dueAt.trim() }
+        : {}),
+    });
+  }
+
+  const supporting = record.supportingInfo as Record<string, unknown>;
+  const currentState =
+    supporting.currentState === null
+      ? null
+      : normalizeStateEvidenceText(supporting.currentState);
+  const activeProposals = normalizeStateEvidenceArray(supporting.activeProposals);
+  const constraintsAndChanges = normalizeStateEvidenceArray(
+    supporting.constraintsAndChanges,
+  );
+  if (
+    supporting.currentState === undefined ||
+    (supporting.currentState !== null && !currentState) ||
+    !activeProposals ||
+    !constraintsAndChanges ||
+    !Array.isArray(supporting.artifacts)
+  ) {
+    return null;
+  }
+  const artifacts: ContentArtifact[] = [];
+  for (const rawArtifact of supporting.artifacts) {
+    const artifact = normalizeStateEvidenceText(rawArtifact);
+    const detail =
+      rawArtifact &&
+      typeof rawArtifact === "object" &&
+      !Array.isArray(rawArtifact)
+        ? (rawArtifact as Record<string, unknown>)
+        : null;
+    if (
+      !artifact ||
+      !detail ||
+      !isContentArtifactKind(detail.kind) ||
+      typeof detail.label !== "string" ||
+      !detail.label.trim()
+    ) {
+      return null;
+    }
+    artifacts.push({
+      ...artifact,
+      kind: detail.kind,
+      label: detail.label.trim(),
+      ...(typeof detail.locator === "string" && detail.locator.trim()
+        ? { locator: detail.locator.trim() }
+        : {}),
+    });
+  }
+
+  return {
+    schemaVersion: CONTENT_NOTE_SCHEMA_VERSION,
+    conversationType: record.conversationType,
+    title,
+    oneLineSummary,
+    keyTakeaways,
+    topics,
+    conclusions,
+    confirmedDecisions,
+    actionItems,
+    openQuestions,
+    supportingInfo: {
+      currentState,
+      artifacts,
+      activeProposals,
+      constraintsAndChanges,
+    },
+  };
+}
+
+function isContentConversationType(value: unknown): value is ContentConversationType {
+  return (
+    value === "research" ||
+    value === "decision" ||
+    value === "problem_solving" ||
+    value === "planning" ||
+    value === "learning" ||
+    value === "mixed"
+  );
+}
+
+function isContentDetailKind(value: unknown): value is ContentTopicDetail["kind"] {
+  return (
+    value === "finding" ||
+    value === "explanation" ||
+    value === "comparison" ||
+    value === "rationale" ||
+    value === "change" ||
+    value === "example" ||
+    value === "implication" ||
+    value === "tradeoff" ||
+    value === "verification" ||
+    value === "step" ||
+    value === "risk" ||
+    value === "principle"
+  );
+}
+
+function isContentActionStatus(value: unknown): value is ContentActionItem["status"] {
+  return (
+    value === "open" ||
+    value === "in_progress" ||
+    value === "blocked" ||
+    value === "deferred"
+  );
+}
+
+function isContentArtifactKind(value: unknown): value is ContentArtifact["kind"] {
+  return (
+    value === "file" ||
+    value === "url" ||
+    value === "code" ||
+    value === "document" ||
+    value === "configuration" ||
+    value === "other"
+  );
 }
 
 function normalizeStateNoteCorrections(
@@ -874,7 +1120,7 @@ export function GPTMemoryApp() {
           <p>
             공개 공유 링크만 가져옵니다.
             <br />
-            정제된 대화는 상태 노트 생성을 위해 Google Gemini API로
+            정제된 대화는 내용 중심 노트 생성을 위해 Google Gemini API로
             전송됩니다. 원본 공유 HTML과 복원된 전체 메시지 배열은
             GPTMemory에 저장하지 않습니다.
           </p>
@@ -961,25 +1207,7 @@ export function GPTMemoryApp() {
                   ) : null}
                   {noteHasActionItems(note) ? (
                     <span className="note-card-signal action">
-                      {note.stateNote
-                        ? `열린 작업 ${visibleStateItemCount(
-                            note.stateNote,
-                            "openActions",
-                            note.stateNote.openActions,
-                          )}`
-                        : "할 일 있음"}
-                    </span>
-                  ) : null}
-                  {noteHasUnresolved(note) ? (
-                    <span className="note-card-signal unresolved">
-                      미해결{" "}
-                      {note.stateNote
-                        ? visibleStateItemCount(
-                            note.stateNote,
-                            "unresolvedQuestions",
-                            note.stateNote.unresolvedQuestions,
-                          )
-                        : 0}
+                      할 일 있음
                     </span>
                   ) : null}
                   <time dateTime={note.updatedAt}>
@@ -1005,7 +1233,7 @@ export function GPTMemoryApp() {
                   ? "다른 검색어나 태그를 사용해보세요."
                   : view === "trash"
                     ? "삭제한 노트가 없거나 모두 영구 삭제되었습니다."
-                    : "ChatGPT 공유 링크 하나면 대화가 도달한 상태와 다음 판단을 10초 안에 복원할 수 있습니다."}
+                    : "ChatGPT 공유 링크 하나면 핵심 내용과 결정, 다음 행동을 다시 읽기 쉬운 노트로 만들 수 있습니다."}
               </p>
               {!queryInput && !activeTag && view === "all" ? (
                 <button type="button" onClick={() => setImportOpen(true)}>
@@ -1349,7 +1577,7 @@ function NoteDetail({
 
   return (
     <article
-      className={`note-detail ${note.stateNote ? "state-note-detail" : ""}`}
+      className={`note-detail ${note.contentNote ? "content-note-detail" : note.stateNote ? "state-note-detail" : ""}`}
     >
       <header className="detail-toolbar">
         <button
@@ -1445,7 +1673,11 @@ function NoteDetail({
       <div className="note-paper">
         <div className="note-meta-row">
           <span>
-            {note.stateNote
+            {note.contentNote
+              ? note.sourceMessageCount
+                ? `${note.sourceMessageCount}개의 메시지 · 주제 중심 노트`
+                : "대화 주제 중심 노트"
+              : note.stateNote
               ? note.sourceMessageCount
                 ? `${note.sourceMessageCount}개의 메시지 · 현재 상태 노트`
                 : "대화 현재 상태 노트"
@@ -1468,7 +1700,7 @@ function NoteDetail({
           </span>
         </div>
 
-        {editing && !note.summary && !note.stateNote ? (
+        {editing && !note.summary && !note.stateNote && !note.contentNote ? (
           <div className="note-editor">
             <label>
               <span>제목</span>
@@ -1555,7 +1787,13 @@ function NoteDetail({
         ) : (
           <>
             <h1>{displayTitle}</h1>
-            {note.stateNote ? (
+            {note.contentNote ? (
+              <V4ContentNote
+                contentNote={note.contentNote}
+                overview={note.overview}
+                sections={note.sections}
+              />
+            ) : note.stateNote ? (
               <V3StateNote
                 stateNote={note.stateNote}
                 overview={note.overview}
@@ -1576,7 +1814,7 @@ function NoteDetail({
                 sections={note.sections}
               />
             )}
-            {!note.summary && !note.stateNote && note.tags.length ? (
+            {!note.summary && !note.stateNote && !note.contentNote && note.tags.length ? (
               <div className="note-tags" aria-label="노트 태그">
                 {note.tags.map((tag) => (
                   <span key={tag}>#{tag}</span>
@@ -1588,7 +1826,7 @@ function NoteDetail({
         )}
       </div>
 
-      {!note.summary && !note.stateNote && !editing && view !== "trash" ? (
+      {!note.summary && !note.stateNote && !note.contentNote && !editing && view !== "trash" ? (
         <button
           className="edit-note-button"
           type="button"
@@ -1711,6 +1949,315 @@ function presentStateItems<T extends StateEvidenceText>(
   items: T[],
 ) {
   return items.map((item) => presentStateItem(stateNote, section, item));
+}
+
+function V4ContentNote({
+  contentNote,
+  overview,
+  sections,
+}: {
+  contentNote: NoteContentV4;
+  overview: string;
+  sections: NoteSection[];
+}) {
+  const supporting = contentNote.supportingInfo;
+  const hasSupportingInfo =
+    supporting.artifacts.length > 0 ||
+    supporting.activeProposals.length > 0 ||
+    supporting.constraintsAndChanges.length > 0;
+  const outcomeHeading =
+    contentNote.conclusions.length && contentNote.confirmedDecisions.length
+      ? "결론과 확정된 결정"
+      : contentNote.conclusions.length
+        ? "결론"
+        : "확정된 결정";
+
+  return (
+    <div className="content-note">
+      <section className="content-glance" aria-labelledby="content-glance-title">
+        <p className="content-kicker" id="content-glance-title">
+          한눈에 보기
+        </p>
+        <p className="content-lede">{contentNote.oneLineSummary.text}</p>
+        <ContentEvidenceDetails
+          label="한눈에 보기의 근거"
+          items={[contentNote.oneLineSummary]}
+        />
+      </section>
+
+      {supporting.currentState ? (
+        <aside className="content-current-state" aria-label="현재 도달한 지점">
+          <span>현재 도달한 지점</span>
+          <p>{supporting.currentState.text}</p>
+          <ContentEvidenceDetails
+            label="현재 상태의 근거"
+            items={[supporting.currentState]}
+          />
+        </aside>
+      ) : null}
+
+      <section className="content-section content-takeaways">
+        <h2>핵심 정리</h2>
+        <ul>
+          {contentNote.keyTakeaways.map((item, index) => (
+            <li key={`takeaway-${index}`}>
+              <p>{item.text}</p>
+            </li>
+          ))}
+        </ul>
+        <ContentEvidenceDetails
+          label="핵심 정리의 근거"
+          items={contentNote.keyTakeaways}
+        />
+      </section>
+
+      <section className="content-section content-topics">
+        <h2>주제별 정리</h2>
+        <div className="content-topic-list">
+          {contentNote.topics.map((topic, index) => (
+            <article className="content-topic" key={`topic-${index}`}>
+              <span className="content-topic-number">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <div>
+                <h3>{topic.title.text}</h3>
+                <p className="content-topic-summary">{topic.summary.text}</p>
+                {topic.details.length ? (
+                  <ul className="content-topic-details">
+                    {topic.details.map((detail, detailIndex) => (
+                      <li key={`${detail.kind}-${detailIndex}`}>
+                        <span className={`content-detail-kind ${detail.kind}`}>
+                          {contentDetailLabel(detail.kind)}
+                        </span>
+                        <div>
+                          <p>{detail.text}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <ContentEvidenceDetails
+                  label="이 주제의 근거"
+                  items={[topic.title, topic.summary, ...topic.details]}
+                />
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {contentNote.conclusions.length || contentNote.confirmedDecisions.length ? (
+        <section className="content-section content-outcomes">
+          <h2>{outcomeHeading}</h2>
+          <ul className="content-labeled-list">
+            {contentNote.conclusions.map((item, index) => (
+              <li key={`conclusion-${index}`}>
+                <span className="content-item-label conclusion">결론</span>
+                <div>
+                  <p>{item.text}</p>
+                </div>
+              </li>
+            ))}
+            {contentNote.confirmedDecisions.map((item, index) => (
+              <li key={`decision-${index}`}>
+                <span className="content-item-label decision">확정</span>
+                <div>
+                  <p>{item.text}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <ContentEvidenceDetails
+            label={`${outcomeHeading}의 근거`}
+            items={[
+              ...contentNote.conclusions,
+              ...contentNote.confirmedDecisions,
+            ]}
+          />
+        </section>
+      ) : null}
+
+      {contentNote.actionItems.length ? (
+        <section className="content-section content-actions">
+          <h2>다음에 할 일</h2>
+          <ol>
+            {contentNote.actionItems.map((item, index) => {
+              const metadata = [
+                `상태: ${stateActionLabel(item.status)}`,
+                item.owner ? `담당자: ${item.owner}` : "",
+                item.dueAt ? `기한: ${item.dueAt}` : "",
+              ].filter(Boolean);
+              return (
+                <li key={`content-action-${index}`}>
+                  <p>{item.text}</p>
+                  <small>{metadata.join(" · ")}</small>
+                </li>
+              );
+            })}
+          </ol>
+          <ContentEvidenceDetails
+            label="다음에 할 일의 근거"
+            items={contentNote.actionItems}
+          />
+        </section>
+      ) : null}
+
+      {contentNote.openQuestions.length ? (
+        <section className="content-section content-questions">
+          <h2>남은 질문</h2>
+          <ContentEvidenceList items={contentNote.openQuestions} />
+          <ContentEvidenceDetails
+            label="남은 질문의 근거"
+            items={contentNote.openQuestions}
+          />
+        </section>
+      ) : null}
+
+      {hasSupportingInfo ? (
+        <details className="content-supporting-details">
+          <summary>보조 정보</summary>
+          <div className="content-supporting-body">
+            {supporting.artifacts.length ? (
+              <section>
+                <h3>실제 산출물</h3>
+                <ul>
+                  {supporting.artifacts.map((item, index) => (
+                    <li key={`artifact-${index}`}>
+                      <p>{item.text}</p>
+                      <small>
+                        {item.label}
+                        {item.locator ? ` · ${item.locator}` : ""}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+                <ContentEvidenceDetails
+                  label="실제 산출물의 근거"
+                  items={supporting.artifacts}
+                />
+              </section>
+            ) : null}
+            {supporting.activeProposals.length ? (
+              <section>
+                <h3>검토 중인 제안</h3>
+                <ContentEvidenceList items={supporting.activeProposals} />
+                <ContentEvidenceDetails
+                  label="검토 중인 제안의 근거"
+                  items={supporting.activeProposals}
+                />
+              </section>
+            ) : null}
+            {supporting.constraintsAndChanges.length ? (
+              <section>
+                <h3>중요한 제약과 변경 이력</h3>
+                <ContentEvidenceList items={supporting.constraintsAndChanges} />
+                <ContentEvidenceDetails
+                  label="제약과 변경 이력의 근거"
+                  items={supporting.constraintsAndChanges}
+                />
+              </section>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
+      {overview || sections.length ? (
+        <details className="conversation-flow-details">
+          <summary>대화 흐름 상세 보기</summary>
+          <div className="conversation-flow-body">
+            <LegacyNoteBody overview={overview} sections={sections} />
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function ContentEvidenceList({ items }: { items: StateEvidenceText[] }) {
+  return (
+    <ul className="content-evidence-list">
+      {items.map((item, index) => (
+        <li key={`${item.text}-${index}`}>
+          <p>{item.text}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ContentEvidenceDetails({
+  label,
+  items,
+}: {
+  label: string;
+  items: StateEvidenceText[];
+}) {
+  const evidence = new Map<string, string[]>();
+
+  for (const item of items) {
+    for (const sourceMessageId of item.sourceMessageIds) {
+      if (!evidence.has(sourceMessageId)) evidence.set(sourceMessageId, []);
+    }
+    for (const snippet of item.evidenceSnippets ?? []) {
+      const quotes = evidence.get(snippet.sourceMessageId) ?? [];
+      if (!quotes.includes(snippet.quote)) quotes.push(snippet.quote);
+      evidence.set(snippet.sourceMessageId, quotes);
+    }
+  }
+
+  if (!evidence.size) return null;
+
+  return (
+    <details className="content-evidence-details">
+      <summary aria-label={`${label} 보기`}>
+        <span>{label}</span>
+        <small>{evidence.size}개 메시지</small>
+      </summary>
+      <ul>
+        {[...evidence.entries()].map(([sourceMessageId, quotes]) => (
+          <li key={sourceMessageId}>
+            <span>{sourceMessageId}</span>
+            {quotes.length ? (
+              quotes.map((quote, index) => (
+                <q key={`${sourceMessageId}-${index}`}>{quote}</q>
+              ))
+            ) : (
+              <small>연결된 원문 메시지</small>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function contentDetailLabel(kind: ContentTopicDetail["kind"]): string {
+  switch (kind) {
+    case "finding":
+      return "발견";
+    case "comparison":
+      return "비교";
+    case "rationale":
+      return "이유";
+    case "change":
+      return "변경";
+    case "example":
+      return "예시";
+    case "implication":
+      return "시사점";
+    case "tradeoff":
+      return "절충점";
+    case "verification":
+      return "검증";
+    case "step":
+      return "단계";
+    case "risk":
+      return "위험";
+    case "principle":
+      return "원리";
+    default:
+      return "설명";
+  }
 }
 
 function V3StateNote({
@@ -2444,8 +2991,8 @@ function ImportDialog({
     setError("");
     setStatus(
       replace
-        ? "기존 노트를 보존한 채 새 상태 노트를 생성하는 중입니다…"
-        : "공개 대화를 불러와 현재 상태를 정리하는 중입니다…",
+        ? "기존 노트를 보존한 채 새 내용 노트를 생성하는 중입니다…"
+        : "공개 대화를 불러와 핵심 내용을 주제별로 정리하는 중입니다…",
     );
     try {
       const response = await fetch("/api/notes/import", {
@@ -2560,8 +3107,8 @@ function ImportDialog({
         <span className="dialog-kicker">새 대화 노트</span>
         <h2 id="import-title">대화를 노트로 가져오기</h2>
         <p className="dialog-intro" id="import-description">
-          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 현재 상태와 확정된 결정,
-          완료된 결과, 남은 작업과 미해결 문제를 재개 가능한 노트로 만듭니다.
+          ChatGPT의 공개 공유 링크를 붙여 넣으세요. 핵심 내용을 주제별로
+          정리하고, 확정된 결정과 다음 할 일을 분리한 노트로 만듭니다.
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
@@ -2584,7 +3131,7 @@ function ImportDialog({
             <span aria-hidden="true">◉</span>
             <p>
               공개 공유 링크만 지원합니다. tool·reasoning 등 내부 정보를 제거한
-                  정제된 대화가 상태 노트 생성을 위해 Google Gemini API로 전송됩니다.
+                  정제된 대화가 내용 중심 노트 생성을 위해 Google Gemini API로 전송됩니다.
                   원본 공유 HTML과 복원된 전체 메시지 배열은 GPTMemory에 저장하지
                   않습니다. 근거 확인에 선택된 짧은 문장만 메시지 ID와 함께 노트에
                   저장됩니다.
@@ -2610,8 +3157,10 @@ function ImportDialog({
                     : ""}
                 </p>
                 <p className="existing-note-warning">
-                  새 상태 노트만 갱신되고 기존 편집 본문은 보존됩니다. 생성에
-                  실패하면 기존 노트는 그대로 유지됩니다.
+                  생성된 요약만 새 내용 중심 노트로 교체되고 기존 편집 본문은
+                  보존됩니다. 기존 상태 노트에 직접 수정하거나 숨긴 항목이 있으면
+                  데이터 보호를 위해 재생성을 중단하며, 생성에 실패해도 기존 노트는
+                  그대로 유지됩니다.
                 </p>
               </div>
             </div>
@@ -2646,7 +3195,7 @@ function ImportDialog({
                 onClick={() => void requestImport(existing)}
                 disabled={submitting}
               >
-                {submitting ? "처리하는 중…" : "새 상태 노트로 재생성"}
+                {submitting ? "처리하는 중…" : "새 내용 노트로 재생성"}
               </button>
             </div>
           ) : (
@@ -2659,7 +3208,7 @@ function ImportDialog({
                 type="submit"
                 disabled={submitting || !shareUrl.trim()}
               >
-                    {submitting ? "상태 정리 중…" : "상태 노트 만들기"}
+                    {submitting ? "내용 정리 중…" : "내용 노트 만들기"}
                 {!submitting ? <span aria-hidden="true">→</span> : null}
               </button>
             </div>

@@ -270,6 +270,7 @@ test("stores exact generation versions and a stable source digest", async () => 
     '{"title":"대화 제목","messages":[{"role":"user","text":"질문"},{"role":"assistant","text":"답변"}]}',
   );
   const generationMetadata = harness.getLastCreate()?.generationMetadata;
+  assert.equal(NOTE_IMPORT_WORKFLOW_VERSION, "gptmemory-note-import.v5");
   assert.deepEqual(generationMetadata, {
     runId: "00000000-0000-4000-8000-000000000001",
     workflowVersion: NOTE_IMPORT_WORKFLOW_VERSION,
@@ -321,6 +322,36 @@ test("stores a versioned v3 state note through the same atomic import path", asy
   assert.equal(
     harness.getLastCreate()?.summary.schemaVersion,
     "gptmemory.state-note.v3",
+  );
+});
+
+test("stores a versioned v4 content note through the same atomic import path", async () => {
+  const harness = createHarness({
+    dependencies: {
+      async createDraft() {
+        return generatedContentDraft();
+      },
+    },
+  });
+
+  const result = await harness.service.execute(importCommand());
+
+  assert.equal(result.status, "created");
+  assert.equal(
+    harness.getLastCreate()?.summarySchemaVersion,
+    "gptmemory.content-note.v4",
+  );
+  assert.equal(
+    harness.getLastCreate()?.generationMetadata.summaryPromptVersion,
+    "gptmemory-content-prompt.v4",
+  );
+  assert.equal(
+    harness.getLastCreate()?.generationMetadata.summaryEngineVersion,
+    "gptmemory-note-content.v4",
+  );
+  assert.equal(
+    harness.getLastCreate()?.summary.schemaVersion,
+    "gptmemory.content-note.v4",
   );
 });
 
@@ -442,14 +473,21 @@ test("does not mutate the existing note when the conditional write loses a race"
   assert.equal(harness.calls.replace, 1);
 });
 
-test("successful replacement adds v2 summary and preserves legacy edits and note state", async () => {
+test("successful replacement adds v4 content and preserves legacy edits and note state", async () => {
   const existing = storedNote({
     archived: true,
     deletedAt: "2026-08-01T12:00:00.000Z",
     favorite: true,
     userEditedMarker: "keep-state-outside-generated-fields",
   });
-  const harness = createHarness({ stored: existing });
+  const harness = createHarness({
+    stored: existing,
+    dependencies: {
+      async createDraft() {
+        return generatedContentDraft();
+      },
+    },
+  });
 
   const result = await harness.service.execute(replaceCommand());
 
@@ -469,8 +507,8 @@ test("successful replacement adds v2 summary and preserves legacy edits and note
   assert.deepEqual(result.note.sections, existing.sections);
   assert.deepEqual(result.note.tags, existing.tags);
   assert.equal(result.note.sourceMessageCount, 2);
-  assert.equal(result.note.summarySchemaVersion, "gptmemory.summary.v2");
-  assert.equal(result.note.summary?.title.text, "새 노트 제목");
+  assert.equal(result.note.summarySchemaVersion, "gptmemory.content-note.v4");
+  assert.equal(result.note.summary?.title.text, "주제 중심 새 노트");
   assert.equal(harness.getLastCreate(), null);
   assert.equal(
     harness.getLastReplace()?.generationMetadata.workflowVersion,
@@ -636,6 +674,55 @@ function generatedStateDraft(): GeneratedImportDraft {
       model: "gemini-test-model",
       engineVersion: "gptmemory-note-state.v3",
       promptVersion: "gptmemory-state-prompt.v3",
+    },
+  };
+}
+
+function generatedContentDraft(): GeneratedImportDraft {
+  const legacyDraft = generatedDraft().legacyDraft;
+  const evidence = (text: string, sourceMessageId: string) => ({
+    text,
+    sourceMessageIds: [sourceMessageId],
+    evidenceSnippets: [{ sourceMessageId, quote: text }],
+  });
+  return {
+    legacyDraft,
+    summary: {
+      schemaVersion: "gptmemory.content-note.v4",
+      conversationType: "research",
+      title: evidence("주제 중심 새 노트", "u1"),
+      oneLineSummary: evidence(
+        "질문과 답변의 핵심 내용을 주제별로 정리했다.",
+        "a1",
+      ),
+      keyTakeaways: [
+        evidence("사용자가 질문을 제시했다.", "u1"),
+        evidence("Assistant가 실질적인 답변을 제공했다.", "a1"),
+        evidence("내용을 주제 중심으로 다시 찾을 수 있다.", "a1"),
+      ],
+      topics: [
+        {
+          title: evidence("질문과 핵심 답변", "u1"),
+          summary: evidence("질문에 대한 핵심 답변이 제공됐다.", "a1"),
+          details: [],
+        },
+      ],
+      conclusions: [evidence("핵심 답변을 내용 중심으로 보존한다.", "a1")],
+      confirmedDecisions: [],
+      actionItems: [],
+      openQuestions: [],
+      supportingInfo: {
+        currentState: null,
+        artifacts: [],
+        activeProposals: [],
+        constraintsAndChanges: [],
+      },
+    },
+    summaryProvider: {
+      provider: "gemini",
+      model: "gemini-test-model",
+      engineVersion: "gptmemory-note-content.v4",
+      promptVersion: "gptmemory-content-prompt.v4",
     },
   };
 }

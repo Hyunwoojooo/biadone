@@ -1,4 +1,8 @@
 import {
+  CONTENT_NOTE_SCHEMA_VERSION,
+  type ConversationContentNoteV4,
+} from "../note-content/index.ts";
+import {
   SUMMARY_SCHEMA_VERSION,
   type ConversationSummaryV2,
 } from "../note-summary/index.ts";
@@ -7,14 +11,16 @@ import {
   type ConversationStateNoteV3,
 } from "../note-state/index.ts";
 
-export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v4";
+export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v5";
 
 export type GeneratedConversationNote =
   | ConversationSummaryV2
-  | ConversationStateNoteV3;
+  | ConversationStateNoteV3
+  | ConversationContentNoteV4;
 export type GeneratedConversationNoteSchemaVersion =
   | typeof SUMMARY_SCHEMA_VERSION
-  | typeof STATE_NOTE_SCHEMA_VERSION;
+  | typeof STATE_NOTE_SCHEMA_VERSION
+  | typeof CONTENT_NOTE_SCHEMA_VERSION;
 
 export type NoteImportReplacement = {
   noteId: string;

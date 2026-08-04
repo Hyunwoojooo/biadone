@@ -24,8 +24,8 @@ const DEFAULT_MAX_MESSAGES_PER_CHUNK = 40;
 const DEFAULT_MAX_CHUNKS = 12;
 const DEFAULT_CHUNK_CONCURRENCY = 3;
 const MAX_TOTAL_INPUT_CHARS = 280_000;
-const MAX_EVIDENCE_CLAUSES_PER_MESSAGE = 24;
 const MAX_EVIDENCE_QUOTE_LENGTH = 420;
+const MAX_EVIDENCE_ITEMS_PER_CHUNK = 512;
 const MAX_SOURCE_IDS = 8;
 const MAX_ITEM_TEXT = 200;
 const MAX_TITLE_TEXT = 120;
@@ -442,11 +442,21 @@ const USER_REQUEST_PATTERN =
   /(?:해\s*줘|해주세요|해\s*봐|진행해|만들어|작성해|수정해|추가해|확인해|검토해|정리해|커밋해|실행해|테스트해|알려\s*줘|보여\s*줘|연결해|띄워|하자|해야\s*(?:해|한다|겠다)|할\s*게|하겠습니다|하겠다|\bplease\b|\bcould you\b|\bcan you\b|\blet's\b|\bi(?:'ll| will)\b)/i;
 const USER_DECISION_PATTERN =
   /(?:하자|하기로\s*(?:했|함)|(?:결정|확정|선택|채택)(?:했|함|한다|됐다|되었)|(?:그걸|이걸|그것|이것)(?:로|으로)?\s*(?:하자|가자|진행해)|해야겠다|사용하자|말고.{0,40}(?:사용|진행)|\blet's\b|\bgo with\b|\bdecided\b|\bconfirmed\b|\bapproved\b)/i;
+const USER_PROPOSAL_ACCEPTANCE_PATTERN =
+  /(?:(?:이|그)\s*방향(?:으로)?\s*(?:가자|진행|수정|적용|해\s*보자|하자)|(?:그래|좋아|오케이|어어|yes|okay|sounds good).{0,24}(?:그렇게\s*해|이대로\s*해|진행해|수정해|적용해))/i;
 const COMPLETION_PATTERN =
   /(?:완료|해결(?:됐|된|했)|적용(?:됐|된|했)|추가(?:됐|된|했)|수정(?:됐|된|했)|만들(?:었|어졌)|작성(?:했|됐)|연결(?:했|됐)|성공|commit(?:ted)?|배포(?:했|됐)|done|completed|finished|fixed|created|updated)/i;
 const BLOCKED_PATTERN = /(?:막혀|차단|오류|실패|안\s*돼|되지\s*않|blocked|failed|error)/i;
 const DEFERRED_PATTERN = /(?:보류|나중에|추후|미루|deferred|later)/i;
 const DUE_MARKER_PATTERN = /(?:까지|기한|마감|\bby\b|deadline|due)/i;
+
+export function isExplicitUserDecisionText(value: string): boolean {
+  return USER_DECISION_PATTERN.test(normalizeText(value));
+}
+
+export function isContextualProposalAcceptanceText(value: string): boolean {
+  return USER_PROPOSAL_ACCEPTANCE_PATTERN.test(normalizeText(value));
+}
 
 /** Generate and deterministically validate a v3 state note. */
 export async function createGeminiConversationStateNote(
@@ -763,17 +773,31 @@ function createChunks(
   const chunks: NormalizedMessage[][] = [];
   let chunk: NormalizedMessage[] = [];
   let chars = 0;
-  for (const message of messages) {
+  const units = messages.flatMap((message) =>
+    splitLongQuote(message.text, limits.maxChars).map((text) => ({
+      ...message,
+      text,
+    })),
+  );
+  for (const message of units) {
+    const messageChars = [...message.text].length;
     if (
       chunk.length > 0 &&
-      (chunk.length + 1 > limits.maxMessages || chars + message.text.length > limits.maxChars)
+      (chunk.length >= limits.maxMessages ||
+        chars + messageChars > limits.maxChars)
     ) {
       chunks.push(chunk);
-      chunk = [];
-      chars = 0;
+      const overlap = chunk.at(-1);
+      const overlapChars = overlap ? [...overlap.text].length : 0;
+      const keepOverlap =
+        overlap !== undefined &&
+        overlap.id !== message.id &&
+        overlapChars + messageChars <= limits.maxChars;
+      chunk = keepOverlap ? [overlap] : [];
+      chars = keepOverlap ? overlapChars : 0;
     }
     chunk.push(message);
-    chars += message.text.length;
+    chars += messageChars;
   }
   if (chunk.length) chunks.push(chunk);
   if (chunks.length > limits.maxChunks) {
@@ -789,7 +813,7 @@ function createChunks(
 function createEvidenceCatalog(
   messages: readonly NormalizedMessage[],
 ): EvidenceCatalogEntry[] {
-  const catalog: EvidenceCatalogEntry[] = [];
+  const candidates: Omit<EvidenceCatalogEntry, "evidenceId">[] = [];
   const seen = new Set<string>();
   for (const message of messages) {
     const clauses = message.text
@@ -800,15 +824,13 @@ function createEvidenceCatalog(
           line.match(/[^!?;。！？]+?(?:[!?;。！？]+|[.](?=\s|$)|$)/gu) ?? [],
       )
       .map((quote) => quote.trim())
-      .filter(Boolean)
-      .slice(0, MAX_EVIDENCE_CLAUSES_PER_MESSAGE);
+      .filter(Boolean);
     for (const rawQuote of clauses) {
       for (const quote of splitLongQuote(rawQuote, MAX_EVIDENCE_QUOTE_LENGTH)) {
         const key = `${message.id}\u0000${quote}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        catalog.push({
-          evidenceId: catalog.length,
+        candidates.push({
           sourceMessageId: message.id,
           quote,
           sequence: message.sequence,
@@ -817,26 +839,55 @@ function createEvidenceCatalog(
       }
     }
   }
+  const catalog = selectEvenly(
+    candidates,
+    MAX_EVIDENCE_ITEMS_PER_CHUNK,
+  ).map((item, evidenceId) => ({ ...item, evidenceId }));
   if (!catalog.length) throw invalidEvidence("No evidence clauses were produced.");
   return catalog;
 }
 
 function splitLongQuote(value: string, maxLength: number): string[] {
-  if ([...value].length <= maxLength) return [value];
-  const words = value.split(/\s+/u);
+  const characters = [...value];
+  if (characters.length <= maxLength) {
+    const text = value.trim();
+    return text ? [text] : [];
+  }
   const output: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if ([...candidate].length > maxLength && current) {
-      output.push(current);
-      current = word;
-    } else {
-      current = candidate;
+  let cursor = 0;
+  while (cursor < characters.length) {
+    const hardEnd = Math.min(cursor + maxLength, characters.length);
+    let end = hardEnd;
+    if (hardEnd < characters.length) {
+      const minimumBreak = cursor + Math.floor(maxLength * 0.6);
+      for (let candidate = hardEnd - 1; candidate >= minimumBreak; candidate -= 1) {
+        if (/\s/u.test(characters[candidate])) {
+          end = candidate;
+          break;
+        }
+      }
+    }
+    if (end <= cursor) end = hardEnd;
+    const text = characters.slice(cursor, end).join("").trim();
+    if (text) output.push(text);
+    cursor = end;
+    while (cursor < characters.length && /\s/u.test(characters[cursor])) {
+      cursor += 1;
     }
   }
-  if (current) output.push(current);
-  return output.filter((item) => item.length <= maxLength);
+  return output;
+}
+
+function selectEvenly<T>(values: readonly T[], limit: number): T[] {
+  if (values.length <= limit) return [...values];
+  if (limit <= 1) return values.length ? [values.at(-1)!] : [];
+  const selected: T[] = [];
+  const indexes = new Set<number>();
+  for (let index = 0; index < limit; index += 1) {
+    indexes.add(Math.round((index * (values.length - 1)) / (limit - 1)));
+  }
+  for (const index of indexes) selected.push(values[index]);
+  return selected;
 }
 
 function buildExtractionPrompt(
@@ -1077,7 +1128,13 @@ function validateRawEvents(
     const kind = eventRecord.kind;
     if (!eventAuthorityIsValid(kind, evidence)) continue;
     const text = generatedString(eventRecord.text, `${path}.text`, MAX_ITEM_TEXT);
-    if ((kind === "decision_set" || kind === "proposal_accepted") && !hasUserDecisionEvidence(evidence)) {
+    if (kind === "decision_set" && !hasUserDecisionEvidence(evidence)) {
+      continue;
+    }
+    if (
+      kind === "proposal_accepted" &&
+      !hasUserProposalAcceptanceEvidence(evidence)
+    ) {
       continue;
     }
     if (kind === "request_opened" && !hasUserRequestEvidence(evidence)) continue;
@@ -1194,6 +1251,27 @@ function foldEventsToStateNote(
         if (proposal) {
           proposal.status = "accepted";
           proposal.terminal = event;
+          const acceptedDecision = canonicalDecisionEvent(
+            {
+              ...event,
+              kind: "decision_set",
+              key: proposal.event.key,
+              targetKey: proposal.event.key,
+            },
+            proposals,
+          );
+          const previous = decisions.get(acceptedDecision.key);
+          if (previous) {
+            changes.push(
+              asChange(
+                acceptedDecision,
+                "direction_changed",
+                previous.text,
+                acceptedDecision.text,
+              ),
+            );
+          }
+          decisions.set(acceptedDecision.key, acceptedDecision);
         }
         break;
       }
@@ -1284,13 +1362,16 @@ function foldEventsToStateNote(
     .map((request) => request.terminal!);
   const allResults = dedupeByKey([...results, ...completedRequestResults]);
   const activeDecisions = [...decisions.values()].slice(-MAX_PRIMARY_ITEMS);
-  const currentEvidence = chooseCurrentEvidence(
+  const selectedCurrentEvidence = chooseCurrentEvidence(
     activeRequests,
     activeDecisions,
     allResults,
     goal,
     events,
   );
+  const currentEvidence = selectedCurrentEvidence.length
+    ? selectedCurrentEvidence
+    : evidenceFromMessage(messages.at(-1)!);
   const currentStateText = buildCurrentStateText(activeRequests, activeDecisions, allResults, goal);
   const titleEvent = goal ?? activeDecisions.at(-1) ?? events[0];
   const fallbackEvidence = titleEvent?.evidence ?? evidenceFromMessage(messages[0]);
@@ -1511,7 +1592,10 @@ function evidenceText(text: string, evidence: readonly EvidenceCatalogEntry[]): 
   return {
     text: shorten(normalizeText(text), MAX_ITEM_TEXT),
     sourceMessageIds: uniqueStrings(snippets.map((item) => item.sourceMessageId)),
-    evidenceSnippets: snippets.map(({ sourceMessageId, quote }) => ({ sourceMessageId, quote })),
+    evidenceSnippets: snippets.map(({ sourceMessageId, quote }) => ({
+      sourceMessageId,
+      quote: shorten(quote, MAX_EVIDENCE_QUOTE_LENGTH),
+    })),
   };
 }
 
@@ -1611,7 +1695,20 @@ function eventAuthorityIsValid(kind: EventKind, evidence: readonly EvidenceCatal
 }
 
 function hasUserDecisionEvidence(evidence: readonly EvidenceCatalogEntry[]): boolean {
-  return evidence.some((item) => item.role === "user" && USER_DECISION_PATTERN.test(item.quote));
+  return evidence.some(
+    (item) => item.role === "user" && isExplicitUserDecisionText(item.quote),
+  );
+}
+
+function hasUserProposalAcceptanceEvidence(
+  evidence: readonly EvidenceCatalogEntry[],
+): boolean {
+  return evidence.some(
+    (item) =>
+      item.role === "user" &&
+      (isExplicitUserDecisionText(item.quote) ||
+        isContextualProposalAcceptanceText(item.quote)),
+  );
 }
 
 function hasUserRequestEvidence(evidence: readonly EvidenceCatalogEntry[]): boolean {
@@ -2051,7 +2148,10 @@ function inferPrimaryLanguage(
 
 function shorten(value: string, max: number): string {
   const chars = [...normalizeText(value)];
-  return chars.length <= max ? chars.join("") : `${chars.slice(0, Math.max(1, max - 1)).join("")}…`;
+  const marker = "...";
+  return chars.length <= max
+    ? chars.join("")
+    : `${chars.slice(0, Math.max(1, max - marker.length)).join("")}${marker}`;
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

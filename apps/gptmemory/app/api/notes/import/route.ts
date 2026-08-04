@@ -17,6 +17,13 @@ import {
   NoteEngineError,
 } from "@/lib/note-engine";
 import {
+  CONTENT_NOTE_ENGINE_VERSION,
+  CONTENT_NOTE_PROMPT_VERSION,
+  ContentNoteGenerationError,
+  createGeminiConversationContentNote,
+  DEFAULT_GEMINI_CONTENT_MODEL,
+} from "@/lib/note-content";
+import {
   createGeminiConversationSummary,
   DEFAULT_GEMINI_MODEL,
   SUMMARY_ENGINE_VERSION,
@@ -68,43 +75,68 @@ const importService = createNoteImportService<PublicNote>({
         shareId: imported.source.shareId,
       },
     });
-    const useLegacySummary =
-      process.env.GPTMEMORY_GENERATION_MODE?.trim() === "summary-v2";
-    const model = useLegacySummary
-      ? process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
+    const mode = process.env.GPTMEMORY_GENERATION_MODE?.trim() || "content-v4";
+    const input = {
+      title: imported.conversation.title,
+      messages: imported.conversation.messages,
+    };
+    let model: string;
+    let summary;
+    let engineVersion: string;
+    let promptVersion: string;
+
+    if (mode === "summary-v2") {
+      model =
+        process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
         process.env.GEMINI_MODEL?.trim() ||
-        DEFAULT_GEMINI_MODEL
-      : process.env.GPTMEMORY_STATE_MODEL?.trim() ||
+        DEFAULT_GEMINI_MODEL;
+      summary = await createGeminiConversationSummary(input, { model });
+      engineVersion = SUMMARY_ENGINE_VERSION;
+      promptVersion = SUMMARY_PROMPT_VERSION;
+    } else if (mode === "state-v3") {
+      model =
+        process.env.GPTMEMORY_STATE_MODEL?.trim() ||
         process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
         process.env.GEMINI_MODEL?.trim() ||
         DEFAULT_GEMINI_STATE_MODEL;
-    const summary = useLegacySummary
-      ? await createGeminiConversationSummary(
-          {
-            title: imported.conversation.title,
-            messages: imported.conversation.messages,
-          },
-          { model },
-        )
-      : await createGeminiConversationStateNote(
-          {
-            title: imported.conversation.title,
-            messages: imported.conversation.messages,
-          },
-          { model },
-        );
+      summary = await createGeminiConversationStateNote(input, { model });
+      engineVersion = STATE_NOTE_ENGINE_VERSION;
+      promptVersion = STATE_NOTE_PROMPT_VERSION;
+    } else if (mode === "content-v4") {
+      const contentModel =
+        process.env.GPTMEMORY_CONTENT_MODEL?.trim() ||
+        process.env.GPTMEMORY_SUMMARY_MODEL?.trim() ||
+        process.env.GEMINI_MODEL?.trim() ||
+        DEFAULT_GEMINI_CONTENT_MODEL;
+      const stateModel =
+        process.env.GPTMEMORY_STATE_MODEL?.trim() ||
+        process.env.GEMINI_MODEL?.trim() ||
+        DEFAULT_GEMINI_STATE_MODEL;
+      summary = await createGeminiConversationContentNote(input, {
+        model: contentModel,
+        stateModel,
+      });
+      model =
+        contentModel === stateModel
+          ? contentModel
+          : `content=${contentModel};state=${stateModel}`;
+      engineVersion = CONTENT_NOTE_ENGINE_VERSION;
+      promptVersion = CONTENT_NOTE_PROMPT_VERSION;
+    } else {
+      throw new ContentNoteGenerationError(
+        "CONTENT_INVALID_INPUT",
+        `Unsupported GPTMEMORY_GENERATION_MODE: ${mode}`,
+        500,
+      );
+    }
     return {
       legacyDraft,
       summary,
       summaryProvider: {
         provider: "gemini",
         model,
-        engineVersion: useLegacySummary
-          ? SUMMARY_ENGINE_VERSION
-          : STATE_NOTE_ENGINE_VERSION,
-        promptVersion: useLegacySummary
-          ? SUMMARY_PROMPT_VERSION
-          : STATE_NOTE_PROMPT_VERSION,
+        engineVersion,
+        promptVersion,
       },
     };
   },
@@ -163,6 +195,17 @@ export async function POST(request: Request): Promise<Response> {
     }
     if (error instanceof StateNoteGenerationError) {
       const message = stateNoteGenerationErrorMessage(error);
+      return jsonResponse(
+        {
+          status: "error",
+          message,
+          error: { code: error.code, message },
+        },
+        error.httpStatus,
+      );
+    }
+    if (error instanceof ContentNoteGenerationError) {
+      const message = contentNoteGenerationErrorMessage(error);
       return jsonResponse(
         {
           status: "error",
@@ -424,6 +467,24 @@ function stateNoteGenerationErrorMessage(
     return "상태 노트 서비스를 사용할 수 없습니다. Gemini 연결 설정을 확인해 주세요.";
   }
   return "상태 노트를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+function contentNoteGenerationErrorMessage(
+  error: ContentNoteGenerationError,
+): string {
+  if (error.httpStatus === 429) {
+    return "내용 정리 요청이 많습니다. 잠시 후 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 408 || error.httpStatus === 504) {
+    return "대화 내용을 주제별로 정리하는 데 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 422 || error.retryable) {
+    return "대화 내용과 원문 근거를 안전하게 검증하지 못했습니다. 다시 시도해 주세요.";
+  }
+  if (error.httpStatus === 503) {
+    return "내용 정리 서비스를 사용할 수 없습니다. Gemini 연결 설정을 확인해 주세요.";
+  }
+  return "내용 중심 대화 노트를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
 function jsonResponse(body: unknown, status: number): Response {
