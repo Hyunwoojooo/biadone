@@ -1,7 +1,26 @@
 # blabase Suggestion Prototype
 
-동일 사용자의 ChatGPT 공유 대화 3~10개를 복원하고, 사용자가 지금 가장 먼저
-처리할 task 한 개를 제안하는 독립 로컬 프로토타입입니다.
+GitHub와 Codex를 중심으로 개발자의 실행 상태를 Work Cockpit에 보여주고,
+현재 근거로 확인 가능한 “지금 개입할 한 가지”를 제안하는 로컬 프로토타입입니다.
+Notion과 Google Calendar는 project/schedule context를 제공하며, 기존 ChatGPT
+공유 대화 기반 `suggestion-engine-v0.3`은 `/legacy`의 별도 경로로 유지합니다.
+
+## 현재 설계 문서 시작점
+
+- 현재 단계, 확정한 제품 결정과 남은 결정:
+  `docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md`
+- observation/candidate/no-action의 규범 정의:
+  `docs/CROSS_SOURCE_ATTENTION_DEFINITION.md`
+- GitHub·Codex Developer Work Ledger와 Candidate Funnel:
+  `docs/DEVELOPER_SIGNAL_INTELLIGENCE.md`
+- 평가 dataset, baseline과 해석 제한:
+  `docs/CROSS_SOURCE_EVALUATION_GUIDE.md`
+- 구현별 버전, run ID, 개인정보, rollback 기록:
+  `docs/ENGINE_CHANGE_RECORD.md`
+- macOS launcher와 작업 재개 안전 경계:
+  `docs/LOCAL_LAUNCHER_CONTRACT.md`, `docs/WORK_RESUMPTION_CONTRACT.md`
+
+다른 세션은 위 순서로 읽으면 현재 제품 결정과 최신 구현 상태를 복원할 수 있다.
 
 ## 로컬 실행
 
@@ -56,19 +75,22 @@ BLABASE_NODE_BINARY=/absolute/path/to/node npm run launcher:package
 
 산출물은 Git에서 제외된 `.local/build/macos/` 아래 생성된다. ad-hoc 서명된 local
 development beta이므로 외부 배포 전에는 Developer ID 서명과 Apple notarization이
-필요하다. 기존 `suggestion/.local` 연결 데이터를 사용해 확인할 때는 앱 시작 전에
-`BLABASE_LAUNCHER_DATA_ROOT`를 `suggestion/`의 절대 경로로 지정한다. 이 override는
-자동으로 source read-only mode가 되므로 기존 웹 coordinator가 동기화한 snapshot을
-표시하되 같은 store를 동시에 갱신하지 않는다. 설치, 검증, 데이터 경계와 release
-명령은 `desktop/macos/README.md`, IPC와 실행 안전 경계는
+필요하다. 기존 `suggestion/.local` 연결 데이터를 사용하려면 native first-run에서
+`기존 데이터 사용`을 선택하고 `suggestion/` root를 직접 확인·저장한다. 저장된
+existing root는 source read-only mode로 열어 기존 웹 coordinator가 동기화한
+snapshot을 표시하되 같은 store를 동시에 갱신하지 않는다.
+`BLABASE_LAUNCHER_DATA_ROOT`는 설정이 전혀 없을 때 보여주는 legacy migration
+candidate일 뿐 자동 적용되지 않는다. 설치, 검증, 데이터 경계와 release 명령은
+`desktop/macos/README.md`, IPC와 실행 안전 경계는
 `docs/LOCAL_LAUNCHER_CONTRACT.md`를 따른다.
 
 ## Google Calendar 로컬 연결 — 운영자 설정
 
 Calendar 연결은 로컬 개발 서버에서만 활성화되며, 기본 캘린더를 읽기 전용으로
-가져옵니다. 제안 엔진에는 아직 Calendar 일정을 입력하지 않고 연결과 수집 결과만
-확인합니다. 아래 설정은 앱 운영자가 최초 한 번 수행하며, 실제 사용자는 화면의
-`Google Calendar 연결` 버튼과 Google 동의 화면만 사용합니다.
+가져옵니다. 수집한 일정은 `supporting-source-adapter-v0.3`의
+`schedule_context_only` 입력으로 Attention의 시간 제약과 coverage에 사용하며 직접
+행동 후보를 만들지는 않습니다. 아래 설정은 앱 운영자가 최초 한 번 수행하며,
+실제 사용자는 화면의 `Google Calendar 연결` 버튼과 Google 동의 화면만 사용합니다.
 
 1. Google Cloud 프로젝트에서 Google Calendar API를 활성화합니다.
 2. OAuth consent screen을 Testing으로 설정하고 사용할 Google 계정을 Test user로
@@ -102,8 +124,10 @@ GOOGLE_CALENDAR_REDIRECT_URI=http://localhost:3102/api/connectors/google-calenda
 Notion 연결도 로컬 개발 서버에서만 활성화됩니다. 사용자는 OAuth 화면에서
 blabase에 보여줄 페이지와 데이터베이스를 직접 선택합니다. 이 프로토타입은
 선택해 공유된 범위에서 페이지·데이터 소스의 제목과 수정 시각만 가져오며,
-본문·사용자 이메일·원시 속성은 저장하지 않습니다. 제안 엔진 입력에는 아직
-Notion 데이터를 사용하지 않습니다.
+본문·사용자 이메일·원시 속성은 저장하지 않습니다. 수집 결과는
+`supporting-source-adapter-v0.3`의 `project_context_only` 입력으로 Attention의
+project context와 coverage에 사용하며, mapped task property 계약이 구현되기 전에는
+직접 행동 후보를 만들지 않습니다.
 
 1. Notion Developer portal에서 `Public connection`을 만듭니다.
 2. Installation scope는 테스트할 워크스페이스에 맞게 선택합니다.
@@ -316,12 +340,15 @@ npm run build:cloudflare
 npm run deploy:cloudflare
 ```
 
-## 동작 경계
+## Legacy `/legacy` 동작 경계
+
+아래 항목은 ChatGPT 공유 대화 기반 `suggestion-engine-v0.3` 경로에만 적용한다.
+메인 Work Cockpit의 Cross-source Attention 계약은 위 설계 문서를 따른다.
 
 - 복원에 성공한 고유 대화가 3개 미만이면 LLM을 호출하지 않습니다.
 - URL은 3~10개를 받으며 중복 URL은 한 개로 계산합니다.
 - 입력한 대화들이 동일 사용자의 것인지는 사용자가 확인합니다.
 - 이 버전은 제안만 하며 task를 자동 실행하지 않습니다.
 - 원본 URL과 대화 전문을 제안 결과에 저장하지 않습니다.
-- Calendar, Notion, GitHub, Codex 연결 결과는 현재 제안 엔진의 입력에
+- Calendar, Notion, GitHub, Codex 연결 결과는 legacy conversation engine의 입력에
   포함하지 않습니다.

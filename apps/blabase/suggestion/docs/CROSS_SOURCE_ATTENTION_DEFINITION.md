@@ -6,14 +6,15 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 0 dev contract closed, Phase 2A policy revision |
+| 문서 상태 | Normative definition v0.2 active; implementation synchronized through Phase 4C.2 and Developer Signal Intelligence v0.1 |
 | Definition ID | `cross-source-attention-definition-v0.2` |
-| 기준일 | 2026-07-30 |
+| 기준일 | 2026-08-05 |
 | 적용 대상 | `suggestion/`의 별도 Cross-source 엔진 |
 | 기존 엔진 | `suggestion-engine-v0.3`은 별도 경로로 유지 |
 | 상위 계획 | `CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md` |
+| Developer signal 설계 | `DEVELOPER_SIGNAL_INTELLIGENCE.md` |
 | 규범 기록 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1·2A, local Phase 2A.1 Data Pipeline Stabilization과 Phase 2B.0 Work Resumption safe destination 완료 |
+| 구현 상태 | Phase 0·1, Phase 2A·2A.1, Phase 2B.0·2B.1·2B.2A, Phase 3A·3B·3C, Phase 4A·4B, Phase 4C·4C.1·4C.2 local beta와 Developer Signal Intelligence v0.1 구현 |
 
 ---
 
@@ -746,8 +747,11 @@ Phase 2A의 적극 정책은 safe GitHub destination이 있는 현재 review req
 - merge conflict
 - 명시적인 follow-up obligation
 
-현재 connector가 required checks, review decision, merge state를 제공하지 않으면
-해당 조건을 추론하지 않는다.
+`github-snapshot-v3` connector는 authored PR에 한해 draft, review decision,
+check summary와 mergeability/merge-conflict를 privacy-minimized fact로 수집한다.
+`checks_failed`, `changes_requested`, `merge_conflict`의 verified positive만 후보로
+승격하며, field 누락·partial/unavailable coverage와 단순 open/draft 상태는
+행동 필요성으로 추론하지 않는다. 기존 v2 snapshot은 context-only 의미로 읽는다.
 
 #### Context-only
 
@@ -1318,6 +1322,9 @@ GitHub 상태가 오래되어 review 요청이 아직 유효한지 확인할 수
 | `AD-GH-002` | fresh non-draft PR review request | candidate | `review`, `CANDIDATE_GITHUB_REVIEW_REQUESTED` |
 | `AD-GH-003` | authored open PR, 행동 필요 field 없음 | overview-only | `OVERVIEW_SOURCE_CONTEXT_ONLY` |
 | `AD-GH-004` | merged PR | excluded | `GATE_FINAL_STATE` |
+| `AD-GH-005` | authored PR, failed check verified | candidate | `do`, `CANDIDATE_GITHUB_AUTHORED_PR_CHECKS_FAILED` |
+| `AD-GH-006` | authored PR, changes requested verified | candidate | `do`, `CANDIDATE_GITHUB_AUTHORED_PR_CHANGES_REQUESTED` |
+| `AD-GH-007` | authored PR, merge conflict verified | candidate | `do`, `CANDIDATE_GITHUB_AUTHORED_PR_MERGE_CONFLICT` |
 | `AD-CA-001` | 다음 일정까지 20분, 연결 task 없음 | overview-only | `OVERVIEW_CALENDAR_CONSTRAINT` |
 | `AD-CA-002` | event와 explicit linked review prep | candidate | `prepare`, `CANDIDATE_CALENDAR_LINKED_PREPARATION` |
 | `AD-NO-001` | 일반 page가 최근 수정됨 | overview-only | `OVERVIEW_SOURCE_CONTEXT_ONLY` |
@@ -1587,3 +1594,17 @@ Codex 세션은 계속 inventory-only `unknown`이며 live managed execution
 `conversation_and_execution`은 이 경계를 바꾸지 않고 과거 기록을
 historical-context-only로 추가한다. 이 확장의 runtime WorkSignal/Attention
 schema와 Codex normalizer/overview rule은 v0.3이다.
+
+이후 Phase 2B.0·2B.1·2B.2A, Phase 3A·3B·3C와 Phase 4A·4B를 구현했다.
+Blabase-owned managed run의 exact direct failure와 configured completion
+follow-through만 Codex active candidate가 될 수 있으며, verified stall,
+scope drift와 stable approval/input escalation은 richer evidence가 필요한 후속
+범위다. Phase 4C·4C.1·4C.2 launcher는 이 결정을 다시 계산하지 않고 현재 결과를
+native macOS surface로 투영한다.
+
+현재 Active Attention은 input v0.4, result v0.5다. Developer Signal Intelligence
+v0.1은 GitHub/Codex normalized signal을 Developer Work Ledger와 Candidate Funnel로
+추적한다. GitHub authored PR은 `github-snapshot-v3`의 verified actionability가 있을
+때만 후보가 되며, Codex historical OpenLoopClaim은 currentness가 검증되기 전까지
+private Developer Work Ledger에만 남고 funnel의 verified 단계에서 rejected되어 추천
+후보가 되지 않는다. underlying Codex observation만 기존 overview 경계를 유지한다.

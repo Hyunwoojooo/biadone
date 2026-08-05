@@ -2998,7 +2998,13 @@
   - suggestion base commit:
     `c60caf5821122b4e60c0800cd8cac571e75f7d96`
   - base subject: `feat(blabase): add first-run launcher data setup`
-  - implementation state: `dirty_worktree`; 현재 record에서 commit을 생성하지 않음
+  - evaluation-time implementation state: `dirty_worktree`; 현재 record에서 commit을
+    생성하지 않음
+  - subsequent implementation commit:
+    `8e2fe01af08f141ccbb3e424549620543f3c6857`
+  - commit subject: `feat(blabase): add developer signal intelligence`
+  - 위 검증은 commit 전에 실행됐으며 이 change는 이후 해당 commit에 함께
+    materialize됐다. 기존 검증을 clean-commit run으로 소급하지 않음
 - Evaluation dataset and run:
   - 새 dataset, Golden/Regression version, engine comparison run ID 없음
   - resolver input, candidate 생성, eligibility, filtering, ranking, selection과 explanation
@@ -3117,9 +3123,15 @@
   - live orchestrator/monitor run/failure: v0.5/v0.5/v0.4
   - monitor v0.4 + replay v2와 v0.3 + replay v1 read compatibility 유지
 - Code commit:
-  - implementation state: `dirty_worktree`; 이 record에서 commit을 생성하지 않음
+  - evaluation-time provenance: `codeCommitSha=null`, `codeState=dirty_worktree`;
+    이 record에서 commit을 생성하지 않음
   - baseline code fingerprint:
     `d59d2fdbe5e26ae0d678a3f8ca7e055348647e5c54d86efee3dfdd6c023320d8`
+  - subsequent implementation commit:
+    `8e2fe01af08f141ccbb3e424549620543f3c6857`
+  - commit subject: `feat(blabase): add developer signal intelligence`
+  - 위 baseline run은 commit 전에 기록된 dirty fingerprint로 실행됐다. 기존 run ID를
+    `8e2fe01`의 clean-commit run으로 소급하지 않음
 - Evaluation dataset and run:
   - 기존 mutable Dev Candidate 원본 v0.1 revision 2와 기대 hash를 수정하지 않음
   - 별도 expectation revision artifact로 eligibility v0.2 revision 3와 Active v0.2

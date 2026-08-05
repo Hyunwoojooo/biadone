@@ -1,5 +1,21 @@
 # Developer Signal Intelligence v0.1
 
+## 문서 정보
+
+| 항목 | 값 |
+|---|---|
+| 상태 | Local developer beta implemented |
+| 기준일 | 2026-08-05 |
+| 구현 commit | `8e2fe01af08f141ccbb3e424549620543f3c6857` |
+| Active Attention | input v0.4 / result v0.5 |
+| Evaluation | eligibility v0.2 revision 3, Active v0.2 revision 3 |
+| 상세 변경 기록 | `ENGINE_CHANGE_RECORD.md`의 2026-08-05 record |
+
+구현 commit은 검증 후 생성됐다. 이 문서에 기록된 baseline run의 실행 당시
+provenance는 `codeCommitSha=null`, `codeState=dirty_worktree`와 fingerprint
+`d59d2fdbe5e26ae0d678a3f8ca7e055348647e5c54d86efee3dfdd6c023320d8`이며,
+기존 run ID를 위 clean commit에서 재실행한 것으로 소급하지 않는다.
+
 ## 목적
 
 GitHub와 Codex에서 수집한 데이터를 곧바로 추천 점수에 넣지 않고, 현재 개발

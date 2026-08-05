@@ -4,8 +4,8 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 4C launcher compatibility checks recorded, Draft v0.6 |
-| 기준일 | 2026-08-03 |
+| 문서 상태 | Developer Signal Intelligence v0.1 baselines recorded, Draft v0.7 |
+| 기준일 | 2026-08-05 |
 | 평가 schema | `cross-source-evaluation-case-v0.1` |
 | reason code | `cross-source-reason-codes-v0.1` |
 | Attention 정의 | `cross-source-attention-definition-v0.2` |
@@ -13,12 +13,15 @@
 | dataset 상태 | Mutable Dev Candidate, revision 2 |
 | 입력 경계 | `normalized_work_signals_and_relations` |
 | 데이터 출처 | Synthetic only |
-| Active decision dataset | `suggestion-active-attention-dev-v0.1`, revision 2 |
+| Eligibility expectation revision | `suggestion-attention-eligibility-dev-v0.2`, revision 3 |
+| Active decision expectation revision | `suggestion-active-attention-dev-v0.2`, revision 3 |
 
 관련 파일:
 
 - `suggestion/docs/CROSS_SOURCE_ATTENTION_DEFINITION.md`
 - `suggestion/docs/CROSS_SOURCE_SUGGESTION_IMPLEMENTATION_PLAN.md`
+- `suggestion/docs/DEVELOPER_SIGNAL_INTELLIGENCE.md`
+- `suggestion/docs/ENGINE_CHANGE_RECORD.md`
 - `suggestion/docs/PHASE2_GITHUB_CODEX_OBSERVABILITY_CONTRACT.md`
 - `suggestion/src/evaluation/crossSourceDatasetSchema.ts`
 - `suggestion/src/evaluation/crossSourceIntegrity.ts`
@@ -30,6 +33,8 @@
 - `suggestion/src/evaluation/activeAttentionDecisionEvaluation.ts`
 - `suggestion/eval/synthetic/activeAttentionDecisionCases.v0.1.json`
 - `suggestion/eval/synthetic/activeAttentionDecisionConfig.v0.2.json`
+- `suggestion/eval/synthetic/eligibilityGateExpectations.v0.2.json`
+- `suggestion/eval/synthetic/activeAttentionExpectations.v0.2.json`
 - `suggestion/tools/run-active-attention-baseline.ts`
 - `suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md`
 - `suggestion/tests/launcherProjection.test.ts`
@@ -127,7 +132,8 @@ dataset version을 만든다.
 ### 2.3 Core revision 2의 Codex v2 tag와 active runtime 분리
 
 기존 30-case core dataset은 작성 당시의 경계를 재현하기 위해 다음 tag를
-그대로 보존한다. 이 이름은 2026-08-03 live runtime이 Codex v2라는 뜻이 아니다.
+그대로 보존한다. 이 이름은 현재 live runtime version을 뜻하지 않는다. 현재
+connector는 `codex-snapshot-v3`를 사용한다.
 
 ```text
 current_codex_v2
@@ -138,13 +144,13 @@ future_candidate_capable_codex
 `codex-snapshot-v2` metadata-only 범위를 나타낸다. 이 범위는 execution exception에 대해
 `overview_only`다.
 
-현재 v2의 optional `taskSummary`는 사용자가 표시를 opt-in한 경우 overview
+해당 historical v2 contract의 optional `taskSummary`는 사용자가 표시를 opt-in한 경우 overview
 label 단서로만 사용할 수 있고 semantic task/progress 상태는 `unknown`이다.
 summary만으로 사용자 obligation이나 completion을 만들지 않는다.
 follow-through는 explicit GitHub relation 또는 사용자가 설정한 project
 workflow가 있을 때만 검토한다.
 
-따라서 현재 v2의 `active`, approval badge, `system_error`만으로 다음을 평가하거나
+따라서 해당 historical v2 contract의 `active`, approval badge, `system_error`만으로 다음을 평가하거나
 지원한다고 주장하면 안 된다.
 
 - verified stall
@@ -379,7 +385,7 @@ reason = WHY_NOW_PRIMARY_OUTCOME_ALIGNED
 - window 안에 있고 순서가 보존됐는가?
 - source status와 truncation이 드러나는가?
 - signal이 같은 source snapshot을 참조하는가?
-- current Codex v2와 future contract가 구분됐는가?
+- historical `current_codex_v2` tag와 future contract가 구분됐는가?
 
 입력 자체가 재현 불가능하면 ranking을 평가하지 않는다.
 
@@ -476,7 +482,7 @@ hard failure가 하나라도 있으면 top ranking이 우연히 맞아도 전체
 - eligible item 없음
 - review-required item 없음
 
-Calendar-only 또는 현재 Codex v2 activity-only로 전체 Attention에 대한
+Calendar-only 또는 historical `current_codex_v2` activity-only로 전체 Attention에 대한
 `no_action`을 라벨링하지 않는다.
 
 scoped `no_action`은 “모든 연결 도구에 할 일이 없다”가 아니다. 사용자 문구는
@@ -876,7 +882,7 @@ hash가 하나라도 맞지 않거나 config artifact를 resolve하지 못하면
 
 | 그룹 | 개수 | 핵심 범위 |
 |---|---:|---|
-| 현재 Codex v2 | 3 | activity, request badge, system error의 overview-only 경계 |
+| historical `current_codex_v2` | 3 | activity, request badge, system error의 overview-only 경계 |
 | Future Codex contract | 14 | progress, stall, failure, follow-through, scope, request lifecycle |
 | GitHub | 3 | assigned issue, review request, authored PR context |
 | Calendar | 2 | constraint-only, explicit linked preparation |
@@ -912,7 +918,7 @@ hash가 하나라도 맞지 않거나 config artifact를 resolve하지 못하면
 | `AD-DEV-DS-005` | complete negative coverage에서 no-action 허용 |
 
 Golden 후보 전에는 stale source, complete-source critical conflict, expired
-request, clarification으로 eligibility가 바뀌는 사례, current Codex v2의
+request, clarification으로 eligibility가 바뀌는 사례, historical `current_codex_v2`의
 `idle`/`not_loaded`/`unknown`, 그리고 “task summary 기본 unknown + workflow
 미설정 시 follow-through 금지” 사례를 추가한다.
 
@@ -930,7 +936,7 @@ Engine Change Record에 보존한다.
 
 - mutable synthetic dataset parse
 - 30개 case와 네 결과 상태별 분포 검증(현재 `needs_clarification`은 0개)
-- current Codex v2와 future contract 분리
+- historical `current_codex_v2`와 future contract 분리
 - 68개 reason code의 유일성
 - snapshot, materialized detector config, frozen dataset canonical hash 검증
 - hash 계산 후 signal을 바꾼 artifact 거부
@@ -974,7 +980,7 @@ npm run lint
 - Zod schema가 strict validation을 수행함
 - reason code bucket이 분리됨
 - no-action과 partial coverage invariant가 code로 검증됨
-- current Codex v2와 future contract case가 분리됨
+- historical Codex v2와 future contract case가 분리됨
 - synthetic Dev Case가 20~30개 존재함
 - dataset revision 규칙이 있고 mutable artifact가 frozen hash를 주장하지 않음
 - parse와 integrity verification이 분리돼 둘 다 검증됨
@@ -1008,9 +1014,24 @@ local supervisor
 → 단축키 launcher
 → Work Cockpit 즉시 실행/관찰
 
+[Developer Signal Intelligence v0.1 완료]
+GitHub snapshot v3 authored-PR actionability
++ Codex OpenLoopClaim ledger-only extraction
+→ Developer Work Ledger
+→ Candidate Funnel
+→ Eligibility v0.2
+→ Active Attention v0.5
+→ live/monitor v0.5
+→ aggregate public summary
+
 [다음]
-external beta 서명/notarization과 first-run data 이동 UX
+GitHub App 권한 승인과 actionability coverage 확인
+→ run별 funnel summary 영속화
+→ Codex OpenLoop currentness 검증
+→ dashboard/root identity handshake
+→ full Xcode·Developer ID·notarization
 → Calendar fit / Notion task mapping
+→ human-reviewed Developer Attention Dataset
 ```
 
 처음부터 ranking weight를 세밀하게 튜닝하지 않는다. 30개 Dev Case에서 hard
@@ -1025,7 +1046,8 @@ route는 연결됐지만 frozen Cross-source Golden과 locked holdout은 아직 
 
 Phase 4B는 기존 30-case core dataset을 active runtime 품질 주장으로 재사용하지
 않고, exact replayable evidence envelope를 입력으로 받는 별도 deterministic
-evaluator를 추가했다.
+evaluator를 추가했다. 이 절의 v0.4/revision 2 값은 Developer Signal Intelligence
+이전의 historical baseline이며 최신 revision 3 baseline은 18절에 기록한다.
 
 ### 16.1 버전과 범위
 
@@ -1173,3 +1195,94 @@ XCTest suite는 이 머신에서 실행하지 못했다. 동일 source의 debug/
 독립 model smoke, 실제 app integration으로 보완했지만 external beta CI에서는 full
 Xcode로 `swift test`를 추가 실행해야 한다. 현재 DMG는 ad-hoc 서명된 local
 development beta이며 Developer ID notarized release나 production 품질 주장이 아니다.
+
+---
+
+## 18. Developer Signal Intelligence v0.1 baseline
+
+Developer Signal Intelligence v0.1은 GitHub authored PR actionability를 실제 후보로
+연결하고, Codex historical content에서 추출한 OpenLoopClaim을 currentness 검증
+전까지 ledger-only로 제한한다. 기존 mutable v0.1 revision 2 case source와 기대값을
+덮어쓰지 않고 eligibility와 Active 각각의 v0.2 revision 3 expectation artifact를
+추가했다. frozen Golden/Regression dataset은 변경하지 않았다.
+
+### 18.1 현재 버전과 범위
+
+- GitHub snapshot/actionability normalizer:
+  `github-snapshot-v3` / `github-pr-actionability-normalizer-v0.3`
+- eligibility projection/policy/evidence/resolver:
+  `attention-eligibility-shadow-projection-v0.1` /
+  `hard-attention-eligibility-policy-v0.2` /
+  `attention-eligibility-evidence-v0.2` /
+  `attention-eligibility-resolver-v0.2`
+- Active input/result/policy/candidate/ranking/resolver:
+  `v0.4 / v0.5 / v0.4 / v0.2 / v0.3 / v0.4`
+- live orchestrator/monitor/failure/replay:
+  `v0.5 / v0.5 / v0.4 / v2`
+- Work Ledger, Candidate Funnel과 runtime projection: v0.1
+- Codex OpenLoop schema/rule/evidence/expiry: v1
+
+revision 3 baseline은 기존 26개 eligibility case와 44개 Active case의 입력 source를
+바꾸지 않고 새 version tuple의 deterministic output expectation을 별도 artifact로
+검증한다. authored PR의 세 actionability 상태, 단순 open·draft·unknown 제외, v2
+snapshot compatibility, partial coverage positive 보존, Codex historical claim의
+currentness fail-closed, ledger/funnel determinism과 public aggregate privacy는 별도
+bounded synthetic Vitest regression으로 검증했다. 이 unit regression을 baseline case나
+human-approved Gold로 계산하지 않는다.
+
+GitHub unresolved review thread, Project priority/dependency, Codex current open-loop
+lifecycle과 실제 사용자 유용성은 이번 baseline과 bounded regression 범위에 포함하지
+않는다.
+
+### 18.2 재현 기록
+
+Eligibility revision:
+
+- dataset: `suggestion-attention-eligibility-dev-v0.2`, revision `3`
+- dataset SHA-256:
+  `3bb839262a78095b5a54a4e73c105802c41f276fe19a5743fadd50c20bd235d4`
+- materialized input SHA-256:
+  `1d1a2ab3fd41cc53a2437e74b874b988fdeb5d7794fd105f2a401da75745f034`
+- config SHA-256:
+  `33c2719e45d6d3715053c44e87f5d5e36317f0457e3ee939ca76aa36c53a2e57`
+- deterministic output SHA-256:
+  `00e1008c24b1c57a66c626a2db8fc78ab74c6c28499919fe79ea6297916ed703`
+- run ID: `attention_eligibility_run_cecf4c97681437b38b3857ddd6cfccfc`
+- result: cases `26/26`, assessments `24/24`
+
+Active revision:
+
+- dataset: `suggestion-active-attention-dev-v0.2`, revision `3`
+- dataset SHA-256:
+  `fc8be53b229f4c685591e34b005a4e99fbf49eb7722cc86cd4aeab97f04c8a26`
+- materialized input SHA-256:
+  `baa7a6ec69173b4207e4409b900519c3148ad06995726aad78f9e2d6ef79f940`
+- config SHA-256:
+  `f8da1f5c0b8f55aaa6acffbd6885bdf4a1a759ca0c0f3cf61d84dcb35b6df30b`
+- deterministic output SHA-256:
+  `6ce881d595ab1476e95f33710c5ee7c6cd9be412d492b2b79daa26faf71c0d55`
+- record payload SHA-256:
+  `9bffa9f0bf7b6010c96528d3d3b51b1b2ed35cca841765e2d31ce3055a47f099`
+- run ID: `active_attention_eval_run_056c3ce2e6084663841f28a20d408088`
+- result: cases `44/44`, assessments `80/80`
+
+두 run의 evaluation-time code provenance는 `codeCommitSha=null`,
+`codeState=dirty_worktree`와 fingerprint
+`d59d2fdbe5e26ae0d678a3f8ca7e055348647e5c54d86efee3dfdd6c023320d8`다.
+이 구현은 이후 commit `8e2fe01af08f141ccbb3e424549620543f3c6857`로 materialize됐지만,
+기존 run ID를 그 clean commit에서 재실행한 것으로 소급하지 않는다.
+
+### 18.3 검증과 해석 제한
+
+- full Vitest: `87/87` files, `732/732` tests passed
+- suggestion typecheck, ESLint와 production build: passed
+- eligibility와 Active deterministic baseline: passed
+- provider/model/prompt/token usage: `not_applicable`
+- public Developer Signal summary는 hash/count만 포함하고 원문, URL, local path와
+  credential을 strict schema에서 거부
+
+이 baseline은 human review를 거치지 않은 mutable synthetic development contract다.
+실제 precision/recall, 사용자 만족도나 external release readiness를 주장하지 않는다.
+production conversation, implicit feedback과 LLM judge score는 자동으로 Gold가 되지
+않으며, Developer Attention Golden Dataset은 별도 privacy review, human review와
+adjudication 후 새 version/hash로 freeze해야 한다.

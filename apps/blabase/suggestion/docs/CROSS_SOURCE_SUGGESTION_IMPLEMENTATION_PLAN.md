@@ -10,10 +10,10 @@
 
 | 항목 | 값 |
 |---|---|
-| 문서 상태 | Phase 4C macOS local launcher beta implemented, Draft v0.14 |
-| 기준일 | 2026-08-03 |
+| 문서 상태 | Phase 4C.2 launcher diagnostics and Developer Signal Intelligence v0.1 implemented, Draft v0.15 |
+| 기준일 | 2026-08-05 |
 | 대상 프로토타입 | `suggestion/` |
-| 현재 엔진 | Cross-source active Attention v0.4; legacy conversation engine `suggestion-engine-v0.3` |
+| 현재 엔진 | Cross-source Active Attention input v0.4 / result v0.5; Developer Signal Intelligence v0.1; legacy conversation engine `suggestion-engine-v0.3` |
 | 선행 계획 | `suggestion/implementation_plan.md` |
 | Attention 정의 | `suggestion/docs/CROSS_SOURCE_ATTENTION_DEFINITION.md` |
 | Evaluation 가이드 | `suggestion/docs/CROSS_SOURCE_EVALUATION_GUIDE.md` |
@@ -25,8 +25,9 @@
 | Eligibility shadow 계약 | `suggestion/docs/ATTENTION_ELIGIBILITY_SHADOW_CONTRACT.md` |
 | Project workflow 계약 | `suggestion/docs/PROJECT_WORKFLOW_FOLLOW_THROUGH_CONTRACT.md` |
 | Local launcher 계약 | `suggestion/docs/LOCAL_LAUNCHER_CONTRACT.md` |
+| Developer signal 설계 | `suggestion/docs/DEVELOPER_SIGNAL_INTELLIGENCE.md` |
 | 규범 문서 | `docs/ENGINE_DEVELOPMENT_RECORDS.md` |
-| 구현 상태 | Phase 0·1, Phase 2A, Phase 2A.1 local Data Pipeline Stabilization, Codex historical capture v0.1, Phase 2B.0 Work Resumption, Phase 2B.1 managed observability, Phase 2B.2A direct-fact semantic timeline, Phase 3A `executes`, Phase 3B explicit GitHub artifact `produces`, Phase 3C claim authority/conflict, Phase 4A eligibility shadow, Phase 4B active candidate/lane/ranking/selection, Phase 4C macOS native launcher local beta 구현 |
+| 구현 상태 | Phase 0·1, Phase 2A·2A.1, Phase 2B.0·2B.1·2B.2A, Phase 3A·3B·3C, Phase 4A·4B, Phase 4C·4C.1·4C.2 local beta, Developer Signal Intelligence v0.1과 GitHub authored PR actionability 구현 |
 
 ---
 
@@ -647,7 +648,7 @@ freshness TTL과 허용 clock skew는 하드코딩하지 않고 versioned policy
 
 `RuntimeSnapshotWindow`는 이미 정규화된 batch를 strict chronological order로
 받고 minimum history, version change, truncation에 따른
-`historySufficiency`만 판단한다. 현재 Codex v2 window는 native observation을
+`historySufficiency`만 판단한다. historical Codex v2 contract window는 native observation을
 보존할 뿐 정체, 복구, 완료 또는 request lifecycle을 파생하지 않는다.
 
 ### 8.2 Source evidence
@@ -672,7 +673,7 @@ GitHub assigned/review/authored 의미는 object field가 아니라 API query me
 
 ```ts
 type RuntimeWorkSignal = {
-  contract: "runtime-work-signal-v0.2";
+  contract: "runtime-work-signal-v0.3";
   signalId: string;       // snapshot 사이에 유지되는 claim identity
   observationId: string;  // 특정 snapshot의 observation identity
   signalHash: string;
@@ -708,12 +709,14 @@ snapshot이 달라도 유지되고, `observationId`와 `signalHash`는 snapshot�
 관찰값 변경을 반영한다. batch는 source snapshot hash, normalization input
 hash, deterministic signal order, sanitized issue와 batch hash를 기록한다.
 
-v0.2에서는 GitHub repository와 Codex scope를 explicit work-context registry로
+v0.3에서는 GitHub repository와 Codex scope를 explicit work-context registry로
 조회해 `projectId`를 주입한다. mapping이 없거나 proposal 상태인 경우에는
 `null`을 유지하며 source label/path 유사성으로 project를 추론하지 않는다.
 
-GitHub authored PR과 activity는 `overview_only`다. review request는
-`draftState = unknown`, `eligibilityLimit = draft_state_unknown`을 보존한다.
+GitHub activity와 actionability가 없는 authored PR은 `overview_only`다.
+`github-snapshot-v3`에서 verified `checks_failed`, `changes_requested` 또는
+`merge_conflict`가 있는 authored PR만 `candidate_input`으로 승격한다. review
+request는 `draftState = unknown`, `eligibilityLimit = draft_state_unknown`을 보존한다.
 Codex inventory의 `active`, `not_loaded`, `system_error`는 live execution
 state `unknown`이며
 approval/input은 `overview_badge_only`다. Phase 1 schema에는
@@ -995,18 +998,18 @@ type RecommendationDecision = {
 조건부 후보:
 
 - `authored_pull_request`는 열린 상태만으로 사용자 행동이 필요하다고 보지 않는다.
-- requested changes, failed checks, merge conflict처럼 행동 필요성을 직접
-  증명하는 필드가 추가된 후 후보로 승격한다.
+- `github-snapshot-v3`의 bounded actionability에서 requested changes, failed checks,
+  merge conflict가 현재 verified positive로 확인될 때만 후보로 승격한다.
+- auxiliary endpoint 실패, cap 또는 권한 부족은 partial/unavailable coverage로
+  기록하며 unknown을 negative 또는 행동 필요 상태로 추정하지 않는다.
 
-추가로 필요한 최소 필드:
+다음 version에서 필요한 최소 보강:
 
 ```text
-isDraft
-reviewDecision
-requestedReviewers
-checksStatus
-mergeState
-latestReviewAt
+review-request isDraft / cancellation lifecycle
+unresolved review threads
+GitHub Project priority
+dependencies and linked issues
 ```
 
 GitHub 항목이 다음 snapshot에서 보이지 않는다는 이유만으로 완료 처리하지 않는다.
@@ -1016,7 +1019,8 @@ GitHub 항목이 다음 snapshot에서 보이지 않는다는 이유만으로 �
 review 요청 사실만 `WorkSignal`로 보존한다. draft 상태를 `false`로 추정하거나
 confirmed `review` candidate로 확정하지 않는다. Phase 2A는 safe destination이
 있는 경우 provisional `inspect`로 상태 확인만 제안한다. `isDraft`가 native
-contract에 추가된 뒤 Phase 2B에서 confirmed `review`로 승격한다.
+contract에 추가된 뒤 confirmed `review`로 승격한다. authored PR의 actionability는
+이 review-request 제한과 별개로 v3에서 현재 지원한다.
 
 ### 9.2 Codex
 
@@ -1208,7 +1212,7 @@ related GitHub URL 또는 relation
 
 | Source | 현재 확인 가능한 필드 | 직접 추천 역할 | 다음 version에서 필요한 최소 보강 |
 |---|---|---|---|
-| GitHub | open assigned issue, review request, authored PR, label, milestone due. review request에는 현재 `isDraft` 없음 | assigned issue 후보, review 요청 관찰 | `isDraft`, review decision, checks, merge state, review 취소/변경 |
+| GitHub | open assigned issue, review request, authored PR, label, milestone due와 `github-snapshot-v3` authored-PR bounded draft/review/check/status/mergeability actionability. review request에는 현재 `isDraft` 없음 | assigned issue, provisional review inspection, verified `checks_failed`·`changes_requested`·`merge_conflict` authored PR 후보 | review-request `isDraft`/취소 lifecycle, unresolved review threads, Project priority, dependency와 linked issue |
 | Codex | `codex-snapshot-v3` inventory/history와 opt-in historical private store는 current state `unknown`. 별도 Blabase-owned managed App Server가 ordered lifecycle metadata, exact binding/GitHub relation, project workflow와 safe open reference를 제공 | inventory/history는 context-only. managed direct failure와 exact relation + configured workflow가 있는 completion follow-through만 active 후보 | verified meaningful progress/stall/scope drift, stable request ID와 requested/resolved/expired lifecycle, approval/input escalation |
 | Calendar | OAuth 연결 세대별 random scope의 primary calendar, -7일~+14일, event start/end/status/title, `Asia/Seoul` | `schedule_context_only` | 사용자 timezone, busy/transparency, 포함 calendar scope, free/busy 정책 |
 | Notion | page/data-source title, created/edited time | `project_context_only` | 선택 task DB와 status/assignee/due/priority/project property mapping |
@@ -2100,26 +2104,36 @@ runtime WorkSignal batch            runtime-work-signal-batch-v0.3
 base Attention input/result         cross-source-attention-input-v0.3
                                      cross-source-attention-result-v0.3
 active Attention input/result       cross-source-active-attention-input-v0.4
-                                     cross-source-active-attention-result-v0.4
-active Attention policy             aggressive-evidence-bound-attention-policy-v0.3
-active candidate/lane               github-managed-codex-active-candidate-rule-v0.1
+                                     cross-source-active-attention-result-v0.5
+active Attention policy             aggressive-evidence-bound-attention-policy-v0.4
+active candidate/lane               github-managed-codex-active-candidate-rule-v0.2
                                      active-attention-lane-policy-v0.1
-active ranking/resolver             active-attention-ranking-policy-v0.2
-                                     active-attention-decision-resolver-v0.3
+active ranking/resolver             active-attention-ranking-policy-v0.3
+                                     active-attention-decision-resolver-v0.4
 active evaluator config             active-attention-decision-config-v0.2
 GitHub candidate rule               github-project-aware-candidate-rule-v0.2
 Codex overview rule                 codex-historical-context-overview-rule-v0.3
-live orchestrator                   attention-live-orchestrator-v0.4
-Attention monitor run              attention-monitor-run-v0.4
-                                     (v0.1/v0.2/v0.3 read compatibility)
+live orchestrator                   attention-live-orchestrator-v0.5
+Attention monitor run              attention-monitor-run-v0.5
+                                     (v0.1/v0.2/v0.3/v0.4 read compatibility)
 ephemeral Attention preview        attention-monitor-preview-v1
-failed Attention execution         attention-monitor-failure-v0.3
-                                     (v0.1/v0.2 read compatibility)
+failed Attention execution         attention-monitor-failure-v0.4
+                                     (v0.1/v0.2/v0.3 read compatibility)
 private Attention replay input     attention-replay-input-v2
                                      (v1 read compatibility)
 claim resolver                      cross-source-claim-resolver-v0.2
-eligibility projection/resolver    attention-eligibility-shadow-projection-v0.1
-                                     attention-eligibility-resolver-v0.1
+eligibility projection/policy      attention-eligibility-shadow-projection-v0.1
+                                     hard-attention-eligibility-policy-v0.2
+eligibility evidence/resolver      attention-eligibility-evidence-v0.2
+                                     attention-eligibility-resolver-v0.2
+GitHub snapshot/actionability      github-snapshot-v3
+                                     github-pr-actionability-normalizer-v0.3
+                                     (github-snapshot-v2 read compatibility)
+Developer Work Ledger              developer-work-ledger-v0.1
+Developer Candidate Funnel         developer-candidate-funnel-v0.1
+Codex OpenLoop ledger/rule          codex-open-loop-ledger-v1
+                                     codex-open-loop-conservative-rules-v1
+Developer runtime projection       developer-runtime-projection-v0.1
 project workflow                    project-workflow-store-v0.1
                                      project-workflow-follow-through-policy-v0.1
 source sync state/history           source-sync-state-v1
@@ -2230,16 +2244,18 @@ Calendar/Notion의 snapshot SHA-256, fetched time, supporting adapter version,
 item/mapping/truncation과 work-context registry, resolved context,
 weekly-outcome store의 hash·상태를 기록한다. title, URL, outcome 원문이나
 provider payload는 monitor history에 복사하지 않는다. current
-`attention-monitor-run-v0.4`는 `analysisId`, `sessionId`, active input/result와
+`attention-monitor-run-v0.5`는 `analysisId`, `sessionId`, active input/result와
 eligibility projection hash, replay artifact SHA-256과 code provenance를 필수로
-기록하고 v0.1/v0.2/v0.3은 read compatibility만 유지한다.
+기록하고 v0.1/v0.2/v0.3/v0.4는 read compatibility만 유지한다. 현재
+Developer Signal aggregate는 같은 API 응답의 sidecar이며 historical monitor run에는
+아직 영속화하지 않는다.
 
 GET 자동 평가는 비영속 `attention-monitor-preview-v1`로 응답한다. 명시적
 POST resolver가 source sync 또는 Attention resolution에서 실패하면
-`attention-monitor-failure-v0.3`에 미리 발급한 `runId`, `analysisId`,
+`attention-monitor-failure-v0.4`에 미리 발급한 `runId`, `analysisId`,
 `sessionId`, 실패 단계, sanitized error code, retry count, latency와 적용한
 engine/schema/policy/rule version 및 성공 run과 동일한 code provenance를
-기록한다. v0.1/v0.2 failure는 legacy contract로만 호환해 읽는다. raw exception
+기록한다. v0.1/v0.2/v0.3 failure는 legacy contract로만 호환해 읽는다. raw exception
 detail과 provider payload는 기록하지 않는다.
 
 ### 20.3 Snapshot 보존과 replay
@@ -2283,10 +2299,11 @@ source title, safe URL, weekly outcome 등 평가에 실제 사용된 값이 포
 있으므로 directory 0700, file 0600을 사용하고 Git과 제품 API 응답에서
 제외한다.
 
-history를 읽을 때 current v0.4 run이 `available`이라고 주장한 artifact의
+history를 읽을 때 current v0.5 run이 `available`이라고 주장한 artifact의
 실재 여부, schema, run/analysis/session/input/captured-at linkage와 artifact
 SHA-256을 다시 검증하고 하나라도 맞지 않으면 fail closed한다. 실제 historical
-v0.3 run/replay v1은 previous contract로 exact read validation을 유지한다.
+v0.4 run/replay v2와 v0.3 run/replay v1은 previous contract로 exact read
+validation을 유지한다.
 v0.1/v0.2 record의 execution/replay/code field는 read 시 null,
 `not_recorded`, `legacy_unknown`으로 보수적으로 정규화되어 신뢰 provenance를
 주장할 수 없다. private store rewrite는 원본 legacy record를 그대로 보존해
@@ -2549,7 +2566,7 @@ connector capability 확대를 뜻하지는 않는다.
 - raw content와 credential이 결과에 없음
 
 Phase 1은 progress/exception detector나 최종 eligibility를 구현하는 단계가
-아니다. 현재 Codex v2의 activity와 optional summary는 의미 상태가
+아니다. historical Codex v2 contract의 activity와 optional summary는 의미 상태가
 `unknown`이며, ordered snapshot이 있다는 사실만으로 progress나 stall을
 판정하지 않는다. GitHub review 요청도 `isDraft`가 없으면 관찰 signal까지만
 만든다.
@@ -2563,7 +2580,7 @@ recommendation selection 연결은 아래 Phase 2A local orchestrator가 별도�
 
 ### Phase 2 — GitHub + Codex observability vertical slice
 
-상태: **Phase 2A·2A.1 completed, Phase 2B.0·2B.1 local beta completed**
+상태: **Phase 2A·2A.1 completed, Phase 2B.0·2B.1·2B.2A local beta completed**
 
 Phase 2는 current decision, data-pipeline stabilization과 enriched connector
 capability의 세 단계로 나눈다.
@@ -2913,8 +2930,8 @@ same-work equivalence와 correction UX는 이번 release에 포함하지 않는�
 
 ### Phase 4 — Eligibility, lane, ranking, selection
 
-상태: **Phase 4A eligibility shadow와 Phase 4B active candidate/lane/ranking/
-selection local beta 구현 및 targeted baseline 통과**
+상태: **Phase 4A eligibility shadow, Phase 4B Active Attention v0.5와
+Developer Signal Intelligence v0.1 local beta 구현 및 targeted baseline 통과**
 
 산출물:
 
@@ -2930,7 +2947,7 @@ selection local beta 구현 및 targeted baseline 통과**
   `insufficient_evidence` selection과 deterministic explanation
 - `[Phase 4B 구현]` project workflow unknown 기본값, 명시적 설정/closure와
   action-target compatibility gate
-- `[Phase 4B 구현]` active result를 Work Cockpit, Attention Lab, monitor v0.4와
+- `[Phase 4B 구현]` active result를 Work Cockpit, Attention Lab, monitor v0.5와
   private replay v2에 연결
 - `[Phase 4B 구현]` Work Resumption open 시 exact binding/execution identity 재검증
 - `[Phase 4B 구현]` archived project workflow, 다른 사용자의 review-requested PR과
@@ -2946,7 +2963,8 @@ selection local beta 구현 및 targeted baseline 통과**
 - 모든 결과에 reason code 존재
 - 같은 입력과 policy version에서 같은 결정
 
-현재 v0.4는 정상 진행 중인 managed run, inventory/history만 있는 Codex 작업,
+현재 Active Attention result v0.5는 정상 진행 중인 managed run,
+inventory/history만 있는 Codex 작업,
 workflow 미설정 또는 archived project의 완료 run을 후보로 만들지 않는다.
 managed failure는 더 최신의 동일 대상 run 또는 직접 상태가 회복을 증명하면
 제거한다. 완료 후속 작업은
@@ -2955,16 +2973,17 @@ GitHub target 종류 호환성을 모두 통과해야 한다. `request_review`�
 작성한 pull request에만 적용한다. 세션을 여는 동작만으로 실패가 해결되거나
 snooze됐다고 기록하지 않는다.
 
-Phase 4B mutable synthetic Dev Candidate revision 2는 44 cases와 80 assessments를
-exact하게 검증했다. final run
-`active_attention_eval_run_1a661f6515069b5721c9bbce775677d2`는 `44/44`,
-`80/80`, archived workflow/authored-PR gate와 schema/determinism/privacy/unsafe
-leakage를 포함한 모든 guardrail `0`을 기록했다. 이 결과는 human-reviewed
-Golden이나 production 유용성 주장이 아니라 local development contract다.
+Developer Signal Intelligence v0.1은 기존 mutable case source를 덮어쓰지 않고
+eligibility v0.2 revision 3과 Active v0.2 revision 3 expectation artifact로
+재평가했다. eligibility final run
+`attention_eligibility_run_cecf4c97681437b38b3857ddd6cfccfc`는 `26/26`, Active
+final run `active_attention_eval_run_056c3ce2e6084663841f28a20d408088`는 `44/44`를
+통과했다. 이 결과는 human-reviewed Golden이나 production 유용성 주장이 아니라
+local development contract다.
 
 ### Phase 4C — macOS native launcher와 Local Agent
 
-상태: **설치형 local development beta vertical slice 구현**
+상태: **Phase 4C·4C.1·4C.2 설치형 local development beta 구현**
 
 산출물:
 
@@ -2978,11 +2997,9 @@ Golden이나 production 유용성 주장이 아니라 local development contract
   검증, ad-hoc 서명 script
 - `[구현]` `/Applications` 설치본의 `SMAppService` 로그인 시 자동 실행과 메뉴
   토글
-- `[후속]` Developer ID 서명·Apple notarization credential로 external beta 생성
-- `[후속]` 기존 pre-audit local monitor/failure record migration 또는 안전한
-  invalidation
-- `[후속]` 설치 앱의 first-run connector/data migration UX와 server-authoritative
-  추천 전환
+- `[후속]` dashboard root identity/snapshot revision handshake
+- `[후속]` full Xcode XCTest/XCUITest, Developer ID 서명과 Apple notarization
+- `[후속]` server-authoritative 추천과 Cloud/local data bridge
 
 런처는 추천을 별도로 계산하거나 정렬하지 않는다. 기존 Active Attention 결과를
 `blabase-launcher-attention-v2`로 축소해 표시하며 raw prompt/answer, command/output,
@@ -3246,9 +3263,9 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
      전파됨
 128. 실제 Codex disconnect route가 local connection과 coordinator snapshot
      revision을 제거하고 두 UI에 disconnected 상태를 전파함
-129. current `attention-monitor-run-v0.4`에 `analysisId`, `sessionId` 또는
+129. current `attention-monitor-run-v0.5`에 `analysisId`, `sessionId` 또는
      일치하는 `attention-replay-input-v2` active input/result hash가 없으면 저장이
-     거부됨. v0.3/v1은 previous read contract로만 검증됨
+     거부됨. v0.4/v0.3/v1은 previous read contract로만 검증됨
 130. private replay input은 제품 API 응답과 Git에 노출되지 않고 run과 같은
      30일 retention 및 0700/0600 permission을 적용함
 131. clean/declared code provenance는 commit SHA를, dirty worktree는
@@ -3261,8 +3278,8 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
 134. 같은 source의 reset→disconnect와 disconnect→reset은 직렬화되고 마지막
      요청의 target state/history가 일관되게 남음
 135. 명시적 Attention POST의 source sync 또는 resolver 실패는
-     `attention-monitor-failure-v0.3`과 성공 run과 같은 code provenance로
-     기록되며 원본 exception은 저장·응답하지 않음. v0.1/v0.2는
+     `attention-monitor-failure-v0.4`와 성공 run과 같은 code provenance로
+     기록되며 원본 exception은 저장·응답하지 않음. v0.1/v0.2/v0.3은
      이전 read contract로만 호환해 읽음
 136. current run이 주장한 replay artifact의 실재, schema, execution linkage
      또는 SHA-256이 맞지 않으면 monitor history read가 fail closed함
@@ -3396,20 +3413,24 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
 26. `[Phase 4A 완료]` GitHub direct-work hard eligibility shadow와 exact
     conflict route 작성
 27. `[Phase 4B 완료]` GitHub/managed Codex active candidate, project workflow,
-    lane/ranking/selection, active Work Cockpit/Lab, monitor v0.4와 replay v2 작성
+    lane/ranking/selection, active Work Cockpit/Lab, monitor v0.5와 replay v2 작성
 28. `[Phase 4B 완료]` user-review clarification, source-refresh
     insufficient-evidence, scoped no-action와 exact Work Resumption open gate 작성
 29. `[Phase 4C local beta 완료]` macOS 메뉴바 host, `⇧ Space` launcher,
     bundled Node Local Agent, versioned JSONL projection/실행 계약과 개발용 DMG 작성.
     runtime provenance/Agent hash, 64 KiB bounded framing, 5분 실행 TTL, physical
     data-root 검증과 root별 single source-writer/read-only override까지 고정
-30. `[Phase 4C 후속]` pre-audit resolver v0.2 monitor/failure record의 versioned
-    migration 또는 안전한 invalidation, first-run data 이동 UX와 external beta
-    Developer ID/notarization 완료
-31. Calendar free-block과 first-step 작성
-32. Notion task property mapping 작성
-33. formal feedback evaluation runner 작성
-34. frozen baseline 후에만 ranking policy 보정
+30. `[Phase 4C.1·4C.2 완료]` first-run data-root 설정, launcher v2 source 진단,
+    explicit local-root recovery와 dashboard default 복구 작성
+31. `[Developer Signal Intelligence v0.1 완료]` GitHub snapshot v3 authored-PR
+    actionability, Codex OpenLoopClaim, Work Ledger, Candidate Funnel, aggregate
+    runtime projection과 Active Attention v0.5 연결 작성
+32. `[Phase 4C 후속]` dashboard root identity/snapshot revision handshake,
+    full Xcode test, Developer ID/notarization과 server-authoritative bridge 작성
+33. Calendar free-block과 first-step 작성
+34. Notion task property mapping 작성
+35. formal feedback evaluation runner 작성
+36. frozen baseline 후에만 ranking policy 보정
 
 ---
 
@@ -3425,11 +3446,22 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
 - connector record를 conversation message로 변환하지 않는다.
 - source fact와 최종 AttentionItem을 분리한다.
 - GitHub는 첫 직접 후보 source로 사용한다.
+- authored PR은 단순 open/draft 상태로 추천하지 않는다. `github-snapshot-v3`에서
+  현재 확인된 `checks_failed`, `changes_requested`, `merge_conflict`만 직접 행동
+  후보로 승격하고 partial/unavailable coverage의 unknown을 행동으로 추정하지 않는다.
+- GitHub·Codex normalized signal은 점수화 전에 Developer Work Ledger와 Candidate
+  Funnel을 통과하며, 각 제외 단계와 reason을 재현 가능한 hash/count로 기록한다.
 - Codex는 첫 execution-observability source로 사용하고 검증된 예외만
   AttentionItem으로 승격한다.
 - 현재 Codex v3의 live semantic task/progress 상태는 기본 `unknown`이다.
 - opt-in historical turn status는 persisted context일 뿐 live 상태나 직접
   추천 후보가 아니다.
+- Codex historical OpenLoopClaim은 exact bounded evidence와 7일 expiry를 가진 private
+  ledger 항목이며 current managed state, verified GitHub binding 또는 명시적 사용자
+  확인이 없으면 eligibility 전에 거부한다.
+- 제품 API에는 raw ledger, prompt/answer, URL 또는 local path를 내보내지 않고
+  Developer Signal aggregate hash/count만 제공한다. monitor history의 run별 aggregate
+  영속화는 후속 범위다.
 - `taskSummary`는 opt-in overview label 단서일 뿐 obligation 근거가 아니다.
 - Codex follow-through는 explicit GitHub relation 또는 사용자가 설정한 project
   workflow가 있을 때만 생성한다.
@@ -3472,15 +3504,16 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
   제공하며 prompt, 승인, retry 또는 GitHub/Notion/Calendar mutation을
   수행하지 않는다.
 - 현재 Attention monitor metadata store는
-  `attention-monitor-run-v0.4`의 run/source/candidate gate/명시적 feedback,
+  `attention-monitor-run-v0.5`의 run/source/candidate gate/명시적 feedback,
   `analysisId`, `sessionId`, code provenance와 replay artifact hash를 최대
   30일 보관한다. raw prompt/response/command/output, title, URL, task
   summary는 metadata history에 보관하지 않는다. Calendar/Notion snapshot과
-  context/outcome hash·version·상태는 provenance로 보존한다.
+  context/outcome hash·version·상태는 provenance로 보존한다. Developer Signal
+  aggregate는 current API sidecar로만 제공하며 run별 history 영속화는 후속이다.
 - 실제 평가에 사용한 exact normalized input은 별도의 private immutable
   `attention-replay-input-v2` artifact로 최대 30일 보관하고 제품 API와 Git에
-  노출하지 않는다. replay v1과 monitor v0.1/v0.2/v0.3은 read compatibility만
-  유지한다.
+  노출하지 않는다. replay v1과 monitor v0.1/v0.2/v0.3/v0.4는 read
+  compatibility만 유지한다.
 - server `SourceSyncCoordinator`가 네 source refresh, due schedule,
   single-flight와 failure backoff를 관리하며 connector connect/callback을
   포함한 explicit collection은 이 경계를 통과한다.
@@ -3535,9 +3568,10 @@ ranking과 selection은 기존 Active Attention resolver가 계속 소유한다.
 
 ## 28. 남은 제품 결정
 
-Phase 4B와 Phase 4C local development beta 구현·검증에는 사용자가 추가로 판단할
-항목이 없다. macOS native 메뉴바 앱, 기본 `⇧ Space`, 별도 웹 대시보드, bundled
-Local Agent와 향후 server-authoritative 추천이라는 방향을 적용했다.
+Phase 4B, Phase 4C.2와 Developer Signal Intelligence v0.1 local development beta
+구현·검증에는 사용자가 추가로 판단할 항목이 없다. macOS native 메뉴바 앱, 기본
+`⇧ Space`, 별도 웹 대시보드, bundled Local Agent와 향후 server-authoritative
+추천이라는 방향을 적용했다.
 프로젝트 workflow의 unknown 기본값과 네 action, 적극 추천 정책, exact
 GitHub–Codex 연결, LLM 원문 분석 opt-in은 이미 확정한 방향을 적용했다.
 다음 질문은 external beta와 Phase 5 이후를 막지 않는 후속 제품·정책 결정이다.
