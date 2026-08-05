@@ -5,7 +5,7 @@ import test from "node:test";
 
 const appRoot = new URL("../", import.meta.url);
 
-test("fresh runtime schema contains nullable v2 summary columns", async () => {
+test("fresh runtime schema contains nullable generated and timeline columns", async () => {
   const databaseSource = await readFile(new URL("db/index.ts", appRoot), "utf8");
   const createTable = databaseSource.match(
     /const CREATE_NOTES_TABLE_SQL = `([\s\S]*?)`;/,
@@ -23,12 +23,19 @@ test("fresh runtime schema contains nullable v2 summary columns", async () => {
 
     assert.equal(byName.get("summary_schema_version")?.notnull, 0);
     assert.equal(byName.get("summary_json")?.notnull, 0);
+    assert.equal(byName.get("source_timeline_at")?.notnull, 0);
+    assert.equal(byName.get("source_last_visible_at")?.notnull, 0);
+    assert.equal(
+      byName.get("source_timestamped_visible_message_count")?.notnull,
+      0,
+    );
+    assert.equal(byName.get("source_visible_message_count")?.notnull, 0);
   } finally {
     database.close();
   }
 });
 
-test("additive summary columns preserve an existing v1 edited row", async () => {
+test("additive generated and timeline columns preserve an existing edited row", async () => {
   const database = new DatabaseSync(":memory:");
   try {
     database.exec(`
@@ -68,18 +75,38 @@ test("additive summary columns preserve an existing v1 edited row", async () => 
 
     database.exec("ALTER TABLE notes ADD COLUMN summary_schema_version TEXT");
     database.exec("ALTER TABLE notes ADD COLUMN summary_json TEXT");
+    database.exec("ALTER TABLE notes ADD COLUMN source_timeline_at TEXT");
+    database.exec("ALTER TABLE notes ADD COLUMN source_last_visible_at TEXT");
+    database.exec(
+      "ALTER TABLE notes ADD COLUMN source_timestamped_visible_message_count INTEGER",
+    );
+    database.exec(
+      "ALTER TABLE notes ADD COLUMN source_visible_message_count INTEGER",
+    );
 
     const after = database
       .prepare("SELECT * FROM notes WHERE id = 'v1-note'")
       .get();
     const legacyAfter = Object.fromEntries(
       Object.entries(after ?? {}).filter(
-        ([key]) => key !== "summary_schema_version" && key !== "summary_json",
+        ([key]) =>
+          ![
+            "summary_schema_version",
+            "summary_json",
+            "source_timeline_at",
+            "source_last_visible_at",
+            "source_timestamped_visible_message_count",
+            "source_visible_message_count",
+          ].includes(key),
       ),
     );
     assert.deepEqual(legacyAfter, Object.fromEntries(Object.entries(before ?? {})));
     assert.equal(after?.summary_schema_version, null);
     assert.equal(after?.summary_json, null);
+    assert.equal(after?.source_timeline_at, null);
+    assert.equal(after?.source_last_visible_at, null);
+    assert.equal(after?.source_timestamped_visible_message_count, null);
+    assert.equal(after?.source_visible_message_count, null);
   } finally {
     database.close();
   }
@@ -102,6 +129,31 @@ test("runtime bootstrap and Drizzle lineage agree on v2 summary columns", async 
   assert.match(migrationSource, /SELECT 1;/);
 });
 
+test("runtime bootstrap and Drizzle lineage agree on source timeline columns", async () => {
+  const [databaseSource, snapshotSource, migrationSource] = await Promise.all([
+    readFile(new URL("db/index.ts", appRoot), "utf8"),
+    readFile(new URL("drizzle/meta/0003_snapshot.json", appRoot), "utf8"),
+    readFile(
+      new URL("drizzle/0003_add_note_source_timeline.sql", appRoot),
+      "utf8",
+    ),
+  ]);
+  const snapshot = JSON.parse(snapshotSource) as {
+    tables?: { notes?: { columns?: Record<string, unknown> } };
+  };
+
+  for (const column of [
+    "source_timeline_at",
+    "source_last_visible_at",
+    "source_timestamped_visible_message_count",
+    "source_visible_message_count",
+  ]) {
+    assert.match(databaseSource, new RegExp(`"${column}"`));
+    assert.ok(snapshot.tables?.notes?.columns?.[column]);
+  }
+  assert.match(migrationSource, /SELECT 1;/);
+});
+
 test("conditional reimport updates only summary and source metadata", async () => {
   const repositorySource = await readFile(
     new URL("app/api/notes/_repository.ts", appRoot),
@@ -116,6 +168,10 @@ test("conditional reimport updates only summary and source metadata", async () =
   assert.match(update, /summary_json = \?/);
   assert.match(update, /generation_metadata_json = \?/);
   assert.match(update, /source_message_count = \?/);
+  assert.match(update, /source_timeline_at = \?/);
+  assert.match(update, /source_last_visible_at = \?/);
+  assert.match(update, /source_timestamped_visible_message_count = \?/);
+  assert.match(update, /source_visible_message_count = \?/);
   assert.match(update, /updated_at = \?/);
   assert.match(update, /AND updated_at = \?/);
   for (const preservedColumn of [
@@ -133,4 +189,21 @@ test("conditional reimport updates only summary and source metadata", async () =
       new RegExp(`^\\s*${preservedColumn}\\s*=`, "m"),
     );
   }
+});
+
+test("timeline view is owner-scoped, active-only, imported-only, and null-last", async () => {
+  const repositorySource = await readFile(
+    new URL("app/api/notes/_repository.ts", appRoot),
+    "utf8",
+  );
+
+  assert.match(repositorySource, /conditions = \["owner_key = \?"\]/);
+  assert.match(repositorySource, /case "timeline":[\s\S]*?"deleted_at IS NULL"/);
+  assert.match(repositorySource, /case "timeline":[\s\S]*?"archived = 0"/);
+  assert.match(repositorySource, /case "timeline":[\s\S]*?"source_url IS NOT NULL"/);
+  assert.match(
+    repositorySource,
+    /CASE WHEN source_timeline_at IS NULL THEN 1 ELSE 0 END ASC/,
+  );
+  assert.match(repositorySource, /source_timeline_at DESC/);
 });

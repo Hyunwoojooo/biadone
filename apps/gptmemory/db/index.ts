@@ -14,6 +14,10 @@ const CREATE_NOTES_TABLE_SQL = `
     source_url TEXT,
     source_title TEXT,
     source_message_count INTEGER,
+    source_timeline_at TEXT,
+    source_last_visible_at TEXT,
+    source_timestamped_visible_message_count INTEGER,
+    source_visible_message_count INTEGER,
     generation_metadata_json TEXT,
     summary_schema_version TEXT,
     summary_json TEXT,
@@ -34,6 +38,11 @@ const CREATE_NOTES_OWNER_SOURCE_INDEX_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS notes_owner_source_url_unique_idx
   ON notes (owner_key, source_url)
   WHERE source_url IS NOT NULL
+`;
+
+const CREATE_NOTES_OWNER_TIMELINE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS notes_owner_timeline_idx
+  ON notes (owner_key, deleted_at, archived, source_timeline_at)
 `;
 
 type NotesDatabase = NonNullable<typeof env.DB>;
@@ -91,14 +100,25 @@ async function initializeNotesSchema(database: NotesDatabase): Promise<void> {
     "generation_metadata_json",
     "summary_schema_version",
     "summary_json",
+    "source_timeline_at",
+    "source_last_visible_at",
   ]) {
     if (!existingColumns.has(column)) {
       await addNullableTextColumn(database, column);
     }
   }
+  for (const column of [
+    "source_timestamped_visible_message_count",
+    "source_visible_message_count",
+  ]) {
+    if (!existingColumns.has(column)) {
+      await addNullableIntegerColumn(database, column);
+    }
+  }
 
   await database.batch([
     database.prepare(CREATE_NOTES_OWNER_VIEW_INDEX_SQL),
+    database.prepare(CREATE_NOTES_OWNER_TIMELINE_INDEX_SQL),
     database.prepare(CREATE_NOTES_OWNER_SOURCE_INDEX_SQL),
   ]);
 }
@@ -107,10 +127,25 @@ async function addNullableTextColumn(
   database: NotesDatabase,
   column: string,
 ): Promise<void> {
+  await addNullableColumn(database, column, "TEXT");
+}
+
+async function addNullableIntegerColumn(
+  database: NotesDatabase,
+  column: string,
+): Promise<void> {
+  await addNullableColumn(database, column, "INTEGER");
+}
+
+async function addNullableColumn(
+  database: NotesDatabase,
+  column: string,
+  type: "TEXT" | "INTEGER",
+): Promise<void> {
   try {
     // Column names come only from the fixed allowlist in initializeNotesSchema.
     await database
-      .prepare(`ALTER TABLE notes ADD COLUMN ${column} TEXT`)
+      .prepare(`ALTER TABLE notes ADD COLUMN ${column} ${type}`)
       .run();
   } catch (error) {
     // Two fresh isolates can observe the old schema at the same time. A

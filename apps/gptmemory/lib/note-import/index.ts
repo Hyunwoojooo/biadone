@@ -11,7 +11,7 @@ import {
   type ConversationStateNoteV3,
 } from "../note-state/index.ts";
 
-export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v5";
+export const NOTE_IMPORT_WORKFLOW_VERSION = "gptmemory-note-import.v6";
 
 export type GeneratedConversationNote =
   | ConversationSummaryV2
@@ -104,6 +104,10 @@ export type ImportedNoteWrite = {
   sourceUrl: string;
   sourceTitle: string | null;
   sourceMessageCount: number;
+  sourceTimelineAt: string | null;
+  sourceLastVisibleAt: string | null;
+  sourceTimestampedVisibleMessageCount: number;
+  sourceVisibleMessageCount: number;
   generationMetadata: NoteImportGenerationMetadata;
   summarySchemaVersion: GeneratedConversationNoteSchemaVersion;
   summary: GeneratedConversationNote;
@@ -310,6 +314,9 @@ function buildImportedNoteWrite(
   normalizedUrl: string,
   generationMetadata: NoteImportGenerationMetadata,
 ): ImportedNoteWrite {
+  const sourceTimeline = deriveSourceTimelineMetadata(
+    imported.conversation.messages,
+  );
   const sections: Array<Record<string, unknown>> = draft.legacyDraft.sections.map(
     (section, index) => ({
       id: section.id || `section-${index + 1}`,
@@ -340,9 +347,48 @@ function buildImportedNoteWrite(
     sourceUrl: normalizedUrl,
     sourceTitle: imported.conversation.title?.trim() || null,
     sourceMessageCount: imported.conversation.messages.length,
+    ...sourceTimeline,
     generationMetadata,
     summarySchemaVersion: draft.summary.schemaVersion,
     summary: draft.summary,
+  };
+}
+
+/**
+ * Derives compact timeline metadata from the already-normalized visible
+ * conversation. Timestamps are never persisted as an array: only the first
+ * timestamped user prompt, the last timestamped visible message, and coverage
+ * counts leave the import workflow.
+ */
+export function deriveSourceTimelineMetadata(
+  messages: ImportedConversationMessage[],
+): Pick<
+  ImportedNoteWrite,
+  | "sourceTimelineAt"
+  | "sourceLastVisibleAt"
+  | "sourceTimestampedVisibleMessageCount"
+  | "sourceVisibleMessageCount"
+> {
+  let sourceTimelineAt: string | null = null;
+  let sourceLastVisibleAt: string | null = null;
+  let sourceTimestampedVisibleMessageCount = 0;
+
+  for (const message of messages) {
+    const timestamp = normalizeSourceTimestamp(message.createdAt);
+    if (!timestamp) continue;
+
+    sourceTimestampedVisibleMessageCount += 1;
+    if (sourceTimelineAt === null && message.role === "user") {
+      sourceTimelineAt = timestamp;
+    }
+    sourceLastVisibleAt = timestamp;
+  }
+
+  return {
+    sourceTimelineAt,
+    sourceLastVisibleAt,
+    sourceTimestampedVisibleMessageCount,
+    sourceVisibleMessageCount: messages.length,
   };
 }
 
@@ -398,6 +444,19 @@ function normalizeMessageForDigest(value: string): string {
     .map((line) => line.trimEnd())
     .join("\n")
     .trim();
+}
+
+function normalizeSourceTimestamp(value: string | null): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }
 
 function normalizeTags(values: string[]): string[] {

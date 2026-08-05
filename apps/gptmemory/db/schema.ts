@@ -19,6 +19,12 @@ export const notes = sqliteTable(
     sourceUrl: text("source_url"),
     sourceTitle: text("source_title"),
     sourceMessageCount: integer("source_message_count"),
+    sourceTimelineAt: text("source_timeline_at"),
+    sourceLastVisibleAt: text("source_last_visible_at"),
+    sourceTimestampedVisibleMessageCount: integer(
+      "source_timestamped_visible_message_count",
+    ),
+    sourceVisibleMessageCount: integer("source_visible_message_count"),
     generationMetadataJson: text("generation_metadata_json"),
     summarySchemaVersion: text("summary_schema_version"),
     summaryJson: text("summary_json"),
@@ -35,6 +41,12 @@ export const notes = sqliteTable(
       table.archived,
       table.favorite,
       table.updatedAt,
+    ),
+    index("notes_owner_timeline_idx").on(
+      table.ownerKey,
+      table.deletedAt,
+      table.archived,
+      table.sourceTimelineAt,
     ),
     uniqueIndex("notes_owner_source_url_unique_idx")
       .on(table.ownerKey, table.sourceUrl)

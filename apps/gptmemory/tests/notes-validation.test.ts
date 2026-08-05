@@ -93,6 +93,12 @@ test("validates list views and patch restore semantics", () => {
   assert.deepEqual(parsePatchNoteInput({ deletedAt: null }), {
     deletedAt: null,
   });
+  assert.deepEqual(
+    parseListNotesInput(
+      new Request("https://example.test/api/notes?view=timeline"),
+    ),
+    { view: "timeline" },
+  );
   assert.throws(
     () => parsePatchNoteInput({ deletedAt: new Date().toISOString() }),
     (error: unknown) =>
@@ -107,6 +113,10 @@ test("validates list views and patch restore semantics", () => {
     { sourceUrl: "https://chatgpt.com/share/other" },
     { sourceTitle: "forged source" },
     { sourceMessageCount: 999 },
+    { sourceTimelineAt: "2026-08-01T00:00:00.000Z" },
+    { sourceLastVisibleAt: "2026-08-01T01:00:00.000Z" },
+    { sourceTimestampedVisibleMessageCount: 2 },
+    { sourceVisibleMessageCount: 3 },
     {
       generationMetadata: {
         workflowVersion: "gptmemory-note-import.v2",
@@ -121,6 +131,19 @@ test("validates list views and patch restore semantics", () => {
   ]) {
     assert.throws(
       () => parsePatchNoteInput(serverManagedPatch),
+      (error: unknown) =>
+        error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
+    );
+  }
+
+  for (const serverManagedCreate of [
+    { sourceTimelineAt: "2026-08-01T00:00:00.000Z" },
+    { sourceLastVisibleAt: "2026-08-01T01:00:00.000Z" },
+    { sourceTimestampedVisibleMessageCount: 2 },
+    { sourceVisibleMessageCount: 3 },
+  ]) {
+    assert.throws(
+      () => parseCreateNoteInput({ title: "forged timeline", ...serverManagedCreate }),
       (error: unknown) =>
         error instanceof ApiRequestError && error.code === "UNKNOWN_FIELDS",
     );

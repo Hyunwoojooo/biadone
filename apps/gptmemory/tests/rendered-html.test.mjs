@@ -258,6 +258,133 @@ test("renders v4 content-first cards and detail sections while preserving legacy
   assert.match(groupedEvidence, /\{evidence\.size\}개 메시지/);
 });
 
+test("renders a chronological, locally grouped conversation timeline", async () => {
+  const [component, styles] = await Promise.all([
+    readFile(new URL("components/GPTMemoryApp.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+
+  assert.match(
+    component,
+    /type ViewKey =[\s\S]{0,100}"all"[\s\S]{0,40}"timeline"[\s\S]{0,40}"continue"[\s\S]{0,40}"favorites"[\s\S]{0,40}"archive"[\s\S]{0,40}"trash"/,
+  );
+  assert.match(
+    component,
+    /timeline:[\s\S]{0,180}label: "시간순"[\s\S]{0,120}title: "대화 타임라인"/,
+  );
+  assert.match(component, /data-view=\{view\}/);
+  assert.match(component, /sourceTimelineAt: string \| null/);
+  assert.match(component, /sourceLastVisibleAt: string \| null/);
+  assert.match(component, /sourceTimestampedVisibleMessageCount: number \| null/);
+  assert.match(component, /sourceVisibleMessageCount: number \| null/);
+
+  const grouping = sourceBetween(
+    component,
+    "function groupNotesByTimelineDay(notes: NoteRecord[])",
+    "function sameLocalDay(",
+  );
+  assert.match(grouping, /left\.date\.getTime\(\) - right\.date\.getTime\(\)/);
+  assertAppearsInOrder(grouping, [
+    "if (left.date) return -1",
+    "if (right.date) return 1",
+    'const key = date ? localDateKey(date) : "undated"',
+    'monthLabel: "날짜 없음"',
+  ]);
+
+  const timeline = sourceBetween(
+    component,
+    "function ConversationTimeline({",
+    "export function GPTMemoryApp()",
+  );
+  assert.match(timeline, /role="region"/);
+  assert.match(timeline, /왼쪽은 과거, 오른쪽은 최신입니다/);
+  assert.match(timeline, /tabIndex=\{0\}/);
+  assert.match(timeline, /<ol className="timeline-track">/);
+  assert.match(timeline, /aria-current=\{selected \|\| undefined\}/);
+  assert.match(timeline, /onClick=\{\(\) => onChoose\(note\.id\)\}/);
+  assert.match(timeline, /noteTitle\(note\)/);
+  assert.match(timeline, /notePreview\(note\)/);
+  assert.match(timeline, /noteHasDecision\(note\)/);
+  assert.match(timeline, /noteHasActionItems\(note\)/);
+  assert.match(timeline, /formatTimelineRange\(note\)/);
+  assert.match(timeline, /formatTimestampCoverage\(note\)/);
+
+  assert.match(
+    styles,
+    /\.memory-app\[data-view="timeline"\][\s\S]{0,100}grid-template-columns:\s*232px minmax\(520px, 620px\)/,
+  );
+  assert.match(styles, /\.timeline-scroll[\s\S]{0,180}overflow:\s*auto/);
+  assert.match(styles, /\.timeline-track::before/);
+  assert.match(styles, /\.timeline-day-group\.undated/);
+  assert.match(styles, /\.timeline-note-card\.selected/);
+  assert.match(
+    styles,
+    /@media \(max-width:\s*900px\)[\s\S]*\.memory-app\[data-view="timeline"\][\s\S]{0,80}display:\s*block/,
+  );
+});
+
+test("adds an isolated resume dashboard without replacing existing note views", async () => {
+  const [component, styles] = await Promise.all([
+    readFile(new URL("components/GPTMemoryApp.tsx", root), "utf8"),
+    readFile(new URL("app/globals.css", root), "utf8"),
+  ]);
+
+  assert.match(
+    component,
+    /continue:[\s\S]{0,180}label: "이어가기"[\s\S]{0,120}title: "대화 이어가기"/,
+  );
+  assert.match(
+    component,
+    /const requestView = nextView === "continue" \? "all" : nextView/,
+  );
+  assert.match(component, /notes\.filter\(isResumableNote\)/);
+  assert.match(component, /function legacyResumeSummary\(note: NoteRecord\)/);
+  assert.match(component, /function isPendingSummaryAction\(item: SummaryActionItem\)/);
+  assert.match(component, /function createResumePack\(note: NoteRecord\)/);
+  assert.match(component, /function buildResumeBrief\(note: NoteRecord\)/);
+
+  const resumePack = sourceBetween(
+    component,
+    "function createResumePack(note: NoteRecord)",
+    "function appendResumeSection",
+  );
+  assert.doesNotMatch(resumePack, /notePreview\(note\)/);
+  assert.match(resumePack, /if \(note\.stateNote\)[\s\S]*summary: ""/);
+  assert.match(resumePack, /summary: legacyResumeSummary\(note\)/);
+  assert.match(
+    resumePack,
+    /context: note\.summary\.necessaryContext\.map\(\(item\) => item\.text\)/,
+  );
+  assert.match(
+    resumePack,
+    /note\.summary\.actionItems[\s\S]{0,80}\.filter\(isPendingSummaryAction\)/,
+  );
+  assert.match(component, /appendResumeSection\(lines, "필요한 맥락", pack\.context\)/);
+
+  const dashboard = sourceBetween(
+    component,
+    "function ResumeDashboard({",
+    "export function GPTMemoryApp()",
+  );
+  assert.match(dashboard, /대화 결산서/);
+  assert.match(dashboard, /이어가기 문맥 복사/);
+  assert.match(dashboard, /navigator\.clipboard\.writeText\(buildResumeBrief\(note\)\)/);
+  assert.match(dashboard, /role="status"/);
+  assert.match(dashboard, /aria-current=\{selected \|\| undefined\}/);
+  assert.match(dashboard, /onClick=\{\(\) => onChoose\(note\.id\)\}/);
+  assert.match(dashboard, /메시지/);
+  assert.match(dashboard, /결정/);
+  assert.match(dashboard, /다음 행동/);
+  assert.match(dashboard, /남은 질문/);
+
+  assert.match(component, /view === "continue" \? \(/);
+  assert.match(styles, /\.memory-app\[data-view="continue"\]/);
+  assert.match(styles, /\.resume-dashboard/);
+  assert.match(styles, /\.resume-card\.selected/);
+  assert.match(styles, /\.resume-copy-button/);
+  assert.match(styles, /\.resume-empty/);
+});
+
 test("renders evidence-preserving v3 corrections and compact mobile controls", async () => {
   const [component, styles, itemKey] = await Promise.all([
     readFile(new URL("components/GPTMemoryApp.tsx", root), "utf8"),

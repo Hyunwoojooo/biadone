@@ -18,7 +18,13 @@ import {
 export const OWNER_HEADER = "x-gptmemory-owner";
 
 const OWNER_KEY_PATTERN = /^[A-Za-z0-9._~-]{32,128}$/;
-const NOTE_VIEWS = ["all", "favorites", "archive", "trash"] as const;
+const NOTE_VIEWS = [
+  "all",
+  "favorites",
+  "archive",
+  "trash",
+  "timeline",
+] as const;
 const CREATE_FIELDS = new Set([
   "title",
   "overview",
@@ -54,6 +60,10 @@ export type PublicNote = {
   sourceUrl?: string;
   sourceTitle?: string;
   sourceMessageCount?: number;
+  sourceTimelineAt: string | null;
+  sourceLastVisibleAt: string | null;
+  sourceTimestampedVisibleMessageCount: number | null;
+  sourceVisibleMessageCount: number | null;
   summarySchemaVersion:
     | typeof SUMMARY_SCHEMA_VERSION
     | typeof STATE_NOTE_SCHEMA_VERSION
@@ -144,7 +154,7 @@ export function parseListNotesInput(request: Request): ListNotesInput {
   if (!isNoteView(rawView)) {
     throw new ApiRequestError(
       "INVALID_VIEW",
-      "view must be one of all, favorites, archive, or trash.",
+      "view must be one of all, favorites, archive, trash, or timeline.",
     );
   }
 

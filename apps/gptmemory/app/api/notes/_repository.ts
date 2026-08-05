@@ -53,6 +53,49 @@ function validateImportedNoteWrite(input: ImportedNoteWrite): CreateNoteInput {
   });
 }
 
+type StoredSourceTimelineWrite = Pick<
+  ImportedNoteWrite,
+  | "sourceTimelineAt"
+  | "sourceLastVisibleAt"
+  | "sourceTimestampedVisibleMessageCount"
+  | "sourceVisibleMessageCount"
+>;
+
+function validateImportedSourceTimeline(
+  input: ImportedNoteWrite,
+): StoredSourceTimelineWrite {
+  const sourceTimeline = {
+    sourceTimelineAt: validateNullableUtcIso(
+      input.sourceTimelineAt,
+      "sourceTimelineAt",
+    ),
+    sourceLastVisibleAt: validateNullableUtcIso(
+      input.sourceLastVisibleAt,
+      "sourceLastVisibleAt",
+    ),
+    sourceTimestampedVisibleMessageCount: validateImportedCount(
+      input.sourceTimestampedVisibleMessageCount,
+      "sourceTimestampedVisibleMessageCount",
+    ),
+    sourceVisibleMessageCount: validateImportedCount(
+      input.sourceVisibleMessageCount,
+      "sourceVisibleMessageCount",
+    ),
+  };
+  if (
+    sourceTimeline.sourceVisibleMessageCount !== input.sourceMessageCount ||
+    sourceTimeline.sourceTimestampedVisibleMessageCount >
+      sourceTimeline.sourceVisibleMessageCount ||
+    (sourceTimeline.sourceLastVisibleAt === null) !==
+      (sourceTimeline.sourceTimestampedVisibleMessageCount === 0) ||
+    (sourceTimeline.sourceTimelineAt !== null &&
+      sourceTimeline.sourceLastVisibleAt === null)
+  ) {
+    throw new Error("Imported source timeline coverage is inconsistent.");
+  }
+  return sourceTimeline;
+}
+
 type StoredSummaryWrite =
   | {
       schemaVersion: typeof SUMMARY_SCHEMA_VERSION;
@@ -98,6 +141,10 @@ type NoteDbRow = {
   source_url: string | null;
   source_title: string | null;
   source_message_count: number | null;
+  source_timeline_at: string | null;
+  source_last_visible_at: string | null;
+  source_timestamped_visible_message_count: number | null;
+  source_visible_message_count: number | null;
   summary_schema_version: string | null;
   summary_json: string | null;
   favorite: number;
@@ -116,6 +163,10 @@ const PUBLIC_NOTE_COLUMNS = `
   source_url,
   source_title,
   source_message_count,
+  source_timeline_at,
+  source_last_visible_at,
+  source_timestamped_visible_message_count,
+  source_visible_message_count,
   summary_schema_version,
   summary_json,
   favorite,
@@ -142,6 +193,13 @@ export async function listNotes(
       break;
     case "trash":
       conditions.push("deleted_at IS NOT NULL");
+      break;
+    case "timeline":
+      conditions.push(
+        "deleted_at IS NULL",
+        "archived = 0",
+        "source_url IS NOT NULL",
+      );
       break;
     default:
       conditions.push("deleted_at IS NULL", "archived = 0");
@@ -170,11 +228,18 @@ export async function listNotes(
     bindings.push(input.tag);
   }
 
+  const orderBy =
+    input.view === "timeline"
+      ? `CASE WHEN source_timeline_at IS NULL THEN 1 ELSE 0 END ASC,
+         source_timeline_at DESC,
+         updated_at DESC,
+         id DESC`
+      : "updated_at DESC, id DESC";
   const query = `
     SELECT ${PUBLIC_NOTE_COLUMNS}
     FROM notes
     WHERE ${conditions.join(" AND ")}
-    ORDER BY updated_at DESC, id DESC
+    ORDER BY ${orderBy}
   `;
   const result = await database
     .prepare(query)
@@ -188,7 +253,7 @@ export async function createNote(
   ownerKey: string,
   input: CreateNoteInput,
 ): Promise<ImportedNoteCreateResult<PublicNote>> {
-  return insertNote(ownerKey, input, null, null);
+  return insertNote(ownerKey, input, null, null, null);
 }
 
 export async function findNoteBySourceUrl(
@@ -266,6 +331,7 @@ export async function createImportedNote(
     validateImportedNoteWrite(input),
     input.generationMetadata,
     validateImportedSummary(input),
+    validateImportedSourceTimeline(input),
   );
 }
 
@@ -279,6 +345,7 @@ export async function replaceImportedNote(input: {
   const database = await getNotesDatabase();
   const noteInput = validateImportedNoteWrite(input.note);
   const generatedSummary = validateImportedSummary(input.note);
+  const sourceTimeline = validateImportedSourceTimeline(input.note);
   const updatedAt = nextUpdatedAt(input.expectedUpdatedAt);
   const note = await database
     .prepare(
@@ -286,6 +353,10 @@ export async function replaceImportedNote(input: {
         UPDATE notes
         SET source_title = ?,
             source_message_count = ?,
+            source_timeline_at = ?,
+            source_last_visible_at = ?,
+            source_timestamped_visible_message_count = ?,
+            source_visible_message_count = ?,
             generation_metadata_json = ?,
             summary_schema_version = ?,
             summary_json = ?,
@@ -300,6 +371,10 @@ export async function replaceImportedNote(input: {
     .bind(
       noteInput.sourceTitle,
       noteInput.sourceMessageCount,
+      sourceTimeline.sourceTimelineAt,
+      sourceTimeline.sourceLastVisibleAt,
+      sourceTimeline.sourceTimestampedVisibleMessageCount,
+      sourceTimeline.sourceVisibleMessageCount,
       JSON.stringify(input.note.generationMetadata),
       generatedSummary.schemaVersion,
       JSON.stringify(generatedSummary.summary),
@@ -535,6 +610,11 @@ function toPublicNote(row: NoteDbRow): PublicNote {
     ...(row.source_message_count !== null
       ? { sourceMessageCount: row.source_message_count }
       : {}),
+    sourceTimelineAt: row.source_timeline_at,
+    sourceLastVisibleAt: row.source_last_visible_at,
+    sourceTimestampedVisibleMessageCount:
+      row.source_timestamped_visible_message_count,
+    sourceVisibleMessageCount: row.source_visible_message_count,
     summarySchemaVersion: contentNote
       ? CONTENT_NOTE_SCHEMA_VERSION
       : stateNote
@@ -558,6 +638,7 @@ async function insertNote(
   input: CreateNoteInput,
   generationMetadata: NoteImportGenerationMetadata | null,
   generatedSummary: StoredSummaryWrite | null,
+  sourceTimeline: StoredSourceTimelineWrite | null,
 ): Promise<ImportedNoteCreateResult<PublicNote>> {
   const database = await getNotesDatabase();
   const id = crypto.randomUUID();
@@ -575,6 +656,10 @@ async function insertNote(
           source_url,
           source_title,
           source_message_count,
+          source_timeline_at,
+          source_last_visible_at,
+          source_timestamped_visible_message_count,
+          source_visible_message_count,
           generation_metadata_json,
           summary_schema_version,
           summary_json,
@@ -584,7 +669,7 @@ async function insertNote(
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         ON CONFLICT(owner_key, source_url)
           WHERE source_url IS NOT NULL
           DO NOTHING
@@ -601,6 +686,10 @@ async function insertNote(
       input.sourceUrl,
       input.sourceTitle,
       input.sourceMessageCount,
+      sourceTimeline?.sourceTimelineAt ?? null,
+      sourceTimeline?.sourceLastVisibleAt ?? null,
+      sourceTimeline?.sourceTimestampedVisibleMessageCount ?? null,
+      sourceTimeline?.sourceVisibleMessageCount ?? null,
       generationMetadata ? JSON.stringify(generationMetadata) : null,
       generatedSummary?.schemaVersion ?? null,
       generatedSummary ? JSON.stringify(generatedSummary.summary) : null,
@@ -623,6 +712,28 @@ async function insertNote(
   }
 
   throw new Error("D1 did not return the created note.");
+}
+
+function validateNullableUtcIso(
+  value: string | null,
+  field: string,
+): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") {
+    throw new Error(`Imported ${field} must be a nullable UTC ISO timestamp.`);
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== value) {
+    throw new Error(`Imported ${field} must be a nullable UTC ISO timestamp.`);
+  }
+  return value;
+}
+
+function validateImportedCount(value: number, field: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 1_000_000) {
+    throw new Error(`Imported ${field} must be a non-negative integer.`);
+  }
+  return value;
 }
 
 function nextUpdatedAt(expectedUpdatedAt: string): string {

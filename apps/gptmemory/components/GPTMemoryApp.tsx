@@ -11,7 +11,13 @@ import {
 
 import { stateNoteItemKey } from "@/lib/note-state/item-key";
 
-type ViewKey = "all" | "favorites" | "archive" | "trash";
+type ViewKey =
+  | "all"
+  | "timeline"
+  | "continue"
+  | "favorites"
+  | "archive"
+  | "trash";
 type MobilePane = "navigation" | "list" | "detail";
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -203,6 +209,10 @@ type NoteRecord = {
   sourceUrl: string | null;
   sourceTitle: string | null;
   sourceMessageCount: number | null;
+  sourceTimelineAt: string | null;
+  sourceLastVisibleAt: string | null;
+  sourceTimestampedVisibleMessageCount: number | null;
+  sourceVisibleMessageCount: number | null;
   summarySchemaVersion: string | null;
   summary: NoteSummaryV2 | null;
   stateNote: NoteStateV3 | null;
@@ -253,12 +263,44 @@ const OUTCOME_LABELS: Record<SummaryOutcome["kind"], string> = {
 
 const viewMeta: Record<
   ViewKey,
-  { label: string; eyebrow: string; symbol: string }
+  { label: string; title: string; eyebrow: string; symbol: string }
 > = {
-  all: { label: "모든 노트", eyebrow: "내 노트", symbol: "▤" },
-  favorites: { label: "즐겨찾기", eyebrow: "다시 볼 노트", symbol: "♡" },
-  archive: { label: "보관함", eyebrow: "보관한 노트", symbol: "□" },
-  trash: { label: "휴지통", eyebrow: "최근 삭제한 노트", symbol: "⌫" },
+  all: {
+    label: "모든 노트",
+    title: "모든 노트",
+    eyebrow: "내 노트",
+    symbol: "▤",
+  },
+  timeline: {
+    label: "시간순",
+    title: "대화 타임라인",
+    eyebrow: "대화가 이어진 순서",
+    symbol: "→",
+  },
+  continue: {
+    label: "이어가기",
+    title: "대화 이어가기",
+    eyebrow: "멈춘 지점에서 다시 시작",
+    symbol: "↗",
+  },
+  favorites: {
+    label: "즐겨찾기",
+    title: "즐겨찾기",
+    eyebrow: "다시 볼 노트",
+    symbol: "♡",
+  },
+  archive: {
+    label: "보관함",
+    title: "보관함",
+    eyebrow: "보관한 노트",
+    symbol: "□",
+  },
+  trash: {
+    label: "휴지통",
+    title: "휴지통",
+    eyebrow: "최근 삭제한 노트",
+    symbol: "⌫",
+  },
 };
 
 function createOwnerKey() {
@@ -298,6 +340,16 @@ function normalizeNote(input: Partial<NoteRecord>): NoteRecord {
       typeof input.sourceMessageCount === "number"
         ? input.sourceMessageCount
         : null,
+    sourceTimelineAt: input.sourceTimelineAt ?? null,
+    sourceLastVisibleAt: input.sourceLastVisibleAt ?? null,
+    sourceTimestampedVisibleMessageCount:
+      typeof input.sourceTimestampedVisibleMessageCount === "number"
+        ? input.sourceTimestampedVisibleMessageCount
+        : null,
+    sourceVisibleMessageCount:
+      typeof input.sourceVisibleMessageCount === "number"
+        ? input.sourceVisibleMessageCount
+        : null,
     summarySchemaVersion,
     summary:
       summarySchemaVersion === SUMMARY_SCHEMA_VERSION
@@ -329,6 +381,125 @@ function formatDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+type TimelineDayGroup = {
+  key: string;
+  yearLabel: string;
+  monthLabel: string;
+  dayLabel: string;
+  dateTime: string | null;
+  undated: boolean;
+  notes: NoteRecord[];
+};
+
+const timelineYearFormatter = new Intl.DateTimeFormat("ko-KR", {
+  year: "numeric",
+});
+const timelineMonthFormatter = new Intl.DateTimeFormat("ko-KR", {
+  month: "long",
+});
+const timelineDayFormatter = new Intl.DateTimeFormat("ko-KR", {
+  day: "numeric",
+  weekday: "short",
+});
+const timelineTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
+  hour: "numeric",
+  minute: "2-digit",
+});
+const timelineDateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function sourceTimelineDate(note: NoteRecord) {
+  if (!note.sourceTimelineAt) return null;
+  const date = new Date(note.sourceTimelineAt);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function localDateKey(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function groupNotesByTimelineDay(notes: NoteRecord[]): TimelineDayGroup[] {
+  const sorted = notes
+    .map((note, index) => ({ note, index, date: sourceTimelineDate(note) }))
+    .sort((left, right) => {
+      if (left.date && right.date) {
+        return left.date.getTime() - right.date.getTime() || left.index - right.index;
+      }
+      if (left.date) return -1;
+      if (right.date) return 1;
+      return left.index - right.index;
+    });
+  const groups: TimelineDayGroup[] = [];
+
+  for (const { note, date } of sorted) {
+    const key = date ? localDateKey(date) : "undated";
+    const current = groups.at(-1);
+    if (current?.key === key) {
+      current.notes.push(note);
+      continue;
+    }
+    groups.push(
+      date
+        ? {
+            key,
+            yearLabel: timelineYearFormatter.format(date),
+            monthLabel: timelineMonthFormatter.format(date),
+            dayLabel: timelineDayFormatter.format(date),
+            dateTime: key,
+            undated: false,
+            notes: [note],
+          }
+        : {
+            key,
+            yearLabel: "",
+            monthLabel: "날짜 없음",
+            dayLabel: "대화 시간 정보가 없습니다",
+            dateTime: null,
+            undated: true,
+            notes: [note],
+          },
+    );
+  }
+
+  return groups;
+}
+
+function sameLocalDay(left: Date, right: Date) {
+  return localDateKey(left) === localDateKey(right);
+}
+
+function formatTimelineRange(note: NoteRecord) {
+  const start = sourceTimelineDate(note);
+  if (!start) return "";
+  const last = note.sourceLastVisibleAt
+    ? new Date(note.sourceLastVisibleAt)
+    : null;
+  const validLast = last && !Number.isNaN(last.getTime()) ? last : null;
+  if (!validLast || validLast.getTime() <= start.getTime()) {
+    return timelineTimeFormatter.format(start);
+  }
+  if (sameLocalDay(start, validLast)) {
+    return `${timelineTimeFormatter.format(start)}–${timelineTimeFormatter.format(validLast)}`;
+  }
+  return `${timelineDateTimeFormatter.format(start)}–${timelineDateTimeFormatter.format(validLast)}`;
+}
+
+function formatTimestampCoverage(note: NoteRecord) {
+  const timestamped = note.sourceTimestampedVisibleMessageCount;
+  const visible = note.sourceVisibleMessageCount;
+  if (timestamped === null || visible === null || visible < 1) return "";
+  if (timestamped >= visible) return `${visible}개 메시지 시간 확인`;
+  return `${timestamped}/${visible}개 메시지 시간 확인`;
 }
 
 function notePreview(note: NoteRecord) {
@@ -383,6 +554,180 @@ function noteHasActionItems(note: NoteRecord) {
     );
   }
   return Boolean(note.summary?.actionItems.length);
+}
+
+type ResumePack = {
+  goal: string;
+  summary: string;
+  currentState: string;
+  decisions: string[];
+  context: string[];
+  constraints: string[];
+  openQuestions: string[];
+  actions: string[];
+  topicCount: number;
+};
+
+function visibleStateTexts(
+  stateNote: NoteStateV3,
+  section: StateNoteItemSection,
+  items: StateEvidenceText[],
+) {
+  return presentStateItems(stateNote, section, items)
+    .filter((entry) => !entry.hidden)
+    .map((entry) => entry.displayText.trim())
+    .filter(Boolean);
+}
+
+function legacyResumeSummary(note: NoteRecord) {
+  return (
+    note.overview.trim() ||
+    note.sections.find((section) => section.body.trim())?.body ||
+    ""
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPendingSummaryAction(item: SummaryActionItem) {
+  const status = item.status?.trim().toLowerCase();
+  return (
+    !status ||
+    status === "open" ||
+    status === "in_progress" ||
+    status === "blocked" ||
+    status === "deferred"
+  );
+}
+
+function createResumePack(note: NoteRecord): ResumePack {
+  if (note.contentNote) {
+    return {
+      goal: "",
+      summary: note.contentNote.oneLineSummary.text.trim(),
+      currentState:
+        note.contentNote.supportingInfo.currentState?.text.trim() ?? "",
+      decisions: note.contentNote.confirmedDecisions.map((item) => item.text),
+      context: [],
+      constraints: note.contentNote.supportingInfo.constraintsAndChanges.map(
+        (item) => item.text,
+      ),
+      openQuestions: note.contentNote.openQuestions.map((item) => item.text),
+      actions: note.contentNote.actionItems.map((item) => item.text),
+      topicCount: note.contentNote.topics.length,
+    };
+  }
+
+  if (note.stateNote) {
+    const goal = note.stateNote.primaryGoal
+      ? presentStateItem(
+          note.stateNote,
+          "primaryGoal",
+          note.stateNote.primaryGoal,
+        )
+      : null;
+    const currentState = presentStateItem(
+      note.stateNote,
+      "currentState",
+      note.stateNote.currentState,
+    );
+    return {
+      goal: goal && !goal.hidden ? goal.displayText.trim() : "",
+      summary: "",
+      currentState: currentState.hidden
+        ? ""
+        : currentState.displayText.trim(),
+      decisions: visibleStateTexts(
+        note.stateNote,
+        "confirmedDecisions",
+        note.stateNote.confirmedDecisions,
+      ),
+      context: [],
+      constraints: visibleStateTexts(
+        note.stateNote,
+        "activeConstraints",
+        note.stateNote.activeConstraints,
+      ),
+      openQuestions: visibleStateTexts(
+        note.stateNote,
+        "unresolvedQuestions",
+        note.stateNote.unresolvedQuestions,
+      ),
+      actions: visibleStateTexts(
+        note.stateNote,
+        "openActions",
+        note.stateNote.openActions,
+      ),
+      topicCount: 0,
+    };
+  }
+
+  if (note.summary) {
+    return {
+      goal: "",
+      summary: note.summary.oneLineSummary.text.trim(),
+      currentState: "",
+      decisions: note.summary.outcomes
+        .filter((item) => item.kind === "decision")
+        .map((item) => item.text),
+      context: note.summary.necessaryContext.map((item) => item.text),
+      constraints: [],
+      openQuestions: note.summary.outcomes
+        .filter((item) => item.kind === "unresolved")
+        .map((item) => item.text),
+      actions: note.summary.actionItems
+        .filter(isPendingSummaryAction)
+        .map((item) => item.text),
+      topicCount: 0,
+    };
+  }
+
+  return {
+    goal: "",
+    summary: legacyResumeSummary(note),
+    currentState: "",
+    decisions: [],
+    context: [],
+    constraints: [],
+    openQuestions: [],
+    actions: [],
+    topicCount: 0,
+  };
+}
+
+function appendResumeSection(lines: string[], heading: string, items: string[]) {
+  const visibleItems = items.map((item) => item.trim()).filter(Boolean);
+  if (!visibleItems.length) return;
+  lines.push("", `## ${heading}`, ...visibleItems.map((item) => `- ${item}`));
+}
+
+function buildResumeBrief(note: NoteRecord) {
+  const pack = createResumePack(note);
+  const lines = [
+    "# 이전 ChatGPT 대화 이어가기",
+    `제목: ${noteTitle(note)}`,
+  ];
+
+  if (pack.goal) lines.push("", "## 목표", pack.goal);
+  if (pack.summary) lines.push("", "## 대화 요약", pack.summary);
+  if (pack.currentState) {
+    lines.push("", "## 현재 도달한 지점", pack.currentState);
+  }
+  appendResumeSection(lines, "확정한 결정", pack.decisions);
+  appendResumeSection(lines, "필요한 맥락", pack.context);
+  appendResumeSection(lines, "제약과 변경 사항", pack.constraints);
+  appendResumeSection(lines, "남은 질문", pack.openQuestions);
+  appendResumeSection(lines, "다음에 할 일", pack.actions);
+  lines.push(
+    "",
+    "## 이어갈 요청",
+    "위 내용은 이전 대화에서 확인된 맥락입니다. 확정되지 않은 사실을 새로 만들지 말고, 남은 질문과 다음 행동을 기준으로 대화를 이어가 주세요.",
+  );
+  return lines.join("\n");
+}
+
+function isResumableNote(note: NoteRecord) {
+  return Boolean(note.sourceUrl);
 }
 
 function normalizeSummary(value: unknown): NoteSummaryV2 | null {
@@ -907,6 +1252,255 @@ function parseError(payload: unknown, fallback: string) {
   return fallback;
 }
 
+function ConversationTimeline({
+  notes,
+  selectedId,
+  onChoose,
+}: {
+  notes: NoteRecord[];
+  selectedId: string | null;
+  onChoose: (id: string) => void;
+}) {
+  const groups = useMemo(() => groupNotesByTimelineDay(notes), [notes]);
+  const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    selectedButtonRef.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [selectedId, groups]);
+
+  return (
+    <div
+      className="timeline-scroll"
+      role="region"
+      aria-label="대화 타임라인. 왼쪽은 과거, 오른쪽은 최신입니다."
+      tabIndex={0}
+    >
+      <ol className="timeline-track">
+        {groups.map((group) => {
+          const headingId = `timeline-date-${group.key}`;
+          return (
+            <li
+              className={`timeline-day-group ${group.undated ? "undated" : ""}`}
+              key={group.key}
+            >
+              <section aria-labelledby={headingId}>
+                <header className="timeline-date-label" id={headingId}>
+                  {group.dateTime ? (
+                    <time dateTime={group.dateTime}>
+                      <span>{group.yearLabel}</span>
+                      <strong>{group.monthLabel}</strong>
+                      <small>{group.dayLabel}</small>
+                    </time>
+                  ) : (
+                    <span>
+                      <strong>{group.monthLabel}</strong>
+                      <small>{group.dayLabel}</small>
+                    </span>
+                  )}
+                </header>
+                <ol className="timeline-day-entries">
+                  {group.notes.map((note) => {
+                    const selected = selectedId === note.id;
+                    const coverage = formatTimestampCoverage(note);
+                    return (
+                      <li className="timeline-entry" key={note.id}>
+                        <button
+                          className={`timeline-note-card ${selected ? "selected" : ""}`}
+                          ref={selected ? selectedButtonRef : undefined}
+                          type="button"
+                          onClick={() => onChoose(note.id)}
+                          aria-current={selected || undefined}
+                        >
+                          <span className="note-card-topline">
+                            <strong>{noteTitle(note)}</strong>
+                          </span>
+                          <span className="note-card-preview">
+                            {notePreview(note)}
+                          </span>
+                          <span className="note-card-meta">
+                            {noteHasDecision(note) ? (
+                              <span className="note-card-signal decision">
+                                결정 있음
+                              </span>
+                            ) : null}
+                            {noteHasActionItems(note) ? (
+                              <span className="note-card-signal action">
+                                할 일 있음
+                              </span>
+                            ) : null}
+                            {group.undated ? (
+                              <span className="timeline-date-missing">
+                                날짜 없음
+                              </span>
+                            ) : (
+                              <time dateTime={note.sourceTimelineAt ?? undefined}>
+                                {formatTimelineRange(note)}
+                              </time>
+                            )}
+                          </span>
+                          {coverage ? (
+                            <span className="timeline-coverage">{coverage}</span>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+type ResumeCopyState = {
+  noteId: string;
+  result: "copied" | "error";
+} | null;
+
+function ResumeDashboard({
+  notes,
+  selectedId,
+  onChoose,
+  onImport,
+}: {
+  notes: NoteRecord[];
+  selectedId: string | null;
+  onChoose: (id: string) => void;
+  onImport: () => void;
+}) {
+  const [copyState, setCopyState] = useState<ResumeCopyState>(null);
+
+  const copyResumeBrief = async (note: NoteRecord) => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(buildResumeBrief(note));
+      setCopyState({ noteId: note.id, result: "copied" });
+    } catch {
+      setCopyState({ noteId: note.id, result: "error" });
+    }
+  };
+
+  if (!notes.length) {
+    return (
+      <div className="resume-empty">
+        <span aria-hidden="true">↗</span>
+        <h2>이어갈 대화를 하나 남겨보세요</h2>
+        <p>
+          중요한 ChatGPT 대화 하나를 가져오면, 멈춘 지점과 결정·남은
+          질문을 다시 시작할 문맥으로 정리합니다.
+        </p>
+        <button type="button" onClick={onImport}>
+          대화 가져오기
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="resume-dashboard">
+      <section className="resume-intro" aria-label="이어가기 사용 안내">
+        <span aria-hidden="true">↗</span>
+        <div>
+          <strong>요약을 넘어, 멈춘 지점에서 다시 시작하세요.</strong>
+          <p>확인된 결정과 제약, 남은 질문만 모아 다음 대화 문맥을 만듭니다.</p>
+        </div>
+      </section>
+
+      <ol className="resume-card-list">
+        {notes.map((note) => {
+          const pack = createResumePack(note);
+          const selected = selectedId === note.id;
+          const structured = Boolean(
+            note.contentNote || note.stateNote || note.summary,
+          );
+          const copyResult =
+            copyState?.noteId === note.id ? copyState.result : null;
+
+          return (
+            <li key={note.id}>
+              <article
+                className={`resume-card ${selected ? "selected" : ""}`}
+              >
+                <button
+                  className="resume-card-main"
+                  type="button"
+                  onClick={() => onChoose(note.id)}
+                  aria-current={selected || undefined}
+                >
+                  <span className="resume-card-kicker">대화 결산서</span>
+                  <strong>{noteTitle(note)}</strong>
+                  <span className="resume-card-summary">
+                    {pack.currentState || pack.summary || pack.goal}
+                  </span>
+                </button>
+
+                <dl className="resume-stats" aria-label="대화에서 정리한 항목">
+                  {note.sourceMessageCount !== null ? (
+                    <div>
+                      <dt>메시지</dt>
+                      <dd>{note.sourceMessageCount}</dd>
+                    </div>
+                  ) : null}
+                  {structured && pack.topicCount > 0 ? (
+                    <div>
+                      <dt>주제</dt>
+                      <dd>{pack.topicCount}</dd>
+                    </div>
+                  ) : null}
+                  {structured ? (
+                    <>
+                      <div>
+                        <dt>결정</dt>
+                        <dd>{pack.decisions.length}</dd>
+                      </div>
+                      <div>
+                        <dt>다음 행동</dt>
+                        <dd>{pack.actions.length}</dd>
+                      </div>
+                      <div>
+                        <dt>남은 질문</dt>
+                        <dd>{pack.openQuestions.length}</dd>
+                      </div>
+                    </>
+                  ) : null}
+                </dl>
+
+                <div className="resume-card-footer">
+                  <button
+                    className="resume-copy-button"
+                    type="button"
+                    onClick={() => void copyResumeBrief(note)}
+                  >
+                    {copyResult === "copied"
+                      ? "문맥을 복사했어요"
+                      : "이어가기 문맥 복사"}
+                  </button>
+                  {copyResult ? (
+                    <span
+                      className={`resume-copy-status ${copyResult}`}
+                      role="status"
+                    >
+                      {copyResult === "copied"
+                        ? "새 ChatGPT 대화에 붙여넣어 이어갈 수 있습니다."
+                        : "복사하지 못했습니다. 브라우저 권한을 확인해주세요."}
+                    </span>
+                  ) : null}
+                </div>
+              </article>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 export function GPTMemoryApp() {
   const [notes, setNotes] = useState<NoteRecord[]>([]);
   const [view, setView] = useState<ViewKey>("all");
@@ -934,8 +1528,17 @@ export function GPTMemoryApp() {
     [],
   );
 
+  const resumeNotes = useMemo(
+    () => notes.filter(isResumableNote),
+    [notes],
+  );
+  const selectableNotes = view === "continue" ? resumeNotes : notes;
   const selectedNote =
-    notes.find((note) => note.id === selectedId) ?? notes[0] ?? null;
+    selectableNotes.find((note) => note.id === selectedId) ??
+    selectableNotes[0] ??
+    null;
+  const currentViewCount =
+    view === "continue" ? resumeNotes.length : notes.length;
 
   const loadNotes = useCallback(
     async (nextView = view, nextQuery = query, nextTag = activeTag) => {
@@ -943,7 +1546,8 @@ export function GPTMemoryApp() {
       setLoading(true);
       setLoadError("");
       try {
-        const params = new URLSearchParams({ view: nextView });
+        const requestView = nextView === "continue" ? "all" : nextView;
+        const params = new URLSearchParams({ view: requestView });
         if (nextQuery.trim()) params.set("q", nextQuery.trim());
         if (nextTag) params.set("tag", nextTag);
         const response = await fetch(`/api/notes?${params.toString()}`, {
@@ -957,12 +1561,19 @@ export function GPTMemoryApp() {
           throw new Error(parseError(payload, "노트를 불러오지 못했습니다."));
         }
         const nextNotes = (payload.notes ?? []).map(normalizeNote);
+        const nextSelectableNotes =
+          nextView === "continue"
+            ? nextNotes.filter(isResumableNote)
+            : nextNotes;
         setNotes(nextNotes);
         setSelectedId((current) => {
-          if (current && nextNotes.some((note) => note.id === current)) {
+          if (
+            current &&
+            nextSelectableNotes.some((note) => note.id === current)
+          ) {
             return current;
           }
-          return nextNotes[0]?.id ?? null;
+          return nextSelectableNotes[0]?.id ?? null;
         });
       } catch (error) {
         setLoadError(
@@ -1033,7 +1644,11 @@ export function GPTMemoryApp() {
   }, [notes]);
 
   return (
-    <main className="memory-app" data-mobile-pane={mobilePane}>
+    <main
+      className="memory-app"
+      data-mobile-pane={mobilePane}
+      data-view={view}
+    >
       <aside className="sidebar" aria-label="노트 탐색">
         <div className="brand-row">
           <button
@@ -1082,7 +1697,7 @@ export function GPTMemoryApp() {
               </span>
               <span>{viewMeta[key].label}</span>
               {key === view && !loading ? (
-                <span className="nav-count">{notes.length}</span>
+                <span className="nav-count">{currentViewCount}</span>
               ) : null}
             </button>
           ))}
@@ -1127,7 +1742,16 @@ export function GPTMemoryApp() {
         </div>
       </aside>
 
-      <section className="notes-pane" aria-label="노트 목록">
+      <section
+        className="notes-pane"
+        aria-label={
+          view === "timeline"
+            ? "대화 타임라인"
+            : view === "continue"
+              ? "대화 이어가기"
+              : "노트 목록"
+        }
+      >
         <div className="list-topbar">
           <button
             className="mobile-nav-button"
@@ -1170,12 +1794,22 @@ export function GPTMemoryApp() {
         <header className="list-heading">
           <div>
             <p>{activeTag ? "태그 노트" : viewMeta[view].eyebrow}</p>
-            <h1>{activeTag ? `#${activeTag}` : viewMeta[view].label}</h1>
+            <h1>{activeTag ? `#${activeTag}` : viewMeta[view].title}</h1>
           </div>
-          <span>{loading ? "…" : `${notes.length}개 노트`}</span>
+          <span>{loading ? "…" : `${currentViewCount}개 노트`}</span>
         </header>
 
-        <div className="note-list" aria-live="polite" aria-busy={loading}>
+        <div
+          className={`note-list ${
+            view === "timeline"
+              ? "timeline-list"
+              : view === "continue"
+                ? "resume-list"
+                : ""
+          }`}
+          aria-live="polite"
+          aria-busy={loading}
+        >
           {loading ? (
             <ListSkeleton />
           ) : loadError ? (
@@ -1187,6 +1821,19 @@ export function GPTMemoryApp() {
                 다시 시도
               </button>
             </div>
+          ) : view === "continue" ? (
+            <ResumeDashboard
+              notes={resumeNotes}
+              selectedId={selectedNote?.id ?? null}
+              onChoose={chooseNote}
+              onImport={() => setImportOpen(true)}
+            />
+          ) : notes.length && view === "timeline" ? (
+            <ConversationTimeline
+              notes={notes}
+              selectedId={selectedNote?.id ?? null}
+              onChoose={chooseNote}
+            />
           ) : notes.length ? (
             notes.map((note) => (
               <button

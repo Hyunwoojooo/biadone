@@ -30,6 +30,10 @@ type TestNote = ImportStoredNote & {
   sections: Array<Record<string, unknown>>;
   tags: string[];
   sourceTitle: string | null;
+  sourceTimelineAt?: string | null;
+  sourceLastVisibleAt?: string | null;
+  sourceTimestampedVisibleMessageCount?: number | null;
+  sourceVisibleMessageCount?: number | null;
   favorite: boolean;
   createdAt: string;
   generationMetadata?: ImportedNoteWrite["generationMetadata"];
@@ -132,6 +136,11 @@ function createHarness(options: HarnessOptions = {}) {
         ...stored,
         sourceTitle: input.note.sourceTitle,
         sourceMessageCount: input.note.sourceMessageCount,
+        sourceTimelineAt: input.note.sourceTimelineAt,
+        sourceLastVisibleAt: input.note.sourceLastVisibleAt,
+        sourceTimestampedVisibleMessageCount:
+          input.note.sourceTimestampedVisibleMessageCount,
+        sourceVisibleMessageCount: input.note.sourceVisibleMessageCount,
         generationMetadata: input.note.generationMetadata,
         summarySchemaVersion: input.note.summarySchemaVersion,
         summary: input.note.summary,
@@ -270,7 +279,7 @@ test("stores exact generation versions and a stable source digest", async () => 
     '{"title":"대화 제목","messages":[{"role":"user","text":"질문"},{"role":"assistant","text":"답변"}]}',
   );
   const generationMetadata = harness.getLastCreate()?.generationMetadata;
-  assert.equal(NOTE_IMPORT_WORKFLOW_VERSION, "gptmemory-note-import.v5");
+  assert.equal(NOTE_IMPORT_WORKFLOW_VERSION, "gptmemory-note-import.v6");
   assert.deepEqual(generationMetadata, {
     runId: "00000000-0000-4000-8000-000000000001",
     workflowVersion: NOTE_IMPORT_WORKFLOW_VERSION,
@@ -293,6 +302,94 @@ test("stores exact generation versions and a stable source digest", async () => 
     /^[a-f0-9]{64}$/,
   );
   assert.equal(harness.calls.digest, 1);
+});
+
+test("derives UTC timeline metadata in normalized visible-message order", async () => {
+  const imported = importedConversation();
+  imported.conversation.messages = [
+    {
+      id: "a0",
+      role: "assistant",
+      text: "앞선 표시 메시지",
+      createdAt: "2026-08-01T09:00:00+09:00",
+    },
+    {
+      id: "u-invalid",
+      role: "user",
+      text: "시간이 손상된 질문",
+      createdAt: "not-a-timestamp",
+    },
+    {
+      id: "u-first-valid",
+      role: "user",
+      text: "첫 유효 시간 질문",
+      createdAt: "2026-08-03T12:34:56+09:00",
+    },
+    {
+      id: "a-missing",
+      role: "assistant",
+      text: "시간 없는 답변",
+      createdAt: null,
+    },
+    {
+      id: "a-last-valid",
+      role: "assistant",
+      text: "마지막 유효 시간 메시지",
+      createdAt: "2026-08-02T01:02:03.004Z",
+    },
+  ];
+  const harness = createHarness({
+    dependencies: {
+      async importShareUrl() {
+        return imported;
+      },
+    },
+  });
+
+  const result = await harness.service.execute(importCommand());
+
+  assert.equal(result.status, "created");
+  assert.equal(
+    harness.getLastCreate()?.sourceTimelineAt,
+    "2026-08-03T03:34:56.000Z",
+  );
+  assert.equal(
+    harness.getLastCreate()?.sourceLastVisibleAt,
+    "2026-08-02T01:02:03.004Z",
+  );
+  assert.equal(
+    harness.getLastCreate()?.sourceTimestampedVisibleMessageCount,
+    3,
+  );
+  assert.equal(harness.getLastCreate()?.sourceVisibleMessageCount, 5);
+});
+
+test("keeps nullable timeline anchors when visible timestamps are unusable", async () => {
+  const imported = importedConversation();
+  imported.conversation.messages = imported.conversation.messages.map(
+    (message, index) => ({
+      ...message,
+      createdAt: index === 0 ? "invalid" : null,
+    }),
+  );
+  const harness = createHarness({
+    dependencies: {
+      async importShareUrl() {
+        return imported;
+      },
+    },
+  });
+
+  const result = await harness.service.execute(importCommand());
+
+  assert.equal(result.status, "created");
+  assert.equal(harness.getLastCreate()?.sourceTimelineAt, null);
+  assert.equal(harness.getLastCreate()?.sourceLastVisibleAt, null);
+  assert.equal(
+    harness.getLastCreate()?.sourceTimestampedVisibleMessageCount,
+    0,
+  );
+  assert.equal(harness.getLastCreate()?.sourceVisibleMessageCount, 2);
 });
 
 test("stores a versioned v3 state note through the same atomic import path", async () => {
@@ -507,6 +604,13 @@ test("successful replacement adds v4 content and preserves legacy edits and note
   assert.deepEqual(result.note.sections, existing.sections);
   assert.deepEqual(result.note.tags, existing.tags);
   assert.equal(result.note.sourceMessageCount, 2);
+  assert.equal(result.note.sourceTimelineAt, "2026-08-01T23:58:00.000Z");
+  assert.equal(
+    result.note.sourceLastVisibleAt,
+    "2026-08-01T23:58:01.000Z",
+  );
+  assert.equal(result.note.sourceTimestampedVisibleMessageCount, 2);
+  assert.equal(result.note.sourceVisibleMessageCount, 2);
   assert.equal(result.note.summarySchemaVersion, "gptmemory.content-note.v4");
   assert.equal(result.note.summary?.title.text, "주제 중심 새 노트");
   assert.equal(harness.getLastCreate(), null);
@@ -559,6 +663,10 @@ function storedNote(overrides: Partial<TestNote> = {}): TestNote {
     sourceUrl: SOURCE_URL,
     sourceTitle: "기존 원본 제목",
     sourceMessageCount: 1,
+    sourceTimelineAt: "2026-07-30T23:00:00.000Z",
+    sourceLastVisibleAt: "2026-07-30T23:30:00.000Z",
+    sourceTimestampedVisibleMessageCount: 1,
+    sourceVisibleMessageCount: 1,
     favorite: true,
     archived: false,
     createdAt: "2026-07-31T00:00:00.000Z",
