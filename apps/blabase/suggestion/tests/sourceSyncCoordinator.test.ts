@@ -1867,6 +1867,143 @@ describe("SourceSyncRepository", () => {
     });
   });
 
+  it("preserves persisted snapshots when a stale coordinator commits another source", async () => {
+    const root = await createTempDirectory();
+    const directory = join(root, "sync");
+    const ids = idFactory();
+    let releaseGithubCommit!: () => void;
+    let markGithubCommitPaused!: () => void;
+    let pauseGithubCommit = true;
+    const githubCommitGate = new Promise<void>((resolve) => {
+      releaseGithubCommit = resolve;
+    });
+    const githubCommitPaused = new Promise<void>((resolve) => {
+      markGithubCommitPaused = resolve;
+    });
+    const githubRepository =
+      new FileSystemSourceSyncRepository(directory, {
+        faultInjector: async (point) => {
+          if (
+            point === "commit_after_history" &&
+            pauseGithubCommit
+          ) {
+            pauseGithubCommit = false;
+            markGithubCommitPaused();
+            await githubCommitGate;
+          }
+        }
+      });
+    const codexRepository =
+      new FileSystemSourceSyncRepository(directory);
+    const githubCoordinator = new SourceSyncCoordinator({
+      adapters: {
+        github: adapter("github", async () =>
+          receipt("github-cross-route", "1", 11)
+        )
+      },
+      repository: githubRepository,
+      clock: new FakeClock(),
+      attemptIdFactory: ids
+    });
+    const codexCoordinator = new SourceSyncCoordinator({
+      adapters: {
+        codex: adapter("codex", async () =>
+          receipt("codex-cross-route", "2", 22)
+        )
+      },
+      repository: codexRepository,
+      clock: new FakeClock(),
+      attemptIdFactory: ids
+    });
+
+    await Promise.all([
+      githubCoordinator.getLatestStore(),
+      codexCoordinator.getLatestStore()
+    ]);
+    const githubSync = githubCoordinator.sync("github", "manual");
+    await githubCommitPaused;
+    const codexSync = codexCoordinator.sync("codex", "manual");
+    releaseGithubCommit();
+    await Promise.all([githubSync, codexSync]);
+
+    const stored = await codexRepository.read();
+    expect(stored.latest).toMatchObject({
+      status: "ready",
+      value: {
+        sources: {
+          github: {
+            status: "ready",
+            latestSnapshot: {
+              revision: "github-cross-route",
+              hash: "1".repeat(64),
+              itemCount: 11
+            }
+          },
+          codex: {
+            status: "ready",
+            latestSnapshot: {
+              revision: "codex-cross-route",
+              hash: "2".repeat(64),
+              itemCount: 22
+            }
+          }
+        }
+      }
+    });
+    expect(stored.history).toMatchObject({
+      status: "ready",
+      value: {
+        attempts: expect.arrayContaining([
+          expect.objectContaining({
+            source: "github",
+            snapshotRevision: "github-cross-route"
+          }),
+          expect.objectContaining({
+            source: "codex",
+            snapshotRevision: "codex-cross-route"
+          })
+        ])
+      }
+    });
+    expect(stored.latest.status).toBe("ready");
+    expect(stored.history.status).toBe("ready");
+    expect(stored.settlements.status).toBe("ready");
+    if (
+      stored.latest.status === "ready" &&
+      stored.history.status === "ready" &&
+      stored.settlements.status === "ready"
+    ) {
+      const githubAttempt = stored.history.value.attempts.find(
+        (attempt) => attempt.source === "github"
+      );
+      const codexAttempt = stored.history.value.attempts.find(
+        (attempt) => attempt.source === "codex"
+      );
+      expect(stored.history.value.attempts).toHaveLength(2);
+      expect(githubAttempt).toBeDefined();
+      expect(codexAttempt).toBeDefined();
+      expect(
+        stored.latest.value.sources.github.lastSuccess?.attemptId
+      ).toBe(githubAttempt?.attemptId);
+      expect(
+        stored.latest.value.sources.codex.lastSuccess?.attemptId
+      ).toBe(codexAttempt?.attemptId);
+      expect(
+        stored.latest.value.sources.github.latestSnapshot?.hash
+      ).toBe(githubAttempt?.snapshotHash);
+      expect(
+        stored.latest.value.sources.codex.latestSnapshot?.hash
+      ).toBe(codexAttempt?.snapshotHash);
+      expect(stored.history.value.updatedAt).toBe(
+        stored.latest.value.updatedAt
+      );
+      expect(stored.settlements.value.updatedAt).toBe(
+        stored.latest.value.updatedAt
+      );
+      expect(stored.settlements.value.settlement).toBeNull();
+    }
+  });
+
   it("preserves a recovered source when another source disconnects in the same process", async () => {
     const root = await createTempDirectory();
     const directory = join(root, "sync");
@@ -2196,7 +2333,7 @@ describe("SourceSyncRepository", () => {
     }
   });
 
-  it("keeps caller adapter-registration normalization when no settlement was recovered", async () => {
+  it("does not persist another source's caller normalization during commit", async () => {
     const root = await createTempDirectory();
     const directory = join(root, "sync");
     const ids = idFactory();
@@ -2248,7 +2385,12 @@ describe("SourceSyncRepository", () => {
               revision: "github-after-registration-change"
             }
           },
-          codex: { status: "disabled", nextDueAt: null }
+          codex: {
+            status: "ready",
+            latestSnapshot: {
+              revision: "codex-before-unregister"
+            }
+          }
         }
       }
     });

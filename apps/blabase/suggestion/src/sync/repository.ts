@@ -8,7 +8,7 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   DEFAULT_SOURCE_SYNC_HISTORY_LIMIT,
@@ -107,10 +107,43 @@ export type FileSystemSourceSyncRepositoryOptions = {
   ) => void | Promise<void>;
 };
 
+const SOURCE_SYNC_MUTATION_QUEUES = Symbol.for(
+  "blabase.source-sync.mutation-queues"
+);
+
+type SourceSyncMutationQueues = Map<string, Promise<unknown>>;
+
+function sourceSyncMutationQueues(): SourceSyncMutationQueues {
+  const sharedGlobal = globalThis as typeof globalThis &
+    Record<symbol, unknown>;
+  const existing = sharedGlobal[SOURCE_SYNC_MUTATION_QUEUES];
+  if (existing instanceof Map) {
+    return existing as SourceSyncMutationQueues;
+  }
+  const queues: SourceSyncMutationQueues = new Map();
+  sharedGlobal[SOURCE_SYNC_MUTATION_QUEUES] = queues;
+  return queues;
+}
+
 export class FileSystemSourceSyncRepository
   implements SourceSyncRepository
 {
-  private mutationTail: Promise<unknown> = Promise.resolve();
+  private get mutationTail(): Promise<unknown> {
+    return (
+      sourceSyncMutationQueues().get(resolve(this.directory)) ??
+      Promise.resolve()
+    );
+  }
+
+  private set mutationTail(value: Promise<unknown>) {
+    const queues = sourceSyncMutationQueues();
+    const directory = resolve(this.directory);
+    queues.set(directory, value);
+    const clear = () => {
+      if (queues.get(directory) === value) queues.delete(directory);
+    };
+    void value.then(clear, clear);
+  }
   private readonly maxHistory: number;
   private readonly faultInjector:
     | FileSystemSourceSyncRepositoryOptions["faultInjector"];
@@ -232,7 +265,6 @@ export class FileSystemSourceSyncRepository
         throw new SourceSyncRepositoryError("STORE_READ_FAILED");
       }
       const authoritativeBase =
-        recoveredPendingSettlement &&
         existingLatest.status === "ready"
           ? existingLatest.value
           : latest;
@@ -436,7 +468,6 @@ export class FileSystemSourceSyncRepository
         throw new SourceSyncRepositoryError("STORE_READ_FAILED");
       }
       const authoritativeBase =
-        recoveredPendingSettlement &&
         existingLatest.status === "ready"
           ? existingLatest.value
           : latest;

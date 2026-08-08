@@ -38,7 +38,11 @@ export function SourceSyncMeta({
       ? `마지막 성공 ${formatTimestamp(sourceStatus.lastSuccessAt)}`
       : null,
     sourceStatus.lastFailureAt
-      ? `마지막 실패 ${formatTimestamp(sourceStatus.lastFailureAt)}`
+      ? sourceStatus.lastSuccessAt &&
+        Date.parse(sourceStatus.lastSuccessAt) >=
+          Date.parse(sourceStatus.lastFailureAt)
+        ? `이전 실패 ${formatTimestamp(sourceStatus.lastFailureAt)} · 복구됨`
+        : `최근 실패 ${formatTimestamp(sourceStatus.lastFailureAt)}`
       : null,
     sourceStatus.nextRetryAt
       ? `다음 재시도 ${formatTimestamp(sourceStatus.nextRetryAt)}`
@@ -79,7 +83,7 @@ export function SourceSyncMeta({
 function syncStateLabel(status: SourceSyncState): string {
   switch (status) {
     case "idle":
-      return "자동 동기화 대기";
+      return "사용 가능 · 자동 동기화 대기";
     case "syncing":
       return "동기화 중";
     case "backoff":
