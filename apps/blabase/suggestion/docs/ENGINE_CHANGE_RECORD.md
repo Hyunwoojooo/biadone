@@ -3222,3 +3222,63 @@
   - add GitHub unresolved review threads, Project priority, dependencies and linked issues
   - capture explicit feedback for wrong link/already done/not important/later and build a
     human-reviewed Developer Attention Golden Dataset
+
+## 2026-08-08 Source sync cross-coordinator lost-update fix
+
+- Date: 2026-08-08
+- Owner: Codex with human direction
+- Goal:
+  - prevent a stale route-local source sync coordinator from overwriting a successful snapshot
+    committed by another coordinator that shares the same filesystem store
+- Affected pipeline stages:
+  - source sync latest/history settlement commit and filesystem repository concurrency behavior
+- Behavior before:
+  - a normal commit used the caller coordinator's cached latest store as its merge base unless a
+    pending settlement had just been recovered
+  - a stale Codex coordinator could therefore replace a newer persisted GitHub success state with
+    its older GitHub state while committing the Codex attempt
+- Behavior after:
+  - a validated persisted latest store is always the authoritative merge base when present
+  - all filesystem repository reads and mutations for one normalized sync directory share a
+    process-global `Symbol.for` queue across repository instances and Next.js route bundles
+  - commit changes only `attempt.source`; other source states and snapshots remain byte-valid
+    inputs to the existing schema, transition protection, history coherence, hash, and settlement
+    integrity checks
+- Versions before:
+  - latest/history/settlement store contracts: existing v1 contracts
+- Versions after:
+  - latest/history/settlement store contracts: unchanged v1 contracts
+  - no version-ledger bump: this is a runtime persistence correctness fix with no schema, serialized
+    contract, source normalizer, semantic rule, ranking, prompt, verifier, or dataset change
+- Code commit:
+  - `ab19ee9aae2f4292f095b853e38a1a254fe4cd2d`
+- Evaluation dataset version and SHA-256:
+  - not applicable; no Golden, Regression, production conversation, or semantic evaluation input
+    changed
+- Candidate run ID: not applicable
+- Comparison run ID: not applicable
+- Commands executed:
+  - `cd suggestion && npm test -- --run tests/sourceSyncCoordinator.test.ts -t "preserves persisted snapshots when a stale coordinator commits another source|does not persist another source's caller normalization during commit"`
+- Metrics changed:
+  - targeted deterministic source-sync regressions: 2/2 passed
+  - semantic quality metrics: unchanged and not rerun
+- Regressions or accepted exceptions:
+  - serialization is process-global but intentionally local to one Node.js process; separate OS
+    processes writing the same managed sync directory still require an external filesystem lease
+  - attempt commit and begin/update/complete disconnect or reset transitions use the shared queue;
+    existing generation, transition, settlement, history-coherence, schema, and integrity guards
+    remain authoritative
+- Privacy or retention impact:
+  - none; fixtures contain synthetic revisions and hashes only, and no token, credential, raw source
+    content, production data, telemetry, or retention policy was added or changed
+- Release decision:
+  - allowed for local source-sync reliability after the targeted regression passes
+  - no semantic baseline is required because engine input interpretation, eligibility, filtering,
+    ordering, ranking, and recommendation output contracts are unchanged
+- Rollback method:
+  - remove the process-global directory queue, restore the previous per-repository-instance queue
+    and commit/transition merge-base conditions, and remove the two persistence-invariant
+    regression expectations; no data or schema migration is required
+- Follow-up work:
+  - add a cross-process filesystem lease before permitting multiple writer processes for the same
+    managed root
