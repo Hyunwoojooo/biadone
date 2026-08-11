@@ -28,15 +28,26 @@ final class StatusItemController: NSObject {
         self.setupRequired = setupRequired
         super.init()
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "sparkles.square.filled",
-                accessibilityDescription: "Blabase"
-            )
-            button.image?.isTemplate = true
+            button.image = Self.makeStatusItemImage()
             button.target = self
             button.action = #selector(handleStatusClick)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+    }
+
+    static func makeStatusItemImage(
+        loadSymbol: (_ name: String, _ description: String) -> NSImage? = {
+            NSImage(
+                systemSymbolName: $0,
+                accessibilityDescription: $1
+            )
+        }
+    ) -> NSImage? {
+        let description = "Blabase"
+        let image = loadSymbol("sparkles", description)
+            ?? loadSymbol("circle.fill", description)
+        image?.isTemplate = true
+        return image
     }
 
     @objc private func handleStatusClick() {

@@ -38,7 +38,7 @@ struct LauncherSettingsView: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 10) {
-                Image(systemName: "sparkles.square.filled")
+                Image(systemName: "sparkles")
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(
                         LauncherVisualTokens.actionPrimary(colorScheme)

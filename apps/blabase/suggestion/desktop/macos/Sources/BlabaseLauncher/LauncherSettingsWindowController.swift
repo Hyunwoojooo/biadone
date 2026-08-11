@@ -35,12 +35,16 @@ final class LauncherSettingsWindowController: NSObject, NSWindowDelegate {
         window.title = viewModel.isSetupRequired
             ? "Blabase 시작 설정"
             : "Blabase 설정"
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        LauncherWindowPresenter.shared.present(window)
     }
 
     func close() {
+        LauncherWindowPresenter.shared.cancel(window)
         window.orderOut(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        LauncherWindowPresenter.shared.cancel(window)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
