@@ -4,6 +4,9 @@ import { githubPullRequestActionabilitySchema } from "../connectors/github/actio
 import {
   CODEX_WORK_SIGNAL_NORMALIZER_VERSION,
   GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
   GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
   RUNTIME_SNAPSHOT_ASSESSMENT_CONTRACT,
   RUNTIME_WORK_SIGNAL_BATCH_CONTRACT,
@@ -384,40 +387,106 @@ const githubDeadlineFactsSchema = z
     }
   });
 
-const githubActivityFactsSchema = z
+const githubActivityFactsShape = {
+  activityKind: z.enum([
+    "push",
+    "ref_created",
+    "ref_deleted",
+    "issue_opened",
+    "issue_closed",
+    "issue_reopened",
+    "issue_commented",
+    "pull_request_opened",
+    "pull_request_closed",
+    "pull_request_reopened",
+    "pull_request_merged",
+    "pull_request_reviewed",
+    "pull_request_review_commented"
+  ]),
+  repositoryFullName: z.string().min(1).max(240),
+  subjectType: z.enum([
+    "repository",
+    "branch",
+    "tag",
+    "issue",
+    "pull_request"
+  ]),
+  subjectNumber: z.number().int().positive().nullable(),
+  subjectTitle: z.string().min(1).max(240).nullable(),
+  refName: z.string().min(1).max(240).nullable(),
+  reviewState: z
+    .enum(["approved", "changes_requested", "commented"])
+    .nullable(),
+  semanticRole: z.literal("activity_only")
+};
+
+const legacyGitHubActivityFactsSchema = z
   .object({
-    activityKind: z.enum([
-      "push",
-      "ref_created",
-      "ref_deleted",
-      "issue_opened",
-      "issue_closed",
-      "issue_reopened",
-      "issue_commented",
-      "pull_request_opened",
-      "pull_request_closed",
-      "pull_request_reopened",
-      "pull_request_merged",
-      "pull_request_reviewed",
-      "pull_request_review_commented"
-    ]),
-    repositoryFullName: z.string().min(1).max(240),
-    subjectType: z.enum([
-      "repository",
-      "branch",
-      "tag",
-      "issue",
-      "pull_request"
-    ]),
-    subjectNumber: z.number().int().positive().nullable(),
-    subjectTitle: z.string().min(1).max(240).nullable(),
-    refName: z.string().min(1).max(240).nullable(),
-    reviewState: z
-      .enum(["approved", "changes_requested", "commented"])
-      .nullable(),
-    semanticRole: z.literal("activity_only")
+    ...githubActivityFactsShape,
+    artifactId: z.never().optional()
   })
   .strict();
+
+const githubActivityV4FactsSchema = z
+  .object({
+    ...githubActivityFactsShape,
+    artifactId: z.string().regex(/^artifact_[a-f0-9]{32}$/).nullable()
+  })
+  .strict()
+  .superRefine((facts, context) => {
+    if (
+      (facts.activityKind === "push") !==
+      (facts.artifactId !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifactId"],
+        message:
+          "GitHub v4 pushes require an opaque artifact ID and other activities require null."
+      });
+    }
+  });
+
+const githubActivityV5FactsSchema = z
+  .object({
+    ...githubActivityFactsShape,
+    artifactId: z.string().regex(/^artifact_[a-f0-9]{32}$/).nullable(),
+    nativeSubjectId: z
+      .string()
+      .regex(/^github:object:[1-9][0-9]*$/)
+      .nullable()
+  })
+  .strict()
+  .superRefine((facts, context) => {
+    if (
+      (facts.activityKind === "push") !==
+      (facts.artifactId !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifactId"],
+        message:
+          "GitHub v5 pushes require an opaque artifact ID and other activities require null."
+      });
+    }
+    const hasWorkItemSubject =
+      facts.subjectType === "issue" ||
+      facts.subjectType === "pull_request";
+    if (hasWorkItemSubject !== (facts.nativeSubjectId !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["nativeSubjectId"],
+        message:
+          "GitHub v5 work-item activity requires an exact native subject identity."
+      });
+    }
+  });
+
+const githubActivityFactsSchema = z.union([
+  githubActivityV5FactsSchema,
+  githubActivityV4FactsSchema,
+  legacyGitHubActivityFactsSchema
+]);
 
 const codexConversationReasonCodeSchema = z.enum([
   "CONTENT_MODE_DISABLED",
@@ -646,7 +715,10 @@ export const githubWorkItemSignalSchema = z
     source: z.literal("github"),
     normalizerVersion: z.enum([
       GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
-      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
     ]),
     subjectType: z.literal("work_item"),
     kind: z.literal("work_item_observation"),
@@ -668,7 +740,10 @@ export const githubDeadlineSignalSchema = z
     source: z.literal("github"),
     normalizerVersion: z.enum([
       GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
-      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
     ]),
     subjectType: z.literal("work_item"),
     kind: z.literal("deadline_observation"),
@@ -690,7 +765,10 @@ export const githubActivitySignalSchema = z
     source: z.literal("github"),
     normalizerVersion: z.enum([
       GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
-      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+      GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
     ]),
     subjectType: z.literal("source_activity"),
     kind: z.literal("activity_observation"),
@@ -768,6 +846,38 @@ export const runtimeWorkSignalSchema = z
         path: ["facts", "actionability"],
         message: "Legacy GitHub signals cannot contain v3 actionability facts."
       });
+    }
+    if (signal.kind === "activity_observation") {
+      const hasArtifactFact = "artifactId" in signal.facts;
+      const usesPushArtifactNormalizer =
+        signal.normalizerVersion ===
+          GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION ||
+        signal.normalizerVersion ===
+          GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION ||
+        signal.normalizerVersion ===
+          GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION;
+      if (hasArtifactFact !== usesPushArtifactNormalizer) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["facts", "artifactId"],
+          message:
+            "GitHub activity artifact facts must match the snapshot normalizer version."
+        });
+      }
+      const hasNativeSubjectFact = "nativeSubjectId" in signal.facts;
+      const usesNativeSubjectNormalizer =
+        signal.normalizerVersion ===
+          GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION ||
+        signal.normalizerVersion ===
+        GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION;
+      if (hasNativeSubjectFact !== usesNativeSubjectNormalizer) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["facts", "nativeSubjectId"],
+          message:
+            "GitHub activity native subject facts must match the snapshot normalizer version."
+        });
+      }
     }
     if (
       signal.kind === "work_item_observation" &&
@@ -1063,9 +1173,15 @@ export const runtimeWorkSignalBatchSchema = z
     }
     const expectedNormalizerVersion =
       batch.source === "github"
-        ? batch.sourceSchemaVersion === "github-snapshot-v3"
-          ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
-          : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
+        ? batch.sourceSchemaVersion === "github-snapshot-v6"
+          ? GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
+          : batch.sourceSchemaVersion === "github-snapshot-v5"
+            ? GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION
+            : batch.sourceSchemaVersion === "github-snapshot-v4"
+              ? GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION
+              : batch.sourceSchemaVersion === "github-snapshot-v3"
+                ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+                : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
         : CODEX_WORK_SIGNAL_NORMALIZER_VERSION;
     if (batch.normalizerVersion !== expectedNormalizerVersion) {
       context.addIssue({

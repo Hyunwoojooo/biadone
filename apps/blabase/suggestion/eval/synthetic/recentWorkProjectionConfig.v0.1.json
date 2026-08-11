@@ -1,0 +1,76 @@
+{
+  "version": "recent-work-projection-config-v0.1",
+  "purpose": "targeted_synthetic_repository_scope_recent_work_projection_evaluation_only",
+  "lifecycle": {
+    "state": "mutable",
+    "configSha256": null,
+    "immutableRef": null
+  },
+  "fixtureDefaults": {
+    "asOf": "2026-08-10T12:00:00.000Z",
+    "pushOccurredAt": "2026-08-10T11:00:00.000Z",
+    "localGitFetchedAt": "2026-08-10T11:59:00.000Z",
+    "focusLevel": "exact_task",
+    "focusKind": "github_push",
+    "focusCurrentness": "current",
+    "focusCompleteness": "complete",
+    "eventCurrentness": "current",
+    "eventCompleteness": "complete",
+    "eventFreshness": "current",
+    "eventAttentionCapability": "focus_selector",
+    "linkMode": "exact",
+    "trackingState": "ahead",
+    "presentationInput": "present",
+    "displayLabel": "Synthetic recent repository work"
+  },
+  "trackingMatrices": {
+    "in_sync": { "aheadCount": 0, "behindCount": 0 },
+    "ahead": { "aheadCount": 2, "behindCount": 0 },
+    "behind": { "aheadCount": 0, "behindCount": 3 },
+    "diverged": { "aheadCount": 2, "behindCount": 3 },
+    "not_configured": { "aheadCount": null, "behindCount": null },
+    "unborn": { "aheadCount": null, "behindCount": null },
+    "unavailable": { "aheadCount": null, "behindCount": null }
+  },
+  "recency": {
+    "focusMaxAgeMs": 86400000,
+    "localGitMaxAgeMs": 300000,
+    "maxFutureSkewMs": 60000
+  },
+  "scopeTruth": {
+    "recentWorkContract": "recent-work-projection-v0.1",
+    "correlationBasis": "repository_scope_only",
+    "presentation": "display_only",
+    "defaultMode": "shadow",
+    "actorOriginProvenanceAvailable": false,
+    "exactCommitEqualityAvailable": false,
+    "continuationObservationContextOfferAvailable": false,
+    "heartbeatOrResumeActionAvailable": false,
+    "fourModeRolloutAvailable": false,
+    "appliedSelectionAvailable": false,
+    "monitorV07OrReplayV4Available": false
+  },
+  "releaseGates": {
+    "allCasesMustPass": true,
+    "allFivePublicTrackingStatesRequired": true,
+    "presentAndShadowCoverageRequired": true,
+    "deterministicHashFailureMax": 0,
+    "privacyLeakageMax": 0,
+    "activeInputMutationMax": 0,
+    "candidateUniverseDiffMax": 0,
+    "eligibilityDiffMax": 0,
+    "activeSelectionDiffMax": 0,
+    "activeResultHashDiffMax": 0,
+    "recentWorkEffectViolationMax": 0,
+    "humanReviewRequiredBeforeFreezeOrRollout": true
+  },
+  "privacy": {
+    "containsProductionData": false,
+    "rawConversationAllowed": false,
+    "credentialOrTokenAllowed": false,
+    "absoluteLocalPathAllowed": false,
+    "rawBranchOrCommitAllowed": false,
+    "remoteTelemetryAdded": false,
+    "artifactRetention": "private_local_evaluation_artifact"
+  }
+}

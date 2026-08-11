@@ -7,9 +7,12 @@ import {
   isLocalAttentionRequest
 } from "../../../../src/attention/access";
 import {
+  WorkContextStoreError,
+  confirmStoredRepositoryScopeProposal,
   confirmStoredProjectMapping,
   createStoredProjectIdentity,
   readStoredSourceScopeDiscovery,
+  readStoredRepositoryScopeProposals,
   readWorkContextRegistry,
   removeStoredProjectMapping,
   sourceScopeRefSchema
@@ -22,6 +25,16 @@ const mutationSchema = z.discriminatedUnion("action", [
   z
     .object({
       action: z.literal("create_project")
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("confirm_repository_scope_proposal"),
+      proposalGroupId: z
+        .string()
+        .regex(/^repository_scope_group_[a-f0-9]{32}$/),
+      projectId: z.string().regex(/^project_[a-f0-9]{32}$/),
+      explicitUserConfirmation: z.literal(true)
     })
     .strict(),
   z
@@ -85,6 +98,49 @@ export async function POST(request: Request) {
         confirmedAt: now,
         explicitUserConfirmation: true
       });
+    } else if (input.action === "confirm_repository_scope_proposal") {
+      const registryRead = await readWorkContextRegistry();
+      if (registryRead.status !== "available") {
+        return noStoreJson(
+          { status: "error", code: "STALE_MAPPING_PROPOSAL" },
+          409
+        );
+      }
+      const resolution = await readStoredRepositoryScopeProposals({
+        asOf: now,
+        registry: registryRead.value
+      });
+      const group =
+        resolution.status === "ready"
+          ? resolution.groups.find(
+              (candidate) =>
+                candidate.proposalGroupId === input.proposalGroupId
+            )
+          : undefined;
+      const project = registryRead.value.projects.find(
+        (candidate) =>
+          candidate.projectId === input.projectId &&
+          candidate.archivedAt === null
+      );
+      if (
+        group === undefined ||
+        project === undefined ||
+        (group.suggestedProjectId !== null &&
+          group.suggestedProjectId !== input.projectId)
+      ) {
+        return noStoreJson(
+          { status: "error", code: "STALE_MAPPING_PROPOSAL" },
+          409
+        );
+      }
+      await confirmStoredRepositoryScopeProposal({
+        githubScope: group.scopes.github,
+        codexScope: group.scopes.codex,
+        projectId: input.projectId,
+        confirmedAt: now,
+        expectedRegistrySha256: registryRead.value.registrySha256,
+        explicitUserConfirmation: true
+      });
     } else {
       await removeStoredProjectMapping({
         scope: input.scope,
@@ -93,7 +149,16 @@ export async function POST(request: Request) {
       });
     }
     return registryResponse();
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof WorkContextStoreError &&
+      error.code === "STALE_REGISTRY"
+    ) {
+      return noStoreJson(
+        { status: "error", code: "STALE_MAPPING_PROPOSAL" },
+        409
+      );
+    }
     return noStoreJson(
       { status: "error", code: "CONTEXT_MUTATION_FAILED" },
       500
@@ -111,13 +176,21 @@ async function registryResponse() {
   }
   const registryValue =
     registry.status === "available" ? registry.value : null;
-  const discovery = await readStoredSourceScopeDiscovery({
-    registry: registryValue
-  });
+  const asOf = new Date().toISOString();
+  const [discovery, repositoryScopeProposalResolution] =
+    await Promise.all([
+      readStoredSourceScopeDiscovery({ registry: registryValue }),
+      readStoredRepositoryScopeProposals({
+        asOf,
+        registry: registryValue
+      })
+    ]);
   return noStoreJson({
     status: "ready",
     registry: registryValue,
-    discovery
+    discovery,
+    repositoryScopeProposals:
+      repositoryScopeProposalResolution.groups
   });
 }
 

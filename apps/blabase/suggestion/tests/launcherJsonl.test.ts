@@ -33,6 +33,27 @@ describe("launcher JSONL IPC", () => {
     expect(service.handle).toHaveBeenCalledTimes(1);
   });
 
+  it("parses status.get without changing the v1 IPC envelope", async () => {
+    const service: Pick<LauncherService, "handle"> = {
+      handle: vi.fn(async () => statusResult())
+    };
+
+    await expect(
+      processLauncherIpcLine(
+        JSON.stringify(statusRequest("request-status")),
+        service
+      )
+    ).resolves.toEqual({
+      contract: LAUNCHER_IPC_CONTRACT,
+      requestId: "request-status",
+      ok: true,
+      result: statusResult()
+    });
+    expect(service.handle).toHaveBeenCalledWith(
+      statusRequest("request-status")
+    );
+  });
+
   it("rejects invalid JSON without reflecting private input", async () => {
     const service = serviceStub();
     const privateText = "private-prompt-that-must-not-be-reflected";
@@ -76,6 +97,13 @@ describe("launcher JSONL IPC", () => {
           commandId: COMMAND_ID,
           command: "open arbitrary target"
         }
+      }
+    },
+    {
+      label: "extra status parameters",
+      request: {
+        ...statusRequest("request-status-extra"),
+        params: { dataRoot: "/private/root" }
       }
     }
   ])("rejects $label", async ({ request }) => {
@@ -272,12 +300,31 @@ function commandRequest(requestId: string) {
   };
 }
 
+function statusRequest(requestId: string) {
+  return {
+    contract: LAUNCHER_IPC_CONTRACT,
+    requestId,
+    method: "status.get" as const,
+    params: {}
+  };
+}
+
 function executionResult() {
   return {
     contract: LAUNCHER_EXECUTION_CONTRACT,
     kind: "focus_or_resume" as const,
     commandId: COMMAND_ID,
     status: "completed" as const
+  };
+}
+
+function statusResult() {
+  return {
+    contract: "blabase-launcher-status-v1" as const,
+    rootId: `root_${"a".repeat(32)}`,
+    sourceMode: "managed" as const,
+    mutationAuthority: "launcher_agent" as const,
+    syncRevision: "pipeline:0123456789abcdef0123456789abcdef"
   };
 }
 

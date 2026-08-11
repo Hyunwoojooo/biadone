@@ -159,6 +159,88 @@ afterEach(() => {
 });
 
 describe("OAuth callback source synchronization", () => {
+  it.each([
+    [
+      "Calendar",
+      calendarCallback,
+      "/api/connectors/google-calendar/callback",
+      GOOGLE_CALENDAR_STATE_COOKIE,
+      "calendar",
+      "source-google-calendar"
+    ],
+    [
+      "Notion",
+      notionCallback,
+      "/api/connectors/notion/callback",
+      NOTION_STATE_COOKIE,
+      "notion",
+      "source-notion"
+    ]
+  ] as const)(
+    "returns a state-bound %s cancellation to its canonical source target",
+    async (
+      _label,
+      callback,
+      pathname,
+      cookieName,
+      statusQuery,
+      anchor
+    ) => {
+      const response = await callback(
+        callbackRequest(pathname, cookieName, {
+          code: null,
+          error: "access_denied"
+        })
+      );
+
+      expectSourceRedirect(
+        response,
+        statusQuery,
+        "cancelled",
+        anchor
+      );
+      expect(syncRuntimeSources).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    [
+      "Calendar",
+      calendarCallback,
+      "/api/connectors/google-calendar/callback",
+      GOOGLE_CALENDAR_STATE_COOKIE,
+      "calendar",
+      "source-google-calendar"
+    ],
+    [
+      "Notion",
+      notionCallback,
+      "/api/connectors/notion/callback",
+      NOTION_STATE_COOKIE,
+      "notion",
+      "source-notion"
+    ]
+  ] as const)(
+    "returns a %s state mismatch to its canonical source target",
+    async (
+      _label,
+      callback,
+      pathname,
+      cookieName,
+      statusQuery,
+      anchor
+    ) => {
+      const response = await callback(
+        callbackRequest(pathname, cookieName, {
+          queryState: "wrong-state"
+        })
+      );
+
+      expectSourceRedirect(response, statusQuery, "failed", anchor);
+      expect(syncRuntimeSources).not.toHaveBeenCalled();
+    }
+  );
+
   it("stores Calendar tokens and collects through SourceSyncCoordinator", async () => {
     const tokens = calendarTokens();
     vi.mocked(exchangeAuthorizationCode).mockResolvedValue(tokens);
@@ -199,11 +281,12 @@ describe("OAuth callback source synchronization", () => {
     ).toBeLessThan(
       vi.mocked(syncRuntimeSources).mock.invocationCallOrder[0]!
     );
-    expect(
-      new URL(requiredHeader(response, "location")).searchParams.get(
-        "calendar"
-      )
-    ).toBe("connected");
+    expectSourceRedirect(
+      response,
+      "calendar",
+      "connected",
+      "source-google-calendar"
+    );
   });
 
   it("stores Notion tokens and collects through SourceSyncCoordinator", async () => {
@@ -240,11 +323,12 @@ describe("OAuth callback source synchronization", () => {
     ).toBeLessThan(
       vi.mocked(syncRuntimeSources).mock.invocationCallOrder[0]!
     );
-    expect(
-      new URL(requiredHeader(response, "location")).searchParams.get(
-        "notion"
-      )
-    ).toBe("connected");
+    expectSourceRedirect(
+      response,
+      "notion",
+      "connected",
+      "source-notion"
+    );
   });
 
   it("keeps the Notion connection but marks initial sync pending when the coordinator records failure", async () => {
@@ -270,11 +354,12 @@ describe("OAuth callback source synchronization", () => {
       )
     );
 
-    expect(
-      new URL(requiredHeader(response, "location")).searchParams.get(
-        "notion"
-      )
-    ).toBe("connected_sync_pending");
+    expectSourceRedirect(
+      response,
+      "notion",
+      "connected_sync_pending",
+      "source-notion"
+    );
   });
 
   it("does not expose replacement credentials when the durable lineage reset fails", async () => {
@@ -294,21 +379,30 @@ describe("OAuth callback source synchronization", () => {
 
     expect(replaceStoredNotionConnection).not.toHaveBeenCalled();
     expect(syncRuntimeSources).not.toHaveBeenCalled();
-    expect(
-      new URL(requiredHeader(response, "location")).searchParams.get(
-        "notion"
-      )
-    ).toBe("failed");
+    expectSourceRedirect(
+      response,
+      "notion",
+      "failed",
+      "source-notion"
+    );
   });
 });
 
 function callbackRequest(
   pathname: string,
-  cookieName: string
+  cookieName: string,
+  options: {
+    queryState?: string;
+    code?: string | null;
+    error?: string;
+  } = {}
 ): NextRequest {
   const url = new URL(`http://localhost:3102${pathname}`);
-  url.searchParams.set("state", "expected-state");
-  url.searchParams.set("code", "oauth-code");
+  url.searchParams.set("state", options.queryState ?? "expected-state");
+  if (options.code !== null) {
+    url.searchParams.set("code", options.code ?? "oauth-code");
+  }
+  if (options.error) url.searchParams.set("error", options.error);
   return new NextRequest(url, {
     headers: {
       cookie: `${cookieName}=expected-state`
@@ -379,4 +473,17 @@ function requiredHeader(response: Response, name: string): string {
   const value = response.headers.get(name);
   if (!value) throw new Error(`missing ${name} header`);
   return value;
+}
+
+function expectSourceRedirect(
+  response: Response,
+  statusQuery: string,
+  status: string,
+  anchor: string
+): void {
+  const location = new URL(requiredHeader(response, "location"));
+  expect(location.pathname).toBe("/sources");
+  expect(location.searchParams.size).toBe(1);
+  expect(location.searchParams.get(statusQuery)).toBe(status);
+  expect(location.hash).toBe(`#${anchor}`);
 }

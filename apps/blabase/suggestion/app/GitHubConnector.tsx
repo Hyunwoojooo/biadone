@@ -11,6 +11,7 @@ import type {
   GitHubConnectionState,
   GitHubTaskKind
 } from "../src/connectors/github/types";
+import { SOURCE_CONNECTION_ANCHORS } from "./sourceNavigation";
 import { SourceSyncMeta } from "./sync/SourceSyncMeta";
 import { invalidateSourceConsumers } from "./sync/invalidationBus";
 import { requestSourceSync } from "./sync/sourceSyncClient";
@@ -172,7 +173,9 @@ export function GitHubConnector() {
 
   return (
     <section
-      className="calendarSection"
+      className="calendarSection sourceConnectorTarget"
+      id={SOURCE_CONNECTION_ANCHORS.github}
+      tabIndex={-1}
       aria-labelledby="github-title"
       aria-busy={isRefreshing || isDisconnecting}
     >
@@ -262,12 +265,17 @@ function GitHubConnectionBody({
   if (connection.status === "unavailable") {
     return (
       <div className="calendarActionBlock">
-        <p>{connection.message}</p>
+        <p role="alert">{connection.message}</p>
         {connection.localUrl ? (
           <a className="calendarPrimaryButton" href={connection.localUrl}>
-            로컬 주소로 열기
+            로컬 연결 화면 열기
           </a>
-        ) : null}
+        ) : (
+          <p className="calendarMeta">
+            이 개발 베타에서는 Blabase 운영자가 GitHub App을 먼저 준비해야
+            계정 연결을 시작할 수 있습니다.
+          </p>
+        )}
       </div>
     );
   }
@@ -440,6 +448,12 @@ function githubNotice(status: string): GitHubNotice {
         tone: "neutral",
         message:
           "GitHub는 연결됐습니다. 선택한 저장소를 다시 확인하고 있습니다."
+      };
+    case "installation_required":
+      return {
+        tone: "neutral",
+        message:
+          "GitHub 사용자 승인이 완료되었습니다. 확인할 저장소를 선택해주세요."
       };
     case "installation_updated":
       return {

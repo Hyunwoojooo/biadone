@@ -1,5 +1,6 @@
 import {
   attachWorkArtifactAttribution,
+  createGitHubArtifactId,
   createEmptyWorkArtifactAttributionStore,
   resolveManagedCodexArtifactRelations,
   type ManagedCodexArtifactRelationProjection
@@ -14,7 +15,8 @@ import { normalizeGitHubSnapshotToWorkSignals } from "../../src/connectors/githu
 import type {
   GitHubPullRequestActionabilitySignal,
   GitHubSnapshot,
-  GitHubTaskSignal
+  GitHubTaskSignal,
+  GitHubUserActivitySignal
 } from "../../src/connectors/github/types";
 import {
   confirmProjectMapping,
@@ -115,6 +117,8 @@ type ManagedFixtureIdentity = {
 export type ActiveAttentionFixtureOptions = {
   githubKind?: GitHubTaskSignal["kind"] | "none";
   githubAvailability?: "available" | "unavailable";
+  githubApiVersion?: string;
+  githubFreshnessPolicyVersion?: string;
   githubObjectId?: number;
   githubTitle?: string;
   bindingGitHubObjectId?: number;
@@ -135,6 +139,8 @@ export type ActiveAttentionFixtureOptions = {
     | "none"
     | "running"
     | "failed"
+    | "repeated_failed"
+    | "failed_gap"
     | "run_failed"
     | "completed"
     | "recovered"
@@ -147,6 +153,7 @@ export type ActiveAttentionFixtureOptions = {
   workflowClosure?: "completed" | "skipped" | null;
   projectArchived?: boolean;
   artifactKind?: "github_commit" | "github_pull_request" | null;
+  githubPushOccurredAt?: string | null;
   managedCompletedAt?: string;
   managedFailureAt?: string;
   primaryOutcome?: string | null;
@@ -162,34 +169,42 @@ export function activeAttentionFixture(
   const githubBatch =
     (options.githubAvailability ?? "available") === "unavailable"
       ? null
-      : normalizeGitHub([
-          ...(githubKind === "none"
-            ? []
-            : [
-                githubTask({
-                  id: options.githubObjectId ?? 501,
-                  kind: githubKind,
-                  number: 42,
-                  title: options.githubTitle ?? "Synthetic linked task",
-                  repositoryId: 101,
-                  repositoryFullName: "synthetic/private",
-                  deadlineAt: options.deadlineAt ?? null,
-                  actionability: options.githubActionability
-                })
-              ]),
-          ...(options.additionalGitHubTasks ?? []).map((task) =>
-            githubTask({
-              id: task.id,
-              kind: task.kind,
-              number: task.number,
-              title: task.title ?? "Synthetic linked task",
-              repositoryId: task.repositoryId ?? 101,
-              repositoryFullName:
-                task.repositoryFullName ?? "synthetic/private",
-              deadlineAt: task.deadlineAt ?? null
-            })
-          )
-        ], options.projectArchived ? null : ACTIVE_FIXTURE_PROJECT_ID);
+      : normalizeGitHub(
+          [
+            ...(githubKind === "none"
+              ? []
+              : [
+                  githubTask({
+                    id: options.githubObjectId ?? 501,
+                    kind: githubKind,
+                    number: 42,
+                    title: options.githubTitle ?? "Synthetic linked task",
+                    repositoryId: 101,
+                    repositoryFullName: "synthetic/private",
+                    deadlineAt: options.deadlineAt ?? null,
+                    actionability: options.githubActionability
+                  })
+                ]),
+            ...(options.additionalGitHubTasks ?? []).map((task) =>
+              githubTask({
+                id: task.id,
+                kind: task.kind,
+                number: task.number,
+                title: task.title ?? "Synthetic linked task",
+                repositoryId: task.repositoryId ?? 101,
+                repositoryFullName:
+                  task.repositoryFullName ?? "synthetic/private",
+                deadlineAt: task.deadlineAt ?? null
+              })
+            )
+          ],
+          options.projectArchived ? null : ACTIVE_FIXTURE_PROJECT_ID,
+          options.githubPushOccurredAt
+            ? [githubPushActivity(options.githubPushOccurredAt)]
+            : [],
+          options.githubApiVersion,
+          options.githubFreshnessPolicyVersion
+        );
   const contextRegistry = mappedContextRegistry(
     options.githubProjectMismatch ?? false,
     options.projectArchived ?? false
@@ -354,6 +369,9 @@ export function activeAttentionFixture(
     claims,
     eligibilityProjection,
     workflowProjection,
+    bindingStore,
+    artifactStore,
+    contextRegistry,
     bindingId: bindingResult?.binding.bindingId ?? null,
     privateCodexThreadSentinel: THREAD_ID
   };
@@ -393,11 +411,24 @@ function buildManagedData(
     };
   }
   const specs: EventSpec[] =
-    scenario === "failed"
+    scenario === "failed" ||
+    scenario === "repeated_failed" ||
+    scenario === "failed_gap"
       ? [
           { kind: "stream", sourceEvent: "stream_connected", at: "2026-08-02T02:55:00.000Z" },
           { kind: "turn_started", at: "2026-08-02T02:56:00.000Z" },
-          { kind: "turn_completed", state: "failed", at: managedFailureAt }
+          { kind: "turn_completed", state: "failed", at: managedFailureAt },
+          ...(scenario === "repeated_failed"
+            ? [
+                {
+                  kind: "turn_completed" as const,
+                  state: "failed" as const,
+                  at: new Date(
+                    Date.parse(managedFailureAt) + 30_000
+                  ).toISOString()
+                }
+              ]
+            : [])
         ]
       : scenario === "run_failed"
         ? [
@@ -438,7 +469,10 @@ function buildManagedData(
     identity: PRIMARY_MANAGED_IDENTITY
   });
   const run = publicRun(history, bindingId, PRIMARY_MANAGED_IDENTITY, {
-    continuity: scenario === "gap" ? "gap_detected" : "continuous",
+    continuity:
+      scenario === "gap" || scenario === "failed_gap"
+        ? "gap_detected"
+        : "continuous",
     ...(scenario === "offline"
       ? {
           streamState: "disconnected" as const,
@@ -631,12 +665,17 @@ function nativeObservation(
 
 function normalizeGitHub(
   tasks: GitHubTaskSignal[],
-  projectId: string | null
+  projectId: string | null,
+  activities: GitHubUserActivitySignal[] = [],
+  apiVersion?: string,
+  freshnessPolicyVersion: string = SNAPSHOT_VALIDITY_POLICY_VERSION
 ) {
-  const result = normalizeGitHubSnapshotToWorkSignals(githubSnapshot(tasks), {
+  const result = normalizeGitHubSnapshotToWorkSignals(
+    githubSnapshot(tasks, activities, apiVersion),
+    {
     asOf: ACTIVE_FIXTURE_AS_OF,
     freshnessPolicy: {
-      version: SNAPSHOT_VALIDITY_POLICY_VERSION,
+      version: freshnessPolicyVersion,
       maxAgeMsBySource: {
         github: 10 * 60 * 1_000,
         codex: 10 * 60 * 1_000
@@ -646,14 +685,19 @@ function normalizeGitHub(
     contextRegistrySha256: null,
     resolveProjectId: (sourceScopeId) =>
       sourceScopeId === "repository:101" ? projectId : null
-  });
+    }
+  );
   if (result.status !== "normalized") {
     throw new TypeError("Synthetic GitHub batch did not normalize.");
   }
   return result.batch;
 }
 
-function githubSnapshot(tasks: GitHubTaskSignal[]): GitHubSnapshot {
+function githubSnapshot(
+  tasks: GitHubTaskSignal[],
+  activities: GitHubUserActivitySignal[],
+  apiVersion = "2022-11-28"
+): GitHubSnapshot {
   const authored = tasks.filter(
     (task) => task.kind === "authored_pull_request"
   );
@@ -661,20 +705,25 @@ function githubSnapshot(tasks: GitHubTaskSignal[]): GitHubSnapshot {
     (task) => task.actionability !== undefined
   );
   const usesActionabilityV3 = actionabilityCollected.length > 0;
+  const usesPushArtifactV4 = activities.some(
+    (activity) => activity.artifactId !== undefined
+  );
   return {
-    schemaVersion: usesActionabilityV3
-      ? "github-snapshot-v3"
-      : "github-snapshot-v2",
+    schemaVersion: usesPushArtifactV4
+      ? "github-snapshot-v4"
+      : usesActionabilityV3
+        ? "github-snapshot-v3"
+        : "github-snapshot-v2",
     appClientId: "synthetic-client",
     appSlug: "synthetic-app",
-    apiVersion: "2022-11-28",
+    apiVersion,
     fetchedAt: FETCHED_AT,
     user: { id: 1, login: "synthetic" },
     truncated: false,
     activityWindowStart: "2026-07-25T00:00:00.000Z",
     activitiesState: "available",
     activitiesTruncated: false,
-    ...(usesActionabilityV3
+    ...(usesActionabilityV3 || usesPushArtifactV4
       ? {
           actionabilityCoverage: {
             state:
@@ -725,7 +774,31 @@ function githubSnapshot(tasks: GitHubTaskSignal[]): GitHubSnapshot {
       updatedAt: FETCHED_AT
     })),
     tasks,
-    activities: []
+    activities
+  };
+}
+
+function githubPushActivity(
+  occurredAt: string
+): GitHubUserActivitySignal {
+  return {
+    id: "synthetic-push-event",
+    source: "github",
+    kind: "user_activity",
+    activityKind: "push",
+    repositoryId: 101,
+    repositoryFullName: "synthetic/private",
+    occurredAt,
+    subjectType: "branch",
+    subjectNumber: null,
+    subjectTitle: null,
+    refName: "main",
+    reviewState: null,
+    artifactId: createGitHubArtifactId({
+      kind: "github_commit",
+      repositoryId: 101,
+      oid: "a".repeat(40)
+    })
   };
 }
 

@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import type { NotionConnectionState } from "../src/connectors/notion/types";
+import { SOURCE_CONNECTION_ANCHORS } from "./sourceNavigation";
 import { SourceSyncMeta } from "./sync/SourceSyncMeta";
 import { invalidateSourceConsumers } from "./sync/invalidationBus";
 import { requestSourceSync } from "./sync/sourceSyncClient";
@@ -158,7 +159,9 @@ export function NotionConnector() {
 
   return (
     <section
-      className="calendarSection"
+      className="calendarSection sourceConnectorTarget"
+      id={SOURCE_CONNECTION_ANCHORS.notion}
+      tabIndex={-1}
       aria-labelledby="notion-title"
       aria-busy={isRefreshing || isDisconnecting}
     >
@@ -211,7 +214,11 @@ function NotionStatusBadge({
         ? "확인 중"
         : connected
           ? "연결됨"
-          : "연결 안 됨"}
+          : connection.status === "unavailable"
+            ? "설정 필요"
+            : connection.status === "reauthorization_required"
+              ? "다시 연결 필요"
+              : "연결 안 됨"}
     </span>
   );
 }
@@ -240,10 +247,17 @@ function NotionConnectionBody({
   if (connection.status === "unavailable") {
     return (
       <div className="calendarActionBlock">
-        <p>{connection.message}</p>
-        <a className="calendarPrimaryButton" href="http://localhost:3102">
-          로컬 주소로 열기
-        </a>
+        <p role="alert">{connection.message}</p>
+        {connection.localUrl ? (
+          <a className="calendarPrimaryButton" href={connection.localUrl}>
+            로컬 연결 화면 열기
+          </a>
+        ) : (
+          <p className="calendarMeta">
+            이 개발 베타에서는 Blabase 운영자가 Notion OAuth 앱을 먼저
+            준비해야 계정 연결을 시작할 수 있습니다.
+          </p>
+        )}
       </div>
     );
   }

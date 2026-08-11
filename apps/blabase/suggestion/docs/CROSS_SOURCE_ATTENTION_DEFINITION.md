@@ -1608,3 +1608,85 @@ v0.1은 GitHub/Codex normalized signal을 Developer Work Ledger와 Candidate Fun
 때만 후보가 되며, Codex historical OpenLoopClaim은 currentness가 검증되기 전까지
 private Developer Work Ledger에만 남고 funnel의 verified 단계에서 rejected되어 추천
 후보가 되지 않는다. underlying Codex observation만 기존 overview 경계를 유지한다.
+
+---
+
+## 21. Current WorkStream / Current Focus shadow v0.1
+
+Current Focus는 “사용자가 가장 최근 어떤 작업 흐름에 있었는가”를 답하고,
+Active Attention은 “사용자가 다음에 어디에 개입해야 하는가”를 답한다. 두 결과는
+의도적으로 분리하며 정상 managed Codex 실행은 Focus가 될 수 있지만 사용자 개입이
+없으면 Attention 후보가 아니다.
+
+```text
+same-asOf GitHub batch + managed Codex direct evidence
+→ recent-meaningful-event-projection-v0.1
+→ current-workstream-projection-v0.1
+→ current-focus-projection-v0.1
+→ 기존 claim authority / eligibility / Active Attention
+→ focus-aware-attention-shadow-v0.1
+```
+
+이 rollout의 내부 계약은 Recent Event schema/rule/ID
+`recent-meaningful-event-schema-v0.2` /
+`github-managed-codex-meaningful-event-rule-v0.5` /
+`recent-meaningful-event-id-v0.2`, WorkStream reconstruction/ID
+`exact-identity-current-workstream-v0.5` / `current-workstream-id-v0.5`, Focus selection
+`recent-direct-current-focus-policy-v0.2`, shadow schema/resolver
+`focus-aware-attention-shadow-schema-v0.2` /
+`focus-aware-attention-shadow-resolver-v0.2`를 사용한다. live/monitor/replay
+계약은 각각 v0.6/v0.6/v3이며 released replay v2의 Active-only 해시 경계는
+그대로 유지한다.
+
+표시용 `ConnectorTimeline`은 이 경로의 입력이 아니다. Notion과 Calendar, 일반 Codex
+inventory/history는 WorkStream·Focus·후보·blocker·owner·completion을 만들지 못한다.
+Codex inventory는 이미 확인된 프로젝트의 bounded historical context로만 남는다.
+
+WorkStream 연결은 동일 native GitHub object, 사용자-confirmed project mapping의
+project-level 범위, active explicit Codex–GitHub relation/binding, verified artifact
+relation만 허용한다. 제목·prompt·경로·시간 근접성은 identity edge가 아니다. exact
+task를 증명하지 못하면 project-level Focus까지만 반환한다.
+
+GitHub `PushEvent`의 raw commit SHA는 `github-snapshot-v6` normalization 즉시
+`github-native-activity-identity-normalizer-v0.6`의 opaque artifact ID로 바꾸고
+폐기한다. v5/v0.5와 v4/v0.4 snapshot/normalizer는 read compatibility를 유지한다.
+기존 Artifact Relation v0.1은 commit을 계속 `not_observed`로 두어 Active graph과
+replay v2를 변경하지 않는다. Push가 exact WorkStream evidence가 되려면
+Recent Event projection이 같은 GitHub v6 batch의 opaque artifact ID/repository scope,
+active explicit artifact attribution, exact active work relation을 모두 교차 검증해야
+한다. 브랜치·시각·제목만 같은 서로 다른 commit/task는 합치지 않는다.
+
+v6 Issue/PR lifecycle activity는 current task의 exact repository/number mapping을
+우선 사용하고, 없으면 bounded authenticated Issues REST lookup으로 search task와 같은
+canonical object ID를 확인한다. lookup 실패나 한도 도달은 partial/truncated로 fail
+closed하고 해당 event를 제외한다. public Focus projection에는 opaque identity만
+내보낸다. 그래서 open-only task가 현재 목록에서 사라진 후에도 explicit binding,
+attributed push, managed run, close/merge를 하나의 exact WorkStream으로 유지한다.
+pre-canonical v5 activity는 읽되 raw PR event ID를 exact disappeared-task bridge로
+신뢰하지 않는다.
+
+GitHub Issue/PR은 repository/type/number native lifecycle anchor를 transient claim보다
+먼저 사용해 open → close/merge 후에도 WorkStream ID와 유효한 explicit
+Focus confirmation을 유지한다. 동일 managed failure 반복은 privacy-safe
+fingerprint, 60초 이내, sequence gap 3 이하가 모두 일치할 때만
+deduplicate한다. 최신 meaningful event 1,000개와 diagnostic 2,000개,
+shadow match detail 100개를 보존하고 초과분은 omitted count로 남긴다.
+
+Focus는 유효한 사용자-confirmed WorkStream을 먼저 사용하고, 그렇지 않으면 유일하게
+가장 최신인 direct/current/complete WorkStream을 사용한다. 최신 direct event가 stale,
+partial, conflict이거나 동일 occurredAt 동률이면 더 오래된 event로 fallback하지 않고
+abstain한다. Codex inventory가 더 최신이어도 direct event의 Focus anchor를 밀어내지
+않는다.
+
+현재 rollout은 `current-focus-shadow-rollout-v0.1`이다. 기존 Active Attention 결과,
+후보 universe, eligibility, lane, deadline, trigger safety tier와 result hash는 바뀌지
+않는다. 같은 안전 tier 안에서만 exact Focus match, project match, 기존 순서를 적용한
+counterfactual top을 기록하며 `attentionSelectionEffect="none"`을 유지한다. Focus가
+terminal task, 다른 owner, authority conflict, stale/partial evidence 또는 ineligible
+항목을 복구하는 것은 금지한다.
+
+모든 projection은 같은 `asOf`, GitHub snapshot/batch, managed revision/semantic/run-start,
+relation, artifact, claim authority hash와 schema/rule/policy version을 봉인한다. 불일치는
+sanitized unavailable sidecar로 fail closed하고 기존 Attention을 유지한다. 공개 API와
+monitor에는 opaque identity, safe label과 hash만 내보내며 token, raw Codex thread ID,
+command/prompt/conversation, 전체 local path와 commit SHA를 넣지 않는다.

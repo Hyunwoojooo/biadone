@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { RecentWorkPublicSummary } from "../recentWork";
+
 import {
   phase2AttentionInputSchema,
   phase2CandidateAssessmentSchema,
@@ -18,6 +20,12 @@ import {
 } from "../attentionDecision/contracts";
 import type { AttentionEligibilityShadowProjection } from "../eligibility/contracts";
 import type { DeveloperRuntimePublicSummary } from "../developerSignals/runtimeProjection";
+import type { RecentMeaningfulEventProjection } from "../recentEvents/contracts";
+import type {
+  CurrentFocusProjection,
+  CurrentWorkstreamProjection,
+  FocusAwareAttentionShadowProjection
+} from "../currentFocus/contracts";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
 import {
   ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION,
@@ -45,10 +53,12 @@ import {
   ATTENTION_LIVE_FRESHNESS_POLICY_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION,
+  ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_FOCUS_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
   ATTENTION_LIVE_ORCHESTRATOR_VERSION,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
   ATTENTION_MONITOR_FAILURE_LEGACY_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_FAILURE_V02_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
@@ -56,9 +66,11 @@ import {
   ATTENTION_MONITOR_RUN_CONTRACT,
   ATTENTION_MONITOR_RUN_LEGACY_CONTRACT,
   ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_MONITOR_RUN_V03_CONTRACT,
   ATTENTION_MONITOR_RUN_V02_CONTRACT,
   ATTENTION_REPLAY_INPUT_CONTRACT,
+  ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_STORE_CONTRACT
 } from "./versions";
@@ -275,6 +287,72 @@ const unresolvedWorkContextMonitor = {
   focusState: "none" as const
 };
 
+const unrecordedFocusSelectionMonitor = {
+  currentFocusStatus: null,
+  currentFocusProjectionSha256: null,
+  focusAwareAttentionShadowProjectionSha256: null,
+  actualTopCandidateId: null,
+  counterfactualTopCandidateId: null,
+  wouldSwitch: null,
+  attentionSelectionEffect: "none" as const
+};
+
+export const attentionFocusSelectionMonitorSchema = z
+  .object({
+    currentFocusStatus: z
+      .enum(["selected", "unresolved", "unavailable"])
+      .nullable(),
+    currentFocusProjectionSha256: sha256Schema.nullable(),
+    focusAwareAttentionShadowProjectionSha256:
+      sha256Schema.nullable(),
+    actualTopCandidateId: activeCandidateIdSchema.nullable(),
+    counterfactualTopCandidateId:
+      activeCandidateIdSchema.nullable(),
+    wouldSwitch: z.boolean().nullable(),
+    attentionSelectionEffect: z.literal("none")
+  })
+  .strict()
+  .superRefine((selection, context) => {
+    const recorded = selection.currentFocusStatus !== null;
+    if (
+      recorded !==
+        (selection.currentFocusProjectionSha256 !== null) ||
+      recorded !==
+        (selection.focusAwareAttentionShadowProjectionSha256 !== null) ||
+      recorded !== (selection.wouldSwitch !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Focus selection status, hashes, and switch state must be recorded together."
+      });
+    }
+    if (
+      !recorded &&
+      (selection.actualTopCandidateId !== null ||
+        selection.counterfactualTopCandidateId !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "An unrecorded focus selection cannot claim candidate identities."
+      });
+    }
+    if (
+      recorded &&
+      selection.wouldSwitch !==
+        (selection.actualTopCandidateId !==
+          selection.counterfactualTopCandidateId)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["wouldSwitch"],
+        message:
+          "Focus switch state must match the actual and counterfactual tops."
+      });
+    }
+  });
+
 const legacyCandidateCountsSchema = z
   .object({
     eligible: z.number().int().nonnegative(),
@@ -444,6 +522,7 @@ const attentionMonitorRunStrictSchema = z
       ATTENTION_MONITOR_RUN_V02_CONTRACT,
       ATTENTION_MONITOR_RUN_V03_CONTRACT,
       ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+      ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT,
       ATTENTION_MONITOR_RUN_CONTRACT
     ]),
     runId: stableIdSchema,
@@ -477,6 +556,7 @@ const attentionMonitorRunStrictSchema = z
     orchestratorVersion: z.enum([
       ATTENTION_LIVE_ORCHESTRATOR_LEGACY_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION,
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_FOCUS_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_VERSION,
       ATTENTION_LIVE_ORCHESTRATOR_VERSION
     ]),
@@ -574,6 +654,9 @@ const attentionMonitorRunStrictSchema = z
     workContext: attentionWorkContextMonitorSchema.default(
       unresolvedWorkContextMonitor
     ),
+    focusSelection: attentionFocusSelectionMonitorSchema.default(
+      unrecordedFocusSelectionMonitor
+    ),
     latencyMs: z.number().int().nonnegative(),
     errors: z
       .array(
@@ -590,6 +673,7 @@ const attentionMonitorRunStrictSchema = z
   .superRefine((run, context) => {
     if (
       run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT ||
       run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT
     ) {
       const elapsed =
@@ -619,6 +703,7 @@ const attentionMonitorRunStrictSchema = z
     }
     if (
       run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT ||
       run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT ||
       run.contract === ATTENTION_MONITOR_RUN_V03_CONTRACT
     ) {
@@ -712,18 +797,51 @@ const attentionMonitorRunStrictSchema = z
     const currentActiveRun =
       run.contract === ATTENTION_MONITOR_RUN_CONTRACT ||
       run.contract === ATTENTION_MONITOR_PREVIEW_CONTRACT;
+    const previousFocusActiveRun =
+      run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT;
     const previousActiveRun =
       run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT;
-    const activeRun = currentActiveRun || previousActiveRun;
+    const currentSemanticActiveRun =
+      currentActiveRun || previousFocusActiveRun;
+    const activeRun = currentSemanticActiveRun || previousActiveRun;
+    const focusSelectionRecorded =
+      run.focusSelection.currentFocusStatus !== null;
+    if (
+      (currentActiveRun && !focusSelectionRecorded) ||
+      (!currentActiveRun && focusSelectionRecorded)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["focusSelection"],
+        message:
+          "Focus selection metadata must match its monitor contract generation."
+      });
+    }
+    if (
+      focusSelectionRecorded &&
+      run.focusSelection.actualTopCandidateId !== run.topCandidateId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["focusSelection", "actualTopCandidateId"],
+        message:
+          "The recorded actual top must match the unchanged Active Attention result."
+      });
+    }
     if (
       (currentActiveRun &&
         run.orchestratorVersion !==
           ATTENTION_LIVE_ORCHESTRATOR_VERSION) ||
+      (previousFocusActiveRun &&
+        run.orchestratorVersion !==
+          ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_FOCUS_VERSION) ||
       (previousActiveRun &&
         run.orchestratorVersion !==
           ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION) ||
       (!activeRun &&
         (run.orchestratorVersion === ATTENTION_LIVE_ORCHESTRATOR_VERSION ||
+          run.orchestratorVersion ===
+            ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_FOCUS_VERSION ||
           run.orchestratorVersion ===
             ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_ACTIVE_VERSION))
     ) {
@@ -761,7 +879,7 @@ const attentionMonitorRunStrictSchema = z
       run.resolverVersion === null &&
       run.idPolicyVersion === null;
     if (
-      (currentActiveRun &&
+      (currentSemanticActiveRun &&
         (!currentActiveVersionsMatch ||
           run.githubCandidateRuleVersion !== null ||
           run.codexOverviewRuleVersion !== null)) ||
@@ -779,7 +897,7 @@ const attentionMonitorRunStrictSchema = z
       });
     }
     if (
-      (currentActiveRun &&
+      (currentSemanticActiveRun &&
         (run.resultContract !== ACTIVE_ATTENTION_RESULT_CONTRACT ||
           !activeResultIdSchema.safeParse(run.resultId).success)) ||
       (previousActiveRun &&
@@ -949,6 +1067,30 @@ export const currentAttentionReplayInputArtifactSchema = z
   .object({
     ...attentionReplayEnvelopeShape,
     contract: z.literal(ATTENTION_REPLAY_INPUT_CONTRACT),
+    focusContextRegistrySha256: sha256Schema.nullable(),
+    input: activeAttentionInputSchema
+  })
+  .strict()
+  .superRefine((artifact, context) => {
+    const calculated = activeAttentionInputSha256(artifact.input);
+    if (
+      artifact.input.contract !== ACTIVE_ATTENTION_INPUT_CONTRACT ||
+      artifact.inputSha256 !== artifact.input.inputSha256 ||
+      artifact.inputSha256 !== calculated
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["inputSha256"],
+        message:
+          "Replay v3 must contain the exact canonical Active Attention input."
+      });
+    }
+  });
+
+export const previousFocusAttentionReplayInputArtifactSchema = z
+  .object({
+    ...attentionReplayEnvelopeShape,
+    contract: z.literal(ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT),
     input: activeAttentionInputSchema
   })
   .strict()
@@ -1026,6 +1168,7 @@ const legacyAttentionReplayInputArtifactSchema = z
 
 export const attentionReplayInputArtifactSchema = z.union([
   currentAttentionReplayInputArtifactSchema,
+  previousFocusAttentionReplayInputArtifactSchema,
   previousAttentionReplayInputArtifactSchema,
   legacyAttentionReplayInputArtifactSchema
 ]);
@@ -1134,6 +1277,30 @@ const legacyAttentionMonitorFailureRecordSchema = z
   })
   .strict();
 
+const previousFocusAttentionMonitorFailureRecordSchema = z
+  .object({
+    ...attentionMonitorFailureCommonShape,
+    contract: z.literal(
+      ATTENTION_MONITOR_FAILURE_PREVIOUS_FOCUS_CONTRACT
+    ),
+    engineVersion: z.literal(
+      ATTENTION_LIVE_ORCHESTRATOR_PREVIOUS_FOCUS_VERSION
+    ),
+    inputSchemaVersion: z.literal(ACTIVE_ATTENTION_INPUT_CONTRACT),
+    resultSchemaVersion: z.literal(ACTIVE_ATTENTION_RESULT_CONTRACT),
+    policyVersion: z.literal(ACTIVE_ATTENTION_POLICY_VERSION),
+    candidateRuleVersion: z.literal(
+      ACTIVE_ATTENTION_CANDIDATE_RULE_VERSION
+    ),
+    lanePolicyVersion: z.literal(ACTIVE_ATTENTION_LANE_POLICY_VERSION),
+    rankingPolicyVersion: z.literal(
+      ACTIVE_ATTENTION_RANKING_POLICY_VERSION
+    ),
+    resolverVersion: z.literal(ACTIVE_ATTENTION_RESOLVER_VERSION),
+    idPolicyVersion: z.literal(ACTIVE_ATTENTION_ID_POLICY_VERSION)
+  })
+  .strict();
+
 const previousAttentionMonitorFailureRecordSchema = z
   .object({
     ...attentionMonitorFailureCommonShape,
@@ -1178,6 +1345,7 @@ const v02AttentionMonitorFailureRecordSchema = z
 const attentionMonitorFailureRecordStrictSchema = z
   .discriminatedUnion("contract", [
     currentAttentionMonitorFailureRecordSchema,
+    previousFocusAttentionMonitorFailureRecordSchema,
     previousAttentionMonitorFailureRecordSchema,
     v02AttentionMonitorFailureRecordSchema,
     legacyAttentionMonitorFailureRecordSchema
@@ -1282,6 +1450,9 @@ export type AttentionSupportingSourceMonitor = z.infer<
 export type AttentionWorkContextMonitor = z.infer<
   typeof attentionWorkContextMonitorSchema
 >;
+export type AttentionFocusSelectionMonitor = z.infer<
+  typeof attentionFocusSelectionMonitorSchema
+>;
 export type AttentionMonitorRun = z.infer<
   typeof attentionMonitorRunSchema
 >;
@@ -1310,6 +1481,9 @@ export function isActiveAttentionMonitorRun(
 export type AttentionReplayInputArtifact = z.infer<
   typeof currentAttentionReplayInputArtifactSchema
 >;
+export type PreviousFocusAttentionReplayInputArtifact = z.infer<
+  typeof previousFocusAttentionReplayInputArtifactSchema
+>;
 export type StoredAttentionReplayInputArtifact = z.infer<
   typeof attentionReplayInputArtifactSchema
 >;
@@ -1335,6 +1509,11 @@ export type AttentionReadyResponse = {
   baseResult: Phase2AttentionResult;
   eligibilityProjection: AttentionEligibilityShadowProjection;
   developerSignals: DeveloperRuntimePublicSummary;
+  recentMeaningfulEvents: RecentMeaningfulEventProjection | null;
+  currentWorkstreams: CurrentWorkstreamProjection | null;
+  currentFocus: CurrentFocusProjection;
+  focusAwareAttentionShadow: FocusAwareAttentionShadowProjection;
+  recentWork?: RecentWorkPublicSummary | null;
   run: AttentionMonitorRun;
   monitoring: {
     state: "preview" | "recorded" | "degraded";

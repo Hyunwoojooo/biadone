@@ -1,6 +1,6 @@
 import Foundation
 
-enum LauncherSourceMode: String, Equatable, Sendable {
+enum LauncherSourceMode: String, Codable, Equatable, Sendable {
     case managed
     case readOnly = "read_only"
 }

@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   SourceSyncAdapterError,
-  createBoundedSourceSyncFetch
+  createBoundedSourceSyncFetch,
+  getRuntimeSourceSyncCoordinator,
+  resetRuntimeSourceSyncForTests
 } from "../src/sync";
 
 describe("runtime source sync transport", () => {
@@ -26,5 +28,24 @@ describe("runtime source sync transport", () => {
     const init = vi.mocked(neverSettles).mock.calls[0]?.[1];
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.signal?.aborted).toBe(true);
+  });
+
+  it("shares a directory coordinator across runtime module evaluations", async () => {
+    resetRuntimeSourceSyncForTests();
+    const env: NodeJS.ProcessEnv = { NODE_ENV: "test" };
+    const first = getRuntimeSourceSyncCoordinator(
+      "/tmp/blabase-runtime-registry",
+      env
+    );
+
+    vi.resetModules();
+    const reloaded = await import("../src/sync/runtime");
+    const second = reloaded.getRuntimeSourceSyncCoordinator(
+      "/tmp/blabase-runtime-registry/.",
+      env
+    );
+
+    expect(second).toBe(first);
+    reloaded.resetRuntimeSourceSyncForTests();
   });
 });

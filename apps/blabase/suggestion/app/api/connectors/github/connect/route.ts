@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { sourceConnectionReturnUrl } from "../../../../sourceNavigation";
 import {
   isLocalGitHubRequest,
   loadGitHubConfig
@@ -16,14 +17,20 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   if (!isLocalGitHubRequest(request)) {
-    return NextResponse.redirect(new URL("/?github=local_only", request.url));
+    return NextResponse.redirect(
+      sourceConnectionReturnUrl(request.url, "github", "local_only")
+    );
   }
 
   loadSharedLocalEnv();
   const configResult = loadGitHubConfig();
   if (!configResult.ok) {
     return NextResponse.redirect(
-      new URL("/?github=temporarily_unavailable", request.url)
+      sourceConnectionReturnUrl(
+        request.url,
+        "github",
+        "temporarily_unavailable"
+      )
     );
   }
 

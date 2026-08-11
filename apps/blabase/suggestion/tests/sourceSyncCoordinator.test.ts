@@ -2518,6 +2518,91 @@ describe("SourceSyncRepository", () => {
     });
   });
 
+  it("reconciles a stale disabled view from an older-clock durable reauthorization", async () => {
+    const repository = new MemorySourceSyncRepository();
+    const staleClock = new FakeClock(
+      Date.parse("2026-07-27T00:00:00.001Z")
+    );
+    let staleAdapterCalls = 0;
+    const stale = new SourceSyncCoordinator({
+      adapters: {
+        github: adapter("github", async () => {
+          staleAdapterCalls += 1;
+          throw new SourceSyncAdapterError(
+            "REAUTHORIZATION_REQUIRED"
+          );
+        })
+      },
+      repository,
+      clock: staleClock,
+      attemptIdFactory: idFactory()
+    });
+
+    await expect(stale.sync("github", "manual")).resolves.toMatchObject({
+      status: "completed",
+      state: {
+        status: "disabled",
+        lastFailure: { errorCode: "REAUTHORIZATION_REQUIRED" }
+      }
+    });
+
+    const reauthorizedClock = new FakeClock(
+      Date.parse("2026-07-27T00:00:00.000Z")
+    );
+    const reauthorized = new SourceSyncCoordinator({
+      adapters: {
+        github: adapter("github", async () =>
+          receipt("github-reauthorized")
+        )
+      },
+      repository,
+      clock: reauthorizedClock,
+      attemptIdFactory: idFactory()
+    });
+    await reauthorized.beginConnectionGeneration("github");
+    await expect(
+      reauthorized.sync("github", "manual")
+    ).resolves.toMatchObject({
+      status: "completed",
+      state: {
+        status: "ready",
+        latestSnapshot: { revision: "github-reauthorized" }
+      }
+    });
+    await expect(repository.read()).resolves.toMatchObject({
+      latest: {
+        status: "ready",
+        value: { updatedAt: "2026-07-27T00:00:00.000Z" }
+      }
+    });
+
+    const scheduled = await stale.tick("scheduled");
+    expect(scheduled).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "github",
+          status: "skipped",
+          reason: "not_due",
+          state: expect.objectContaining({
+            status: "ready",
+            latestSnapshot: expect.objectContaining({
+              revision: "github-reauthorized"
+            })
+          })
+        })
+      ])
+    );
+    await expect(stale.getState("github")).resolves.toMatchObject({
+      status: "ready",
+      latestSnapshot: { revision: "github-reauthorized" }
+    });
+    expect(staleAdapterCalls).toBe(1);
+    await expect(reauthorized.getState("github")).resolves.toMatchObject({
+      status: "ready",
+      latestSnapshot: { revision: "github-reauthorized" }
+    });
+  });
+
   it("fails closed when persisted state is invalid or inconsistent", async () => {
     const invalidRepository = new MemorySourceSyncRepository({
       latest: {

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  sourceConnectionReturnUrl,
+  type SourceConnectionReturnStatus
+} from "../../../../sourceNavigation";
+import {
   isLocalCalendarRequest,
   loadGoogleCalendarConfig
 } from "../../../../../src/connectors/googleCalendar/config";
@@ -84,10 +88,13 @@ export async function GET(request: NextRequest) {
 
 function redirectWithClearedState(
   request: NextRequest,
-  status: string
+  status: SourceConnectionReturnStatus<"google-calendar">
 ): NextResponse {
-  const destination = new URL("/", request.url);
-  destination.searchParams.set("calendar", status);
+  const destination = sourceConnectionReturnUrl(
+    request.url,
+    "google-calendar",
+    status
+  );
   const response = NextResponse.redirect(destination);
   response.cookies.set(GOOGLE_CALENDAR_STATE_COOKIE, "", {
     httpOnly: true,

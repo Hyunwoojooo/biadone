@@ -1,11 +1,19 @@
 import { z } from "zod";
 
+import {
+  rootIdSchema,
+  rootSyncRevisionSchema
+} from "../rootContext/contracts";
+import { currentFocusReasonCodeSchema } from "../currentFocus/contracts";
+
 export const LAUNCHER_IPC_CONTRACT =
   "blabase-launcher-ipc-v1" as const;
 export const LAUNCHER_ATTENTION_CONTRACT =
   "blabase-launcher-attention-v2" as const;
 export const LAUNCHER_EXECUTION_CONTRACT =
   "blabase-launcher-execution-v1" as const;
+export const LAUNCHER_STATUS_CONTRACT =
+  "blabase-launcher-status-v1" as const;
 
 const requestIdSchema = z
   .string()
@@ -58,12 +66,21 @@ export const launcherCommandGetRequestSchema = z
   })
   .strict();
 
+export const launcherStatusGetRequestSchema = z
+  .object({
+    ...launcherRequestEnvelopeShape,
+    method: z.literal("status.get"),
+    params: z.object({}).strict()
+  })
+  .strict();
+
 export const launcherIpcRequestSchema = z.discriminatedUnion(
   "method",
   [
     launcherAttentionGetRequestSchema,
     launcherAttentionExecuteRequestSchema,
-    launcherCommandGetRequestSchema
+    launcherCommandGetRequestSchema,
+    launcherStatusGetRequestSchema
   ]
 );
 
@@ -119,6 +136,90 @@ export const launcherCandidateCountsSchema = z
     ineligible: z.number().int().nonnegative()
   })
   .strict();
+
+export const launcherCurrentFocusSummarySchema = z
+  .object({
+    status: z.enum(["selected", "unresolved", "unavailable"]),
+    displayLabel: z.string().min(1).max(240).nullable(),
+    reasonCodes: z
+      .array(currentFocusReasonCodeSchema)
+      .min(1)
+      .max(12),
+    attentionSelectionEffect: z.literal("none")
+  })
+  .strict()
+  .superRefine((summary, context) => {
+    if (
+      (summary.status === "selected") !==
+      (summary.displayLabel !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["displayLabel"],
+        message: "Only a selected Current Focus may expose a label."
+      });
+    }
+    if (
+      new Set(summary.reasonCodes).size !== summary.reasonCodes.length ||
+      summary.reasonCodes.join("|") !==
+        [...summary.reasonCodes].sort().join("|")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reasonCodes"],
+        message: "Current Focus reasons must be canonical and unique."
+      });
+    }
+  });
+
+export const launcherRecentWorkSummarySchema = z
+  .object({
+    displayLabel: z.string().min(1).max(240),
+    pushOccurredAt: z.string().datetime({ precision: 3 }),
+    trackingState: z.enum([
+      "in_sync",
+      "ahead",
+      "behind",
+      "diverged",
+      "not_configured"
+    ]),
+    aheadCount: z.number().int().min(0).max(100_000).nullable(),
+    behindCount: z.number().int().min(0).max(100_000).nullable(),
+    correlation: z.literal("repository_scope_only"),
+    presentation: z.literal("display_only"),
+    attentionSelectionEffect: z.literal("none"),
+    executionEffect: z.literal("none")
+  })
+  .strict()
+  .superRefine((summary, context) => {
+    const countsMatchTrackingState =
+      (summary.trackingState === "in_sync" &&
+        summary.aheadCount === 0 &&
+        summary.behindCount === 0) ||
+      (summary.trackingState === "ahead" &&
+        summary.aheadCount !== null &&
+        summary.aheadCount > 0 &&
+        summary.behindCount === 0) ||
+      (summary.trackingState === "behind" &&
+        summary.aheadCount === 0 &&
+        summary.behindCount !== null &&
+        summary.behindCount > 0) ||
+      (summary.trackingState === "diverged" &&
+        summary.aheadCount !== null &&
+        summary.aheadCount > 0 &&
+        summary.behindCount !== null &&
+        summary.behindCount > 0) ||
+      (summary.trackingState === "not_configured" &&
+        summary.aheadCount === null &&
+        summary.behindCount === null);
+    if (!countsMatchTrackingState) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trackingState"],
+        message: "Recent Work tracking counts are inconsistent."
+      });
+    }
+  });
 
 export const launcherSourceDiagnosticSchema = z
   .object({
@@ -196,6 +297,14 @@ export const launcherAttentionProjectionSchema = z
       launcherSourceDiagnosticSchema,
       launcherSourceDiagnosticSchema
     ]),
+    currentFocusSummary: launcherCurrentFocusSummarySchema
+      .nullable()
+      .optional()
+      .default(null),
+    recentWorkSummary: launcherRecentWorkSummarySchema
+      .nullable()
+      .optional()
+      .default(null),
     card: z
       .object({
         candidateId: candidateIdSchema,
@@ -351,6 +460,34 @@ export const launcherExecutionProjectionSchema = z
   })
   .strict();
 
+export const launcherStatusProjectionSchema = z
+  .object({
+    contract: z.literal(LAUNCHER_STATUS_CONTRACT),
+    rootId: rootIdSchema.nullable(),
+    sourceMode: z.enum(["managed", "read_only"]),
+    mutationAuthority: z.enum(["launcher_agent", "none"]),
+    syncRevision: rootSyncRevisionSchema.nullable()
+  })
+  .strict()
+  .superRefine((status, context) => {
+    const expectedAuthority =
+      status.sourceMode === "managed" ? "launcher_agent" : "none";
+    if (status.mutationAuthority !== expectedAuthority) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mutationAuthority"],
+        message: "Mutation authority must match launcher source mode."
+      });
+    }
+    if (status.sourceMode === "managed" && status.rootId === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rootId"],
+        message: "Managed launcher status requires a root identity."
+      });
+    }
+  });
+
 export const launcherIpcErrorSchema = z
   .object({
     code: z.string().min(1).max(120).regex(/^[A-Z0-9_]+$/),
@@ -365,7 +502,8 @@ export const launcherIpcSuccessResponseSchema = z
     ok: z.literal(true),
     result: z.union([
       launcherAttentionProjectionSchema,
-      launcherExecutionProjectionSchema
+      launcherExecutionProjectionSchema,
+      launcherStatusProjectionSchema
     ])
   })
   .strict();
@@ -396,6 +534,9 @@ export type LauncherAttentionExecuteRequest = z.infer<
 export type LauncherCommandGetRequest = z.infer<
   typeof launcherCommandGetRequestSchema
 >;
+export type LauncherStatusGetRequest = z.infer<
+  typeof launcherStatusGetRequestSchema
+>;
 export type LauncherPrimaryAction = z.infer<
   typeof launcherPrimaryActionSchema
 >;
@@ -411,6 +552,12 @@ export type LauncherSourceDiagnosticReasonCode = z.infer<
 export type LauncherCandidateCounts = z.infer<
   typeof launcherCandidateCountsSchema
 >;
+export type LauncherCurrentFocusSummary = z.infer<
+  typeof launcherCurrentFocusSummarySchema
+>;
+export type LauncherRecentWorkSummary = z.infer<
+  typeof launcherRecentWorkSummarySchema
+>;
 export type LauncherSourceDiagnostic = z.infer<
   typeof launcherSourceDiagnosticSchema
 >;
@@ -419,6 +566,9 @@ export type LauncherAttentionProjection = z.infer<
 >;
 export type LauncherExecutionProjection = z.infer<
   typeof launcherExecutionProjectionSchema
+>;
+export type LauncherStatusProjection = z.infer<
+  typeof launcherStatusProjectionSchema
 >;
 export type LauncherIpcResponse = z.infer<
   typeof launcherIpcResponseSchema

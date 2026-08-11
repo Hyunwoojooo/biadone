@@ -50,6 +50,14 @@ final class LauncherAgentClient: @unchecked Sendable {
         )
     }
 
+    func getStatus() async throws -> LauncherAgentStatus {
+        try await request(
+            method: "status.get",
+            parameters: StatusGetParameters(),
+            resultType: LauncherAgentStatus.self
+        )
+    }
+
     func executeAttention(
         resultId: String,
         candidateId: String

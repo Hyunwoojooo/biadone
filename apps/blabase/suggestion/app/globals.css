@@ -320,6 +320,22 @@ h1 {
   padding: 26px 30px;
 }
 
+.sourceConnectorTarget {
+  scroll-margin-top: 24px;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.sourceConnectorTarget:target,
+.sourceConnectorTarget[data-source-focus="true"] {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 18px 50px rgb(35 45 37 / 7%);
+}
+
 .timelineSection {
   margin: 8px 0 38px;
   padding: 30px;
@@ -487,6 +503,12 @@ h1 {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.calendarEventList li > span.codexSessionActivityText {
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .calendarEventList li > span a {
@@ -3447,6 +3469,357 @@ summary {
   text-align: right;
 }
 
+.currentFocusCard,
+.recentWorkCard,
+.nextAttentionSection {
+  margin-top: 14px;
+  padding: 22px;
+  border: 1px solid rgb(52 91 71 / 18%);
+  border-radius: 17px;
+  background: linear-gradient(145deg, #f4f8f5, #fff);
+}
+
+.recentWorkCard {
+  margin-top: 14px;
+  padding: 22px;
+  border: 1px solid rgb(166 111 45 / 24%);
+  border-radius: 17px;
+  background:
+    radial-gradient(circle at 88% 12%, rgb(223 174 92 / 18%), transparent 34%),
+    linear-gradient(145deg, #fff9ed, #fff);
+}
+
+.recentWorkSignal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.recentWorkSignal > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 78%);
+}
+
+.recentWorkSignal span,
+.recentWorkSignal time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.recentWorkSignal strong {
+  color: #75501f;
+  font-size: 13px;
+}
+
+.recentWorkBoundary {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.currentFocusCard-unresolved {
+  border-color: #dfd6c5;
+  background: linear-gradient(145deg, #faf8f3, #fff);
+}
+
+.nextAttentionSection {
+  border-color: rgb(34 41 37 / 15%);
+  background: rgb(255 255 255 / 54%);
+}
+
+.workFlowSectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.workFlowSectionHeader .eyebrow {
+  margin: 0 0 4px;
+}
+
+.workFlowSectionHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.3;
+}
+
+.workFlowSectionHeader > span {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgb(39 103 73 / 9%);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.currentFocusLatest {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.currentFocusLatest > div {
+  display: grid;
+  gap: 3px;
+}
+
+.currentFocusLatest strong {
+  font-size: 14px;
+}
+
+.currentFocusLatest time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.currentFocusMeta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.currentFocusMeta > div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.currentFocusMeta dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.currentFocusMeta dd {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 720;
+  overflow-wrap: anywhere;
+}
+
+.currentFocusBoundary,
+.currentFocusFootnote {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.currentFocusFootnote {
+  color: var(--accent);
+  font-weight: 680;
+}
+
+.currentFocusHistory {
+  margin-top: 12px;
+}
+
+.currentFocusHistory summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.currentFocusHistory ol {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.currentFocusHistory li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.currentFocusHistory li > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.currentFocusHistory strong {
+  font-size: 12px;
+}
+
+.currentFocusHistory span,
+.currentFocusHistory time {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.currentFocusHistory span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nextAttentionSection > .attentionDecision {
+  padding: 22px;
+}
+
+.labFocusPanel {
+  border-color: rgb(39 103 73 / 20%);
+  background: linear-gradient(145deg, rgb(244 248 245 / 92%), #fff);
+}
+
+.labFocusSelection {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(0, 2fr);
+  gap: 18px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgb(39 103 73 / 13%);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.labFocusSelection > div:first-child {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.labFocusSelection > div:first-child span,
+.labFocusSelection dt,
+.labFocusComparison span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.labFocusSelection > div:first-child strong {
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.labFocusSelection dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 16px;
+  margin: 0;
+}
+
+.labFocusSelection dl > div {
+  min-width: 0;
+}
+
+.labFocusSelection dd {
+  margin: 3px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.labFocusComparison {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.labFocusComparison > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 78%);
+}
+
+.labFocusComparison strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.labFocusDiagnosticColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 14px 0 20px;
+}
+
+.labFocusDiagnosticColumns h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.labFocusDiagnosticList {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.labFocusDiagnosticList li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.labFocusDiagnosticList li > span {
+  padding: 3px 5px;
+  border-radius: 999px;
+  background: #eef1ed;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.labFocusDiagnosticList li > span.is-included {
+  background: #dceee2;
+  color: var(--accent);
+}
+
+.labFocusDiagnosticList li > span.is-excluded {
+  background: #f7e5df;
+  color: var(--error);
+}
+
+.labFocusDiagnosticList li > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.labFocusDiagnosticList strong,
+.labFocusDiagnosticList small {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.labFocusDiagnosticList small {
+  color: var(--muted);
+}
+
+.labFocusDiagnosticList code {
+  color: #555950;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .labIntro {
     align-items: flex-start;
@@ -3566,6 +3939,26 @@ summary {
     padding: 20px;
   }
 
+  .currentFocusCard,
+  .recentWorkCard,
+  .nextAttentionSection {
+    padding: 18px;
+  }
+
+  .workFlowSectionHeader,
+  .currentFocusHistory li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .currentFocusMeta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .recentWorkSignal {
+    grid-template-columns: 1fr;
+  }
+
   .workResumptionHeader,
   .workResumptionBound {
     grid-template-columns: 1fr;
@@ -3677,7 +4070,10 @@ summary {
 
   .labSummaryGrid,
   .labRunList ol,
-  .labFunnel {
+  .labFunnel,
+  .labFocusSelection,
+  .labFocusComparison,
+  .labFocusDiagnosticColumns {
     grid-template-columns: 1fr;
   }
 

@@ -116,6 +116,12 @@ async function runAttention(
       baseResult: evaluated.baseResult,
       eligibilityProjection: evaluated.eligibilityProjection,
       developerSignals: evaluated.developerSignals.publicSummary,
+      recentMeaningfulEvents: evaluated.recentMeaningfulEvents,
+      currentWorkstreams: evaluated.currentWorkstreams,
+      currentFocus: evaluated.currentFocus,
+      focusAwareAttentionShadow:
+        evaluated.focusAwareAttentionShadow,
+      recentWork: evaluated.recentWorkPublicSummary,
       run: publicRun,
       monitoring
     } satisfies AttentionReadyResponse);

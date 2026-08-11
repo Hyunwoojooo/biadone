@@ -4,10 +4,12 @@ import { GitHubConnector } from "../GitHubConnector";
 import { GoogleCalendarConnector } from "../GoogleCalendarConnector";
 import { NotionConnector } from "../NotionConnector";
 import styles from "../DashboardPage.module.css";
+import { SourceFocusController } from "./SourceFocusController";
 
 export default function SourcesPage() {
   return (
     <main className={styles.page} id="main-content">
+      <SourceFocusController />
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderText}>
           <p className={styles.eyebrow}>Sources &amp; Permissions</p>

@@ -68,7 +68,99 @@ struct LauncherSourceDiagnosticDisplay: Equatable, Sendable {
     let tone: LauncherSourceDiagnosticTone
 }
 
+struct LauncherDecisionDisplay: Equatable, Sendable {
+    let icon: String
+    let title: String
+    let currentFocusLabel: String?
+}
+
+struct LauncherRecentWorkDisplay: Equatable, Sendable {
+    let title: String
+    let trackingText: String
+    let pushedAtText: String
+}
+
 enum LauncherPresentation {
+    static func decisionDisplay(
+        decisionStatus: AttentionDecisionStatus,
+        decisionReasonCodes: [AttentionDecisionReasonCode],
+        candidateCounts: AttentionCandidateCounts,
+        currentFocusSummary: AttentionCurrentFocusSummary?
+    ) -> LauncherDecisionDisplay {
+        let focusLabel = currentFocusSummary?.status == .selected
+            ? currentFocusSummary?.displayLabel
+            : nil
+        let icon: String
+        let title: String
+        switch decisionStatus {
+        case .suggested:
+            icon = "sparkles"
+            title = "현재 제안을 표시할 수 없습니다."
+        case .needsClarification:
+            icon = "questionmark.bubble"
+            title = "한 가지 확인이 필요합니다."
+        case .noAction:
+            icon = "checkmark.circle"
+            if focusLabel != nil {
+                title = "현재 작업 흐름은 확인했지만, 평가한 범위에서는 별도 개입 후보가 없습니다."
+            } else if candidateCounts.reviewRequired > 0 ||
+                candidateCounts.ineligible > 0 {
+                title = "확인된 항목은 지금 개입 조건에 해당하지 않습니다."
+            } else {
+                title = "평가한 범위에는 지금 개입할 항목이 없습니다."
+            }
+        case .insufficientEvidence:
+            icon = "scope"
+            if focusLabel != nil {
+                title = "현재 작업 흐름은 확인됐지만, 새 개입 제안의 근거는 부족합니다."
+            } else if decisionReasonCodes.contains(
+                .relevantCoverageInsufficient
+            ) {
+                title = candidateCounts.reviewRequired > 0 ||
+                    candidateCounts.ineligible > 0
+                    ? "확인된 항목은 추천 조건에 맞지 않고, 평가 범위도 충분하지 않습니다."
+                    : "GitHub·Codex 평가 범위가 충분하지 않습니다."
+            } else {
+                title = "최신 source 증거를 다시 수집해야 합니다."
+            }
+        }
+        return LauncherDecisionDisplay(
+            icon: icon,
+            title: title,
+            currentFocusLabel: focusLabel
+        )
+    }
+
+    static func recentWorkDisplay(
+        _ summary: AttentionRecentWorkSummary
+    ) -> LauncherRecentWorkDisplay? {
+        guard summary.isValid else {
+            return nil
+        }
+        let trackingText: String
+        switch summary.trackingState {
+        case .inSync:
+            trackingText = "로컬 추적 상태와 일치합니다."
+        case .ahead:
+            trackingText =
+                "로컬 작업이 \(summary.aheadCount ?? 0)개 앞서 있습니다."
+        case .behind:
+            trackingText =
+                "로컬 작업이 \(summary.behindCount ?? 0)개 뒤처져 있습니다."
+        case .diverged:
+            trackingText =
+                "로컬 작업이 \(summary.aheadCount ?? 0)개 앞서고 " +
+                "\(summary.behindCount ?? 0)개 뒤처져 있습니다."
+        case .notConfigured:
+            trackingText = "로컬 추적 기준이 설정되지 않았습니다."
+        }
+        return LauncherRecentWorkDisplay(
+            title: summary.displayLabel,
+            trackingText: trackingText,
+            pushedAtText: "GitHub push · \(summary.pushOccurredAt)"
+        )
+    }
+
     static func sourceDiagnosticDisplay(
         _ diagnostic: AttentionSourceDiagnostic
     ) -> LauncherSourceDiagnosticDisplay {

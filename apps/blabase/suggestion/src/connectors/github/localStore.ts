@@ -89,42 +89,97 @@ const taskSchema = z.object({
   }
 });
 
-const activitySchema = z.object({
-  id: z.string().min(1).max(200),
-  source: z.literal("github"),
-  kind: z.literal("user_activity"),
-  activityKind: z.enum([
-    "push",
-    "ref_created",
-    "ref_deleted",
-    "issue_opened",
-    "issue_closed",
-    "issue_reopened",
-    "issue_commented",
-    "pull_request_opened",
-    "pull_request_closed",
-    "pull_request_reopened",
-    "pull_request_merged",
-    "pull_request_reviewed",
-    "pull_request_review_commented"
-  ]),
-  repositoryId: z.number().int().positive(),
-  repositoryFullName: z.string().min(1),
-  occurredAt: z.string().datetime(),
-  subjectType: z.enum([
-    "repository",
-    "branch",
-    "tag",
-    "issue",
-    "pull_request"
-  ]),
-  subjectNumber: z.number().int().positive().nullable(),
-  subjectTitle: z.string().nullable(),
-  refName: z.string().nullable(),
-  reviewState: z
-    .enum(["approved", "changes_requested", "commented"])
-    .nullable()
-});
+const artifactIdSchema = z
+  .string()
+  .regex(/^artifact_[a-f0-9]{32}$/);
+
+const legacyActivitySchema = z
+  .object({
+    id: z.string().min(1).max(200),
+    source: z.literal("github"),
+    kind: z.literal("user_activity"),
+    activityKind: z.enum([
+      "push",
+      "ref_created",
+      "ref_deleted",
+      "issue_opened",
+      "issue_closed",
+      "issue_reopened",
+      "issue_commented",
+      "pull_request_opened",
+      "pull_request_closed",
+      "pull_request_reopened",
+      "pull_request_merged",
+      "pull_request_reviewed",
+      "pull_request_review_commented"
+    ]),
+    repositoryId: z.number().int().positive(),
+    repositoryFullName: z.string().min(1),
+    occurredAt: z.string().datetime(),
+    subjectType: z.enum([
+      "repository",
+      "branch",
+      "tag",
+      "issue",
+      "pull_request"
+    ]),
+    subjectNumber: z.number().int().positive().nullable(),
+    subjectTitle: z.string().nullable(),
+    refName: z.string().nullable(),
+    reviewState: z
+      .enum(["approved", "changes_requested", "commented"])
+      .nullable()
+  })
+  .strict();
+
+const activityV4Schema = legacyActivitySchema
+  .extend({ artifactId: artifactIdSchema.nullable() })
+  .superRefine((activity, context) => {
+    if (
+      (activity.activityKind === "push") !==
+      (activity.artifactId !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifactId"],
+        message:
+          "GitHub v4 pushes require an opaque artifact ID and other activities require null."
+      });
+    }
+  });
+
+const activityV5Schema = legacyActivitySchema
+  .extend({
+    artifactId: artifactIdSchema.nullable(),
+    subjectObjectId: z.number().int().safe().positive().nullable()
+  })
+  .superRefine((activity, context) => {
+    if (
+      (activity.activityKind === "push") !==
+      (activity.artifactId !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["artifactId"],
+        message:
+          "GitHub v5 pushes require an opaque artifact ID and other activities require null."
+      });
+    }
+    const hasWorkItemSubject =
+      activity.subjectType === "issue" ||
+      activity.subjectType === "pull_request";
+    if (
+      hasWorkItemSubject !== (activity.subjectObjectId !== null) ||
+      hasWorkItemSubject !== (activity.subjectNumber !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["subjectObjectId"],
+        message:
+          "GitHub v5 work-item activity requires an exact native object ID and number."
+      });
+    }
+  });
 
 const snapshotV1Schema = z.object({
   schemaVersion: z.literal("github-snapshot-v1"),
@@ -153,7 +208,7 @@ const snapshotV2BaseSchema = snapshotV1Schema
       "unavailable"
     ]),
     activitiesTruncated: z.boolean(),
-    activities: z.array(activitySchema)
+    activities: z.array(legacyActivitySchema)
   });
 
 const snapshotV2Schema = snapshotV2BaseSchema.superRefine(
@@ -189,9 +244,84 @@ const snapshotV3Schema = snapshotV2BaseSchema
     }
   });
 
-const snapshotSchema = z.union([snapshotV3Schema, snapshotV2Schema]);
+const snapshotV4Schema = snapshotV2BaseSchema
+  .omit({ schemaVersion: true, activities: true })
+  .extend({
+    schemaVersion: z.literal("github-snapshot-v4"),
+    actionabilityCoverage: githubActionabilityCoverageSchema,
+    activities: z.array(activityV4Schema)
+  })
+  .superRefine((snapshot, context) => {
+    if (
+      !actionabilityCoverageMatchesTasks(
+        snapshot.actionabilityCoverage,
+        snapshot.tasks
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionabilityCoverage"],
+        message: "GitHub actionability coverage must match collected PR facts."
+      });
+    }
+  });
+
+const snapshotV5Schema = snapshotV2BaseSchema
+  .omit({ schemaVersion: true, activities: true })
+  .extend({
+    schemaVersion: z.literal("github-snapshot-v5"),
+    actionabilityCoverage: githubActionabilityCoverageSchema,
+    activities: z.array(activityV5Schema)
+  })
+  .superRefine((snapshot, context) => {
+    if (
+      !actionabilityCoverageMatchesTasks(
+        snapshot.actionabilityCoverage,
+        snapshot.tasks
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionabilityCoverage"],
+        message: "GitHub actionability coverage must match collected PR facts."
+      });
+    }
+  });
+
+const snapshotV6Schema = snapshotV2BaseSchema
+  .omit({ schemaVersion: true, activities: true })
+  .extend({
+    schemaVersion: z.literal("github-snapshot-v6"),
+    actionabilityCoverage: githubActionabilityCoverageSchema,
+    activities: z.array(activityV5Schema)
+  })
+  .superRefine((snapshot, context) => {
+    if (
+      !actionabilityCoverageMatchesTasks(
+        snapshot.actionabilityCoverage,
+        snapshot.tasks
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionabilityCoverage"],
+        message: "GitHub actionability coverage must match collected PR facts."
+      });
+    }
+  });
+
+const snapshotSchema = z.union([
+  snapshotV6Schema,
+  snapshotV5Schema,
+  snapshotV4Schema,
+  snapshotV3Schema,
+  snapshotV2Schema
+]);
 
 const storedSnapshotSchema = z.union([
+  snapshotV6Schema,
+  snapshotV5Schema,
+  snapshotV4Schema,
   snapshotV3Schema,
   snapshotV2Schema,
   snapshotV1Schema

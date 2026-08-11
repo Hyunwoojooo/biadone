@@ -22,6 +22,12 @@ import type {
 } from "../attention/monitoringSchema";
 import type { ActiveAttentionResult } from "../attentionDecision";
 import type { Phase2AttentionResult } from "../crossSource/attentionSchema";
+import type { CurrentFocusProjection } from "../currentFocus";
+import type { RecentWorkPublicSummary } from "../recentWork";
+import {
+  readPersistedSyncRevision,
+  resolveRootMarker
+} from "../rootContext";
 import {
   openWorkSession,
   readWorkResumptionCommandStatus,
@@ -33,10 +39,13 @@ import {
 import { syncRuntimeSources } from "../sync/runtime";
 import {
   LAUNCHER_EXECUTION_CONTRACT,
+  LAUNCHER_STATUS_CONTRACT,
   launcherExecutionProjectionSchema,
+  launcherStatusProjectionSchema,
   type LauncherAttentionProjection,
   type LauncherExecutionProjection,
-  type LauncherIpcRequest
+  type LauncherIpcRequest,
+  type LauncherStatusProjection
 } from "./contracts";
 import {
   buildLauncherAttentionView,
@@ -48,6 +57,8 @@ export type LauncherAttentionEvaluation = {
   baseResult: Phase2AttentionResult;
   run: AttentionMonitorRun;
   replayArtifact: AttentionReplayInputArtifact;
+  currentFocus: CurrentFocusProjection;
+  recentWorkPublicSummary?: RecentWorkPublicSummary | null;
 };
 
 export const MAX_LAUNCHER_RECOMMENDATION_AGE_MS =
@@ -78,6 +89,8 @@ export type LauncherServiceDependencies = {
   ) => Promise<AttentionCodeProvenance>;
   recordRun: typeof recordAttentionRun;
   recordFailure: typeof recordAttentionFailure;
+  resolveRootMarker: typeof resolveRootMarker;
+  readSyncRevision: typeof readPersistedSyncRevision;
   now: () => Date;
   warn: (code: string) => void;
 };
@@ -92,6 +105,8 @@ const defaultDependencies: LauncherServiceDependencies = {
   resolveCodeProvenance: resolveAttentionCodeProvenance,
   recordRun: recordAttentionRun,
   recordFailure: recordAttentionFailure,
+  resolveRootMarker,
+  readSyncRevision: readPersistedSyncRevision,
   now: () => new Date(),
   warn: () => undefined
 };
@@ -128,7 +143,9 @@ export class LauncherService {
   async handle(
     request: LauncherIpcRequest
   ): Promise<
-    LauncherAttentionProjection | LauncherExecutionProjection
+    | LauncherAttentionProjection
+    | LauncherExecutionProjection
+    | LauncherStatusProjection
   > {
     switch (request.method) {
       case "attention.get":
@@ -137,6 +154,33 @@ export class LauncherService {
         return this.executeAttention(request.params);
       case "command.get":
         return this.getCommand(request.params.commandId);
+      case "status.get":
+        return this.getStatus();
+    }
+  }
+
+  private async getStatus(): Promise<LauncherStatusProjection> {
+    const sourceMode = resolveLauncherSourceMode(this.env);
+    try {
+      const marker = await this.dependencies.resolveRootMarker(
+        this.dataRoot,
+        sourceMode === "managed" ? "owner" : "read_only"
+      );
+      return launcherStatusProjectionSchema.parse({
+        contract: LAUNCHER_STATUS_CONTRACT,
+        rootId: marker?.rootId ?? null,
+        sourceMode,
+        mutationAuthority:
+          sourceMode === "managed" ? "launcher_agent" : "none",
+        syncRevision: await this.dependencies.readSyncRevision(
+          this.dataRoot
+        )
+      });
+    } catch {
+      throw new LauncherServiceError(
+        "ROOT_CONTEXT_FAILED",
+        "선택한 데이터 저장소의 식별 정보를 확인하지 못했습니다."
+      );
     }
   }
 
@@ -160,7 +204,9 @@ export class LauncherService {
       result: evaluated.result,
       baseResult: evaluated.baseResult,
       run: evaluated.run,
-      resumption
+      resumption,
+      currentFocus: evaluated.currentFocus,
+      recentWorkSummary: evaluated.recentWorkPublicSummary ?? null
     });
     const candidateId = view.projection.card?.candidateId;
     if (candidateId) {
@@ -251,7 +297,9 @@ export class LauncherService {
       result: evaluated.result,
       baseResult: evaluated.baseResult,
       run: evaluated.run,
-      resumption
+      resumption,
+      currentFocus: evaluated.currentFocus,
+      recentWorkSummary: evaluated.recentWorkPublicSummary ?? null
     });
     const currentGuard = currentView.executionGuard;
     if (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { sourceConnectionReturnUrl } from "../../../../sourceNavigation";
 import {
   isLocalNotionRequest,
   loadNotionConfig
@@ -16,14 +17,20 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   if (!isLocalNotionRequest(request)) {
-    return NextResponse.redirect(new URL("/?notion=local_only", request.url));
+    return NextResponse.redirect(
+      sourceConnectionReturnUrl(request.url, "notion", "local_only")
+    );
   }
 
   loadSharedLocalEnv();
   const configResult = loadNotionConfig();
   if (!configResult.ok) {
     return NextResponse.redirect(
-      new URL("/?notion=temporarily_unavailable", request.url)
+      sourceConnectionReturnUrl(
+        request.url,
+        "notion",
+        "temporarily_unavailable"
+      )
     );
   }
 

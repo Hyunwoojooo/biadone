@@ -11,6 +11,7 @@ final class LauncherSettingsViewModel: ObservableObject {
     @Published private(set) var statusMessage: String?
     @Published private(set) var isSetupRequired = true
     @Published private(set) var activeDataRootChoice: LauncherDataRootChoice?
+    @Published private(set) var activeDashboardBaseURLText: String?
 
     var onApplied: (() -> Void)?
 
@@ -42,6 +43,7 @@ final class LauncherSettingsViewModel: ObservableObject {
         switch store.loadResult {
         case .configured(let snapshot):
             activeDataRootChoice = snapshot.dataRootChoice
+            activeDashboardBaseURLText = snapshot.dashboardBaseURLString
             dataRootChoice = snapshot.dataRootChoice
             dashboardBaseURLText = snapshot.dashboardBaseURLString
         case .setupRequired(
@@ -50,6 +52,7 @@ final class LauncherSettingsViewModel: ObservableObject {
             let message
         ):
             activeDataRootChoice = nil
+            activeDashboardBaseURLText = nil
             if let savedDraft {
                 dataRootChoice = savedDraft.dataRootChoice
                 dashboardBaseURLText = savedDraft.dashboardBaseURLString
@@ -110,7 +113,7 @@ final class LauncherSettingsViewModel: ObservableObject {
         dataRootChoice = .managedDefault
         errorMessage = nil
         statusMessage =
-            "전용 저장소를 사용하려면 이 저장소에 GitHub 또는 Codex source 연결이 필요합니다."
+            "개발 베타에서 Source를 연결하려면 로컬 Work Cockpit이 소유한 기존 데이터 폴더를 선택하세요."
     }
 
     func useCloudDashboard() {
@@ -142,6 +145,8 @@ final class LauncherSettingsViewModel: ObservableObject {
                 self.dataRootChoice = snapshot.dataRootChoice
                 self.activeDataRootChoice = snapshot.dataRootChoice
                 self.dashboardBaseURLText = snapshot.dashboardBaseURLString
+                self.activeDashboardBaseURLText =
+                    snapshot.dashboardBaseURLString
                 self.isSetupRequired = false
                 self.statusMessage = "설정을 저장했습니다."
                 self.onApplied?()
@@ -170,6 +175,11 @@ final class LauncherSettingsViewModel: ObservableObject {
 
     var isDataRootDraftDirty: Bool {
         activeDataRootChoice != dataRootChoice
+    }
+
+    var isSourceNavigationDraftDirty: Bool {
+        isDataRootDraftDirty
+            || activeDashboardBaseURLText != dashboardBaseURLText
     }
 
     private static func message(for error: Error) -> String {

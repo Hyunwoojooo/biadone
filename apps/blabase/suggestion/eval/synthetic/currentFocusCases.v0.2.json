@@ -1,0 +1,115 @@
+{
+  "contract": "current-focus-evaluation-dataset-v0.1",
+  "schemaVersion": "current-focus-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-current-focus-dev-v0.2",
+  "datasetRevision": 1,
+  "datasetClass": "dev_candidate",
+  "split": "development",
+  "inputBoundary": "exact_request_time_focus_evidence_envelope",
+  "dataOrigin": "bounded_synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-06T00:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "resolverConfig": {
+    "immutableRef": "eval/synthetic/currentFocusConfig.v0.3.json",
+    "version": "current-focus-config-v0.3"
+  },
+  "cases": [
+    {
+      "caseId": "FOCUS-DEV-001",
+      "scenario": "codex_push_ci_failure",
+      "expectedFocus": "selected_exact",
+      "expectedShadow": "ci_failure_exact_match",
+      "labels": ["exact_relation", "opaque_push_artifact", "current_blocker"]
+    },
+    {
+      "caseId": "FOCUS-DEV-002",
+      "scenario": "push_then_pr_merged",
+      "expectedFocus": "not_terminal_pr",
+      "expectedShadow": "no_resurrection",
+      "labels": ["terminal", "historical_context"]
+    },
+    {
+      "caseId": "FOCUS-DEV-003",
+      "scenario": "many_old_one_new",
+      "expectedFocus": "selected_latest",
+      "expectedShadow": "latest_not_sum",
+      "labels": ["recency", "deterministic"]
+    },
+    {
+      "caseId": "FOCUS-DEV-004",
+      "scenario": "heartbeat_after_meaningful",
+      "expectedFocus": "selected_previous_meaningful",
+      "expectedShadow": "heartbeat_excluded",
+      "labels": ["exclusion", "managed_codex"]
+    },
+    {
+      "caseId": "FOCUS-DEV-005",
+      "scenario": "same_title_distinct_identity",
+      "expectedFocus": "not_grouped_by_title",
+      "expectedShadow": "identity_only",
+      "labels": ["identity", "false_merge"]
+    },
+    {
+      "caseId": "FOCUS-DEV-006",
+      "scenario": "healthy_managed_run",
+      "expectedFocus": "selected_managed_run",
+      "expectedShadow": "no_new_candidate",
+      "labels": ["managed_codex", "no_action"]
+    },
+    {
+      "caseId": "FOCUS-DEV-007",
+      "scenario": "stale_partial_source",
+      "expectedFocus": "unresolved",
+      "expectedShadow": "existing_attention_preserved",
+      "labels": ["currentness", "abstention"]
+    },
+    {
+      "caseId": "FOCUS-DEV-008",
+      "scenario": "out_of_order_duplicate_equal_time",
+      "expectedFocus": "deterministic",
+      "expectedShadow": "stable_hash",
+      "labels": ["dedupe", "ordering", "hash"]
+    },
+    {
+      "caseId": "FOCUS-DEV-009",
+      "scenario": "context_only_sources_recent",
+      "expectedFocus": "unavailable",
+      "expectedShadow": "no_context_leakage",
+      "labels": ["notion", "calendar", "context_only"]
+    },
+    {
+      "caseId": "FOCUS-DEV-010",
+      "scenario": "focus_cannot_override_gates",
+      "expectedFocus": "selected_or_unresolved",
+      "expectedShadow": "hard_gates_preserved",
+      "labels": ["eligibility", "owner", "conflict", "terminal"]
+    },
+    {
+      "caseId": "FOCUS-DEV-011",
+      "scenario": "input_permutation",
+      "expectedFocus": "deterministic",
+      "expectedShadow": "same_top",
+      "labels": ["permutation", "replay"]
+    },
+    {
+      "caseId": "FOCUS-DEV-012",
+      "scenario": "dependency_hash_tamper",
+      "expectedFocus": "rejected",
+      "expectedShadow": "fail_closed",
+      "labels": ["integrity", "tamper"]
+    },
+    {
+      "caseId": "FOCUS-DEV-013",
+      "scenario": "public_projection_privacy",
+      "expectedFocus": "privacy_safe",
+      "expectedShadow": "privacy_safe",
+      "labels": ["api", "monitor", "privacy"]
+    }
+  ]
+}

@@ -6,9 +6,11 @@ import {
   type ActiveAttentionResult
 } from "../src/attentionDecision";
 import { runPhase2AttentionRouter } from "../src/crossSource/runAttentionRouter";
+import type { CurrentFocusProjection } from "../src/currentFocus";
 import {
   buildLauncherAttentionView,
   launcherAttentionProjectionSchema,
+  launcherRecentWorkSummarySchema,
   projectAttentionForLauncher
 } from "../src/launcher";
 import type { WorkResumptionStatus } from "../src/resumption";
@@ -166,6 +168,109 @@ describe("launcher Attention projection", () => {
     expect(projection.candidateCounts).toEqual(result.counts);
     expect(projection.card).toBeNull();
     expect(projection.clarificationQuestion).toBeNull();
+  });
+
+  it("projects bounded display-only summaries without changing no-action", () => {
+    const fixture = activeAttentionFixture({
+      githubKind: "none",
+      managedScenario: "none"
+    });
+    const result = resolveActiveAttention(fixture.input);
+    const projection = projectAttentionForLauncher({
+      result,
+      baseResult: runPhase2AttentionRouter(
+        fixture.input.baseAttentionInput
+      ),
+      run: monitorRun(),
+      resumption: resumption(),
+      currentFocus: selectedCurrentFocus(),
+      recentWorkSummary: {
+        displayLabel: "Launcher contract repair",
+        pushOccurredAt: "2026-08-02T02:58:30.000Z",
+        trackingState: "ahead",
+        aheadCount: 2,
+        behindCount: 0,
+        correlation: "repository_scope_only",
+        presentation: "display_only",
+        attentionSelectionEffect: "none",
+        executionEffect: "none"
+      }
+    });
+
+    expect(projection).toMatchObject({
+      decisionStatus: "no_action",
+      candidateCounts: { eligible: 0 },
+      card: null,
+      currentFocusSummary: {
+        status: "selected",
+        displayLabel: "Launcher contract repair",
+        reasonCodes: ["FOCUS_LATEST_DIRECT_COMPLETE_EVENT"],
+        attentionSelectionEffect: "none"
+      },
+      recentWorkSummary: {
+        displayLabel: "Launcher contract repair",
+        trackingState: "ahead",
+        aheadCount: 2,
+        behindCount: 0,
+        correlation: "repository_scope_only",
+        presentation: "display_only",
+        attentionSelectionEffect: "none",
+        executionEffect: "none"
+      }
+    });
+    const serialized = JSON.stringify({
+      currentFocusSummary: projection.currentFocusSummary,
+      recentWorkSummary: projection.recentWorkSummary
+    });
+    expect(serialized).not.toContain("workstream_");
+    expect(serialized).not.toContain("identityRefs");
+    expect(serialized).not.toContain("latestMeaningfulEvent");
+    expect(serialized).not.toContain("candidateId");
+    expect(serialized).not.toContain("projectId");
+    expect(serialized).not.toContain("repositoryId");
+    expect(serialized).not.toContain("scopeId");
+    expect(serialized).not.toContain("resultSha256");
+    expect(Object.keys(projection.recentWorkSummary ?? {}).sort()).toEqual([
+      "aheadCount",
+      "attentionSelectionEffect",
+      "behindCount",
+      "correlation",
+      "displayLabel",
+      "executionEffect",
+      "presentation",
+      "pushOccurredAt",
+      "trackingState"
+    ]);
+    const canonicalRecentWork =
+      launcherRecentWorkSummarySchema.parse(
+        projection.recentWorkSummary
+      );
+    expect(canonicalRecentWork.pushOccurredAt).toBe(
+      "2026-08-02T02:58:30.000Z"
+    );
+    for (const pushOccurredAt of [
+      "2026-08-02T02:58Z",
+      "2026-08-02T02:58:30Z",
+      "2026-08-02T02:58:30.0Z",
+      "2026-08-02T02:58:30.0000Z",
+      "2026-08-02T02:58:30.000+00:00"
+    ]) {
+      expect(() =>
+        launcherRecentWorkSummarySchema.parse({
+          ...canonicalRecentWork,
+          pushOccurredAt
+        })
+      ).toThrow();
+    }
+
+    const {
+      currentFocusSummary: _summary,
+      recentWorkSummary: _recentWorkSummary,
+      ...legacy
+    } = projection;
+    const parsedLegacy = launcherAttentionProjectionSchema.parse(legacy);
+    expect(parsedLegacy.currentFocusSummary).toBeNull();
+    expect(parsedLegacy.recentWorkSummary).toBeNull();
   });
 
   it("keeps source diagnostics canonical and bounded to monitor metadata", () => {
@@ -383,4 +488,15 @@ function resumption(
           ]
         : []
   };
+}
+
+function selectedCurrentFocus(): CurrentFocusProjection {
+  return {
+    status: "selected",
+    selectedFocus: {
+      displayLabel: "Launcher contract repair"
+    },
+    reasonCodes: ["FOCUS_LATEST_DIRECT_COMPLETE_EVENT"],
+    attentionSelectionEffect: "none"
+  } as CurrentFocusProjection;
 }

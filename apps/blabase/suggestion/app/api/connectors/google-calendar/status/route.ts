@@ -22,16 +22,18 @@ export async function GET(request: Request) {
   if (!isLocalCalendarRequest(request)) {
     return noStoreJson({
       status: "unavailable",
-      message: "Google Calendar 연결은 http://localhost:3102에서 확인해주세요."
+      message: "Google Calendar 연결은 http://localhost:3102에서 확인해주세요.",
+      localUrl: "http://localhost:3102/sources#source-google-calendar"
     });
   }
 
   loadSharedLocalEnv();
   const configResult = loadGoogleCalendarConfig();
   if (!configResult.ok) {
-    // App-level OAuth configuration is an operator concern. The end-user
-    // surface should remain the same one-click connection flow.
-    return noStoreJson({ status: "disconnected" });
+    return noStoreJson({
+      status: "unavailable",
+      message: configResult.message
+    });
   }
 
   const tokens = await readStoredTokens();

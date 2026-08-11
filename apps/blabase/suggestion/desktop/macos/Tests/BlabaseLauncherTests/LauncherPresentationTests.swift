@@ -129,6 +129,106 @@ final class LauncherPresentationTests: XCTestCase {
         )
     }
 
+    func testDecisionCopySeparatesCurrentFocusFromAttentionSelection() {
+        let selectedFocus = AttentionCurrentFocusSummary(
+            status: .selected,
+            displayLabel: "Launcher contract repair",
+            reasonCodes: [.latestDirectCompleteEvent],
+            attentionSelectionEffect: .none
+        )
+        let counts = AttentionCandidateCounts(
+            eligible: 0,
+            reviewRequired: 0,
+            ineligible: 1
+        )
+
+        XCTAssertEqual(
+            LauncherPresentation.decisionDisplay(
+                decisionStatus: .noAction,
+                decisionReasonCodes: [.scopedNoAction],
+                candidateCounts: counts,
+                currentFocusSummary: selectedFocus
+            ),
+            LauncherDecisionDisplay(
+                icon: "checkmark.circle",
+                title: "현재 작업 흐름은 확인했지만, 평가한 범위에서는 별도 개입 후보가 없습니다.",
+                currentFocusLabel: "Launcher contract repair"
+            )
+        )
+        XCTAssertEqual(
+            LauncherPresentation.decisionDisplay(
+                decisionStatus: .insufficientEvidence,
+                decisionReasonCodes: [.relevantCoverageInsufficient],
+                candidateCounts: counts,
+                currentFocusSummary: selectedFocus
+            ).title,
+            "현재 작업 흐름은 확인됐지만, 새 개입 제안의 근거는 부족합니다."
+        )
+    }
+
+    func testInsufficientCopyExplainsZeroEligibleAndPartialCoverage() {
+        let display = LauncherPresentation.decisionDisplay(
+            decisionStatus: .insufficientEvidence,
+            decisionReasonCodes: [.relevantCoverageInsufficient],
+            candidateCounts: AttentionCandidateCounts(
+                eligible: 0,
+                reviewRequired: 0,
+                ineligible: 1
+            ),
+            currentFocusSummary: nil
+        )
+
+        XCTAssertEqual(
+            display.title,
+            "확인된 항목은 추천 조건에 맞지 않고, 평가 범위도 충분하지 않습니다."
+        )
+        XCTAssertNil(display.currentFocusLabel)
+    }
+
+    func testRecentWorkDisplayDoesNotChangeActiveDecisionCopy() {
+        let counts = AttentionCandidateCounts(
+            eligible: 0,
+            reviewRequired: 0,
+            ineligible: 1
+        )
+        let decisionBefore = LauncherPresentation.decisionDisplay(
+            decisionStatus: .noAction,
+            decisionReasonCodes: [.scopedNoAction],
+            candidateCounts: counts,
+            currentFocusSummary: nil
+        )
+        let summary = AttentionRecentWorkSummary(
+            displayLabel: "Launcher recent work",
+            pushOccurredAt: "2026-08-03T00:00:00.000Z",
+            trackingState: .ahead,
+            aheadCount: 2,
+            behindCount: 0,
+            correlation: .repositoryScopeOnly,
+            presentation: .displayOnly,
+            attentionSelectionEffect: .none,
+            executionEffect: .none
+        )
+
+        XCTAssertEqual(
+            LauncherPresentation.recentWorkDisplay(summary),
+            LauncherRecentWorkDisplay(
+                title: "Launcher recent work",
+                trackingText: "로컬 작업이 2개 앞서 있습니다.",
+                pushedAtText:
+                    "GitHub push · 2026-08-03T00:00:00.000Z"
+            )
+        )
+        XCTAssertEqual(
+            LauncherPresentation.decisionDisplay(
+                decisionStatus: .noAction,
+                decisionReasonCodes: [.scopedNoAction],
+                candidateCounts: counts,
+                currentFocusSummary: nil
+            ),
+            decisionBefore
+        )
+    }
+
     private func sourceDiagnostics(
         github: AttentionSourceDiagnosticState,
         codex: AttentionSourceDiagnosticState

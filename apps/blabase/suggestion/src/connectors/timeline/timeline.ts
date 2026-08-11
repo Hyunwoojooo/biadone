@@ -5,7 +5,10 @@ import {
   readStoredCodexConfig,
   readStoredCodexSnapshot
 } from "../codex/localStore";
-import type { CodexSnapshot } from "../codex/types";
+import type {
+  CodexSessionSignal,
+  CodexSnapshot
+} from "../codex/types";
 import { readStoredGitHubSnapshot } from "../github/localStore";
 import type {
   GitHubActivityKind,
@@ -279,14 +282,8 @@ function codexTimelineItems(
         endAt: null,
         dueAt: null,
         allDay: false,
-        title: safeText(
-          session.taskSummary ?? session.projectLabel,
-          "Codex 작업"
-        ),
-        detail: codexTaskDetail(
-          session.projectLabel,
-          session.taskSummarySource
-        ),
+        title: codexTimelineTitle(session),
+        detail: codexTimelineDetail(session),
         tags: []
       }
     ];
@@ -520,17 +517,74 @@ function githubTaskLabel(kind: GitHubTaskKind): string {
   }
 }
 
-function codexTaskDetail(
-  projectLabel: string,
+function codexTimelineTitle(session: CodexSessionSignal): string {
+  const latestRequest = currentCodexLatestRequest(session);
+  if (latestRequest) {
+    return safeText(`최근 요청: ${latestRequest}`, "Codex 작업");
+  }
+
+  return safeText(
+    `${session.projectLabel} Codex 세션 활동`,
+    "Codex 세션 활동"
+  );
+}
+
+function codexTimelineDetail(session: CodexSessionSignal): string {
+  const project = safeText(session.projectLabel, "Codex 프로젝트");
+  const details = [project, "마지막 활동 기준"];
+
+  if (!currentCodexLatestRequest(session)) {
+    details.push("최근 요청 확인 불가");
+  }
+
+  if (session.taskSummary) {
+    details.push(
+      `${codexTaskSummaryLabel(session.taskSummarySource)}: ${safeText(
+        session.taskSummary,
+        "작업 설명 없음"
+      )}`
+    );
+  } else {
+    details.push("작업 설명 없음");
+  }
+
+  return details.join(" · ");
+}
+
+function currentCodexLatestRequest(
+  session: CodexSessionSignal
+): string | null {
+  if (session.content.state !== "complete") {
+    return null;
+  }
+
+  const contentSourceUpdatedAt = session.content.contentSourceUpdatedAt;
+  const normalizedContentSourceUpdatedAt = contentSourceUpdatedAt
+    ? normalizeTimestamp(contentSourceUpdatedAt)
+    : null;
+  const normalizedSessionUpdatedAt = normalizeTimestamp(
+    session.updatedAt
+  );
+  if (
+    !normalizedContentSourceUpdatedAt ||
+    !normalizedSessionUpdatedAt ||
+    normalizedContentSourceUpdatedAt !== normalizedSessionUpdatedAt
+  ) {
+    return null;
+  }
+
+  return session.content.latestUserPromptExcerpt;
+}
+
+function codexTaskSummaryLabel(
   summarySource: "thread_name" | "first_user_request" | null
-): string {
-  const project = safeText(projectLabel, "Codex 프로젝트");
+): "작업 제목" | "첫 요청" | "작업 설명" {
   switch (summarySource) {
     case "thread_name":
-      return `${project} · Codex 작업 제목`;
+      return "작업 제목";
     case "first_user_request":
-      return `${project} · 첫 요청 기준`;
+      return "첫 요청";
     default:
-      return `${project} · 작업 설명 없음`;
+      return "작업 설명";
   }
 }

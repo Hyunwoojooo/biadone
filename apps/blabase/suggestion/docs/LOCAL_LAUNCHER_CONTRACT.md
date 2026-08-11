@@ -1,6 +1,6 @@
 # Blabase Local Launcher Contract
 
-상태: Phase 4C.2 macOS local beta v0.3
+상태: Phase 4C.3 source connection onboarding local beta v0.4
 
 ## 1. 목적
 
@@ -34,6 +34,10 @@ source 가용 상태를 확인하는 최소 설정 화면만 둔다.
 - `⇧ Space` 등록 실패는 launcher footer와 메뉴에 충돌 상태로 표시한다.
 - first-run과 이후 설정 화면에서 기존 Blabase data root를 사용자가 직접 선택하고,
   허용된 dashboard URL과 source 가용 상태를 표시한다.
+- read-only root의 source별 연결 동작은 dashboard와 Local Agent의 opaque root ID와
+  persisted sync revision이 모두 일치할 때만 고정된 `/sources` deep link를 연다.
+- managed root에는 아직 root-owning Connection Hub가 bundle되지 않았으므로 source
+  연결 URL을 열지 않고 기존 owner Work Cockpit data root 선택으로 안내한다.
 - data root 변경을 저장하면 실행 중인 Local Agent의 실제 종료를 기다린 뒤 새
   root로 시작하고 현재 snapshot을 재평가한다. dashboard-only 변경은 Agent를
   재시작하지 않는다. Swift가 재평가 결과를 보정하거나 다시 순위화하지 않는다.
@@ -74,7 +78,11 @@ source 가용 상태를 확인하는 최소 설정 화면만 둔다.
 type LauncherRequest = {
   contract: "blabase-launcher-ipc-v1";
   requestId: string;
-  method: "attention.get" | "attention.execute" | "command.get";
+  method:
+    | "attention.get"
+    | "attention.execute"
+    | "command.get"
+    | "status.get";
   params: unknown;
 };
 
@@ -143,6 +151,28 @@ type LauncherAttentionProjection = {
       | "COLLECTION_FAILED"
       | null;
   }>;
+  currentFocusSummary?: {
+    status: "selected" | "unresolved" | "unavailable";
+    displayLabel: string | null; // selected일 때만, 최대 240자
+    reasonCodes: string[]; // canonical unique, 1..12
+    attentionSelectionEffect: "none";
+  } | null;
+  recentWorkSummary?: {
+    displayLabel: string; // 최대 240 UTF-16 code units
+    pushOccurredAt: string; // YYYY-MM-DDTHH:mm:ss.SSSZ
+    trackingState:
+      | "in_sync"
+      | "ahead"
+      | "behind"
+      | "diverged"
+      | "not_configured";
+    aheadCount: number | null; // 0..100000
+    behindCount: number | null; // 0..100000
+    correlation: "repository_scope_only";
+    presentation: "display_only";
+    attentionSelectionEffect: "none";
+    executionEffect: "none";
+  } | null;
   card: {
     candidateId: string;
     title: string;
@@ -166,6 +196,33 @@ type LauncherAttentionProjection = {
 };
 ```
 
+`status.get`은 strict empty params만 받고 다음 bounded control-plane 상태를 반환한다.
+절대 경로, URL, token, credential과 source 원문은 포함하지 않는다.
+
+```ts
+type LauncherStatus = {
+  contract: "blabase-launcher-status-v1";
+  rootId: `root_${string}` | null;
+  sourceMode: "managed" | "read_only";
+  mutationAuthority: "launcher_agent" | "none";
+  syncRevision: string | null;
+};
+
+type DashboardRootContext = {
+  contract: "blabase-root-context-v1";
+  rootId: `root_${string}`;
+  mutationAuthority: "dashboard";
+  syncRevision: string | null;
+};
+```
+
+root ID는 `root_` 뒤 lowercase hex 32자이며 owner가
+`<root>/.local/root-context.json`에 원자적으로 생성한다. `.local`은 `0700`, marker는
+`0600`이고 symlink와 다른 UID 소유 파일은 거부한다. dashboard/managed owner만
+missing marker를 만들거나 안전한 기존 권한을 강화하며 read-only Local Agent는
+생성·복구하지 않는다. sync revision은 양쪽 모두 같은 persisted source-sync
+`latest.json`에서 계산하고 snapshot이 없으면 `null`이다.
+
 `sourceDiagnostics` 순서는 GitHub, Codex, Notion, Google Calendar로 고정한다.
 GitHub·Codex만 후보 source이므로 `candidateSetComplete`를 boolean으로
 표시하고 Notion·Calendar는 `null`을 사용한다. 상태와 bounded reason code,
@@ -173,6 +230,23 @@ decision status와 decision reason/candidate count가 모두 일치해야 decode
 받아든인다. 이 진단 필드는 런처가 추천을 다시 판정하기 위한 값이
 아니라, 제안이 없을 때 source 연결·수집·후보 범위 중 어디가 막혔는지
 사용자에게 설명하기 위한 관찰 계약이다.
+
+`currentFocusSummary`는 같은 평가에서 이미 계산된 Phase 1 Current Focus의 bounded
+표시 요약이다. 이전 v2 producer와의 호환을 위해 생략 가능하며 consumer는 생략을
+`null`로 처리한다. 선택된 경우에만 최대 240자의 `displayLabel`을 포함하고, status와
+canonical reason code 외 workstream/focus ID, identity ref, event payload, prompt,
+command, path는 전달하지 않는다. 이 필드는 항상
+`attentionSelectionEffect: "none"`이며 후보 생성·eligibility·순위·card·실행 guard를
+변경하지 않는다.
+
+`recentWorkSummary`는 이전 v2 producer와의 호환을 위해 생략 가능하며 consumer는
+생략을 `null`로 처리한다. `pushOccurredAt`은 public seam에서 canonical UTC
+millisecond 형식으로 정규화한다. tracking count는 `in_sync=0/0`,
+`ahead=>0/0`, `behind=0/>0`, `diverged=>0/>0`,
+`not_configured=null/null`만 허용한다. 이 요약은 display-only이며 repository-level
+상관관계만 표현한다. candidate/action/URL/project/scope/repository/hash, raw SHA,
+branch, remote, path를 포함하지 않고 Attention 선택·eligibility·순위·card·실행
+guard 또는 실행에 영향을 주지 않는다.
 
 projection에는 `baseResult`, replay input, raw prompt/answer, command/output/diff,
 credential, native thread ID와 project cwd를 포함하지 않는다.
@@ -266,12 +340,20 @@ host/scheme을 포함한 URL은 fail closed로 거부한다. dashboard URL과 �
 local preference에 경로/URL만 저장하며 credential이나 source 원문은 preference에
 저장하지 않는다.
 
-Phase 4C.1의 dashboard URL은 navigation destination일 뿐 선택한 local data root와
-같은 snapshot을 사용한다는 handshake가 아니다. local Work Cockpit은 사용자가
-선택한 root를 `cwd`로 소유한 `SourceSyncCoordinator`여야 한다. Cloud와 local Agent
-사이의 data bridge도 아직 이 계약에 포함되지 않는다. 후속 단계에서는 dashboard
-status API가 opaque root identity와 snapshot revision을 반환하고 런처가 이를
-비교하되 절대 경로를 네트워크로 전송하지 않는 handshake를 추가한다.
+Phase 4C.3에서 read-only source 연결을 열기 전 Local Agent `status.get`, dashboard
+`GET /api/system/root-context`, 다시 Local Agent `status.get` 순서로 확인한다. 첫
+status가 managed이거나 authority가 맞지 않으면 dashboard에 요청하지 않는다. 이후
+non-null root ID와 sync revision이 정확히 일치할 때만 네 provider enum으로 만든
+`/sources?source=<allowlisted>&entry=launcher#source-<provider>`를 연다. mismatch,
+invalid response, redirect, timeout과 unreachable은 모두 fail closed이며 재시도 안내만
+표시한다. 절대 data-root path는 dashboard API나 URL로 보내지 않는다.
+
+local Work Cockpit은 선택 root를 `cwd`로 소유한 `SourceSyncCoordinator`여야 한다.
+이 handshake는 navigation 직전의 동일-store 확인이며 coordinator의 exclusive lease나
+이후 browser/OAuth mutation을 handshake 시점에 묶는 session proof는 아니다. 따라서
+현재 release는 operator가 한 owner Work Cockpit만 실행하는 internal dogfood 범위다.
+Cloud/local data bridge, lease-backed mutation gate와 launcher-managed Connection Hub는
+external beta 후속 release gate다.
 
 기존 beta의 `BLABASE_LAUNCHER_DATA_ROOT`와 `BLABASE_DASHBOARD_URL` 값은 저장된 설정이
 없는 최초 실행에서만 legacy candidate로 읽는다. 안전한 root/URL 검증 뒤 설정 화면에
@@ -322,6 +404,10 @@ Phase 4C.2 diagnostics projection도 기존 resolver output의 상태·개수·s
 filtering, ranking, selection을 변경하지 않으므로 Golden Dataset과 semantic
 baseline은 재실행하지 않는다.
 
+Phase 4C.3 root handshake와 source deep link/OAuth return도 control-plane과 navigation
+변경이다. source snapshot schema, 수집 의미, engine input/output 해석과 후보 순서를
+바꾸지 않으므로 Golden Dataset과 semantic baseline은 재실행하지 않는다.
+
 - 네 decision status와 top suggestion이 손실 없이 projection되는지
 - launcher가 top suggestion filtering/ordering을 바꾸지 않는지
 - raw/private field가 projection과 stdout log에 나오지 않는지
@@ -352,5 +438,11 @@ baseline은 재실행하지 않는다.
   monitor와 일치하고, 상태/reason·순서·completeness 불일치를 fail closed하는지
 - 기존 root 선택 시 기본 Cloud dashboard만 local Work Cockpit으로 전환되고
   사용자가 명시한 허용 localhost endpoint는 보존되는지
-- 후속: dashboard status의 opaque root identity/snapshot revision handshake로 서로
-  다른 store를 보는 launcher와 Work Cockpit을 감지하는지
+- owner marker가 stable·atomic·private permission으로 생성되고 read-only lookup은
+  missing/invalid marker를 만들거나 복구하지 않는지
+- dashboard와 Local Agent root ID 또는 sync revision이 다르면 source link가 열리지
+  않고 managed mode에서는 dashboard status 요청조차 하지 않는지
+- GitHub/Codex/Notion/Google Calendar만 고정 deep link로 만들고 OAuth 완료·실패가
+  임의 return destination이 아니라 해당 `/sources` anchor로 돌아오는지
+- 후속: coordinator exclusive lease와 launcher-issued session proof로 preflight 이후
+  browser mutation까지 같은 root authority에 묶는지

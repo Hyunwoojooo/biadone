@@ -32,6 +32,7 @@ import {
 } from "../src/attention/monitoringSchema";
 import { asEphemeralAttentionPreview } from "../src/attention/liveAttention";
 import { runtimeSha256 } from "../src/crossSource/canonicalHash";
+import { createEmptyWorkContextRegistry } from "../src/context";
 
 const temporaryDirectories: string[] = [];
 
@@ -47,12 +48,16 @@ describe("Attention local monitor store", () => {
   it("keeps previously recorded v0.2 Attention replay inputs readable", async () => {
     const cwd = await temporaryDirectory();
     const current = evaluatedAt("2026-07-26T12:00:00.000Z");
+    const {
+      focusContextRegistrySha256: _focusContextRegistrySha256,
+      ...legacyReplayEnvelope
+    } = current.replayArtifact;
     const legacyInput = {
       ...current.replayArtifact.input.baseAttentionInput,
       contract: "cross-source-attention-input-v0.2"
     };
     const legacyArtifact = {
-      ...current.replayArtifact,
+      ...legacyReplayEnvelope,
       contract: "attention-replay-input-v1" as const,
       inputSha256: runtimeSha256({
         domain: "blabase-cross-source-attention-input-v0.2",
@@ -308,7 +313,7 @@ describe("Attention local monitor store", () => {
         (run) => run.runId === currentRun.run.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-run-v0.5",
+      contract: "attention-monitor-run-v0.6",
       replayArtifactState: "available"
     });
     expect(persisted.feedback).toHaveLength(1);
@@ -322,7 +327,7 @@ describe("Attention local monitor store", () => {
         (failure) => failure.runId === currentFailure.runId
       )
     ).toMatchObject({
-      contract: "attention-monitor-failure-v0.4",
+      contract: "attention-monitor-failure-v0.5",
       codeState: "unavailable"
     });
   });
@@ -446,7 +451,7 @@ describe("Attention local monitor store", () => {
           status: "failed",
           errorCode: "ATTENTION_RESOLUTION_FAILED",
           latencyMs: 1_250,
-          contract: "attention-monitor-failure-v0.4",
+          contract: "attention-monitor-failure-v0.5",
           codeCommitSha: "a".repeat(40),
           codeState: "declared_commit",
           codeFingerprintSha256: null
@@ -746,7 +751,119 @@ describe("Attention local monitor store", () => {
     });
   });
 
-  it("fails closed when a v0.5 replay artifact is missing or schema-invalid", async () => {
+  it("rejects v0.6 Focus monitor metadata that the exact replay input cannot reproduce", async () => {
+    const cwd = await temporaryDirectory();
+    const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
+    const tamperedRuns = [
+      attentionMonitorRunSchema.parse({
+        ...evaluated.run,
+        focusSelection: {
+          ...evaluated.run.focusSelection,
+          currentFocusProjectionSha256: "f".repeat(64)
+        }
+      }),
+      attentionMonitorRunSchema.parse({
+        ...evaluated.run,
+        focusSelection: {
+          ...evaluated.run.focusSelection,
+          focusAwareAttentionShadowProjectionSha256: "f".repeat(64)
+        }
+      }),
+      attentionMonitorRunSchema.parse({
+        ...evaluated.run,
+        focusSelection: {
+          ...evaluated.run.focusSelection,
+          currentFocusStatus: "selected"
+        }
+      }),
+      attentionMonitorRunSchema.parse({
+        ...evaluated.run,
+        focusSelection: {
+          ...evaluated.run.focusSelection,
+          counterfactualTopCandidateId: `attention_${"f".repeat(32)}`,
+          wouldSwitch: true
+        }
+      })
+    ];
+
+    for (const run of tamperedRuns) {
+      await expect(
+        recordAttentionRun(
+          run,
+          evaluated.replayArtifact,
+          cwd,
+          new Date(evaluated.run.asOf)
+        )
+      ).rejects.toMatchObject({
+        code: "REPLAY_ARTIFACT_INVALID"
+      });
+    }
+  });
+
+  it("replays the same fail-closed Focus result when the request-time context hash mismatched", async () => {
+    const cwd = await temporaryDirectory();
+    const asOf = "2026-07-26T12:00:00.000Z";
+    const baseline = evaluatedAt(asOf);
+    const activeInput = baseline.replayArtifact.input;
+    const mismatched = evaluateAttentionSnapshots({
+      github: {
+        status: "unavailable",
+        reason: "CONNECTOR_DISCONNECTED"
+      },
+      codex: {
+        status: "unavailable",
+        reason: "CONNECTOR_DISCONNECTED"
+      },
+      asOf,
+      currentWorkEvidence: {
+        asOf,
+        githubBatch: activeInput.githubBatch,
+        managedProjection: activeInput.managedPublicProjection,
+        managedSemantics: activeInput.managedSemanticProjection,
+        managedRunStartedAtById:
+          activeInput.managedRunStartedAtById,
+        workRelations: activeInput.workRelationProjection,
+        artifacts: activeInput.artifactRelationProjection,
+        claims: activeInput.claimAuthorityProjection,
+        contextRegistry: createEmptyWorkContextRegistry(asOf)
+      }
+    });
+
+    expect(mismatched.currentFocus).toMatchObject({
+      status: "unavailable",
+      reasonCodes: ["FOCUS_DEPENDENCY_MISMATCH"]
+    });
+    expect(
+      mismatched.replayArtifact.focusContextRegistrySha256
+    ).not.toBe(
+      activeInput.workRelationProjection.contextRegistrySha256
+    );
+    await expect(
+      recordAttentionRun(
+        mismatched.run,
+        mismatched.replayArtifact,
+        cwd,
+        new Date(asOf)
+      )
+    ).resolves.toEqual(mismatched.run);
+    await expect(
+      readAttentionMonitorStore(cwd, new Date(asOf))
+    ).resolves.toMatchObject({
+      runs: [
+        {
+          focusSelection: {
+            currentFocusStatus: "unavailable",
+            currentFocusProjectionSha256:
+              mismatched.currentFocus.projectionSha256,
+            focusAwareAttentionShadowProjectionSha256:
+              mismatched.focusAwareAttentionShadow.projectionSha256
+          }
+        }
+      ]
+    });
+  });
+
+  it("fails closed when a v0.6 replay artifact is missing or schema-invalid", async () => {
     for (const corruption of ["missing", "invalid_schema"] as const) {
       const cwd = await temporaryDirectory();
       const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
@@ -777,7 +894,7 @@ describe("Attention local monitor store", () => {
     }
   });
 
-  it("fails closed when a v0.5 replay hash claim is not the artifact hash", async () => {
+  it("fails closed when a v0.6 replay hash claim is not the artifact hash", async () => {
     const cwd = await temporaryDirectory();
     const evaluated = evaluatedAt("2026-07-26T12:00:00.000Z");
     await recordAttentionRun(
@@ -1028,7 +1145,7 @@ function legacyRunFieldsFromEvaluation(
 function legacyFailureFixture(
   current: ReturnType<typeof createAttentionFailureRecord>
 ) {
-  if (current.contract !== "attention-monitor-failure-v0.4") {
+  if (current.contract !== "attention-monitor-failure-v0.5") {
     throw new TypeError("Expected a current failure fixture.");
   }
   const {

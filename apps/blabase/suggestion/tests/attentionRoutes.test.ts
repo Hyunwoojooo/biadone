@@ -129,6 +129,12 @@ describe("Attention routes", () => {
       result: evaluated.result,
       baseResult: evaluated.baseResult,
       eligibilityProjection: evaluated.eligibilityProjection,
+      recentMeaningfulEvents: evaluated.recentMeaningfulEvents,
+      currentWorkstreams: evaluated.currentWorkstreams,
+      currentFocus: evaluated.currentFocus,
+      focusAwareAttentionShadow:
+        evaluated.focusAwareAttentionShadow,
+      recentWork: null,
       run: {
         ...evaluated.run,
         contract: "attention-monitor-preview-v1",
@@ -140,6 +146,40 @@ describe("Attention routes", () => {
     expect(JSON.stringify(payload)).not.toContain(
       "private-replay-input"
     );
+    expect(JSON.stringify(payload)).not.toContain("raw-thread-id");
+    expect(JSON.stringify(payload)).not.toContain("/Users/private");
+    expect(JSON.stringify(payload)).not.toContain("secret-token");
+    expect(JSON.stringify(payload)).not.toContain(
+      "PRIVATE_RECENT_WORK_SIDECAR"
+    );
+  });
+
+  it("exposes only the bounded Recent Work public summary", async () => {
+    setDevelopmentEnvironment();
+    const evaluated = evaluatedFixture();
+    evaluated.recentWorkPublicSummary = {
+      displayLabel: "Safe recent work",
+      pushOccurredAt: "2026-07-26T11:58:00.000Z",
+      trackingState: "in_sync",
+      aheadCount: 0,
+      behindCount: 0,
+      correlation: "repository_scope_only",
+      presentation: "display_only",
+      attentionSelectionEffect: "none",
+      executionEffect: "none"
+    };
+    vi.mocked(evaluateCurrentAttention).mockResolvedValue(evaluated as never);
+
+    const response = await getAttention(
+      new Request("http://localhost:3102/api/attention")
+    );
+    const payload = await response.json();
+    expect(payload.recentWork).toEqual(evaluated.recentWorkPublicSummary);
+    expect(JSON.stringify(payload)).not.toContain(
+      "PRIVATE_RECENT_WORK_SIDECAR"
+    );
+    expect(JSON.stringify(payload.recentWork)).not.toContain("Sha256");
+    expect(JSON.stringify(payload.recentWork)).not.toContain("project_");
   });
 
   it("refreshes both sources only through a same-origin local POST", async () => {
@@ -249,7 +289,7 @@ describe("Attention routes", () => {
       stage: "source_sync",
       errorCode: "SOURCE_SYNC_FAILED",
       retryCount: 0,
-      engineVersion: "attention-live-orchestrator-v0.5",
+      engineVersion: "attention-live-orchestrator-v0.6",
       inputSchemaVersion: "cross-source-active-attention-input-v0.4",
       resultSchemaVersion: "cross-source-active-attention-result-v0.5",
       policyVersion: "aggressive-evidence-bound-attention-policy-v0.4",
@@ -259,7 +299,7 @@ describe("Attention routes", () => {
       rankingPolicyVersion: "active-attention-ranking-policy-v0.3",
       resolverVersion: "active-attention-decision-resolver-v0.4",
       idPolicyVersion: "active-attention-id-v0.1",
-      contract: "attention-monitor-failure-v0.4",
+      contract: "attention-monitor-failure-v0.5",
       codeCommitSha: "a".repeat(40),
       codeState: "declared_commit",
       codeFingerprintSha256: null,
@@ -463,6 +503,26 @@ function evaluatedFixture() {
         summarySha256: "e".repeat(64)
       }
     },
+    recentMeaningfulEvents: null,
+    currentWorkstreams: null,
+    currentFocus: {
+      status: "unavailable",
+      projectionSha256: "f".repeat(64),
+      reasonCodes: ["FOCUS_PROJECTION_UNAVAILABLE"],
+      attentionSelectionEffect: "none"
+    },
+    focusAwareAttentionShadow: {
+      status: "unavailable",
+      projectionSha256: "1".repeat(64),
+      existingTopCandidateId: null,
+      counterfactualTopCandidateId: null,
+      wouldSwitch: false,
+      attentionSelectionEffect: "none"
+    },
+    recentWork: {
+      marker: "PRIVATE_RECENT_WORK_SIDECAR"
+    },
+    recentWorkPublicSummary: null as null | Record<string, unknown>,
     run: {
       runId: `run_${"a".repeat(32)}`,
       resultId: `res_${"b".repeat(32)}`

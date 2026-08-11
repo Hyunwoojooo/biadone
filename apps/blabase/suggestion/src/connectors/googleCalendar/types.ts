@@ -60,6 +60,7 @@ export type CalendarConnectionState =
   | {
       status: "unavailable";
       message: string;
+      localUrl?: string;
     }
   | {
       status: "disconnected";

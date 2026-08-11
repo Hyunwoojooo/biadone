@@ -51,8 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let panelController = LauncherPanelController(
             viewModel: viewModel,
-            openSettings: { [weak settingsWindowController] in
-                settingsWindowController?.show()
+            openSettings: { [weak self] in
+                self?.showSettings()
             }
         )
         let hotKey = GlobalHotKey { [weak self] in
@@ -62,9 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusItemController = StatusItemController(
             loginItemController: loginItemController,
             hotKeyRegistered: hotKey.isRegistered,
-            togglePanel: { [weak panelController] in
+            togglePanel: { [weak self, weak panelController] in
                 if settingsStore.requiresSetup {
-                    settingsWindowController.show()
+                    self?.showSettings()
                 } else {
                     panelController?.toggle()
                 }
@@ -72,8 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openDashboard: { [weak viewModel] in
                 viewModel?.openDashboard()
             },
-            openSettings: { [weak settingsWindowController] in
-                settingsWindowController?.show()
+            openSettings: { [weak self] in
+                self?.showSettings()
             },
             setupRequired: {
                 settingsStore.requiresSetup
@@ -115,10 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPrimaryInterface() {
         guard let settingsStore else { return }
         if settingsStore.requiresSetup {
-            settingsWindowController?.show()
+            showSettings()
         } else {
             panelController?.toggle()
         }
+    }
+
+    private func showSettings() {
+        panelController?.hide()
+        settingsWindowController?.show()
     }
 
     private func applySettings(

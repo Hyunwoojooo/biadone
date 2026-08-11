@@ -27,24 +27,35 @@ import {
   type AttentionMonitorRun,
   type AttentionMonitorStore,
   type AttentionReplayInputArtifact,
+  type PreviousFocusAttentionReplayInputArtifact,
   type StoredAttentionReplayInputArtifact
 } from "./monitoringSchema";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
+import type { RuntimeWorkSignalBatch } from "../crossSource/schema";
 import { runPhase2AttentionRouter } from "../crossSource/runAttentionRouter";
 import { resolveActiveAttention } from "../attentionDecision";
+import {
+  createDependencyMismatchFocusAwareAttentionShadow,
+  createUnavailableCurrentFocusProjection,
+  resolveCurrentFocusFromEvidence,
+  resolveFocusAwareAttentionShadow
+} from "../currentFocus";
 import {
   ATTENTION_FEEDBACK_CONTRACT,
   ATTENTION_MONITOR_MAX_FEEDBACK,
   ATTENTION_MONITOR_MAX_FAILURES,
   ATTENTION_MONITOR_MAX_RUNS,
   ATTENTION_MONITOR_FAILURE_CONTRACT,
+  ATTENTION_MONITOR_FAILURE_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_FAILURE_V02_CONTRACT,
   ATTENTION_MONITOR_RETENTION_DAYS,
   ATTENTION_MONITOR_RUN_CONTRACT,
   ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT,
+  ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_MONITOR_RUN_V03_CONTRACT,
   ATTENTION_REPLAY_INPUT_CONTRACT,
+  ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT,
   ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT,
   ATTENTION_MONITOR_STORE_CONTRACT
 } from "./versions";
@@ -311,15 +322,20 @@ function assertReplayArtifactMatchesRun(
   const contractGenerationMatches =
     (run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
       artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
+    (run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT &&
+      artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT) ||
     (run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
-      artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
+      artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT) ||
     (run.contract === ATTENTION_MONITOR_RUN_V03_CONTRACT &&
       artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_CONTRACT);
   const artifactSha256 = runtimeSha256({
     domain:
       artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT
-        ? "attention-private-replay-artifact-v2"
-        : "attention-private-replay-artifact-v1",
+        ? "attention-private-replay-artifact-v3"
+        : artifact.contract ===
+            ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT
+          ? "attention-private-replay-artifact-v2"
+          : "attention-private-replay-artifact-v1",
     artifact
   });
   if (
@@ -337,16 +353,154 @@ function assertReplayArtifactMatchesRun(
     );
   }
   if (
-    run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
-    artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT
+    run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
+    artifact.contract === ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT
+  ) {
+    assertV04ReplayDependencyMatrix(artifact);
+  }
+  if (
+    ((run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
+      artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT) ||
+      (run.contract === ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT &&
+        artifact.contract ===
+          ATTENTION_REPLAY_INPUT_PREVIOUS_FOCUS_CONTRACT))
   ) {
     assertActiveReplayResolutionMatchesRun(run, artifact);
   }
+  // Monitor v0.4 used the historical Active resolver v0.3, which is not
+  // retained. Its replay v2 artifact is therefore verified by its immutable
+  // envelope, canonical input hash, lineage, and frozen dependency matrix;
+  // a current resolver result must never be treated as semantically equivalent.
+}
+
+function assertV04ReplayDependencyMatrix(
+  artifact: PreviousFocusAttentionReplayInputArtifact
+): void {
+  const input = artifact.input;
+  const githubSource = input.baseAttentionInput.sources.github;
+  const codexSource = input.baseAttentionInput.sources.codex;
+  const githubVersionsMatch =
+    githubSource.status === "unavailable"
+      ? input.githubBatch === null
+      : input.githubBatch !== null &&
+        hasV04RuntimeBatchVersions(githubSource.batch, "github") &&
+        hasV04RuntimeBatchVersions(input.githubBatch, "github");
+  const codexVersionsMatch =
+    codexSource.status === "unavailable" ||
+    hasV04RuntimeBatchVersions(codexSource.batch, "codex");
+  const eligibility = input.eligibilityProjection;
+  const managedSemantic = input.managedSemanticProjection;
+  const workRelations = input.workRelationProjection;
+  const artifacts = input.artifactRelationProjection;
+  const claims = input.claimAuthorityProjection;
+  const workflow = input.workflowProjection;
+  const dependenciesMatch =
+    input.contract === "cross-source-active-attention-input-v0.4" &&
+    input.baseAttentionInput.contract ===
+      "cross-source-attention-input-v0.3" &&
+    input.baseAttentionInput.policy.version ===
+      "aggressive-evidence-bound-attention-policy-v0.2" &&
+    input.baseAttentionInput.policy.codexMetadataRetentionPolicyVersion ===
+      "codex-metadata-retention-30d-v0.1" &&
+    githubVersionsMatch &&
+    codexVersionsMatch &&
+    eligibility.contract ===
+      "attention-eligibility-shadow-projection-v0.1" &&
+    eligibility.candidateSeedSchemaVersion ===
+      "attention-candidate-seed-v0.1" &&
+    eligibility.policyVersion ===
+      "hard-attention-eligibility-policy-v0.1" &&
+    eligibility.evidencePolicyVersion ===
+      "attention-eligibility-evidence-v0.1" &&
+    eligibility.resolverVersion ===
+      "attention-eligibility-resolver-v0.1" &&
+    eligibility.idPolicyVersion === "attention-eligibility-id-v0.1" &&
+    input.managedPublicProjection.contract ===
+      "codex-managed-public-projection-v1" &&
+    managedSemantic.contract ===
+      "codex-managed-semantic-projection-v0.1" &&
+    managedSemantic.schemaVersion ===
+      "codex-managed-semantic-schema-v0.1" &&
+    managedSemantic.ruleVersion ===
+      "codex-managed-direct-event-detector-v0.1" &&
+    managedSemantic.evidencePolicyVersion ===
+      "codex-managed-direct-metadata-evidence-v0.1" &&
+    workRelations.contract ===
+      "managed-codex-work-relation-projection-v0.1" &&
+    workRelations.schemaVersion === "work-relation-schema-v0.1" &&
+    workRelations.resolverVersion ===
+      "managed-codex-explicit-binding-resolver-v0.1" &&
+    workRelations.evidencePolicyVersion ===
+      "explicit-binding-native-id-evidence-v0.1" &&
+    artifacts.contract ===
+      "managed-codex-artifact-relation-projection-v0.1" &&
+    artifacts.schemaVersion === "artifact-relation-schema-v0.1" &&
+    artifacts.resolverVersion ===
+      "managed-codex-explicit-artifact-resolver-v0.1" &&
+    artifacts.evidencePolicyVersion ===
+      "explicit-user-native-artifact-evidence-v0.1" &&
+    artifacts.identityPolicyVersion ===
+      "github-native-artifact-id-v0.1" &&
+    claims.contract === "claim-authority-projection-v0.1" &&
+    claims.schemaVersion === "work-claim-schema-v0.1" &&
+    claims.conflictSchemaVersion === "claim-conflict-schema-v0.1" &&
+    claims.resolverVersion === "cross-source-claim-resolver-v0.2" &&
+    claims.authorityPolicyVersion ===
+      "field-claim-authority-policy-v0.1" &&
+    claims.evidencePolicyVersion ===
+      "direct-source-claim-evidence-v0.1" &&
+    workflow.contract === "project-workflow-projection-v0.1" &&
+    workflow.schemaVersion === "project-workflow-schema-v0.1" &&
+    workflow.policyVersion ===
+      "project-workflow-follow-through-policy-v0.1";
+  if (!dependenciesMatch) {
+    throw new AttentionMonitorStoreError(
+      "REPLAY_ARTIFACT_INVALID"
+    );
+  }
+}
+
+function hasV04RuntimeBatchVersions(
+  batch: RuntimeWorkSignalBatch,
+  source: "github" | "codex"
+): boolean {
+  const commonVersionsMatch =
+    batch.contract === "runtime-work-signal-batch-v0.3" &&
+    batch.source === source &&
+    batch.workSignalContract === "runtime-work-signal-v0.3" &&
+    batch.assessment.contract ===
+      "runtime-snapshot-assessment-v0.1" &&
+    batch.assessment.freshnessPolicyVersion ===
+      "attention-live-freshness-policy-v0.1";
+  if (!commonVersionsMatch) return false;
+  if (source === "github") {
+    return (
+      batch.sourceSchemaVersion === "github-snapshot-v2" &&
+      [
+        "github-api-2022-11-28",
+        "github-api-2026-03-10"
+      ].includes(batch.collectorVersion) &&
+      batch.normalizerVersion ===
+        "github-project-context-normalizer-v0.2"
+    );
+  }
+  return (
+    batch.sourceSchemaVersion === "codex-snapshot-v3" &&
+    [
+      "codex-app-server-metadata-v1",
+      "codex-app-server-activity-summary-v1",
+      "codex-app-server-conversation-and-execution-v1"
+    ].includes(batch.collectorVersion) &&
+    batch.normalizerVersion ===
+      "codex-historical-context-normalizer-v0.3"
+  );
 }
 
 function assertActiveReplayResolutionMatchesRun(
   run: AttentionMonitorRun,
-  artifact: AttentionReplayInputArtifact
+  artifact:
+    | AttentionReplayInputArtifact
+    | PreviousFocusAttentionReplayInputArtifact
 ): void {
   const result = resolveActiveAttention(artifact.input);
   const baseResult = runPhase2AttentionRouter(
@@ -421,6 +575,109 @@ function assertActiveReplayResolutionMatchesRun(
       "REPLAY_ARTIFACT_INVALID"
     );
   }
+  if (
+    run.contract === ATTENTION_MONITOR_RUN_CONTRACT &&
+    artifact.contract === ATTENTION_REPLAY_INPUT_CONTRACT
+  ) {
+    assertFocusReplayResolutionMatchesRun(run, artifact, result);
+  }
+}
+
+function assertFocusReplayResolutionMatchesRun(
+  run: AttentionMonitorRun,
+  artifact: AttentionReplayInputArtifact,
+  activeAttentionResult: ReturnType<typeof resolveActiveAttention>
+): void {
+  try {
+    const codexSource = artifact.input.baseAttentionInput.sources.codex;
+    let currentFocus: ReturnType<
+      typeof createUnavailableCurrentFocusProjection
+    >;
+    let shadow: ReturnType<
+      typeof createDependencyMismatchFocusAwareAttentionShadow
+    >;
+    try {
+      const focusEvidence = resolveCurrentFocusFromEvidence({
+        asOf: artifact.input.asOf,
+        githubBatch: artifact.input.githubBatch,
+        codexInventoryBatch:
+          codexSource.status === "available" ? codexSource.batch : null,
+        managedPublicProjection:
+          artifact.input.managedPublicProjection,
+        managedSemanticProjection:
+          artifact.input.managedSemanticProjection,
+        managedRunStartedAtById:
+          artifact.input.managedRunStartedAtById,
+        workRelationProjection:
+          artifact.input.workRelationProjection,
+        artifactRelationProjection:
+          artifact.input.artifactRelationProjection,
+        claimAuthorityProjection:
+          artifact.input.claimAuthorityProjection,
+        contextRegistrySha256:
+          artifact.focusContextRegistrySha256
+      });
+      currentFocus = focusEvidence.currentFocus;
+      shadow = resolveFocusAwareAttentionShadow({
+        asOf: artifact.input.asOf,
+        currentFocus,
+        activeAttentionResult,
+        eligibilityProjectionSha256:
+          artifact.input.eligibilityProjection.projectionSha256,
+        workRelationProjectionSha256:
+          artifact.input.workRelationProjection.projectionSha256,
+        claimAuthorityProjectionSha256:
+          artifact.input.claimAuthorityProjection.projectionSha256
+      });
+    } catch {
+      currentFocus = createUnavailableCurrentFocusProjection({
+        asOf: artifact.input.asOf,
+        reasonCode: "FOCUS_DEPENDENCY_MISMATCH"
+      });
+      shadow = createDependencyMismatchFocusAwareAttentionShadow({
+        asOf: artifact.input.asOf,
+        currentFocus,
+        activeAttentionResult,
+        eligibilityProjectionSha256:
+          artifact.input.eligibilityProjection.projectionSha256,
+        workRelationProjectionSha256:
+          artifact.input.workRelationProjection.projectionSha256,
+        claimAuthorityProjectionSha256:
+          artifact.input.claimAuthorityProjection.projectionSha256
+      });
+    }
+    const expected = {
+      currentFocusStatus: currentFocus.status,
+      currentFocusProjectionSha256:
+        currentFocus.projectionSha256,
+      focusAwareAttentionShadowProjectionSha256:
+        shadow.projectionSha256,
+      actualTopCandidateId: shadow.existingTopCandidateId,
+      counterfactualTopCandidateId:
+        shadow.counterfactualTopCandidateId,
+      wouldSwitch: shadow.wouldSwitch,
+      attentionSelectionEffect: shadow.attentionSelectionEffect
+    };
+    if (
+      runtimeSha256({
+        domain: "focus-replay-resolution-v0.1",
+        expected
+      }) !==
+      runtimeSha256({
+        domain: "focus-replay-resolution-v0.1",
+        expected: run.focusSelection
+      })
+    ) {
+      throw new AttentionMonitorStoreError(
+        "REPLAY_ARTIFACT_INVALID"
+      );
+    }
+  } catch (error) {
+    if (error instanceof AttentionMonitorStoreError) throw error;
+    throw new AttentionMonitorStoreError(
+      "REPLAY_ARTIFACT_INVALID"
+    );
+  }
 }
 
 async function assertPersistedReplayClaims(
@@ -430,6 +687,7 @@ async function assertPersistedReplayClaims(
   for (const run of store.runs) {
     if (
       run.contract !== ATTENTION_MONITOR_RUN_CONTRACT &&
+      run.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_FOCUS_CONTRACT &&
       run.contract !== ATTENTION_MONITOR_RUN_PREVIOUS_CONTRACT &&
       run.contract !== ATTENTION_MONITOR_RUN_V03_CONTRACT
     ) {
@@ -652,6 +910,8 @@ async function writeAttentionMonitorStore(
     failures: store.failures.map((failure) =>
       failure.contract === "attention-monitor-failure-v0.1" ||
       failure.contract === ATTENTION_MONITOR_FAILURE_V02_CONTRACT ||
+      failure.contract ===
+        ATTENTION_MONITOR_FAILURE_PREVIOUS_FOCUS_CONTRACT ||
       failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT
         ? legacyRecords.failures.get(failure.runId) ?? failure
         : failure
@@ -712,6 +972,8 @@ function collectPersistedLegacyRecords(
         typeof failure.runId === "string" &&
         (failure.contract === "attention-monitor-failure-v0.1" ||
           failure.contract === ATTENTION_MONITOR_FAILURE_V02_CONTRACT ||
+          failure.contract ===
+            ATTENTION_MONITOR_FAILURE_PREVIOUS_FOCUS_CONTRACT ||
           failure.contract === ATTENTION_MONITOR_FAILURE_PREVIOUS_CONTRACT)
       ) {
         records.failures.set(failure.runId, failure);

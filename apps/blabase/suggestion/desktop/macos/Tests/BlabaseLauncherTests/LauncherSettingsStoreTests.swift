@@ -161,6 +161,33 @@ final class LauncherSettingsStoreTests: XCTestCase {
         )
     }
 
+    func testDashboardDraftDisablesSourceNavigationUntilApplied() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let store = LauncherSettingsStore(
+            userDefaults: fixture.defaults,
+            environment: [:],
+            fileManager: fixture.fileManager
+        )
+        store.persist(
+            try store.prepare(
+                dataRootChoice: .existingReadOnly(
+                    path: fixture.dataRoot.path
+                ),
+                dashboardBaseURLText: "http://localhost:3102"
+            )
+        )
+        let viewModel = LauncherSettingsViewModel(
+            store: store,
+            fileManager: fixture.fileManager,
+            applyHandler: { _, _ in throw CancellationError() }
+        )
+
+        XCTAssertFalse(viewModel.isSourceNavigationDraftDirty)
+        viewModel.dashboardBaseURLText = "http://127.0.0.1:3102"
+        XCTAssertTrue(viewModel.isSourceNavigationDraftDirty)
+    }
+
     func testUnknownSettingsVersionFailsClosed() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

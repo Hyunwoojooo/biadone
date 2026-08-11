@@ -19,14 +19,18 @@ export async function GET(request: Request) {
   if (!isLocalNotionRequest(request)) {
     return noStoreJson({
       status: "unavailable",
-      message: "Notion 연결은 http://localhost:3102에서 확인해주세요."
+      message: "Notion 연결은 http://localhost:3102에서 확인해주세요.",
+      localUrl: "http://localhost:3102/sources#source-notion"
     });
   }
 
   loadSharedLocalEnv();
   const configResult = loadNotionConfig();
   if (!configResult.ok) {
-    return noStoreJson({ status: "disconnected" });
+    return noStoreJson({
+      status: "unavailable",
+      message: configResult.message
+    });
   }
 
   const tokens = await readStoredNotionTokens();

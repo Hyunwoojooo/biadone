@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  createGitHubArtifactId,
+  githubCommitOidSchema
+} from "../../artifacts/contracts";
 import type { GitHubConfig } from "./config";
 import {
   githubStoreGeneration,
@@ -32,6 +36,7 @@ export const MAX_GITHUB_REPOSITORIES = 100;
 export const MAX_GITHUB_TASKS = 200;
 export const MAX_GITHUB_ACTIVITIES = 300;
 export const MAX_GITHUB_AUTHORED_PR_ACTIONABILITY = 25;
+export const MAX_GITHUB_ACTIVITY_IDENTITY_LOOKUPS = 25;
 
 const GITHUB_PAGE_SIZE = 100;
 const MAX_GITHUB_PAGES = 10;
@@ -194,17 +199,25 @@ const eventEnvelopeSchema = z.object({
 });
 
 const issueSubjectSchema = z.object({
+  id: z.number().int().positive(),
   number: z.number().int().positive(),
   title: z.string(),
   pull_request: z.unknown().optional()
 });
 const pullRequestSubjectSchema = z.object({
+  id: z.number().int().positive(),
   number: z.number().int().positive(),
   title: z.string(),
   merged: z.boolean().optional().default(false)
 });
+const pullRequestIssueIdentitySchema = z.object({
+  id: z.number().int().safe().positive(),
+  number: z.number().int().positive(),
+  pull_request: z.unknown()
+});
 const pushEventPayloadSchema = z.object({
-  ref: z.string().min(1)
+  ref: z.string().min(1),
+  head: githubCommitOidSchema
 });
 const refEventPayloadSchema = z.object({
   ref: z.string().min(1),
@@ -368,11 +381,12 @@ export async function fetchAndStoreGitHubSnapshot(
           request,
           user.login,
           repositoryIndex,
-          activityWindowStart
+          activityWindowStart,
+          tasks
         ).catch(() => unavailableActivityResult(activityWindowStart));
 
   const snapshot: GitHubSnapshot = {
-    schemaVersion: "github-snapshot-v3",
+    schemaVersion: "github-snapshot-v6",
     appClientId: config.clientId,
     appSlug: config.appSlug,
     apiVersion: config.apiVersion,
@@ -1140,7 +1154,8 @@ async function fetchUserActivities(
   request: AuthenticatedRequest,
   userLogin: string,
   repositoryIndex: Map<string, RepositoryIndexEntry>,
-  windowStart: string
+  windowStart: string,
+  currentTasks: GitHubTaskSignal[]
 ): Promise<ActivityFetchResult> {
   const activitiesById = new Map<string, GitHubUserActivitySignal>();
   let truncated = false;
@@ -1198,15 +1213,172 @@ async function fetchUserActivities(
     }
   }
 
+  const boundedActivities = [...activitiesById.values()]
+    .sort(compareGitHubActivities)
+    .slice(0, MAX_GITHUB_ACTIVITIES);
+  const identityResolution = await canonicalizePullRequestActivityIdentities({
+    activities: boundedActivities,
+    currentTasks,
+    config,
+    request
+  });
   return {
     state:
-      truncated || invalidEventCount > 0 ? "partial" : "available",
+      truncated ||
+      invalidEventCount > 0 ||
+      identityResolution.incomplete
+        ? "partial"
+        : "available",
     windowStart,
-    truncated,
-    activities: [...activitiesById.values()]
-      .sort(compareGitHubActivities)
-      .slice(0, MAX_GITHUB_ACTIVITIES)
+    truncated: truncated || identityResolution.lookupLimitReached,
+    activities: identityResolution.activities
   };
+}
+
+async function canonicalizePullRequestActivityIdentities(input: {
+  activities: GitHubUserActivitySignal[];
+  currentTasks: GitHubTaskSignal[];
+  config: GitHubConfig;
+  request: AuthenticatedRequest;
+}): Promise<{
+  activities: GitHubUserActivitySignal[];
+  incomplete: boolean;
+  lookupLimitReached: boolean;
+}> {
+  const currentIssueIds = new Map<string, number | null>();
+  for (const task of input.currentTasks) {
+    if (task.kind === "assigned_issue") continue;
+    const key = pullRequestLocatorKey(task.repositoryId, task.number);
+    const existing = currentIssueIds.get(key);
+    currentIssueIds.set(
+      key,
+      existing === undefined || existing === task.id ? task.id : null
+    );
+  }
+
+  const lookupTargets = new Map<
+    string,
+    { repositoryFullName: string; number: number }
+  >();
+  for (const activity of input.activities) {
+    if (!requiresPullRequestIssueIdentity(activity)) continue;
+    const key = pullRequestLocatorKey(
+      activity.repositoryId,
+      activity.subjectNumber
+    );
+    if (currentIssueIds.has(key) || lookupTargets.has(key)) continue;
+    lookupTargets.set(key, {
+      repositoryFullName: activity.repositoryFullName,
+      number: activity.subjectNumber
+    });
+  }
+
+  const boundedTargets = [...lookupTargets.entries()].slice(
+    0,
+    MAX_GITHUB_ACTIVITY_IDENTITY_LOOKUPS
+  );
+  const resolvedIssueIds = new Map<string, number | null>();
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < boundedTargets.length) {
+      const entry = boundedTargets[nextIndex];
+      nextIndex += 1;
+      if (!entry) continue;
+      const [key, target] = entry;
+      const issueId = await fetchPullRequestIssueObjectId(
+        input.config,
+        input.request,
+        target
+      ).catch(() => null);
+      resolvedIssueIds.set(key, issueId);
+    }
+  }
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          GITHUB_ACTIONABILITY_CONCURRENCY,
+          boundedTargets.length
+        )
+      },
+      () => worker()
+    )
+  );
+
+  let incomplete = lookupTargets.size > boundedTargets.length;
+  const activities: GitHubUserActivitySignal[] = [];
+  for (const activity of input.activities) {
+    if (!requiresPullRequestIssueIdentity(activity)) {
+      activities.push(activity);
+      continue;
+    }
+    const key = pullRequestLocatorKey(
+      activity.repositoryId,
+      activity.subjectNumber
+    );
+    const issueId = currentIssueIds.has(key)
+      ? currentIssueIds.get(key)
+      : resolvedIssueIds.get(key);
+    if (issueId === null || issueId === undefined) {
+      incomplete = true;
+      continue;
+    }
+    activities.push({ ...activity, subjectObjectId: issueId });
+  }
+  return {
+    activities,
+    incomplete,
+    lookupLimitReached: lookupTargets.size > boundedTargets.length
+  };
+}
+
+function requiresPullRequestIssueIdentity(
+  activity: GitHubUserActivitySignal
+): activity is GitHubUserActivitySignal & {
+  subjectType: "pull_request";
+  subjectNumber: number;
+} {
+  return (
+    activity.subjectType === "pull_request" &&
+    activity.subjectNumber !== null &&
+    activity.activityKind.startsWith("pull_request_")
+  );
+}
+
+async function fetchPullRequestIssueObjectId(
+  config: GitHubConfig,
+  request: AuthenticatedRequest,
+  target: { repositoryFullName: string; number: number }
+): Promise<number> {
+  const parts = target.repositoryFullName.split("/");
+  const owner = parts[0];
+  const repository = parts[1];
+  if (!owner || !repository || parts.length !== 2) {
+    throw new GitHubApiError("ACTIVITIES_RESPONSE_INVALID");
+  }
+  const response = await request(
+    apiUrl(
+      config,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/issues/${target.number}`
+    )
+  );
+  assertResponseOk(response, "ACTIVITIES_REQUEST_FAILED");
+  const issue = await parseResponse(
+    response,
+    pullRequestIssueIdentitySchema,
+    "ACTIVITIES_RESPONSE_INVALID"
+  );
+  if (issue.number !== target.number) {
+    throw new GitHubApiError("ACTIVITIES_RESPONSE_INVALID");
+  }
+  return issue.id;
+}
+
+function pullRequestLocatorKey(
+  repositoryId: number,
+  number: number
+): string {
+  return `${repositoryId}:pull_request:${number}`;
 }
 
 function normalizeUserActivity(
@@ -1240,18 +1412,26 @@ function normalizeUserActivity(
     kind: "user_activity" as const,
     repositoryId: repository.id,
     repositoryFullName: repository.fullName,
-    occurredAt: event.created_at
+    occurredAt: event.created_at,
+    artifactId: null,
+    subjectObjectId: null
   };
 
   switch (event.type) {
     case "PushEvent": {
       const payload = pushEventPayloadSchema.safeParse(event.payload);
       if (!payload.success) return { state: "invalid" };
+      const artifactId = createGitHubArtifactId({
+        kind: "github_commit",
+        repositoryId: repository.id,
+        oid: payload.data.head
+      });
       const ref = normalizeGitRef(payload.data.ref);
       return {
         state: "activity",
         activity: {
           ...base,
+          artifactId,
           activityKind: "push",
           subjectType: ref?.type ?? "repository",
           subjectNumber: null,
@@ -1293,6 +1473,7 @@ function normalizeUserActivity(
             ? "pull_request"
             : "issue",
           subjectNumber: payload.data.issue.number,
+          subjectObjectId: payload.data.issue.id,
           subjectTitle: normalizeActivityText(payload.data.issue.title),
           refName: null,
           reviewState: null
@@ -1313,6 +1494,7 @@ function normalizeUserActivity(
             ? "pull_request"
             : "issue",
           subjectNumber: payload.data.issue.number,
+          subjectObjectId: payload.data.issue.id,
           subjectTitle: normalizeActivityText(payload.data.issue.title),
           refName: null,
           reviewState: null
@@ -1334,6 +1516,7 @@ function normalizeUserActivity(
           ),
           subjectType: "pull_request",
           subjectNumber: payload.data.pull_request.number,
+          subjectObjectId: payload.data.pull_request.id,
           subjectTitle: normalizeActivityText(
             payload.data.pull_request.title
           ),
@@ -1358,6 +1541,7 @@ function normalizeUserActivity(
           activityKind: "pull_request_reviewed",
           subjectType: "pull_request",
           subjectNumber: payload.data.pull_request.number,
+          subjectObjectId: payload.data.pull_request.id,
           subjectTitle: normalizeActivityText(
             payload.data.pull_request.title
           ),
@@ -1379,6 +1563,7 @@ function normalizeUserActivity(
           activityKind: "pull_request_review_commented",
           subjectType: "pull_request",
           subjectNumber: payload.data.pull_request.number,
+          subjectObjectId: payload.data.pull_request.id,
           subjectTitle: normalizeActivityText(
             payload.data.pull_request.title
           ),

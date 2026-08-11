@@ -7,7 +7,7 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { ZodType } from "zod";
 
@@ -21,6 +21,7 @@ import {
   proposeProjectMapping,
   removeProjectMapping,
   resolveWeeklyOutcome,
+  WorkContextContractError,
   type MappingDecision,
   type MappingProposal,
   type ProjectIdentity,
@@ -34,7 +35,9 @@ import {
 
 const REGISTRY_FILENAME = "project-registry.json";
 const OUTCOMES_FILENAME = "weekly-outcomes.json";
-const mutationQueues = new Map<string, Promise<unknown>>();
+const WORK_CONTEXT_MUTATION_QUEUES = Symbol.for(
+  "blabase.work-context-mutation-queues.v1"
+);
 
 export type StoreReadFailureReason =
   | "PARSE_FAILED"
@@ -171,6 +174,74 @@ export async function confirmStoredProjectMapping(
   );
 }
 
+export async function confirmStoredRepositoryScopeProposal(
+  input: {
+    githubScope: Extract<
+      SourceScopeRef,
+      { source: "github"; resourceType: "repository" }
+    >;
+    codexScope: Extract<
+      SourceScopeRef,
+      { source: "codex"; resourceType: "scope" }
+    >;
+    projectId: string;
+    confirmedAt: string;
+    expectedRegistrySha256: string;
+    explicitUserConfirmation: true;
+  },
+  cwd = process.cwd()
+): Promise<{
+  registry: WorkContextRegistry;
+  proposals: MappingProposal[];
+  decisions: MappingDecision[];
+}> {
+  if (input.explicitUserConfirmation !== true) {
+    throw new WorkContextContractError(
+      "EXPLICIT_USER_CONFIRMATION_REQUIRED"
+    );
+  }
+  if (
+    input.githubScope.source !== "github" ||
+    input.githubScope.resourceType !== "repository" ||
+    input.codexScope.source !== "codex" ||
+    input.codexScope.resourceType !== "scope"
+  ) {
+    throw new TypeError("Expected one GitHub repository and one Codex scope.");
+  }
+
+  return mutateRegistry(cwd, input.confirmedAt, (registry) => {
+    if (registry.registrySha256 !== input.expectedRegistrySha256) {
+      throw new WorkContextStoreError("STALE_REGISTRY");
+    }
+    const scopes = [input.githubScope, input.codexScope] as const;
+    let next = registry;
+    const proposals: MappingProposal[] = [];
+    for (const scope of scopes) {
+      const proposed = proposeProjectMapping(next, {
+        scope,
+        suggestedProjectId: input.projectId,
+        proposedAt: input.confirmedAt,
+        basis: "shared_opaque_identifier"
+      });
+      next = proposed.registry;
+      proposals.push(proposed.proposal);
+    }
+
+    const decisions: MappingDecision[] = [];
+    for (const scope of scopes) {
+      const confirmed = confirmProjectMapping(next, {
+        scope,
+        projectId: input.projectId,
+        confirmedAt: input.confirmedAt,
+        explicitUserConfirmation: true
+      });
+      next = confirmed.registry;
+      decisions.push(confirmed.decision);
+    }
+    return { registry: next, proposals, decisions };
+  });
+}
+
 export async function removeStoredProjectMapping(
   input: {
     scope: SourceScopeRef;
@@ -227,6 +298,7 @@ export class WorkContextStoreError extends Error {
       | "STORE_INVALID"
       | "STORE_READ_FAILED"
       | "STORE_WRITE_FAILED"
+      | "STALE_REGISTRY"
   ) {
     super(code);
     this.name = "WorkContextStoreError";
@@ -346,12 +418,27 @@ function withStoreMutation<T>(
   key: string,
   mutation: () => Promise<T>
 ): Promise<T> {
-  const previous = mutationQueues.get(key) ?? Promise.resolve();
+  const normalizedKey = resolve(key);
+  const mutationQueues = sharedMutationQueues();
+  const previous = mutationQueues.get(normalizedKey) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(mutation);
-  mutationQueues.set(key, next);
+  mutationQueues.set(normalizedKey, next);
   return next.finally(() => {
-    if (mutationQueues.get(key) === next) mutationQueues.delete(key);
+    if (mutationQueues.get(normalizedKey) === next) {
+      mutationQueues.delete(normalizedKey);
+    }
   });
+}
+
+function sharedMutationQueues(): Map<string, Promise<unknown>> {
+  const shared = globalThis as typeof globalThis & Record<symbol, unknown>;
+  const existing = shared[WORK_CONTEXT_MUTATION_QUEUES];
+  if (existing instanceof Map) {
+    return existing as Map<string, Promise<unknown>>;
+  }
+  const created = new Map<string, Promise<unknown>>();
+  shared[WORK_CONTEXT_MUTATION_QUEUES] = created;
+  return created;
 }
 
 function isNodeError(error: unknown, code: string): boolean {

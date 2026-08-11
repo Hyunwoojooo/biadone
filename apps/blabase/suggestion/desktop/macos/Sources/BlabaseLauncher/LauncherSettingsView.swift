@@ -27,6 +27,12 @@ struct LauncherSettingsView: View {
         .background(LauncherVisualTokens.surfaceFloating(colorScheme))
         .foregroundStyle(LauncherVisualTokens.textPrimary(colorScheme))
         .tint(LauncherVisualTokens.actionPrimary(colorScheme))
+        .onChange(of: viewModel.dataRootChoice) { _ in
+            launcherViewModel.cancelSourceNavigationForDraftChange()
+        }
+        .onChange(of: viewModel.dashboardBaseURLText) { _ in
+            launcherViewModel.cancelSourceNavigationForDraftChange()
+        }
     }
 
     private var heading: some View {
@@ -88,7 +94,7 @@ struct LauncherSettingsView: View {
                 }
                 Text(
                     viewModel.sourceMode == .managed
-                        ? "이 저장소에서는 Blabase가 source 동기화와 평가 기록을 관리합니다."
+                        ? "개발 베타에서 이 저장소는 Local Agent 평가용이며 Source 연결 화면을 제공하지 않습니다."
                         : "연결한 source snapshot은 읽기 전용으로 평가합니다. Codex 작업 이어가기에 필요한 queue 상태는 갱신될 수 있습니다."
                 )
                 .font(.caption)
@@ -96,7 +102,7 @@ struct LauncherSettingsView: View {
                     LauncherVisualTokens.textSecondary(colorScheme)
                 )
                 if viewModel.sourceMode == .managed {
-                    Text("처음 사용하는 전용 저장소에는 기존 연결을 자동으로 복사하지 않습니다. GitHub 또는 Codex를 이 저장소에 연결하기 전에는 추천 후보를 만들 수 없습니다.")
+                    Text("Source를 연결하려면 실행 중인 로컬 Work Cockpit이 소유한 기존 데이터 폴더를 선택하세요.")
                         .font(.caption)
                         .foregroundStyle(
                             LauncherVisualTokens.statusWarning(colorScheme)
@@ -160,17 +166,32 @@ struct LauncherSettingsView: View {
         settingsCard(title: "현재 평가 범위", icon: "checklist") {
             VStack(alignment: .leading, spacing: 9) {
                 ForEach(AttentionSource.allCases, id: \.self) { source in
-                    HStack {
-                        Circle()
-                            .fill(sourceColor(source))
-                            .frame(width: 8, height: 8)
-                        Text(source.displayName)
-                        Spacer()
-                        Text(sourceStatus(source))
-                            .font(.caption)
-                            .foregroundStyle(
-                                LauncherVisualTokens.textSecondary(colorScheme)
-                            )
+                    if viewModel.sourceMode == .readOnly {
+                        Button {
+                            launcherViewModel.openSourceConnections(source)
+                        } label: {
+                            sourceRow(source, showsNavigation: true)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(
+                            viewModel.isSourceNavigationDraftDirty
+                                || launcherViewModel
+                                    .isResolvingSourceNavigation
+                        )
+                        .accessibilityHint(
+                            "같은 작업 저장소를 사용하는 대시보드에서 \(source.displayName) 연결 설정을 엽니다."
+                        )
+                    } else {
+                        Button {
+                            viewModel.chooseExistingDataRoot()
+                        } label: {
+                            sourceRow(source, showsNavigation: true)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.isApplying)
+                        .accessibilityHint(
+                            "\(source.displayName) 연결을 위해 로컬 Work Cockpit 데이터 폴더 선택기를 엽니다. 폴더를 선택한 뒤 설정을 적용하세요."
+                        )
                     }
                 }
                 Text(
@@ -192,12 +213,43 @@ struct LauncherSettingsView: View {
                                 : LauncherVisualTokens.textSecondary(colorScheme)
                         )
                 }
-                if viewModel.sourceMode == .readOnly {
+                if viewModel.sourceMode == .managed {
+                    Text("각 Source 행을 눌러 로컬 Work Cockpit이 소유한 기존 데이터 폴더를 선택한 뒤, 아래의 설정 적용 버튼을 눌러야 연결 화면으로 이동할 수 있습니다.")
+                        .font(.caption)
+                        .foregroundStyle(
+                            LauncherVisualTokens.textSecondary(colorScheme)
+                        )
+                } else {
                     Button("Source 연결 관리") {
                         launcherViewModel.openSourceConnections()
                     }
                     .buttonStyle(.link)
-                    .disabled(viewModel.isDataRootDraftDirty)
+                    .disabled(
+                        viewModel.isSourceNavigationDraftDirty
+                            || launcherViewModel.isResolvingSourceNavigation
+                    )
+                }
+                if let message =
+                    launcherViewModel.sourceNavigationRecoveryMessage {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            message,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(
+                            LauncherVisualTokens.statusWarning(colorScheme)
+                        )
+                        Button("다시 확인") {
+                            launcherViewModel.retrySourceConnections()
+                        }
+                        .buttonStyle(.link)
+                        .disabled(
+                            viewModel.isSourceNavigationDraftDirty
+                                || launcherViewModel
+                                    .isResolvingSourceNavigation
+                        )
+                    }
                 }
             }
         }
@@ -299,6 +351,48 @@ struct LauncherSettingsView: View {
                 diagnostic
             )
             return "\(display.stateLabel) · 신호 \(diagnostic.signalCount)"
+        }
+    }
+
+    private func sourceTierLabel(_ source: AttentionSource) -> String {
+        switch source {
+        case .github, .codex:
+            "핵심"
+        case .notion, .googleCalendar:
+            "선택"
+        }
+    }
+
+    private func sourceRow(
+        _ source: AttentionSource,
+        showsNavigation: Bool
+    ) -> some View {
+        HStack {
+            Circle()
+                .fill(sourceColor(source))
+                .frame(width: 8, height: 8)
+            Text(source.displayName)
+            Text(sourceTierLabel(source))
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    LauncherVisualTokens.surfaceFloating(colorScheme)
+                )
+                .clipShape(Capsule())
+            Spacer()
+            Text(sourceStatus(source))
+                .font(.caption)
+                .foregroundStyle(
+                    LauncherVisualTokens.textSecondary(colorScheme)
+                )
+            if showsNavigation {
+                Image(systemName: "arrow.up.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(
+                        LauncherVisualTokens.textTertiary(colorScheme)
+                    )
+            }
         }
     }
 

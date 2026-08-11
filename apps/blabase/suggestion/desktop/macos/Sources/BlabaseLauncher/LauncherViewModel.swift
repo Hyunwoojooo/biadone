@@ -9,16 +9,29 @@ final class LauncherViewModel: ObservableObject {
     @Published private(set) var isHotKeyRegistered = false
     @Published private(set) var actionMessage: String?
     @Published private(set) var route: LauncherRoute = .home
+    @Published private(set) var isResolvingSourceNavigation = false
+    @Published private(set) var sourceNavigationRecoveryMessage: String?
 
     private let client: LauncherAgentClient
+    private let dashboardRootContextClient: DashboardRootContextClient
+    private let agentStatusProvider: () async throws -> LauncherAgentStatus
+    private let sourceURLOpener: (URL) -> Bool
     private let dashboardBaseURLProvider: () -> URL?
     private let sourceModeProvider: () -> LauncherSourceMode
     private var loadTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
+    private var sourceNavigationTask: Task<Void, Never>?
+    private var lastSourceNavigationTarget: SourceNavigationTarget?
     private var configurationGeneration = UUID()
 
     init(
         client: LauncherAgentClient = LauncherAgentClient(),
+        dashboardRootContextClient: DashboardRootContextClient =
+            DashboardRootContextClient(),
+        agentStatusProvider: (() async throws -> LauncherAgentStatus)? = nil,
+        sourceURLOpener: @escaping (URL) -> Bool = {
+            NSWorkspace.shared.open($0)
+        },
         dashboardBaseURLProvider: @escaping () -> URL? = {
             let configured = ProcessInfo.processInfo.environment[
                 "BLABASE_DASHBOARD_URL"
@@ -33,6 +46,11 @@ final class LauncherViewModel: ObservableObject {
         }
     ) {
         self.client = client
+        self.dashboardRootContextClient = dashboardRootContextClient
+        self.agentStatusProvider = agentStatusProvider ?? {
+            try await client.getStatus()
+        }
+        self.sourceURLOpener = sourceURLOpener
         self.dashboardBaseURLProvider = dashboardBaseURLProvider
         self.sourceModeProvider = sourceModeProvider
     }
@@ -124,7 +142,86 @@ final class LauncherViewModel: ObservableObject {
     }
 
     func openSourceConnections() {
-        openDashboard(path: "/sources")
+        openSourceConnections(target: .overview)
+    }
+
+    func openSourceConnections(_ source: AttentionSource) {
+        openSourceConnections(target: .source(source))
+    }
+
+    private func openSourceConnections(target: SourceNavigationTarget) {
+        guard !isResolvingSourceNavigation else { return }
+        lastSourceNavigationTarget = target
+        sourceNavigationRecoveryMessage = nil
+        guard let baseURL = dashboardBaseURLProvider() else {
+            presentSourceNavigationUnavailable()
+            return
+        }
+        isResolvingSourceNavigation = true
+        let generation = configurationGeneration
+        sourceNavigationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.configurationGeneration {
+                    self.isResolvingSourceNavigation = false
+                    self.sourceNavigationTask = nil
+                }
+            }
+            do {
+                let decision = try await LauncherSourceNavigationHandshake
+                    .evaluate(
+                        getAgentStatus: {
+                            try await self.agentStatusProvider()
+                        },
+                        getDashboardContext: {
+                            try await self.dashboardRootContextClient
+                                .getRootContext(baseURL: baseURL)
+                        }
+                    )
+                guard
+                    !Task.isCancelled,
+                    generation == self.configurationGeneration
+                else { return }
+                switch decision {
+                case .allowed:
+                    guard let url = self.sourceNavigationURL(
+                        target: target,
+                        baseURL: baseURL
+                    ) else {
+                        self.presentSourceNavigationUnavailable()
+                        return
+                    }
+                    guard self.sourceURLOpener(url) else {
+                        self.presentSourceNavigationUnavailable()
+                        return
+                    }
+                    self.sourceNavigationRecoveryMessage = nil
+                case .blocked(let reason):
+                    self.presentSourceNavigationBlock(reason)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard
+                    !Task.isCancelled,
+                    generation == self.configurationGeneration
+                else { return }
+                self.presentSourceNavigationUnavailable()
+            }
+        }
+    }
+
+    func retrySourceConnections() {
+        guard let target = lastSourceNavigationTarget else { return }
+        openSourceConnections(target: target)
+    }
+
+    func cancelSourceNavigationForDraftChange() {
+        sourceNavigationTask?.cancel()
+        sourceNavigationTask = nil
+        isResolvingSourceNavigation = false
+        sourceNavigationRecoveryMessage = nil
+        lastSourceNavigationTarget = nil
     }
 
     private func openDashboard(path: String) {
@@ -161,6 +258,7 @@ final class LauncherViewModel: ObservableObject {
     func shutdown() {
         loadTask?.cancel()
         actionTask?.cancel()
+        sourceNavigationTask?.cancel()
         client.shutdown()
     }
 
@@ -232,10 +330,48 @@ final class LauncherViewModel: ObservableObject {
         loadTask = nil
         actionTask?.cancel()
         actionTask = nil
+        sourceNavigationTask?.cancel()
+        sourceNavigationTask = nil
         isRefreshing = false
         isPerformingAction = false
+        isResolvingSourceNavigation = false
         actionMessage = nil
+        sourceNavigationRecoveryMessage = nil
+        lastSourceNavigationTarget = nil
         route = .home
+    }
+
+    private func presentSourceNavigationBlock(
+        _ reason: LauncherSourceNavigationBlockReason
+    ) {
+        switch reason {
+        case .readOnlyRootRequired:
+            sourceNavigationRecoveryMessage =
+                "Source 연결은 읽기 전용 데이터와 이를 소유한 대시보드가 확인될 때만 열 수 있습니다. 데이터 설정을 확인한 뒤 다시 시도해주세요."
+        case .rootMismatch:
+            sourceNavigationRecoveryMessage =
+                "읽기 전용 데이터와 웹 대시보드가 서로 다른 저장소를 가리킵니다. 같은 저장소로 맞춘 뒤 다시 시도해주세요."
+        case .syncRevisionMismatch:
+            sourceNavigationRecoveryMessage =
+                "Local Agent와 웹 대시보드의 동기화 버전이 다릅니다. 동기화가 끝난 뒤 다시 확인해주세요."
+        }
+    }
+
+    private func presentSourceNavigationUnavailable() {
+        sourceNavigationRecoveryMessage =
+            "Source 연결 상태를 확인하지 못했습니다. 웹 대시보드가 실행 중인지 확인한 뒤 다시 시도해주세요."
+    }
+
+    private func sourceNavigationURL(
+        target: SourceNavigationTarget,
+        baseURL: URL
+    ) -> URL? {
+        switch target {
+        case .overview:
+            SafeURLPolicy.dashboardURL(path: "/sources", baseURL: baseURL)
+        case .source(let source):
+            SafeURLPolicy.sourceConnectionURL(for: source, baseURL: baseURL)
+        }
     }
 
     private static func executionMessage(
@@ -257,4 +393,9 @@ final class LauncherViewModel: ObservableObject {
         (error as? LocalizedError)?.errorDescription
             ?? "현재 작업 제안을 불러오지 못했습니다."
     }
+}
+
+private enum SourceNavigationTarget: Sendable {
+    case overview
+    case source(AttentionSource)
 }

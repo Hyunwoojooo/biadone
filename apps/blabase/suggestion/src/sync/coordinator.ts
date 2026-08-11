@@ -186,6 +186,7 @@ export class SourceSyncCoordinator {
   private settlementTail: Promise<unknown> = Promise.resolve();
   private latest: SourceSyncLatestStore | null = null;
   private initializationPromise: Promise<void> | null = null;
+  private reconciliationPromise: Promise<boolean> | null = null;
   private startPromise: Promise<void> | null = null;
   private timerHandle: unknown = null;
   private running = false;
@@ -210,6 +211,7 @@ export class SourceSyncCoordinator {
 
     const starting = (async () => {
       await this.ensureInitialized();
+      await this.reconcileLatestFromRepository();
       this.running = true;
       this.scheduleNextTick("startup");
     })();
@@ -242,6 +244,7 @@ export class SourceSyncCoordinator {
       .exclude(["manual"])
       .parse(triggerInput);
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
     const results = await Promise.all(
       SYNC_SOURCES.map((source) => this.sync(source, trigger))
     );
@@ -256,6 +259,7 @@ export class SourceSyncCoordinator {
     const source = syncSourceSchema.parse(sourceInput);
     const trigger = syncTriggerSchema.parse(triggerInput);
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
 
     if (this.transitioningSources.has(source)) {
       return {
@@ -329,11 +333,13 @@ export class SourceSyncCoordinator {
   async getState(sourceInput: SyncSource): Promise<SourceSyncState> {
     const source = syncSourceSchema.parse(sourceInput);
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
     return cloneState(this.requireLatest().sources[source]);
   }
 
   async getLatestStore(): Promise<SourceSyncLatestStore> {
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
     return sourceSyncLatestStoreSchema.parse(this.requireLatest());
   }
 
@@ -342,6 +348,7 @@ export class SourceSyncCoordinator {
   ): Promise<SourceSyncState> {
     const source = syncSourceSchema.parse(sourceInput);
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
     return this.withSourceTransition(source, async () => {
       await this.recoverPendingSettlementBeforeMutation();
       // Supersede the old adapter execution before waiting for persistence.
@@ -425,6 +432,7 @@ export class SourceSyncCoordinator {
   ): Promise<SourceSyncState> {
     const source = syncSourceSchema.parse(sourceInput);
     await this.ensureInitialized();
+    await this.reconcileLatestFromRepository();
     return this.withSourceTransition(source, async () => {
       await this.recoverPendingSettlementBeforeMutation();
       this.sourceGenerations.set(
@@ -579,6 +587,68 @@ export class SourceSyncCoordinator {
       }
     }
     this.latest = normalized;
+  }
+
+  /**
+   * Route bundles can retain a coordinator after another runtime view has
+   * durably advanced the same sync store. Adopt that projection only while
+   * this coordinator has no local mutation to protect. The durable timestamp
+   * prevents an older filesystem view from replacing newer local state.
+   */
+  private async reconcileLatestFromRepository(): Promise<void> {
+    if (
+      this.inFlight.size > 0 ||
+      this.transitioningSources.size > 0 ||
+      this.pendingTransitions.size > 0
+    ) {
+      return;
+    }
+
+    if (!this.reconciliationPromise) {
+      const reconciliation = this.withSettlement(async () => {
+        if (
+          this.inFlight.size > 0 ||
+          this.transitioningSources.size > 0 ||
+          this.pendingTransitions.size > 0
+        ) {
+          return false;
+        }
+
+        const persisted = await this.repository.read();
+        validateRepositorySnapshot(persisted);
+        if (persisted.latest.status !== "ready") return false;
+        if (
+          persisted.transitions.status === "ready" &&
+          persisted.transitions.value.transitions.length > 0
+        ) {
+          return false;
+        }
+
+        const current = this.requireLatest();
+        const durable = persisted.latest.value;
+        const normalized = normalizeRegisteredAdapters(
+          durable,
+          this.adapters,
+          this.now().toISOString()
+        );
+        if (safeSha256(normalized) === safeSha256(current)) {
+          return false;
+        }
+        this.latest = normalized;
+        return true;
+      });
+      this.reconciliationPromise = reconciliation;
+    }
+
+    const reconciliation = this.reconciliationPromise;
+    try {
+      const changed = await reconciliation;
+      if (changed && this.running) this.scheduleNextTick();
+    } finally {
+      if (this.reconciliationPromise === reconciliation) {
+        this.reconciliationPromise = null;
+      }
+    }
   }
 
   private async executeSource(

@@ -10,10 +10,14 @@ import type {
   WorkResumptionStatus,
   WorkSessionBinding
 } from "../resumption";
+import type { CurrentFocusProjection } from "../currentFocus";
+import type { RecentWorkPublicSummary } from "../recentWork";
 import {
   LAUNCHER_ATTENTION_CONTRACT,
   launcherAttentionProjectionSchema,
   type LauncherAttentionProjection,
+  type LauncherCurrentFocusSummary,
+  type LauncherRecentWorkSummary,
   type LauncherPrimaryAction,
   type LauncherSourceDiagnosticState
 } from "./contracts";
@@ -23,6 +27,8 @@ export type LauncherProjectionInput = {
   baseResult: Phase2AttentionResult;
   run: AttentionMonitorRun;
   resumption: WorkResumptionStatus;
+  currentFocus?: CurrentFocusProjection;
+  recentWorkSummary?: RecentWorkPublicSummary | null;
 };
 
 export type LauncherExecutionGuard =
@@ -78,6 +84,12 @@ export function buildLauncherAttentionView(
     decisionReasonCodes: input.result.decision.reasonCodes,
     candidateCounts: input.result.counts,
     sourceDiagnostics: sourceDiagnostics(input.run),
+    currentFocusSummary: projectCurrentFocusSummary(
+      input.currentFocus
+    ),
+    recentWorkSummary: projectRecentWorkSummary(
+      input.recentWorkSummary
+    ),
     card,
     clarificationQuestion:
       input.result.decision.clarification?.question ?? null,
@@ -87,6 +99,38 @@ export function buildLauncherAttentionView(
   });
 
   return { projection, executionGuard: action.guard };
+}
+
+function projectCurrentFocusSummary(
+  currentFocus: CurrentFocusProjection | undefined
+): LauncherCurrentFocusSummary | null {
+  if (!currentFocus) return null;
+  return {
+    status: currentFocus.status,
+    displayLabel:
+      currentFocus.status === "selected"
+        ? currentFocus.selectedFocus?.displayLabel ?? null
+        : null,
+    reasonCodes: currentFocus.reasonCodes,
+    attentionSelectionEffect: "none"
+  };
+}
+
+function projectRecentWorkSummary(
+  summary: RecentWorkPublicSummary | null | undefined
+): LauncherRecentWorkSummary | null {
+  if (!summary) return null;
+  return {
+    displayLabel: summary.displayLabel,
+    pushOccurredAt: summary.pushOccurredAt,
+    trackingState: summary.trackingState,
+    aheadCount: summary.aheadCount,
+    behindCount: summary.behindCount,
+    correlation: summary.correlation,
+    presentation: summary.presentation,
+    attentionSelectionEffect: summary.attentionSelectionEffect,
+    executionEffect: summary.executionEffect
+  };
 }
 
 function resolvePrimaryAction(

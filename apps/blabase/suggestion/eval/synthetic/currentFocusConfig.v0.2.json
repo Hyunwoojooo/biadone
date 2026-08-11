@@ -1,0 +1,49 @@
+{
+  "version": "current-focus-config-v0.2",
+  "purpose": "targeted_synthetic_current_focus_shadow_evaluation_only",
+  "inputBoundary": "exact_request_time_focus_evidence_envelope",
+  "recentWindowMs": 604800000,
+  "maxHistoricalEventsPerWorkStream": 12,
+  "selection": {
+    "explicitConfirmedFocusWins": true,
+    "latestDirectCompleteCurrentEventWins": true,
+    "allDirectSourceCoverageMustBeComplete": true,
+    "equalLatestTimeAcrossWorkStreamsAbstains": true,
+    "historicalScoresAreNotSummed": true,
+    "projectOnlyEvidenceReturnsProjectFocus": true,
+    "terminalTaskLifecycleSurvivesNewerExecutionEvents": true
+  },
+  "grouping": {
+    "exactNativeIdentityOnly": true,
+    "explicitUserRelationAllowed": true,
+    "verifiedArtifactRelationAllowed": true,
+    "verifiedOpaquePushArtifactAllowed": true,
+    "projectOnlyCreatesTaskRelation": false,
+    "titleOrTimeSimilarityAllowed": false
+  },
+  "shadowRanking": {
+    "candidateCreationAllowed": false,
+    "attentionSelectionEffect": "none",
+    "preserveLaneDeadlineAndBlockerTiers": true,
+    "exactMatchBeforeProjectMatch": true,
+    "preserveExistingOrderAfterFocusMatch": true
+  },
+  "contextOnlySources": ["notion", "google_calendar", "codex_inventory"],
+  "integrity": {
+    "exactAsOfRequired": true,
+    "exactDependencyHashesRequired": true,
+    "supportedSourceAndPolicyVersionsRequired": true,
+    "canonicalOrderingRequired": true,
+    "deterministicReplayRequired": true,
+    "failClosedRequired": true
+  },
+  "privacy": {
+    "containsProductionData": false,
+    "genericGitHubPublicLabelsOnly": true,
+    "rawCodexThreadIdAllowed": false,
+    "rawCommandPromptConversationAllowed": false,
+    "absoluteLocalPathAllowed": false,
+    "commitShaAllowed": false,
+    "credentialOrTokenAllowed": false
+  }
+}

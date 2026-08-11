@@ -103,6 +103,13 @@ root를 소유한 웹 dashboard의 `SourceSyncCoordinator`가 갱신한다.
 이전 Local Agent의 실제 종료를 기다린 뒤 새 root로 시작하고 현재 snapshot을 다시
 평가한다. dashboard endpoint만 바뀌면 Agent를 재시작하지 않는다.
 
+GitHub와 Codex는 추천의 핵심 source, Notion과 Google Calendar는 선택 context로
+표시한다. read-only mode의 source row를 누르면 launcher가 Local Agent → dashboard
+root context → Local Agent 순서로 opaque root ID와 persisted sync revision을 확인한
+뒤 해당 `/sources` card를 연다. 네 provider의 path/query/anchor는 native enum에서만
+만들며 임의 `returnTo`를 받지 않는다. OAuth 완료·취소·실패도 같은 provider card로
+돌아온다.
+
 `managed` root에 연결된 source가 하나도 없으면 launcher는 이를 추천 결과처럼
 뭉뚱그리지 않고 source별 `disconnected` 진단과 후보 수 `0`을 표시하며 설정으로
 돌아가는 동작을 제공한다. 기존 root를 선택할 때 dashboard가 아직 기본 Cloud
@@ -115,10 +122,18 @@ dashboard endpoint preference에는 HTTPS Blabase Cloud 또는 HTTP
 임의 host가 포함된 URL은 거부한다. preference에는 선택 path와 허용된 URL만
 기록하고 source 원문이나 credential은 저장하지 않는다.
 
-현재 dashboard URL은 화면을 여는 주소이며 data-root handshake는 아니다. local Work
-Cockpit은 선택한 root를 소유한 프로세스로 실행해야 한다. Cloud/local data bridge와
-절대 경로를 노출하지 않는 opaque root identity + snapshot revision handshake는 후속
-release gate다.
+dashboard URL 자체는 여전히 화면을 여는 주소지만 source 연결 전에는
+`blabase-launcher-status-v1`과 `blabase-root-context-v1` handshake를 수행한다. local
+Work Cockpit은 선택 root를 소유한 프로세스로 실행해야 하며 root ID 또는 sync
+revision mismatch, invalid response, redirect와 timeout은 source navigation을
+fail closed한다. 절대 경로는 API나 URL로 보내지 않는다.
+
+`managed` root의 launcher Agent는 source sync writer이므로 별도 dashboard mutation
+화면을 열지 않는다. 현재 development beta에는 그 managed root를 소유하는 local
+Connection Hub가 bundle되어 있지 않다. source 연결 dogfood는 실행 중인 local Work
+Cockpit이 소유하는 기존 root를 선택한 `read_only` mode에서만 지원한다. 선언된
+`mutationAuthority`는 아직 exclusive coordinator lease나 OAuth mutation session
+proof가 아니므로 external beta 전에는 lease-backed gate가 필요하다.
 
 기존 store 함수는 전달된 root 아래 `.local/`을 사용한다. 예전 개발 beta에서 앱
 시작 환경에 절대 경로를 지정했다면 fresh install 설정 화면이 이를 legacy candidate로
@@ -182,6 +197,13 @@ Phase 4B semantic baseline을 다시 실행하지 않는다. 대신 구현과 pa
   owner Work Cockpit의 `/sources`를 열고 managed root는 data-root 설정을 연다.
 - 기존 root를 선택하면서 기본 Cloud dashboard가 남아 있으면 local Work Cockpit
   기본값으로 전환하고, 사용자가 정한 다른 localhost endpoint는 보존한다.
+- owner는 opaque root marker를 private permission으로 원자적으로 생성하고 read-only
+  Agent는 missing/invalid marker를 만들거나 복구하지 않는다.
+- source link는 read-only mode에서 dashboard와 Agent의 non-null root ID 및 persisted
+  sync revision이 모두 같을 때만 열린다. managed, mismatch, timeout, redirect와
+  malformed response는 fail closed한다.
+- 네 source row는 고정된 `/sources?source=...&entry=launcher#source-...`만 만들고
+  OAuth return도 해당 source anchor로 돌아간다.
 
 ## Development beta build
 

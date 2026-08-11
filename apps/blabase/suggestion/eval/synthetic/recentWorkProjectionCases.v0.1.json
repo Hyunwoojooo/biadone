@@ -1,0 +1,365 @@
+{
+  "contract": "recent-work-projection-evaluation-dataset-v0.1",
+  "schemaVersion": "recent-work-projection-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-recent-work-projection-dev-v0.1",
+  "datasetRevision": 1,
+  "datasetClass": "regression_dev_candidate",
+  "split": "development",
+  "scope": "repository_scope_recent_work_projection_v0.1",
+  "dataOrigin": "bounded_synthetic_non_private",
+  "containsProductionData": false,
+  "createdAt": "2026-08-10T00:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "config": {
+    "ref": "eval/synthetic/recentWorkProjectionConfig.v0.1.json",
+    "version": "recent-work-projection-config-v0.1"
+  },
+  "cases": [
+    {
+      "caseId": "RW-PROJ-DEV-001",
+      "scenario": "present_in_sync",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["positive", "present", "tracking_matrix"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "present-in-sync",
+        "input": { "trackingState": "in_sync" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "in_sync", "aheadCount": 0, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-002",
+      "scenario": "shadow_ahead",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["positive", "shadow", "tracking_matrix"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "shadow-ahead",
+        "input": { "trackingState": "ahead", "presentationInput": "shadow" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "shadow", "summaryDisposition": "null", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-003",
+      "scenario": "present_behind",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["positive", "present", "tracking_matrix"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "present-behind",
+        "input": { "trackingState": "behind" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "behind", "aheadCount": 0, "behindCount": 3, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-004",
+      "scenario": "present_diverged",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["positive", "present", "tracking_matrix"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "present-diverged",
+        "input": { "trackingState": "diverged" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "diverged", "aheadCount": 2, "behindCount": 3, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-005",
+      "scenario": "present_not_configured",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["positive", "present", "tracking_matrix"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "present-not-configured",
+        "input": { "trackingState": "not_configured" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "not_configured", "aheadCount": null, "behindCount": null, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-006",
+      "scenario": "push_age_boundary",
+      "evaluationKind": "boundary_matrix",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["focus_ttl", "exact_boundary", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [
+        {
+          "variantId": "focus-exact-24h",
+          "input": { "pushOccurredAt": "2026-08-09T12:00:00.000Z" },
+          "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-09T12:00:00.000Z" }
+        },
+        {
+          "variantId": "focus-over-24h-by-1ms",
+          "input": { "pushOccurredAt": "2026-08-09T11:59:59.999Z" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_FOCUS_STALE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        }
+      ]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-007",
+      "scenario": "push_future_skew_boundary",
+      "evaluationKind": "boundary_matrix",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["focus_future_skew", "exact_boundary", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [
+        {
+          "variantId": "focus-future-exact-60s",
+          "input": { "pushOccurredAt": "2026-08-10T12:01:00.000Z" },
+          "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T12:01:00.000Z" }
+        },
+        {
+          "variantId": "focus-future-over-60s-by-1ms",
+          "input": { "pushOccurredAt": "2026-08-10T12:01:00.001Z" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_FOCUS_STALE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        }
+      ]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-008",
+      "scenario": "local_git_age_boundary",
+      "evaluationKind": "boundary_matrix",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["local_git_ttl", "exact_boundary", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [
+        {
+          "variantId": "local-git-exact-5m",
+          "input": { "localGitFetchedAt": "2026-08-10T11:55:00.000Z" },
+          "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+        },
+        {
+          "variantId": "local-git-over-5m-by-1ms",
+          "input": { "localGitFetchedAt": "2026-08-10T11:54:59.999Z" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LOCAL_GIT_STALE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        }
+      ]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-009",
+      "scenario": "local_git_future_skew_boundary",
+      "evaluationKind": "boundary_matrix",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["local_git_future_skew", "exact_boundary", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [
+        {
+          "variantId": "local-git-future-exact-60s",
+          "input": { "localGitFetchedAt": "2026-08-10T12:01:00.000Z" },
+          "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+        },
+        {
+          "variantId": "local-git-future-over-60s-by-1ms",
+          "input": { "localGitFetchedAt": "2026-08-10T12:01:00.001Z" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LOCAL_GIT_STALE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        }
+      ]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-010",
+      "scenario": "focus_partial",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["focus", "partial", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "partial-event",
+        "input": { "eventCompleteness": "partial" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_FOCUS_NOT_CURRENT", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-011",
+      "scenario": "focus_stale",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["focus", "currentness", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "stale-focus",
+        "input": { "focusCurrentness": "stale" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_FOCUS_NOT_CURRENT", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-012",
+      "scenario": "focus_non_push",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["focus", "non_push", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "github-non-push",
+        "input": { "focusKind": "github_issue_reopened" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_FOCUS_NOT_GITHUB_PUSH", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-013",
+      "scenario": "project_level_display_only",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["project_level", "repository_scope_only", "display_only"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "project-level-push",
+        "input": { "focusLevel": "project" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-014",
+      "scenario": "mapping_missing",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["mapping", "missing", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "no-confirmed-link",
+        "input": { "linkMode": "missing" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LINK_UNAVAILABLE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-015",
+      "scenario": "mapping_different_repository",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["mapping", "different_repository", "fail_closed"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "different-repository-link",
+        "input": { "linkMode": "different_repository" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LINK_UNAVAILABLE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-016",
+      "scenario": "mapping_removed_upstream",
+      "evaluationKind": "upstream_filtered_runtime",
+      "upstreamMappingState": "removed",
+      "labels": ["mapping", "removed", "upstream_filtered_absence"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "removed-link-absent-from-confirmed-resolution",
+        "input": { "linkMode": "removed_filtered" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LINK_UNAVAILABLE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-017",
+      "scenario": "mapping_archived_upstream",
+      "evaluationKind": "upstream_filtered_runtime",
+      "upstreamMappingState": "archived",
+      "labels": ["mapping", "archived", "upstream_filtered_absence"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "archived-link-absent-from-confirmed-resolution",
+        "input": { "linkMode": "archived_filtered" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LINK_UNAVAILABLE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-018",
+      "scenario": "mapping_duplicate",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["mapping", "duplicate", "tie"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "duplicate-confirmed-links",
+        "input": { "linkMode": "duplicate" },
+        "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LINK_TIE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-019",
+      "scenario": "same_project_multi_repository",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["mapping", "same_project", "multiple_repositories"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "one-exact-link-among-project-repositories",
+        "input": { "linkMode": "same_project_multi_repository" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-020",
+      "scenario": "local_git_unavailable_unborn",
+      "evaluationKind": "state_matrix",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["local_git", "unavailable", "unborn"],
+      "privateSentinels": [],
+      "variants": [
+        {
+          "variantId": "local-git-unavailable",
+          "input": { "trackingState": "unavailable" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LOCAL_GIT_UNAVAILABLE", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        },
+        {
+          "variantId": "local-git-unborn",
+          "input": { "trackingState": "unborn" },
+          "expected": { "projectionStatus": "unavailable", "reasonCode": "RECENT_WORK_LOCAL_GIT_UNBORN", "presentationMode": "present", "summaryDisposition": "null", "trackingState": null, "aheadCount": null, "behindCount": null, "publicPushOccurredAt": null }
+        }
+      ]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-021",
+      "scenario": "invalid_rollout_defaults_shadow",
+      "evaluationKind": "runtime",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["rollout", "invalid", "shadow_default"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "invalid-env",
+        "input": { "presentationInput": "invalid" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "shadow", "summaryDisposition": "null", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": null }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-022",
+      "scenario": "seconds_public_canonicalization_privacy",
+      "evaluationKind": "invariant",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["timestamp", "public_projection", "privacy"],
+      "privateSentinels": [
+        "token_SYNTHETIC_RECENT_WORK_PRIVATE",
+        "/Users/synthetic/private/repository",
+        "refs/heads/synthetic-private",
+        "synthetic-login-private",
+        "synthetic prompt and command body",
+        "0123456789abcdef0123456789abcdef01234567"
+      ],
+      "variants": [{
+        "variantId": "seconds-only-to-milliseconds",
+        "input": { "pushOccurredAt": "2026-08-10T11:00:00Z" },
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    },
+    {
+      "caseId": "RW-PROJ-DEV-023",
+      "scenario": "deterministic_active_no_effect",
+      "evaluationKind": "invariant",
+      "upstreamMappingState": "not_applicable",
+      "labels": ["determinism", "active_invariants", "no_effect"],
+      "privateSentinels": [],
+      "variants": [{
+        "variantId": "same-input-replay",
+        "input": {},
+        "expected": { "projectionStatus": "matched", "reasonCode": "RECENT_WORK_MATCHED", "presentationMode": "present", "summaryDisposition": "present", "trackingState": "ahead", "aheadCount": 2, "behindCount": 0, "publicPushOccurredAt": "2026-08-10T11:00:00.000Z" }
+      }]
+    }
+  ]
+}

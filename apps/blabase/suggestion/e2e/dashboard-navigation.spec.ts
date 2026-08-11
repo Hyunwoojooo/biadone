@@ -38,3 +38,54 @@ test("navigates the dashboard information architecture", async ({ page }) => {
     page.getByRole("heading", { name: "기존 ChatGPT 대화 분석" })
   ).toBeVisible();
 });
+
+test("focuses only allowlisted launcher source targets", async ({ page }) => {
+  await page.goto(
+    "/sources?source=google-calendar&entry=launcher&returnTo=https%3A%2F%2Fexample.com"
+  );
+
+  const calendar = page.locator("#source-google-calendar");
+  await expect(calendar).toBeFocused();
+  await expect(calendar).toHaveAttribute("data-source-focus", "true");
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        origin: window.location.origin,
+        pathname: window.location.pathname,
+        hash: window.location.hash
+      }))
+    )
+    .toEqual({
+      origin: "http://localhost:3199",
+      pathname: "/sources",
+      hash: "#source-google-calendar"
+    });
+
+  await page.evaluate(() => {
+    window.location.hash = "source-codex";
+  });
+  await expect(page.locator("#source-codex")).toBeFocused();
+
+  await page.goto("/sources?source=google_calendar&entry=launcher");
+  await expect(page.locator("[data-source-focus='true']")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => window.location.hash))
+    .toBe("");
+});
+
+test("consumes a connector status at its canonical source anchor", async ({
+  page
+}) => {
+  await page.goto("/sources?notion=connected#source-notion");
+
+  await expect(page.locator("#source-notion")).toBeFocused();
+  await expect(page.getByText("Notion이 연결되었습니다.")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        search: window.location.search,
+        hash: window.location.hash
+      }))
+    )
+    .toEqual({ search: "", hash: "#source-notion" });
+});

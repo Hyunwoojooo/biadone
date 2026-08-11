@@ -19,6 +19,7 @@ import {
 } from "../src/attention/liveAttention";
 import { resolveAttentionCodeProvenance } from "../src/attention/codeProvenance";
 import { verifyActiveAttentionResultIntegrity } from "../src/attentionDecision";
+import { createEmptyWorkContextRegistry } from "../src/context";
 import { verifyPhase2AttentionResultIntegrity } from "../src/crossSource/runAttentionRouter";
 
 const AS_OF = "2026-07-26T12:00:00.000Z";
@@ -26,6 +27,33 @@ const SCOPE_ID = "111111111111111111111111";
 const execFileAsync = promisify(execFile);
 
 describe("live Attention orchestration", () => {
+  it("keeps Active and replay hashes byte-identical across Recent Work rollout modes", () => {
+    const input = {
+      github: {
+        status: "available" as const,
+        snapshot: githubSnapshot({ tasks: [githubTask()] })
+      },
+      codex: {
+        status: "available" as const,
+        snapshot: codexSnapshot()
+      },
+      asOf: AS_OF
+    };
+    const shadow = evaluateAttentionSnapshots({
+      ...input,
+      recentWorkPresentationMode: "shadow"
+    });
+    const present = evaluateAttentionSnapshots({
+      ...input,
+      recentWorkPresentationMode: "present"
+    });
+    expect(present.result).toEqual(shadow.result);
+    expect(present.result.inputSha256).toBe(shadow.result.inputSha256);
+    expect(present.result.resultSha256).toBe(shadow.result.resultSha256);
+    expect(present.replayArtifact.input).toEqual(shadow.replayArtifact.input);
+    expect(present.recentWork).toEqual(shadow.recentWork);
+  });
+
   it("normalizes fresh native snapshots into a suggestion and metadata-only run record", () => {
     const evaluated = evaluateAttentionSnapshots({
       github: {
@@ -183,6 +211,110 @@ describe("live Attention orchestration", () => {
       source: "github",
       inputState: "available",
       freshness: "stale"
+    });
+    expect(evaluated.recentMeaningfulEvents).not.toBeNull();
+    expect(evaluated.currentWorkstreams).not.toBeNull();
+    expect(evaluated.currentFocus.attentionSelectionEffect).toBe("none");
+    expect(evaluated.focusAwareAttentionShadow).toMatchObject({
+      existingTopCandidateId: null,
+      counterfactualTopCandidateId: null,
+      wouldSwitch: false,
+      attentionSelectionEffect: "none"
+    });
+  });
+
+  it("keeps partial source events out of selected Current Focus", () => {
+    const evaluated = evaluateAttentionSnapshots({
+      github: {
+        status: "available",
+        snapshot: githubSnapshot({
+          truncated: true,
+          activitiesState: "partial",
+          activitiesTruncated: true,
+          tasks: [githubTask()],
+          activities: [githubIssueActivity()]
+        })
+      },
+      codex: {
+        status: "available",
+        snapshot: codexSnapshot()
+      },
+      asOf: AS_OF
+    });
+
+    expect(evaluated.recentMeaningfulEvents?.coverage.github).toBe(
+      "partial"
+    );
+    expect(evaluated.currentFocus.status).toBe("unresolved");
+    expect(evaluated.focusAwareAttentionShadow).toMatchObject({
+      status: "not_applied",
+      existingTopCandidateId:
+        evaluated.result.decision.topSuggestion?.candidateId ?? null,
+      counterfactualTopCandidateId:
+        evaluated.result.decision.topSuggestion?.candidateId ?? null,
+      wouldSwitch: false,
+      attentionSelectionEffect: "none"
+    });
+  });
+
+  it("fails a mismatched Focus graph closed without changing Active Attention", () => {
+    const snapshots = {
+      github: {
+        status: "available" as const,
+        snapshot: githubSnapshot({
+          tasks: [githubTask()],
+          activities: [githubIssueActivity()]
+        })
+      },
+      codex: {
+        status: "available" as const,
+        snapshot: codexSnapshot()
+      },
+      asOf: AS_OF
+    };
+    const baseline = evaluateAttentionSnapshots(snapshots);
+    expect(baseline.recentMeaningfulEvents?.events).toHaveLength(2);
+    expect(
+      baseline.currentWorkstreams?.workstreams.length
+    ).toBeGreaterThan(0);
+    expect(baseline.currentFocus.status).toBe("selected");
+    const activeInput = baseline.replayArtifact.input;
+
+    const mismatched = evaluateAttentionSnapshots({
+      ...snapshots,
+      currentWorkEvidence: {
+        asOf: AS_OF,
+        githubBatch: activeInput.githubBatch,
+        managedProjection: activeInput.managedPublicProjection,
+        managedSemantics: activeInput.managedSemanticProjection,
+        managedRunStartedAtById:
+          activeInput.managedRunStartedAtById,
+        workRelations: activeInput.workRelationProjection,
+        artifacts: activeInput.artifactRelationProjection,
+        claims: activeInput.claimAuthorityProjection,
+        contextRegistry: createEmptyWorkContextRegistry(AS_OF)
+      }
+    });
+
+    expect(mismatched.result).toEqual(baseline.result);
+    expect(mismatched.result.resultSha256).toBe(
+      baseline.result.resultSha256
+    );
+    expect(mismatched.recentMeaningfulEvents).toBeNull();
+    expect(mismatched.currentWorkstreams).toBeNull();
+    expect(mismatched.currentFocus).toMatchObject({
+      status: "unavailable",
+      reasonCodes: ["FOCUS_DEPENDENCY_MISMATCH"],
+      attentionSelectionEffect: "none"
+    });
+    expect(mismatched.focusAwareAttentionShadow).toMatchObject({
+      status: "unavailable",
+      existingTopCandidateId:
+        baseline.result.decision.topSuggestion?.candidateId ?? null,
+      counterfactualTopCandidateId:
+        baseline.result.decision.topSuggestion?.candidateId ?? null,
+      wouldSwitch: false,
+      attentionSelectionEffect: "none"
     });
   });
 
@@ -552,6 +684,23 @@ function githubTask(
     createdAt: "2026-07-25T08:00:00.000Z",
     updatedAt: "2026-07-26T11:50:00.000Z",
     ...overrides
+  };
+}
+
+function githubIssueActivity() {
+  return {
+    id: "activity-issue-11-opened",
+    source: "github" as const,
+    kind: "user_activity" as const,
+    activityKind: "issue_opened" as const,
+    repositoryId: 101,
+    repositoryFullName: "acme/app",
+    occurredAt: "2026-07-26T11:58:00.000Z",
+    subjectType: "issue" as const,
+    subjectNumber: 11,
+    subjectTitle: "Private issue activity",
+    refName: null,
+    reviewState: null
   };
 }
 

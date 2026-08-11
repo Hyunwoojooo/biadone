@@ -26,6 +26,9 @@ import {
 } from "../../crossSource/validateSnapshots";
 import {
   GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
   GITHUB_WORK_SIGNAL_NORMALIZER_VERSION,
   RUNTIME_WORK_SIGNAL_BATCH_CONTRACT,
   RUNTIME_WORK_SIGNAL_CONTRACT
@@ -42,6 +45,13 @@ export type GitHubNormalizationOptions = {
   resolveProjectId?: (sourceScopeId: string) => string | null;
 };
 
+type GitHubWorkSignalNormalizerVersion =
+  | typeof GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
+  | typeof GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+  | typeof GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION
+  | typeof GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION
+  | typeof GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION;
+
 export function normalizeGitHubSnapshotToWorkSignals(
   input: unknown,
   options: GitHubNormalizationOptions
@@ -51,9 +61,15 @@ export function normalizeGitHubSnapshotToWorkSignals(
 
   const artifact = validation.artifact;
   const normalizerVersion =
-    artifact.sourceSchemaVersion === "github-snapshot-v3"
-      ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
-      : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION;
+    artifact.sourceSchemaVersion === "github-snapshot-v6"
+      ? GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
+      : artifact.sourceSchemaVersion === "github-snapshot-v5"
+        ? GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION
+        : artifact.sourceSchemaVersion === "github-snapshot-v4"
+          ? GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION
+          : artifact.sourceSchemaVersion === "github-snapshot-v3"
+            ? GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+            : GITHUB_WORK_SIGNAL_NORMALIZER_VERSION;
   const assessment = assessSnapshot(
     artifact,
     options.asOf,
@@ -174,9 +190,7 @@ function normalizeTask(
   observedAt: string,
   truncated: boolean,
   issues: NormalizationIssue[],
-  normalizerVersion:
-    | typeof GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
-    | typeof GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  normalizerVersion: GitHubWorkSignalNormalizerVersion,
   resolveProjectId:
     | ((sourceScopeId: string) => string | null)
     | undefined
@@ -347,15 +361,25 @@ function normalizeActivity(
   snapshotSha256: string,
   observedAt: string,
   truncated: boolean,
-  normalizerVersion:
-    | typeof GITHUB_WORK_SIGNAL_NORMALIZER_VERSION
-    | typeof GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  normalizerVersion: GitHubWorkSignalNormalizerVersion,
   resolveProjectId:
     | ((sourceScopeId: string) => string | null)
     | undefined
 ): RuntimeWorkSignal {
   const subjectId = githubActivitySubjectId(activity.id);
-  const facts = {
+  const includesArtifactIdentity =
+    normalizerVersion ===
+      GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION ||
+    normalizerVersion ===
+      GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION ||
+    normalizerVersion ===
+      GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION;
+  const includesNativeSubjectIdentity =
+    normalizerVersion ===
+      GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION ||
+    normalizerVersion ===
+      GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION;
+  const baseFacts = {
     activityKind: activity.activityKind,
     repositoryFullName: safeText(
       activity.repositoryFullName,
@@ -368,6 +392,19 @@ function normalizeActivity(
     reviewState: activity.reviewState,
     semanticRole: "activity_only" as const
   };
+  const facts = includesNativeSubjectIdentity
+    ? {
+        ...baseFacts,
+        artifactId: activity.artifactId ?? null,
+        nativeSubjectId:
+          activity.subjectObjectId === null ||
+          activity.subjectObjectId === undefined
+            ? null
+            : githubSubjectId(activity.subjectObjectId)
+      }
+    : includesArtifactIdentity
+      ? { ...baseFacts, artifactId: activity.artifactId ?? null }
+      : baseFacts;
   const sourceScopeId = `repository:${activity.repositoryId}`;
   return finalizeRuntimeWorkSignal({
     contract: RUNTIME_WORK_SIGNAL_CONTRACT,
@@ -393,7 +430,12 @@ function normalizeActivity(
         activityId: activity.id,
         activityKind: activity.activityKind,
         valueSha256: runtimeSha256({
-          domain: "github-activity-record-v0.1",
+          domain:
+            includesNativeSubjectIdentity
+              ? "github-activity-record-v0.3"
+              : includesArtifactIdentity
+              ? "github-activity-record-v0.2"
+              : "github-activity-record-v0.1",
           facts
         }),
         snapshotSha256,

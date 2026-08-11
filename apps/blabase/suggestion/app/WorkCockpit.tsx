@@ -17,6 +17,7 @@ import type {
 } from "../src/attention/monitoringSchema";
 import type { ActiveAttentionCandidate } from "../src/attentionDecision";
 import type { Phase2CodexOverviewItem } from "../src/crossSource/attentionSchema";
+import type { RecentWorkPublicSummary } from "../src/recentWork";
 import {
   fetchAttention,
   submitAttentionFeedback
@@ -263,33 +264,49 @@ function CockpitResult({
         {run.latencyMs.toLocaleString("ko-KR")}ms
       </p>
 
-      <AttentionDecision
-        status={result.decision.status}
-        suggestion={result.decision.topSuggestion}
-        alternatives={result.decision.alternatives}
-        clarification={result.decision.clarification}
-        scopeStatement={result.decision.scopeStatement}
-        certainty={result.decision.certainty}
-      />
+      <CurrentFocusCard payload={payload} />
+
+      <RecentWorkCard summary={payload.recentWork ?? null} />
+
+      <section className="nextAttentionSection" aria-label="Next Attention">
+        <div className="workFlowSectionHeader">
+          <div>
+            <p className="eyebrow">Next Attention</p>
+            <h3>다음에 직접 확인할 일</h3>
+          </div>
+          <span>기존 권위·자격 판정 유지</span>
+        </div>
+
+        <AttentionDecision
+          status={result.decision.status}
+          suggestion={result.decision.topSuggestion}
+          alternatives={result.decision.alternatives}
+          clarification={result.decision.clarification}
+          scopeStatement={result.decision.scopeStatement}
+          certainty={result.decision.certainty}
+          currentFocus={payload.currentFocus}
+          reasonCodes={result.decision.reasonCodes}
+        />
+
+        <AttentionReviewDisclosure assessments={result.assessments} />
+
+        {result.decision.status === "suggested" &&
+        result.decision.topSuggestion ? (
+          <WorkResumption
+            suggestion={result.decision.topSuggestion}
+            codexItems={baseResult.workCockpit.codexExecutions}
+          />
+        ) : null}
+
+        {result.decision.topSuggestion?.triggerKind ===
+        "configured_follow_through" ? (
+          <WorkflowFollowThroughActions
+            suggestion={result.decision.topSuggestion}
+          />
+        ) : null}
+      </section>
 
       <AttentionStatusStrip payload={payload} />
-
-      <AttentionReviewDisclosure assessments={result.assessments} />
-
-      {result.decision.status === "suggested" &&
-      result.decision.topSuggestion ? (
-        <WorkResumption
-          suggestion={result.decision.topSuggestion}
-          codexItems={baseResult.workCockpit.codexExecutions}
-        />
-      ) : null}
-
-      {result.decision.topSuggestion?.triggerKind ===
-      "configured_follow_through" ? (
-        <WorkflowFollowThroughActions
-          suggestion={result.decision.topSuggestion}
-        />
-      ) : null}
 
       <ManagedCodexProgress />
 
@@ -394,6 +411,296 @@ function CockpitResult({
   );
 }
 
+export function RecentWorkCard({
+  summary
+}: {
+  summary: RecentWorkPublicSummary | null;
+}) {
+  if (summary === null) return null;
+  return (
+    <section className="recentWorkCard" aria-labelledby="recent-work-title">
+      <div className="workFlowSectionHeader">
+        <div>
+          <p className="eyebrow">Recent Work</p>
+          <h3 id="recent-work-title">{summary.displayLabel}</h3>
+        </div>
+        <span>표시 전용</span>
+      </div>
+      <div className="recentWorkSignal">
+        <div>
+          <span>최근 push</span>
+          <time dateTime={summary.pushOccurredAt}>
+            {formatTimestamp(summary.pushOccurredAt)}
+          </time>
+        </div>
+        <div>
+          <span>로컬 추적 상태</span>
+          <strong>{recentWorkTrackingLabel(summary)}</strong>
+        </div>
+      </div>
+      <p className="recentWorkBoundary">
+        확인된 저장소와 Codex 범위의 상관관계만 표시합니다. commit 동일성을
+        주장하거나 추천·실행을 변경하지 않습니다.
+      </p>
+    </section>
+  );
+}
+
+function recentWorkTrackingLabel(summary: RecentWorkPublicSummary): string {
+  switch (summary.trackingState) {
+    case "in_sync":
+      return "동기화됨";
+    case "ahead":
+      return `로컬 +${summary.aheadCount ?? 0}`;
+    case "behind":
+      return `원격 추적 +${summary.behindCount ?? 0}`;
+    case "diverged":
+      return `분기됨 · 로컬 ${summary.aheadCount ?? 0} / 추적 ${summary.behindCount ?? 0}`;
+    case "not_configured":
+      return "upstream 미설정";
+  }
+}
+
+function CurrentFocusCard({
+  payload
+}: {
+  payload: AttentionReadyResponse;
+}) {
+  const projection = payload.currentFocus;
+  const focus = projection.selectedFocus;
+  if (projection.status !== "selected" || focus === null) {
+    return (
+      <section
+        className="currentFocusCard currentFocusCard-unresolved"
+        aria-labelledby="current-focus-title"
+      >
+        <div className="workFlowSectionHeader">
+          <div>
+            <p className="eyebrow">Current Focus</p>
+            <h3 id="current-focus-title">
+              현재 작업 흐름을 확정하지 않았습니다.
+            </h3>
+          </div>
+          <span>
+            {projection.status === "unavailable"
+              ? "근거 확인 불가"
+              : "안전하게 보류"}
+          </span>
+        </div>
+        <p className="currentFocusBoundary">
+          {projection.reasonCodes.map(currentFocusReasonLabel).join(" · ")}
+        </p>
+        <p className="currentFocusFootnote">
+          Current Focus가 없어도 검증된 Next Attention 결과는 그대로
+          유지합니다.
+        </p>
+      </section>
+    );
+  }
+
+  const workstream = payload.currentWorkstreams?.workstreams.find(
+    (item) => item.workstreamId === focus.workstreamId
+  );
+  const eventById = new Map(
+    (payload.recentMeaningfulEvents?.events ?? []).map((event) => [
+      event.eventId,
+      event
+    ])
+  );
+  const historicalEvents = (workstream?.historicalEventRefs ?? [])
+    .map((eventId) => eventById.get(eventId))
+    .filter(
+      (
+        event
+      ): event is NonNullable<
+        AttentionReadyResponse["recentMeaningfulEvents"]
+      >["events"][number] => event !== undefined
+    );
+  const latest = focus.latestMeaningfulEvent;
+  return (
+    <section
+      className="currentFocusCard"
+      aria-labelledby="current-focus-title"
+    >
+      <div className="workFlowSectionHeader">
+        <div>
+          <p className="eyebrow">Current Focus</p>
+          <h3 id="current-focus-title">{focus.displayLabel}</h3>
+        </div>
+        <span>
+          {focus.level === "exact_task" ? "정확한 작업 연결" : "프로젝트 범위"}
+        </span>
+      </div>
+      <div className="currentFocusLatest">
+        <span
+          className={`attentionSourceBadge ${
+            latest.source === "github" ? "isGitHub" : "isCodex"
+          }`}
+        >
+          <i aria-hidden="true" />
+          {focusSourceLabel(latest.source)}
+        </span>
+        <div>
+          <strong>{focusEventLabel(latest.kind)}</strong>
+          <time dateTime={latest.occurredAt}>
+            {formatTimestamp(latest.occurredAt)}
+          </time>
+        </div>
+      </div>
+      <dl className="currentFocusMeta">
+        <div>
+          <dt>현재 단계</dt>
+          <dd>{focusStateLabel(focus.authoritativeState)}</dd>
+        </div>
+        <div>
+          <dt>데이터 상태</dt>
+          <dd>{focusCurrentnessLabel(focus.currentness)}</dd>
+        </div>
+        <div>
+          <dt>복원 확신도</dt>
+          <dd>{focusConfidenceLabel(focus.reconstructionConfidence)}</dd>
+        </div>
+        <div>
+          <dt>Blocker</dt>
+          <dd>{focusBlockerLabel(focus.activeBlocker)}</dd>
+        </div>
+      </dl>
+      <p className="currentFocusBoundary">
+        최근 의미 이벤트를 현재 Focus 복원에 사용했습니다. 이 값은 새 추천
+        후보를 만들지 않습니다.
+      </p>
+      {historicalEvents.length > 0 ? (
+        <details className="currentFocusHistory">
+          <summary>이 작업 흐름의 과거 이벤트 {historicalEvents.length}개</summary>
+          <ol>
+            {historicalEvents.map((event) => (
+              <li key={event.eventId}>
+                <div>
+                  <strong>{focusEventLabel(event.kind)}</strong>
+                  <span>{event.displayLabel}</span>
+                </div>
+                <time dateTime={event.occurredAt}>
+                  {formatTimestamp(event.occurredAt)}
+                </time>
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function currentFocusReasonLabel(
+  reason: AttentionReadyResponse["currentFocus"]["reasonCodes"][number]
+): string {
+  const labels: Record<typeof reason, string> = {
+    FOCUS_EXPLICIT_USER_CONFIRMATION: "사용자가 확인한 Focus",
+    FOCUS_LATEST_DIRECT_COMPLETE_EVENT: "최신 직접 이벤트",
+    FOCUS_PROJECT_LEVEL_ONLY: "프로젝트 수준 근거만 있음",
+    FOCUS_NO_MEANINGFUL_EVENT: "최근 의미 이벤트 없음",
+    FOCUS_EVENT_OUTSIDE_RECENT_WINDOW: "최근성 범위 밖의 이벤트",
+    FOCUS_SOURCE_STALE: "소스가 오래됨",
+    FOCUS_SOURCE_PARTIAL: "소스 수집이 일부만 완료됨",
+    FOCUS_IDENTITY_CONFLICT: "작업 식별자 충돌",
+    FOCUS_AUTHORITY_CONFLICT: "현재 상태 근거 충돌",
+    FOCUS_LATEST_EVENT_TIE: "최신 이벤트가 동률임",
+    FOCUS_INSUFFICIENT_IDENTITY: "정확한 작업 근거 부족",
+    FOCUS_DEPENDENCY_MISMATCH: "동일 evidence graph를 확인하지 못함",
+    FOCUS_PROJECTION_UNAVAILABLE: "Focus projection을 만들 수 없음"
+  };
+  return labels[reason];
+}
+
+function focusSourceLabel(
+  source: NonNullable<
+    AttentionReadyResponse["currentFocus"]["selectedFocus"]
+  >["latestMeaningfulEvent"]["source"]
+): string {
+  return source === "github"
+    ? "GitHub"
+    : source === "codex_managed"
+      ? "Codex"
+      : "Codex 기록";
+}
+
+function focusEventLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    github_push: "코드 push",
+    github_issue_opened: "Issue 생성",
+    github_issue_closed: "Issue 종료",
+    github_issue_reopened: "Issue 재개",
+    github_pull_request_opened: "Pull Request 생성",
+    github_pull_request_closed: "Pull Request 종료",
+    github_pull_request_reopened: "Pull Request 재개",
+    github_pull_request_merged: "Pull Request merge",
+    github_review_submitted: "Review 완료",
+    github_changes_requested: "변경 요청",
+    github_ci_failed: "CI 실패 확인",
+    github_merge_conflict: "Merge conflict 확인",
+    codex_run_started: "Codex 실행 시작",
+    codex_turn_started: "Codex 작업 진행",
+    codex_turn_completed: "Codex turn 완료",
+    codex_turn_failed: "Codex turn 실패",
+    codex_turn_interrupted: "Codex turn 중단",
+    codex_run_failed: "Codex 실행 실패",
+    codex_run_closed: "Codex 실행 종료",
+    codex_waiting_approval: "승인 대기",
+    codex_waiting_user_input: "사용자 입력 대기",
+    codex_project_activity: "Codex 프로젝트 기록"
+  };
+  return labels[kind] ?? kind;
+}
+
+function focusStateLabel(state: string): string {
+  const labels: Record<string, string> = {
+    open: "열림",
+    running: "진행 중",
+    idle: "대기",
+    failed: "실패",
+    interrupted: "중단",
+    completed: "완료",
+    cancelled: "취소",
+    unknown: "확인되지 않음",
+    conflict: "근거 충돌"
+  };
+  return labels[state] ?? state;
+}
+
+function focusCurrentnessLabel(currentness: string): string {
+  const labels: Record<string, string> = {
+    current: "최신·완전",
+    stale: "오래됨",
+    partial: "부분 수집",
+    historical_only: "과거 맥락만",
+    conflict: "근거 충돌",
+    unknown: "확인되지 않음"
+  };
+  return labels[currentness] ?? currentness;
+}
+
+function focusConfidenceLabel(confidence: string): string {
+  return confidence === "high"
+    ? "높음"
+    : confidence === "medium"
+      ? "중간"
+      : "낮음";
+}
+
+function focusBlockerLabel(blocker: string): string {
+  const labels: Record<string, string> = {
+    none: "없음",
+    ci_failed: "CI 실패",
+    changes_requested: "변경 요청",
+    merge_conflict: "Merge conflict",
+    codex_failure: "Codex 실패",
+    waiting_on_approval: "승인 대기",
+    waiting_on_user_input: "사용자 입력 대기",
+    unknown: "확인되지 않음"
+  };
+  return labels[blocker] ?? blocker;
+}
+
 function AttentionStatusStrip({
   payload
 }: {
@@ -481,7 +788,9 @@ function AttentionDecision({
   alternatives,
   clarification,
   scopeStatement,
-  certainty
+  certainty,
+  currentFocus,
+  reasonCodes
 }: {
   status: AttentionReadyResponse["result"]["decision"]["status"];
   suggestion: ActiveAttentionCandidate | null;
@@ -489,6 +798,8 @@ function AttentionDecision({
   clarification: AttentionReadyResponse["result"]["decision"]["clarification"];
   scopeStatement: string;
   certainty: AttentionReadyResponse["result"]["decision"]["certainty"];
+  currentFocus: AttentionReadyResponse["currentFocus"];
+  reasonCodes: AttentionReadyResponse["result"]["decision"]["reasonCodes"];
 }) {
   if (status === "suggested" && suggestion) {
     const source =
@@ -578,11 +889,19 @@ function AttentionDecision({
     );
   }
 
+  const hasSelectedCurrentFocus =
+    currentFocus.status === "selected" &&
+    currentFocus.selectedFocus !== null;
+  const coverageIsIncomplete = reasonCodes.includes(
+    "DECISION_RELEVANT_COVERAGE_INSUFFICIENT"
+  );
   const content =
     status === "no_action"
       ? {
           label: "현재 평가 범위",
-          title: "지금 직접 개입할 항목이 없습니다."
+          title: hasSelectedCurrentFocus
+            ? "현재 작업 흐름은 확인했지만, 평가한 범위에서는 별도 개입 후보가 없습니다."
+            : "지금 직접 개입할 항목이 없습니다."
         }
       : status === "needs_clarification"
         ? {
@@ -591,7 +910,11 @@ function AttentionDecision({
           }
         : {
             label: "평가 범위 부족",
-            title: "안전하게 한 가지를 고르기 어렵습니다."
+            title: hasSelectedCurrentFocus
+              ? "현재 작업 흐름은 확인했지만, 다음 개입 후보는 확정하지 못했습니다."
+              : coverageIsIncomplete
+                ? "검증된 개입 후보가 없고 일부 작업 근거가 부족합니다."
+                : "현재 근거만으로 다음 개입 후보를 확정하지 못했습니다."
           };
   return (
     <article

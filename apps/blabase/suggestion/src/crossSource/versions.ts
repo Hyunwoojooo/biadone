@@ -127,6 +127,15 @@ export const GITHUB_WORK_SIGNAL_NORMALIZER_VERSION =
 export const GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION =
   "github-pr-actionability-normalizer-v0.3" as const;
 
+export const GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION =
+  "github-push-artifact-normalizer-v0.4" as const;
+
+export const GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION =
+  "github-native-activity-identity-normalizer-v0.5" as const;
+
+export const GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION =
+  "github-native-activity-identity-normalizer-v0.6" as const;
+
 export const CODEX_WORK_SIGNAL_NORMALIZER_VERSION =
   "codex-historical-context-normalizer-v0.3" as const;
 
@@ -189,3 +198,57 @@ export const ACTIVE_ATTENTION_PREVIOUS_RESOLVER_VERSION =
 
 export const ACTIVE_ATTENTION_ID_POLICY_VERSION =
   "active-attention-id-v0.1" as const;
+
+export const RECENT_MEANINGFUL_EVENT_PROJECTION_CONTRACT =
+  "recent-meaningful-event-projection-v0.1" as const;
+
+export const RECENT_MEANINGFUL_EVENT_SCHEMA_VERSION =
+  "recent-meaningful-event-schema-v0.2" as const;
+
+export const RECENT_MEANINGFUL_EVENT_RULE_VERSION =
+  "github-managed-codex-meaningful-event-rule-v0.6" as const;
+
+export const RECENT_MEANINGFUL_EVENT_ID_POLICY_VERSION =
+  "recent-meaningful-event-id-v0.2" as const;
+
+export const CURRENT_WORKSTREAM_PROJECTION_CONTRACT =
+  "current-workstream-projection-v0.1" as const;
+
+export const CURRENT_WORKSTREAM_SCHEMA_VERSION =
+  "current-workstream-schema-v0.1" as const;
+
+export const CURRENT_WORKSTREAM_RECONSTRUCTION_RULE_VERSION =
+  "exact-identity-current-workstream-v0.5" as const;
+
+export const CURRENT_WORKSTREAM_CURRENTNESS_POLICY_VERSION =
+  "current-workstream-currentness-policy-v0.1" as const;
+
+export const CURRENT_WORKSTREAM_ID_POLICY_VERSION =
+  "current-workstream-id-v0.5" as const;
+
+export const CURRENT_FOCUS_PROJECTION_CONTRACT =
+  "current-focus-projection-v0.1" as const;
+
+export const CURRENT_FOCUS_SCHEMA_VERSION =
+  "current-focus-schema-v0.1" as const;
+
+export const CURRENT_FOCUS_SELECTION_POLICY_VERSION =
+  "recent-direct-current-focus-policy-v0.2" as const;
+
+export const CURRENT_FOCUS_ID_POLICY_VERSION =
+  "current-focus-id-v0.1" as const;
+
+export const FOCUS_AWARE_ATTENTION_SHADOW_PROJECTION_CONTRACT =
+  "focus-aware-attention-shadow-v0.1" as const;
+
+export const FOCUS_AWARE_ATTENTION_SHADOW_SCHEMA_VERSION =
+  "focus-aware-attention-shadow-schema-v0.2" as const;
+
+export const FOCUS_AWARE_ATTENTION_RANKING_POLICY_VERSION =
+  "focus-aware-ranking-policy-v0.1" as const;
+
+export const FOCUS_AWARE_ATTENTION_SHADOW_RESOLVER_VERSION =
+  "focus-aware-attention-shadow-resolver-v0.2" as const;
+
+export const CURRENT_FOCUS_SHADOW_ROLLOUT_VERSION =
+  "current-focus-shadow-rollout-v0.1" as const;

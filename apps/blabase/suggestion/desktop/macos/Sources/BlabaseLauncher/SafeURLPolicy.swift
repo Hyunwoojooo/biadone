@@ -52,7 +52,18 @@ enum SafeURLPolicy {
         path: String,
         baseURL: URL = defaultDashboardBaseURL
     ) -> URL? {
-        guard path.hasPrefix("/"), !path.hasPrefix("//") else { return nil }
+        guard
+            path.hasPrefix("/"),
+            !path.hasPrefix("//"),
+            !path.contains("?"),
+            !path.contains("#"),
+            !path.contains("\\"),
+            path.unicodeScalars.allSatisfy({
+                !CharacterSet.controlCharacters.contains($0)
+            })
+        else {
+            return nil
+        }
         guard var components = URLComponents(
             url: baseURL,
             resolvingAgainstBaseURL: false
@@ -82,6 +93,40 @@ enum SafeURLPolicy {
         return components.url
     }
 
+    static func dashboardRootContextURL(
+        baseURL: URL = defaultDashboardBaseURL
+    ) -> URL? {
+        dashboardURL(
+            path: "/api/system/root-context",
+            baseURL: baseURL
+        )
+    }
+
+    static func sourceConnectionURL(
+        for source: AttentionSource,
+        baseURL: URL = defaultDashboardBaseURL
+    ) -> URL? {
+        guard
+            let allowedBase = dashboardURL(
+                path: "/sources",
+                baseURL: baseURL
+            ),
+            var components = URLComponents(
+                url: allowedBase,
+                resolvingAgainstBaseURL: false
+            )
+        else {
+            return nil
+        }
+        let destination = sourceConnectionDestination(for: source)
+        components.queryItems = [
+            URLQueryItem(name: "source", value: destination.source),
+            URLQueryItem(name: "entry", value: "launcher")
+        ]
+        components.fragment = destination.anchor
+        return components.url
+    }
+
     static func dashboardBaseURL(from rawValue: String) -> URL? {
         guard
             let candidate = URL(string: rawValue),
@@ -104,5 +149,20 @@ enum SafeURLPolicy {
         normalized.query = nil
         normalized.fragment = nil
         return normalized.url
+    }
+
+    private static func sourceConnectionDestination(
+        for source: AttentionSource
+    ) -> (source: String, anchor: String) {
+        switch source {
+        case .github:
+            ("github", "source-github")
+        case .codex:
+            ("codex", "source-codex")
+        case .notion:
+            ("notion", "source-notion")
+        case .googleCalendar:
+            ("google-calendar", "source-google-calendar")
+        }
     }
 }

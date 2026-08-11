@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  sourceConnectionReturnUrl,
+  type SourceConnectionReturnStatus
+} from "../../../../sourceNavigation";
+import {
   isLocalGitHubRequest,
   loadGitHubConfig
 } from "../../../../../src/connectors/github/config";
@@ -78,10 +82,13 @@ export async function GET(request: NextRequest) {
 
 function redirectWithClearedState(
   request: NextRequest,
-  status: string
+  status: SourceConnectionReturnStatus<"github">
 ): NextResponse {
-  const destination = new URL("/", request.url);
-  destination.searchParams.set("github", status);
+  const destination = sourceConnectionReturnUrl(
+    request.url,
+    "github",
+    status
+  );
   const response = NextResponse.redirect(destination);
   response.cookies.set(GITHUB_STATE_COOKIE, "", {
     httpOnly: true,

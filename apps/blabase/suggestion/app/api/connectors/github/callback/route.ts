@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  sourceConnectionReturnUrl,
+  type SourceConnectionReturnStatus
+} from "../../../../sourceNavigation";
+import {
   isLocalGitHubRequest,
   loadGitHubConfig
 } from "../../../../../src/connectors/github/config";
@@ -90,11 +94,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (snapshotInstallationCount === 0) {
-      return redirectWithClearedState(
-        request,
-        "installation_required",
-        "/api/connectors/github/install"
-      );
+      return redirectWithClearedState(request, "installation_required");
     }
 
     return redirectWithClearedState(
@@ -110,13 +110,13 @@ export async function GET(request: NextRequest) {
 
 function redirectWithClearedState(
   request: NextRequest,
-  status: string,
-  pathname = "/"
+  status: SourceConnectionReturnStatus<"github">
 ): NextResponse {
-  const destination = new URL(pathname, request.url);
-  if (pathname === "/") {
-    destination.searchParams.set("github", status);
-  }
+  const destination = sourceConnectionReturnUrl(
+    request.url,
+    "github",
+    status
+  );
   const response = NextResponse.redirect(destination);
   response.cookies.set(GITHUB_STATE_COOKIE, "", {
     httpOnly: true,

@@ -129,13 +129,32 @@ export type GitHubUserActivitySignal = {
   occurredAt: string;
   subjectType: GitHubActivitySubjectType;
   subjectNumber: number | null;
+  /**
+   * Required by github-snapshot-v5/v6. In v6, issue and pull-request activity carries
+   * the canonical Issues REST object ID used by task bindings. Pull request
+   * event IDs are resolved through the exact repository/number Issues API;
+   * non-work-item activity carries null. v5 may contain the pre-canonicalized
+   * event-native PR ID, so only v6 can bridge a disappeared task by this field.
+   * Older snapshots omit it.
+   */
+  subjectObjectId?: number | null;
   subjectTitle: string | null;
   refName: string | null;
   reviewState: GitHubReviewState | null;
+  /**
+   * Required by github-snapshot-v4. Pushes carry the opaque commit artifact
+   * ID; every other activity carries null. Legacy v2/v3 snapshots omit it.
+   */
+  artifactId?: string | null;
 };
 
 export type GitHubSnapshot = {
-  schemaVersion: "github-snapshot-v2" | "github-snapshot-v3";
+  schemaVersion:
+    | "github-snapshot-v2"
+    | "github-snapshot-v3"
+    | "github-snapshot-v4"
+    | "github-snapshot-v5"
+    | "github-snapshot-v6";
   appClientId: string;
   appSlug: string;
   apiVersion: string;
@@ -145,7 +164,7 @@ export type GitHubSnapshot = {
   activityWindowStart: string;
   activitiesState: "available" | "partial" | "unavailable";
   activitiesTruncated: boolean;
-  /** Required by github-snapshot-v3; absent from legacy v2 snapshots. */
+  /** Required by github-snapshot-v3/v4; absent from legacy v2 snapshots. */
   actionabilityCoverage?: GitHubActionabilityCoverage;
   installations: GitHubInstallationSignal[];
   repositories: GitHubRepositorySignal[];

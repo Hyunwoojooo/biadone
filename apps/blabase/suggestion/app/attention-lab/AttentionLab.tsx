@@ -219,6 +219,7 @@ export function AttentionLab() {
         <div className="labNotice">{history.message}</div>
       ) : null}
 
+      <CurrentFocusDiagnosticsPanel response={current} />
       <EligibilityShadowPanel
         projection={
           current?.status === "ready"
@@ -249,6 +250,241 @@ export function AttentionLab() {
       ) : null}
     </main>
   );
+}
+
+function CurrentFocusDiagnosticsPanel({
+  response
+}: {
+  response: AttentionApiResponse | null;
+}) {
+  if (response?.status !== "ready") return null;
+  const {
+    currentFocus,
+    currentWorkstreams,
+    recentMeaningfulEvents,
+    focusAwareAttentionShadow,
+    result
+  } = response;
+  const selected = currentFocus.selectedFocus;
+  const eventById = new Map(
+    (recentMeaningfulEvents?.events ?? []).map((event) => [
+      event.eventId,
+      event
+    ])
+  );
+  const titleByCandidateId = new Map(
+    result.rankedCandidates.map((candidate) => [
+      candidate.candidateId,
+      candidate.title
+    ])
+  );
+  const existingTop = focusAwareAttentionShadow.existingTopCandidateId;
+  const counterfactualTop =
+    focusAwareAttentionShadow.counterfactualTopCandidateId;
+  return (
+    <section
+      className="labEligibilityPanel labFocusPanel"
+      aria-labelledby="current-focus-diagnostics-title"
+    >
+      <div className="labPanelHeader">
+        <div>
+          <p className="eyebrow">Current WorkStream · Shadow v0.1</p>
+          <h2 id="current-focus-diagnostics-title">
+            Current Focus 복원 진단
+          </h2>
+        </div>
+        <span>
+          {currentFocus.status === "selected"
+            ? "Focus 선택됨"
+            : currentFocus.status === "unresolved"
+              ? "선택 보류"
+              : "Projection 불가"}
+        </span>
+      </div>
+      <p className="labEligibilityBoundary">
+        같은 asOf와 evidence lineage를 가진 GitHub·managed Codex 이벤트만
+        사용합니다. Focus는 후보를 만들거나 eligibility를 바꾸지 않으며,
+        현재는 실제 선택에 적용하지 않는 shadow 결과입니다.
+      </p>
+      <div className="labFunnel labEligibilityFunnel">
+        <div>
+          <strong>{recentMeaningfulEvents?.counts.included ?? 0}</strong>
+          <span>Focus 가능 이벤트</span>
+        </div>
+        <div>
+          <strong>{recentMeaningfulEvents?.counts.contextOnly ?? 0}</strong>
+          <span>과거 맥락</span>
+        </div>
+        <div>
+          <strong>{currentWorkstreams?.workstreams.length ?? 0}</strong>
+          <span>복원 WorkStream</span>
+        </div>
+      </div>
+
+      {selected ? (
+        <article className="labFocusSelection">
+          <div>
+            <span>선택된 Current Focus</span>
+            <strong>{selected.displayLabel}</strong>
+          </div>
+          <dl>
+            <div>
+              <dt>latest event</dt>
+              <dd>{focusEventDiagnosticLabel(selected.latestMeaningfulEvent.kind)}</dd>
+            </div>
+            <div>
+              <dt>occurredAt</dt>
+              <dd>{formatTimestamp(selected.latestMeaningfulEvent.occurredAt)}</dd>
+            </div>
+            <div>
+              <dt>source</dt>
+              <dd>{focusSourceDiagnosticLabel(selected.latestMeaningfulEvent.source)}</dd>
+            </div>
+            <div>
+              <dt>quality</dt>
+              <dd>
+                {selected.currentness} · {selected.completeness} · {selected.reconstructionConfidence}
+              </dd>
+            </div>
+            <div>
+              <dt>state / blocker</dt>
+              <dd>{selected.authoritativeState} · {selected.activeBlocker}</dd>
+            </div>
+          </dl>
+        </article>
+      ) : (
+        <p className="labEmpty">
+          선택하지 않은 이유: {currentFocus.reasonCodes.join(" · ")}
+        </p>
+      )}
+
+      <div className="labFocusComparison" aria-label="Focus shadow 선택 비교">
+        <div>
+          <span>기존 top</span>
+          <strong>
+            {existingTop
+              ? titleByCandidateId.get(existingTop) ?? "비공개 후보"
+              : "후보 없음"}
+          </strong>
+        </div>
+        <div>
+          <span>counterfactual top</span>
+          <strong>
+            {counterfactualTop
+              ? titleByCandidateId.get(counterfactualTop) ?? "비공개 후보"
+              : "후보 없음"}
+          </strong>
+        </div>
+        <div>
+          <span>실제 영향</span>
+          <strong>
+            {focusAwareAttentionShadow.attentionSelectionEffect === "none"
+              ? focusAwareAttentionShadow.wouldSwitch
+                ? "변경 가능성만 기록 · 적용 안 함"
+                : "변경 없음"
+              : focusAwareAttentionShadow.attentionSelectionEffect}
+          </strong>
+        </div>
+      </div>
+
+      <details className="labTechnical">
+        <summary>이벤트 포함·제외와 WorkStream grouping 근거</summary>
+        <div className="labFocusDiagnosticColumns">
+          <div>
+            <h3>Meaningful event 판정</h3>
+            {recentMeaningfulEvents?.diagnostics.length ? (
+              <ol className="labFocusDiagnosticList">
+                {recentMeaningfulEvents.diagnostics.map((diagnostic) => {
+                  const event = diagnostic.eventId
+                    ? eventById.get(diagnostic.eventId)
+                    : null;
+                  return (
+                    <li key={diagnostic.diagnosticId}>
+                      <span className={`is-${diagnostic.disposition}`}>
+                        {diagnostic.disposition}
+                      </span>
+                      <div>
+                        <strong>
+                          {event?.displayLabel ??
+                            focusSourceDiagnosticLabel(diagnostic.source)}
+                        </strong>
+                        <code>{diagnostic.reasonCode}</code>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="labEmpty">기록된 event 진단이 없습니다.</p>
+            )}
+          </div>
+          <div>
+            <h3>WorkStream grouping</h3>
+            {currentWorkstreams?.workstreams.length ? (
+              <ol className="labFocusDiagnosticList">
+                {currentWorkstreams.workstreams.map((workstream) => (
+                  <li key={workstream.workstreamId}>
+                    <span>{workstream.level}</span>
+                    <div>
+                      <strong>{workstream.displayLabel}</strong>
+                      <code>{workstream.reasonCodes.join(" · ")}</code>
+                      <small>
+                        {workstream.currentness} · {workstream.completeness} · {workstream.reconstructionConfidence}
+                      </small>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="labEmpty">복원된 WorkStream이 없습니다.</p>
+            )}
+          </div>
+        </div>
+        <dl>
+          <TechnicalValue
+            label="Focus reason"
+            value={currentFocus.reasonCodes.join(" · ")}
+          />
+          <TechnicalValue
+            label="Shadow reason"
+            value={focusAwareAttentionShadow.reasonCodes.join(" · ")}
+          />
+          <TechnicalValue
+            label="Eligibility diff"
+            value={String(focusAwareAttentionShadow.eligibilityDiffCount)}
+          />
+          <TechnicalValue
+            label="Shadow match coverage"
+            value={`${focusAwareAttentionShadow.matches.length} / ${focusAwareAttentionShadow.totalMatchCount} retained · ${focusAwareAttentionShadow.omittedMatchCount} omitted`}
+          />
+          <TechnicalValue
+            label="Recent event retention"
+            value={`${recentMeaningfulEvents?.events.length ?? 0} retained · ${recentMeaningfulEvents?.counts.omittedMeaningfulEventCount ?? 0} events omitted · ${recentMeaningfulEvents?.counts.omittedDiagnosticCount ?? 0} diagnostics omitted`}
+          />
+          <TechnicalValue
+            label="Focus projection"
+            value={currentFocus.projectionSha256}
+          />
+          <TechnicalValue
+            label="Shadow projection"
+            value={focusAwareAttentionShadow.projectionSha256}
+          />
+        </dl>
+      </details>
+    </section>
+  );
+}
+
+function focusSourceDiagnosticLabel(source: string): string {
+  return source === "github"
+    ? "GitHub"
+    : source === "codex_managed"
+      ? "Managed Codex"
+      : "Codex inventory (context-only)";
+}
+
+function focusEventDiagnosticLabel(kind: string): string {
+  return kind.replace(/^github_/, "GitHub ").replace(/^codex_/, "Codex ");
 }
 
 function DeveloperSignalPanel({

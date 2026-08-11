@@ -39,6 +39,7 @@ export type NotionConnectionState =
   | {
       status: "unavailable";
       message: string;
+      localUrl?: string;
     }
   | {
       status: "disconnected";

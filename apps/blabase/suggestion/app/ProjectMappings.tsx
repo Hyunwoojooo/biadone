@@ -13,6 +13,7 @@ import type {
   DiscoverableSourceScope,
   SourceScopeDiscovery
 } from "../src/context/sourceScopeDiscovery";
+import type { RepositoryScopeProposalGroup } from "../src/context/repositoryScopeProposals";
 import type {
   ProjectWorkflowActionKind,
   ProjectWorkflowProjection
@@ -29,6 +30,7 @@ type ProjectContextResponse =
   | {
       status: "ready";
       discovery: SourceScopeDiscovery;
+      repositoryScopeProposals: RepositoryScopeProposalGroup[];
     }
   | {
       status: "error" | "unavailable";
@@ -36,6 +38,7 @@ type ProjectContextResponse =
     };
 
 type ScopeDrafts = Record<string, string>;
+type ProposalDrafts = Record<string, string>;
 type WorkflowSelection = ProjectWorkflowActionKind | "unknown";
 type WorkflowDrafts = Record<string, WorkflowSelection>;
 
@@ -55,9 +58,16 @@ export function ProjectMappings({
   const [discovery, setDiscovery] =
     useState<SourceScopeDiscovery | null>(null);
   const [drafts, setDrafts] = useState<ScopeDrafts>({});
+  const [repositoryScopeProposals, setRepositoryScopeProposals] =
+    useState<RepositoryScopeProposalGroup[]>([]);
+  const [proposalDrafts, setProposalDrafts] =
+    useState<ProposalDrafts>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [savingScope, setSavingScope] = useState<string | null>(null);
+  const [savingProposalGroup, setSavingProposalGroup] = useState<
+    string | null
+  >(null);
   const [message, setMessage] = useState<string | null>(null);
   const [workflowProjection, setWorkflowProjection] =
     useState<ProjectWorkflowProjection | null>(null);
@@ -73,10 +83,18 @@ export function ProjectMappings({
   const workflowSequenceRef = useRef(0);
   const workflowMutationActiveRef = useRef(false);
 
-  const acceptDiscovery = useCallback((next: SourceScopeDiscovery) => {
-    setDiscovery(next);
+  const acceptContext = useCallback((next: Extract<ProjectContextResponse, { status: "ready" }>) => {
+    setDiscovery(next.discovery);
+    setRepositoryScopeProposals(next.repositoryScopeProposals);
     setDrafts((current) =>
-      scopeDrafts(next.scopes, next.projects, current)
+      scopeDrafts(next.discovery.scopes, next.discovery.projects, current)
+    );
+    setProposalDrafts((current) =>
+      repositoryProposalDrafts(
+        next.repositoryScopeProposals,
+        next.discovery.projects,
+        current
+      )
     );
   }, []);
 
@@ -96,7 +114,7 @@ export function ProjectMappings({
         ) {
           return;
         }
-        acceptDiscovery(payload.discovery);
+        acceptContext(payload);
       } catch {
         if (sequence === sequenceRef.current && !silent) {
           setMessage("프로젝트 연결 정보를 불러오지 못했습니다.");
@@ -107,7 +125,7 @@ export function ProjectMappings({
         }
       }
     },
-    [acceptDiscovery]
+    [acceptContext]
   );
 
   const loadProjectWorkflows = useCallback(async (silent = false) => {
@@ -151,6 +169,7 @@ export function ProjectMappings({
       if (
         !isCreating &&
         savingScope === null &&
+        savingProposalGroup === null &&
         savingWorkflowProjectId === null
       ) {
         void load(true);
@@ -188,7 +207,7 @@ export function ProjectMappings({
         action: "create_project"
       });
       if (sequence !== sequenceRef.current) return;
-      acceptDiscovery(next);
+      acceptContext(next);
       setMessage(
         "프로젝트를 만들었습니다. 아래 source를 확인한 뒤 연결하세요."
       );
@@ -226,7 +245,7 @@ export function ProjectMappings({
             }
       );
       if (sequence !== sequenceRef.current) return;
-      acceptDiscovery(next);
+      acceptContext(next);
       setMessage(
         selectedProjectId
           ? "사용자 확인으로 프로젝트 연결을 반영했습니다."
@@ -242,6 +261,51 @@ export function ProjectMappings({
       }
     } finally {
       if (sequence === sequenceRef.current) setSavingScope(null);
+    }
+  }
+
+  async function applyRepositoryScopeProposal(
+    group: RepositoryScopeProposalGroup
+  ) {
+    if (
+      savingProposalGroup !== null ||
+      savingScope !== null ||
+      savingWorkflowProjectId !== null ||
+      isCreating
+    ) {
+      return;
+    }
+    const selectedProjectId =
+      proposalDrafts[group.proposalGroupId] ?? "";
+    if (!selectedProjectId) return;
+
+    const sequence = ++sequenceRef.current;
+    setSavingProposalGroup(group.proposalGroupId);
+    setMessage(null);
+    try {
+      const next = await mutateProjectContext({
+        action: "confirm_repository_scope_proposal",
+        proposalGroupId: group.proposalGroupId,
+        projectId: selectedProjectId,
+        explicitUserConfirmation: true
+      });
+      if (sequence !== sequenceRef.current) return;
+      acceptContext(next);
+      setMessage(
+        "사용자 확인으로 GitHub 저장소와 Codex 범위를 함께 연결했습니다."
+      );
+      syncInvalidationBus.invalidate({
+        reason: "context_changed",
+        targets: ["attention"]
+      });
+    } catch {
+      if (sequence === sequenceRef.current) {
+        setMessage(
+          "범위 제안이 변경되었거나 연결을 반영하지 못했습니다. 다시 확인하세요."
+        );
+      }
+    } finally {
+      if (sequence === sequenceRef.current) setSavingProposalGroup(null);
     }
   }
 
@@ -334,6 +398,7 @@ export function ProjectMappings({
             disabled={
               isCreating ||
               savingScope !== null ||
+              savingProposalGroup !== null ||
               savingWorkflowProjectId !== null ||
               isLoading
             }
@@ -358,6 +423,73 @@ export function ProjectMappings({
           <p className="projectMappingsEmpty">
             먼저 프로젝트를 하나 만든 뒤 연결할 source를 확인하세요.
           </p>
+        ) : null}
+
+        {repositoryScopeProposals.length > 0 ? (
+          <section
+            className="projectMappingGroup"
+            aria-labelledby="repository-scope-proposals"
+          >
+            <div>
+              <h3 id="repository-scope-proposals">정확히 확인된 범위 묶음</h3>
+              <span>{repositoryScopeProposals.length}개</span>
+            </div>
+            <ul>
+              {repositoryScopeProposals.map((group) => {
+                const selectedProjectId =
+                  proposalDrafts[group.proposalGroupId] ?? "";
+                const isSaving =
+                  savingProposalGroup === group.proposalGroupId;
+                const isLocked =
+                  savingProposalGroup !== null ||
+                  savingScope !== null ||
+                  savingWorkflowProjectId !== null ||
+                  isCreating;
+                return (
+                  <li key={group.proposalGroupId}>
+                    <div className="projectMappingScope">
+                      <strong>GitHub 저장소 + Codex 선택 범위</strong>
+                      <span>{repositoryProposalReasonLabel(group.reason)}</span>
+                    </div>
+                    <label>
+                      <span className="srOnly">두 범위를 연결할 프로젝트</span>
+                      <select
+                        value={selectedProjectId}
+                        disabled={
+                          isLocked || group.suggestedProjectId !== null
+                        }
+                        onChange={(event) =>
+                          setProposalDrafts((current) => ({
+                            ...current,
+                            [group.proposalGroupId]: event.target.value
+                          }))
+                        }
+                      >
+                        <option value="">프로젝트 선택</option>
+                        {activeProjects.map((project) => (
+                          <option
+                            key={project.projectId}
+                            value={project.projectId}
+                          >
+                            {project.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!selectedProjectId || isLocked}
+                      onClick={() =>
+                        void applyRepositoryScopeProposal(group)
+                      }
+                    >
+                      {isSaving ? "연결 중" : "두 범위 연결"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         ) : null}
 
         {activeProjects.length > 0
@@ -390,6 +522,7 @@ export function ProjectMappings({
                         }
                         isLocked={
                           savingScope !== null ||
+                          savingProposalGroup !== null ||
                           savingWorkflowProjectId !== null ||
                           isCreating
                         }
@@ -450,6 +583,7 @@ export function ProjectMappings({
                       isWorkflowLoading ||
                       savingWorkflowProjectId !== null ||
                       savingScope !== null ||
+                      savingProposalGroup !== null ||
                       isCreating
                     }
                     onSelect={(actionKind) =>
@@ -645,6 +779,41 @@ function scopeDrafts(
   );
 }
 
+function repositoryProposalDrafts(
+  groups: RepositoryScopeProposalGroup[],
+  projects: DiscoverableProject[],
+  current: ProposalDrafts
+): ProposalDrafts {
+  const activeProjectIds = new Set(
+    projects
+      .filter((project) => !project.archived)
+      .map((project) => project.projectId)
+  );
+  return Object.fromEntries(
+    groups.map((group) => {
+      const preserved = current[group.proposalGroupId];
+      return [
+        group.proposalGroupId,
+        group.suggestedProjectId ??
+          (preserved && activeProjectIds.has(preserved) ? preserved : "")
+      ];
+    })
+  );
+}
+
+function repositoryProposalReasonLabel(
+  reason: RepositoryScopeProposalGroup["reason"]
+): string {
+  switch (reason) {
+    case "EXISTING_PROJECT_MAPPING":
+      return "기존 연결과 일치";
+    case "SOLE_ACTIVE_PROJECT":
+      return "유일한 활성 프로젝트";
+    case "USER_SELECTION_REQUIRED":
+      return "프로젝트 선택 필요";
+  }
+}
+
 function currentWorkflowAction(
   projection: ProjectWorkflowProjection | null,
   projectId: string
@@ -715,7 +884,7 @@ function scopeTypeLabel(scope: DiscoverableSourceScope): string {
 
 async function mutateProjectContext(
   body: Record<string, unknown>
-): Promise<SourceScopeDiscovery> {
+): Promise<Extract<ProjectContextResponse, { status: "ready" }>> {
   const response = await fetch("/api/context/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -726,5 +895,5 @@ async function mutateProjectContext(
   if (payload.status !== "ready") {
     throw new Error("project context response was not ready");
   }
-  return payload.discovery;
+  return payload;
 }

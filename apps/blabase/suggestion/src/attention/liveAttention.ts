@@ -2,11 +2,13 @@ import { randomBytes } from "node:crypto";
 
 import {
   readStoredCodexConfig,
+  readStoredCodexLocalGitSnapshot,
   readStoredCodexSnapshot
 } from "../connectors/codex/localStore";
+import type { CodexLocalGitSnapshot } from "../connectors/codex/localGitContracts";
 import { codexSnapshotMatchesConfig } from "../connectors/codex/connectionState";
 import { normalizeCodexSnapshotToWorkSignals } from "../connectors/codex/toWorkSignals";
-import type { CodexSnapshot } from "../connectors/codex/types";
+import type { CodexSnapshot, StoredCodexConfig } from "../connectors/codex/types";
 import {
   googleCalendarSnapshotMatchesTokens,
   googleCalendarSnapshotScopeId,
@@ -47,13 +49,16 @@ import {
   lookupProjectId,
   readWorkContextRegistry,
   readWeeklyOutcomeStore,
+  resolveConfirmedRepositoryScopeLinks,
   resolveAttentionWorkContext,
   resolveStoredAttentionWorkContext,
   type SourceScopeRef,
   type WorkContextRegistry
 } from "../context";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
-import { ACTIVE_ATTENTION_INPUT_CONTRACT } from "../crossSource/versions";
+import {
+  ACTIVE_ATTENTION_INPUT_CONTRACT
+} from "../crossSource/versions";
 import { resolveAttentionEligibilityShadow } from "../eligibility";
 import type { AttentionEligibilityShadowProjection } from "../eligibility";
 import {
@@ -78,6 +83,25 @@ import {
   resolveProjectWorkflowProjection,
   type ProjectWorkflowProjection
 } from "../workflows";
+import type { RecentMeaningfulEventProjection } from "../recentEvents";
+import {
+  createDependencyMismatchFocusAwareAttentionShadow,
+  createUnavailableCurrentFocusProjection,
+  resolveCurrentFocusFromEvidence,
+  resolveFocusAwareAttentionShadow,
+  type CurrentFocusProjection,
+  type CurrentWorkstreamProjection,
+  type FocusAwareAttentionShadowProjection
+} from "../currentFocus";
+import {
+  createUnavailableRecentWorkProjection,
+  projectRecentWorkPublicSummary,
+  resolveRecentWork,
+  resolveRecentWorkPresentationMode,
+  type RecentWorkPresentationMode,
+  type RecentWorkProjection,
+  type RecentWorkPublicSummary
+} from "../recentWork";
 import {
   adaptCalendarSnapshotForAttention,
   adaptNotionSnapshotForAttention,
@@ -143,6 +167,9 @@ type AttentionSnapshots = {
   contextProvenance?: AttentionWorkContextMonitor;
   currentWorkEvidence?: CurrentWorkEvidence;
   workflowProjection?: ProjectWorkflowProjection;
+  codexConfig?: StoredCodexConfig | null;
+  localGitSnapshot?: CodexLocalGitSnapshot | null;
+  recentWorkPresentationMode?: RecentWorkPresentationMode;
 };
 
 type EvaluatedAttention = {
@@ -150,6 +177,12 @@ type EvaluatedAttention = {
   baseResult: ReturnType<typeof runPhase2AttentionRouter>;
   eligibilityProjection: AttentionEligibilityShadowProjection;
   developerSignals: DeveloperRuntimeProjection;
+  recentMeaningfulEvents: RecentMeaningfulEventProjection | null;
+  currentWorkstreams: CurrentWorkstreamProjection | null;
+  currentFocus: CurrentFocusProjection;
+  focusAwareAttentionShadow: FocusAwareAttentionShadowProjection;
+  recentWork: RecentWorkProjection;
+  recentWorkPublicSummary: RecentWorkPublicSummary | null;
   run: AttentionMonitorRun;
   replayArtifact: AttentionReplayInputArtifact;
 };
@@ -189,14 +222,24 @@ export async function evaluateCurrentAttention(input?: {
       env
     });
   }
-  const [github, codex, googleCalendar, notion, codeProvenance] =
+  const [
+    github,
+    codex,
+    googleCalendar,
+    notion,
+    codeProvenance,
+    codexConfig,
+    localGitSnapshot
+  ] =
     await Promise.all([
     readGitHubSource(cwd, new Date(startedAtMs), env),
     readCodexSource(cwd),
     readCalendarSource(cwd),
     readNotionSource(cwd),
     input?.codeProvenance ??
-      resolveAttentionCodeProvenance(cwd, env)
+      resolveAttentionCodeProvenance(cwd, env),
+    readStoredCodexConfig(cwd),
+    readStoredCodexLocalGitSnapshot(cwd)
   ]);
   const sourceScopes = attentionSourceScopes({
     github,
@@ -270,6 +313,10 @@ export async function evaluateCurrentAttention(input?: {
     },
     currentWorkEvidence,
     workflowProjection,
+    codexConfig,
+    localGitSnapshot,
+    recentWorkPresentationMode:
+      resolveRecentWorkPresentationMode(env),
     asOf,
     startedAt,
     completionClock: input?.now
@@ -385,6 +432,35 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
     workflowProjection
   });
   const result = resolveActiveAttention(activeInput);
+  const {
+    recentMeaningfulEvents,
+    currentWorkstreams,
+    currentFocus,
+    focusAwareAttentionShadow
+  } = resolveLiveFocusSidecars({
+    asOf: input.asOf,
+    githubBatch,
+    codexBatch,
+    currentWorkEvidence,
+    result,
+    eligibilityProjection
+  });
+  const recentWork = resolveLiveRecentWorkSidecar({
+    asOf: input.asOf,
+    githubBatch,
+    registry: input.registry ?? null,
+    githubSnapshot:
+      input.github.status === "available"
+        ? input.github.snapshot
+        : null,
+    codexConfig: input.codexConfig ?? null,
+    localGitSnapshot: input.localGitSnapshot ?? null,
+    currentFocus
+  });
+  const recentWorkPublicSummary = projectRecentWorkPublicSummary(
+    recentWork,
+    input.recentWorkPresentationMode ?? "shadow"
+  );
   const candidateCounts = {
     eligible: 0,
     reviewRequired: 0,
@@ -443,10 +519,12 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       inputSha256: result.inputSha256,
       privacyClass: "private_local_engine_input",
       retentionDays: ATTENTION_MONITOR_RETENTION_DAYS,
+      focusContextRegistrySha256:
+        currentWorkEvidence.contextRegistry?.registrySha256 ?? null,
       input: activeInput
     });
   const replayArtifactSha256 = runtimeSha256({
-    domain: "attention-private-replay-artifact-v2",
+    domain: "attention-private-replay-artifact-v3",
     artifact: replayArtifact
   });
   const codeState =
@@ -487,6 +565,12 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
     baseResult,
     eligibilityProjection,
     developerSignals,
+    recentMeaningfulEvents,
+    currentWorkstreams,
+    currentFocus,
+    focusAwareAttentionShadow,
+    recentWork,
+    recentWorkPublicSummary,
     run: attentionMonitorRunSchema.parse({
       contract: ATTENTION_MONITOR_RUN_CONTRACT,
       runId,
@@ -553,11 +637,147 @@ export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
       ...(input.contextProvenance
         ? { workContext: input.contextProvenance }
         : {}),
+      focusSelection: {
+        currentFocusStatus: currentFocus.status,
+        currentFocusProjectionSha256: currentFocus.projectionSha256,
+        focusAwareAttentionShadowProjectionSha256:
+          focusAwareAttentionShadow.projectionSha256,
+        actualTopCandidateId:
+          focusAwareAttentionShadow.existingTopCandidateId,
+        counterfactualTopCandidateId:
+          focusAwareAttentionShadow.counterfactualTopCandidateId,
+        wouldSwitch: focusAwareAttentionShadow.wouldSwitch,
+        attentionSelectionEffect: "none"
+      },
       latencyMs,
       errors
     }),
     replayArtifact
   };
+}
+
+function resolveLiveRecentWorkSidecar(input: {
+  asOf: string;
+  githubBatch: RuntimeWorkSignalBatch | null;
+  registry: WorkContextRegistry | null;
+  githubSnapshot: GitHubSnapshot | null;
+  codexConfig: StoredCodexConfig | null;
+  localGitSnapshot: CodexLocalGitSnapshot | null;
+  currentFocus: CurrentFocusProjection;
+}): RecentWorkProjection {
+  try {
+    const confirmedLinks = resolveConfirmedRepositoryScopeLinks({
+      asOf: input.asOf,
+      registry: input.registry,
+      githubSnapshot: input.githubSnapshot,
+      codexConfig: input.codexConfig,
+      localGitSnapshot: input.localGitSnapshot
+    });
+    return resolveRecentWork({
+      asOf: input.asOf,
+      currentFocus: input.currentFocus,
+      githubBatch: input.githubBatch,
+      confirmedLinks,
+      localGitSnapshot: input.localGitSnapshot
+    });
+  } catch {
+    return createUnavailableRecentWorkProjection({
+      asOf: input.asOf,
+      reasonCode: "RECENT_WORK_DEPENDENCY_MISMATCH"
+    });
+  }
+}
+
+function resolveLiveFocusSidecars(input: {
+  asOf: string;
+  githubBatch: RuntimeWorkSignalBatch | null;
+  codexBatch: RuntimeWorkSignalBatch | null;
+  currentWorkEvidence: CurrentWorkEvidence;
+  result: ActiveAttentionResult;
+  eligibilityProjection: AttentionEligibilityShadowProjection;
+}): {
+  recentMeaningfulEvents: RecentMeaningfulEventProjection | null;
+  currentWorkstreams: CurrentWorkstreamProjection | null;
+  currentFocus: CurrentFocusProjection;
+  focusAwareAttentionShadow: FocusAwareAttentionShadowProjection;
+} {
+  try {
+    const focusEvidence = resolveCurrentFocusFromEvidence({
+      asOf: input.asOf,
+      githubBatch: input.githubBatch,
+      codexInventoryBatch: input.codexBatch,
+      managedPublicProjection:
+        input.currentWorkEvidence.managedProjection,
+      managedSemanticProjection:
+        input.currentWorkEvidence.managedSemantics,
+      managedRunStartedAtById:
+        input.currentWorkEvidence.managedRunStartedAtById,
+      workRelationProjection:
+        input.currentWorkEvidence.workRelations,
+      artifactRelationProjection:
+        input.currentWorkEvidence.artifacts,
+      claimAuthorityProjection: input.currentWorkEvidence.claims,
+      contextRegistrySha256:
+        input.currentWorkEvidence.contextRegistry?.registrySha256 ?? null
+    });
+    const focusAwareAttentionShadow =
+      resolveFocusAwareAttentionShadow({
+        asOf: input.asOf,
+        currentFocus: focusEvidence.currentFocus,
+        activeAttentionResult: input.result,
+        eligibilityProjectionSha256:
+          input.eligibilityProjection.projectionSha256,
+        workRelationProjectionSha256:
+          input.currentWorkEvidence.workRelations.projectionSha256,
+        claimAuthorityProjectionSha256:
+          input.currentWorkEvidence.claims.projectionSha256
+      });
+    const actualTopCandidateId =
+      input.result.decision.topSuggestion?.candidateId ?? null;
+    const activeCandidateIds = new Set(
+      input.result.rankedCandidates.map(
+        (candidate) => candidate.candidateId
+      )
+    );
+    if (
+      focusAwareAttentionShadow.existingTopCandidateId !==
+        actualTopCandidateId ||
+      (focusAwareAttentionShadow.counterfactualTopCandidateId !== null &&
+        !activeCandidateIds.has(
+          focusAwareAttentionShadow.counterfactualTopCandidateId
+        ))
+    ) {
+      throw new TypeError(
+        "Focus shadow cannot replace the Active Attention candidate universe."
+      );
+    }
+    return {
+      ...focusEvidence,
+      focusAwareAttentionShadow
+    };
+  } catch {
+    const currentFocus = createUnavailableCurrentFocusProjection({
+      asOf: input.asOf,
+      reasonCode: "FOCUS_DEPENDENCY_MISMATCH"
+    });
+    return {
+      recentMeaningfulEvents: null,
+      currentWorkstreams: null,
+      currentFocus,
+      focusAwareAttentionShadow:
+        createDependencyMismatchFocusAwareAttentionShadow({
+          asOf: input.asOf,
+          currentFocus,
+          activeAttentionResult: input.result,
+          eligibilityProjectionSha256:
+            input.eligibilityProjection.projectionSha256,
+          workRelationProjectionSha256:
+            input.currentWorkEvidence.workRelations.projectionSha256,
+          claimAuthorityProjectionSha256:
+            input.currentWorkEvidence.claims.projectionSha256
+        })
+    };
+  }
 }
 
 function activeCoverageDisposition(

@@ -150,6 +150,7 @@ struct LauncherView: View {
             suggestionRow(card, execution: execution)
             actionRow(card)
             scopeStrip(projection)
+            recentWorkRow(projection.recentWorkSummary)
             Spacer(minLength: 0)
         }
     }
@@ -601,7 +602,12 @@ struct LauncherView: View {
     private func emptyDecision(
         _ projection: LauncherAttentionProjection
     ) -> some View {
-        let display = decisionDisplay(projection)
+        let display = LauncherPresentation.decisionDisplay(
+            decisionStatus: projection.decisionStatus,
+            decisionReasonCodes: projection.decisionReasonCodes,
+            candidateCounts: projection.candidateCounts,
+            currentFocusSummary: projection.currentFocusSummary
+        )
         let reasonSummary = LauncherPresentation.decisionReasonSummary(
             projection.decisionReasonCodes
         )
@@ -609,6 +615,9 @@ struct LauncherView: View {
             LauncherPresentation.shouldOfferDataConnectionCheck(
                 sourceDiagnostics: projection.sourceDiagnostics
             )
+        let sourceConnectionTarget = sourceConnectionTarget(
+            projection.sourceDiagnostics
+        )
         return VStack(spacing: 9) {
             HStack(spacing: 12) {
                 Image(systemName: display.icon)
@@ -629,6 +638,15 @@ struct LauncherView: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if let currentFocusLabel = display.currentFocusLabel {
+                Text("현재 작업 흐름 · \(currentFocusLabel)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1)
+            }
             if let question = projection.clarificationQuestion {
                 Text(question)
                     .font(.system(size: 12, weight: .medium))
@@ -660,26 +678,80 @@ struct LauncherView: View {
                 )
             }
             sourceDiagnosticGrid(projection.sourceDiagnostics)
+            recentWorkRow(projection.recentWorkSummary)
             if offersConnectionCheck {
                 primaryButton(
                     title: viewModel.sourceMode == .readOnly
-                        ? "Source 연결 관리"
+                        ? "\(sourceConnectionTarget?.displayName ?? "Source") 연결 관리"
                         : "데이터 경로 확인",
-                    action: viewModel.sourceMode == .readOnly
-                        ? viewModel.openSourceConnections
-                        : openSettings
+                    action: {
+                        if viewModel.sourceMode == .readOnly,
+                           let sourceConnectionTarget {
+                            viewModel.openSourceConnections(
+                                sourceConnectionTarget
+                            )
+                        } else {
+                            openSettings()
+                        }
+                    }
                 )
                     .frame(maxWidth: 260)
                     .accessibilityHint(
                         viewModel.sourceMode == .readOnly
-                            ? "이 데이터 폴더를 소유한 Work Cockpit에서 source 연결을 관리합니다."
+                            ? "같은 작업 저장소로 확인된 대시보드에서 source 연결을 관리합니다."
                             : "GitHub와 Codex가 사용할 데이터 경로를 확인합니다."
                     )
+            }
+            if let recovery = viewModel.sourceNavigationRecoveryMessage {
+                Text(recovery)
+                    .font(.system(size: 10))
+                    .foregroundStyle(
+                        LauncherVisualTokens.statusWarning(colorScheme)
+                    )
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                Button("설정 및 상태 확인") {
+                    openSettings()
+                }
+                .buttonStyle(.link)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func recentWorkRow(
+        _ summary: AttentionRecentWorkSummary?
+    ) -> some View {
+        if let summary,
+           let display = LauncherPresentation.recentWorkDisplay(summary) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("최근 작업")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
+                Text(display.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(display.trackingText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
+                    .lineLimit(2)
+                Text(display.pushedAtText)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(
+                        LauncherVisualTokens.textSecondary(colorScheme)
+                    )
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
     }
 
     private func sourceDiagnosticGrid(
@@ -739,6 +811,15 @@ struct LauncherView: View {
                 )
             }
         }
+    }
+
+    private func sourceConnectionTarget(
+        _ diagnostics: [AttentionSourceDiagnostic]
+    ) -> AttentionSource? {
+        diagnostics.first { diagnostic in
+            (diagnostic.source == .github || diagnostic.source == .codex)
+                && !diagnostic.state.isUsable
+        }?.source
     }
 
     private func sourceDiagnosticColor(
@@ -844,18 +925,4 @@ struct LauncherView: View {
         }
     }
 
-    private func decisionDisplay(
-        _ projection: LauncherAttentionProjection
-    ) -> (icon: String, title: String) {
-        switch projection.decisionStatus {
-        case .suggested:
-            ("sparkles", "현재 제안을 표시할 수 없습니다.")
-        case .needsClarification:
-            ("questionmark.bubble", "한 가지 확인이 필요합니다.")
-        case .noAction:
-            ("checkmark.circle", "지금 직접 개입할 항목이 없습니다.")
-        case .insufficientEvidence:
-            ("scope", "안전하게 한 가지를 고르기 어렵습니다.")
-        }
-    }
 }

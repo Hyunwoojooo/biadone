@@ -7,7 +7,7 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -31,6 +31,10 @@ import {
   parseCodexObservationHistory,
   type CodexObservationHistory
 } from "./observationContract";
+import {
+  parseCodexLocalGitSnapshot,
+  type CodexLocalGitSnapshot
+} from "./localGitContracts";
 import type {
   CodexSnapshot,
   StoredCodexConfig
@@ -39,6 +43,7 @@ import type {
 const CODEX_STORE_BASENAMES = [
   "config.json",
   "snapshot.json",
+  "local-git.json",
   "observation-history.json",
   "conversation-history.json"
 ] as const;
@@ -254,11 +259,46 @@ const legacyV1SnapshotSchema = z.object({
   sessions: z.array(legacyV1SessionSchema)
 });
 
-const mutationTails = new Map<string, Promise<void>>();
-const storeGenerations = new Map<string, number>();
+const CODEX_STORE_COORDINATION_KEY = Symbol.for(
+  "blabase.codex-store-coordination.v1"
+);
+
+type CodexStoreCoordination = {
+  mutationTails: Map<string, Promise<void>>;
+  storeGenerations: Map<string, number>;
+};
+
+function sharedCodexStoreCoordination(): CodexStoreCoordination {
+  const existing = Reflect.get(
+    globalThis,
+    CODEX_STORE_COORDINATION_KEY
+  );
+  if (
+    existing &&
+    typeof existing === "object" &&
+    "mutationTails" in existing &&
+    existing.mutationTails instanceof Map &&
+    "storeGenerations" in existing &&
+    existing.storeGenerations instanceof Map
+  ) {
+    return existing as CodexStoreCoordination;
+  }
+  const created: CodexStoreCoordination = {
+    mutationTails: new Map(),
+    storeGenerations: new Map()
+  };
+  Reflect.set(globalThis, CODEX_STORE_COORDINATION_KEY, created);
+  return created;
+}
+
+const codexStoreCoordination = sharedCodexStoreCoordination();
 
 export function codexLocalDirectory(cwd = process.cwd()): string {
   return join(cwd, ".local", "connectors", "codex");
+}
+
+function codexStoreKey(cwd: string): string {
+  return resolve(codexLocalDirectory(cwd));
 }
 
 export async function readStoredCodexConfig(
@@ -371,6 +411,9 @@ export async function transitionStoredCodexConfig(
           join(codexLocalDirectory(cwd), "snapshot.json")
         ),
         deleteIfPresent(
+          join(codexLocalDirectory(cwd), "local-git.json")
+        ),
+        deleteIfPresent(
           join(
             codexLocalDirectory(cwd),
             "observation-history.json"
@@ -472,7 +515,10 @@ export async function writeStoredCodexSnapshot(
   await withCodexStoreMutation(cwd, async () => {
     assertCurrentGeneration(cwd, expectedGeneration);
     const currentConfig = await readStoredCodexConfig(cwd);
-    if (!sameConnectionSelection(currentConfig, expectedConfig)) {
+    if (
+      !currentConfig ||
+      !sameConnectionSelection(currentConfig, expectedConfig)
+    ) {
       throw new Error("Codex connector selection changed during sync.");
     }
     const observationHistory = await nextObservationHistory(
@@ -522,10 +568,68 @@ export async function writeStoredCodexSnapshot(
   });
 }
 
+export async function readStoredCodexLocalGitSnapshot(
+  cwd = process.cwd()
+): Promise<CodexLocalGitSnapshot | null> {
+  await cleanupStaleCodexTempFiles(cwd, true);
+  try {
+    const text = await readFile(
+      join(codexLocalDirectory(cwd), "local-git.json"),
+      "utf8"
+    );
+    return parseCodexLocalGitSnapshot(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+export async function writeStoredCodexLocalGitSnapshot(
+  snapshot: CodexLocalGitSnapshot,
+  expectedConfig: StoredCodexConfig,
+  cwd = process.cwd(),
+  expectedGeneration = codexStoreGeneration(cwd)
+): Promise<void> {
+  await withCodexStoreMutation(cwd, async () => {
+    assertCurrentGeneration(cwd, expectedGeneration);
+    const currentConfig = await readStoredCodexConfig(cwd);
+    if (
+      !currentConfig ||
+      !sameConnectionSelection(currentConfig, expectedConfig)
+    ) {
+      throw new Error("Codex connector selection changed during sync.");
+    }
+    const parsed = parseCodexLocalGitSnapshot(snapshot);
+    const selectedScopeIds = new Set(currentConfig.selectedScopeIds);
+    if (
+      parsed.scopeIds.some(
+        (scopeId) => !selectedScopeIds.has(scopeId)
+      )
+    ) {
+      throw new Error("Local Git snapshot includes an unselected scope.");
+    }
+    await writePrivateJson("local-git.json", parsed, cwd);
+  });
+}
+
+export async function deleteStoredCodexLocalGitSnapshot(
+  cwd = process.cwd(),
+  expectedGeneration = codexStoreGeneration(cwd)
+): Promise<void> {
+  await withCodexStoreMutation(cwd, async () => {
+    assertCurrentGeneration(cwd, expectedGeneration);
+    await deleteIfPresent(
+      join(codexLocalDirectory(cwd), "local-git.json")
+    );
+  });
+}
+
 export async function deleteStoredCodexConnection(
   cwd = process.cwd()
 ): Promise<void> {
-  storeGenerations.set(cwd, codexStoreGeneration(cwd) + 1);
+  codexStoreCoordination.storeGenerations.set(
+    codexStoreKey(cwd),
+    codexStoreGeneration(cwd) + 1
+  );
   await withCodexStoreMutation(cwd, async () => {
     const config = await readStoredCodexConfig(cwd);
     if (config?.contentMode === "conversation_and_execution") {
@@ -550,6 +654,7 @@ export async function deleteStoredCodexConnection(
     );
     await Promise.all([
       deleteIfPresent(join(codexLocalDirectory(cwd), "snapshot.json")),
+      deleteIfPresent(join(codexLocalDirectory(cwd), "local-git.json")),
       deleteIfPresent(
         join(codexLocalDirectory(cwd), "observation-history.json")
       )
@@ -616,7 +721,10 @@ export function createCodexInstallationSecret(): string {
 }
 
 export function codexStoreGeneration(cwd = process.cwd()): number {
-  return storeGenerations.get(cwd) ?? 0;
+  return (
+    codexStoreCoordination.storeGenerations.get(codexStoreKey(cwd)) ??
+    0
+  );
 }
 
 async function nextObservationHistory(
@@ -901,21 +1009,23 @@ async function withCodexStoreMutation<T>(
   cwd: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  const previous = mutationTails.get(cwd) ?? Promise.resolve();
+  const key = codexStoreKey(cwd);
+  const previous =
+    codexStoreCoordination.mutationTails.get(key) ?? Promise.resolve();
   let releaseCurrent!: () => void;
   const current = new Promise<void>((resolve) => {
     releaseCurrent = resolve;
   });
   const tail = previous.catch(() => undefined).then(() => current);
-  mutationTails.set(cwd, tail);
+  codexStoreCoordination.mutationTails.set(key, tail);
 
   await previous.catch(() => undefined);
   try {
     return await operation();
   } finally {
     releaseCurrent();
-    if (mutationTails.get(cwd) === tail) {
-      mutationTails.delete(cwd);
+    if (codexStoreCoordination.mutationTails.get(key) === tail) {
+      codexStoreCoordination.mutationTails.delete(key);
     }
   }
 }

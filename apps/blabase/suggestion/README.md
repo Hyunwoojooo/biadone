@@ -84,6 +84,22 @@ candidate일 뿐 자동 적용되지 않는다. 설치, 검증, 데이터 경계
 `desktop/macos/README.md`, IPC와 실행 안전 경계는
 `docs/LOCAL_LAUNCHER_CONTRACT.md`를 따른다.
 
+현재 connection onboarding은 internal dogfood 흐름이다.
+
+1. 위 `npm run dev`로 `localhost:3102` Work Cockpit을 실행한다.
+2. launcher 설정에서 그 Work Cockpit이 소유하는 `suggestion/`을 `기존 데이터`로
+   선택하고 저장한다.
+3. 설정의 GitHub, Codex, Notion, Google Calendar row를 눌러 웹 `/sources`의 해당
+   연결 카드로 이동한다.
+4. launcher는 이동 전에 opaque root ID와 persisted sync revision을 두 번 확인하며
+   다른 root, stale revision, 응답 오류에서는 링크를 열지 않는다.
+
+GitHub·Notion·Google OAuth 등록/credential은 아직 운영자가 준비해야 하며 Codex는
+로컬 프로젝트를 찾는 방식이라 별도 OAuth가 없다. 기본 `managed` root를 소유하는
+Connection Hub, product-owned OAuth broker, exclusive writer lease와 signed/notarized
+배포는 external beta 후속 범위다. 따라서 현재 artifact는 신규 사용자의 zero-config
+연결 흐름으로 배포하지 않는다.
+
 ## Google Calendar 로컬 연결 — 운영자 설정
 
 Calendar 연결은 로컬 개발 서버에서만 활성화되며, 기본 캘린더를 읽기 전용으로

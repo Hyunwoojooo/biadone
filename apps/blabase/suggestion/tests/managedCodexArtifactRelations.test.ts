@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LIVE_ATTENTION_FRESHNESS_POLICY } from "../src/attention/liveAttention";
 import {
   attachWorkArtifactAttribution,
+  createGitHubArtifactId,
   createEmptyWorkArtifactAttributionStore,
   detachWorkArtifactAttribution,
   managedCodexArtifactRelationProjectionSchema,
@@ -109,6 +110,90 @@ describe("managed Codex artifact relation resolver", () => {
     expect(JSON.stringify(result)).not.toContain("biadone/blabase");
   });
 
+  it("keeps opaque v4 push verification outside the v0.1 artifact projection", () => {
+    const oid = "a".repeat(40);
+    const store = attachWorkArtifactAttribution(
+      createEmptyWorkArtifactAttributionStore(AS_OF),
+      {
+        ...producer(),
+        artifact: {
+          kind: "github_commit",
+          repositoryId: 101,
+          oid
+        },
+        attachedAt: AS_OF,
+        explicitUserConfirmation: true
+      }
+    ).store;
+    const githubBatch = normalizedGitHubBatch(githubPushSnapshot(oid));
+    const push = githubBatch.signals.find(
+      (signal) => signal.kind === "activity_observation"
+    );
+    const result = resolveManagedCodexArtifactRelations({
+      asOf: AS_OF,
+      workRelationProjection: workProjection(),
+      attributionStore: store,
+      githubBatch
+    });
+
+    expect(push).toMatchObject({
+      kind: "activity_observation",
+      sourceScopeId: "repository:101",
+      facts: {
+        activityKind: "push",
+        artifactId: createGitHubArtifactId({
+          kind: "github_commit",
+          repositoryId: 101,
+          oid
+        })
+      }
+    });
+    expect(result.relations[0]?.githubObservation).toEqual({
+      status: "not_observed",
+      sourceSnapshotSha256: githubBatch.sourceSnapshotSha256,
+      signalIds: [],
+      destinationUrl: null,
+      sourceUpdatedAt: null,
+      completeness: "complete"
+    });
+    expect(JSON.stringify(githubBatch)).not.toContain(oid);
+  });
+
+  it("keeps a legacy push project-level and does not infer a commit observation", () => {
+    const oid = "a".repeat(40);
+    const store = attachWorkArtifactAttribution(
+      createEmptyWorkArtifactAttributionStore(AS_OF),
+      {
+        ...producer(),
+        artifact: {
+          kind: "github_commit",
+          repositoryId: 101,
+          oid
+        },
+        attachedAt: AS_OF,
+        explicitUserConfirmation: true
+      }
+    ).store;
+    const githubBatch = normalizedGitHubBatch(legacyPushSnapshot());
+    const result = resolveManagedCodexArtifactRelations({
+      asOf: AS_OF,
+      workRelationProjection: workProjection(),
+      attributionStore: store,
+      githubBatch
+    });
+
+    expect(
+      githubBatch.signals.find(
+        (signal) => signal.kind === "activity_observation"
+      )
+    ).not.toHaveProperty("facts.artifactId");
+    expect(result.relations[0]?.githubObservation).toMatchObject({
+      status: "not_observed",
+      sourceSnapshotSha256: githubBatch.sourceSnapshotSha256,
+      signalIds: []
+    });
+  });
+
   it("preserves detached lineage but exposes no active attribution", () => {
     const attached = attachWorkArtifactAttribution(
       createEmptyWorkArtifactAttributionStore(AS_OF),
@@ -133,7 +218,10 @@ describe("managed Codex artifact relation resolver", () => {
       asOf: later,
       workRelationProjection: workProjection(later),
       attributionStore: detached.store,
-      githubBatch: null
+      githubBatch: normalizedGitHubBatch(
+        githubPushSnapshot("b".repeat(40), later),
+        later
+      )
     });
 
     expect(result.relations).toHaveLength(1);
@@ -147,6 +235,9 @@ describe("managed Codex artifact relation resolver", () => {
         (relation) => relation.attributionLifecycle.state === "active"
       )
     ).toEqual([]);
+    expect(result.relations[0]?.githubObservation.status).toBe(
+      "not_observed"
+    );
   });
 
   it("does not infer produces from executes, lifecycle, project, or title alone", () => {
@@ -320,11 +411,14 @@ function workProjection(
   });
 }
 
-function normalizedGitHubBatch() {
+function normalizedGitHubBatch(
+  snapshot: GitHubSnapshot = githubSnapshot(),
+  asOf = AS_OF
+) {
   const result = normalizeGitHubSnapshotToWorkSignals(
-    githubSnapshot(),
+    snapshot,
     {
-      asOf: AS_OF,
+      asOf,
       freshnessPolicy: LIVE_ATTENTION_FRESHNESS_POLICY,
       contextRegistrySha256: null
     }
@@ -333,6 +427,70 @@ function normalizedGitHubBatch() {
     throw new Error("Expected a normalized GitHub fixture.");
   }
   return result.batch;
+}
+
+function githubPushSnapshot(
+  oid: string,
+  fetchedAt = AS_OF
+): GitHubSnapshot {
+  const artifactId = createGitHubArtifactId({
+    kind: "github_commit",
+    repositoryId: 101,
+    oid
+  });
+  return {
+    ...githubSnapshot(),
+    schemaVersion: "github-snapshot-v4",
+    fetchedAt,
+    actionabilityCoverage: {
+      state: "complete",
+      authoredPullRequestCount: 0,
+      attemptedCount: 0,
+      collectedCount: 0,
+      truncated: false
+    },
+    tasks: [],
+    activities: [
+      {
+        id: `push-${artifactId}`,
+        source: "github",
+        kind: "user_activity",
+        activityKind: "push",
+        repositoryId: 101,
+        repositoryFullName: "biadone/blabase",
+        occurredAt: "2026-07-31T23:59:00.000Z",
+        subjectType: "branch",
+        subjectNumber: null,
+        subjectTitle: null,
+        refName: "PRIVATE_BRANCH_SENTINEL",
+        reviewState: null,
+        artifactId
+      }
+    ]
+  };
+}
+
+function legacyPushSnapshot(): GitHubSnapshot {
+  return {
+    ...githubSnapshot(),
+    tasks: [],
+    activities: [
+      {
+        id: "legacy-push",
+        source: "github",
+        kind: "user_activity",
+        activityKind: "push",
+        repositoryId: 101,
+        repositoryFullName: "biadone/blabase",
+        occurredAt: "2026-07-31T23:59:00.000Z",
+        subjectType: "branch",
+        subjectNumber: null,
+        subjectTitle: null,
+        refName: "PRIVATE_BRANCH_SENTINEL",
+        reviewState: null
+      }
+    ]
+  };
 }
 
 function githubSnapshot(): GitHubSnapshot {

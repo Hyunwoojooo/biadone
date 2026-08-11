@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { sourceConnectionReturnUrl } from "../../../../sourceNavigation";
 import {
   isLocalCalendarRequest,
   loadGoogleCalendarConfig
@@ -17,7 +18,11 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   if (!isLocalCalendarRequest(request)) {
     return NextResponse.redirect(
-      new URL("/?calendar=local_only", request.url)
+      sourceConnectionReturnUrl(
+        request.url,
+        "google-calendar",
+        "local_only"
+      )
     );
   }
 
@@ -25,7 +30,11 @@ export async function GET(request: Request) {
   const configResult = loadGoogleCalendarConfig();
   if (!configResult.ok) {
     return NextResponse.redirect(
-      new URL("/?calendar=temporarily_unavailable", request.url)
+      sourceConnectionReturnUrl(
+        request.url,
+        "google-calendar",
+        "temporarily_unavailable"
+      )
     );
   }
 

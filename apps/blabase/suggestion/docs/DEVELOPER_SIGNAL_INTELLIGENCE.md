@@ -148,3 +148,53 @@ branch는 snapshot에 저장하지 않는다.
 3. explicit project identity를 통한 GitHub–Codex temporal join
 4. 사용자 feedback(`맞음`, `이미 함`, `중요하지 않음`, `나중에`, `잘못 연결됨`)
 5. human-reviewed Developer Attention Golden Dataset
+
+## Current WorkStream / Focus sidecar v0.1
+
+Developer Signal Intelligence의 ledger/funnel과 별도로, Work Cockpit은 같은 request-time
+evidence graph에서 Recent Meaningful Event → Current WorkStream → Current Focus를
+결정적으로 계산한다. 이 sidecar는 현재 작업 맥락을 설명하지만 기존 candidate funnel의
+collected/verified/eligible/selected 수나 Active Attention result를 변경하지 않는다.
+
+v0.1에서 Focus를 선택할 수 있는 근거는 GitHub의 직접 user activity와 complete한
+authored-PR actionability state observation, 그리고 Blabase가 직접 소유·검증한 managed
+Codex lifecycle/semantic event다. 일반 Codex inventory와 과거 conversation은
+historical-context-only다. Notion과 Calendar는 이 projection에 입력되지 않는다.
+
+동일 native identity, explicit user binding/work relation, verified artifact relation만
+exact WorkStream을 결합한다. project mapping만 있으면 project-level WorkStream이며,
+title·문장·prompt·timestamp 유사도는 결합 근거가 아니다. 최신 direct evidence가 stale,
+partial 또는 conflict이면 older healthy event로 fallback하지 않고 Focus를 보류한다.
+
+Phase 1은 `focus-aware-attention-shadow-v0.1`으로 기존 top과 같은 safety tier에서 계산한
+counterfactual top을 함께 기록한다. `candidateUniverseChanged=false`,
+`eligibilityDiffCount=0`, `attentionSelectionEffect="none"`이 강제된다. Phase 2 활성화는
+별도 versioned flag, targeted baseline과 사람 검토 전에는 허용하지 않는다.
+
+GitHub v6 push evidence는 raw commit SHA를 저장하지 않고 normalization 시점에
+opaque artifact ID로 바꾼다. Artifact Relation v0.1의 commit `not_observed`
+결과는 바꾸지 않고, Recent Event projection에서만 같은 batch/repository의
+opaque push, active explicit artifact attribution, exact active work relation을 모두
+확인한다. 이 별도 join으로 기존 ledger/funnel, eligibility, Active Attention,
+replay v2 해시를 유지한다.
+
+v6 lifecycle activity는 current task mapping 또는 bounded authenticated Issues REST
+lookup으로 canonical Issue/PR object ID를 확인한 뒤 internal identity edge로만 사용한다.
+lookup failure/limit은 partial/truncated로 fail closed한다. open-only task가 현재 목록에서
+제거된 후에도 terminal event를 기존 explicit binding·artifact attribution·managed run과
+exact join하며 public projection에 raw object ID를 내보내지 않는다. v5/v0.5와 v4/v0.4는
+read compatibility를 유지하되 pre-canonical v5 raw PR ID는 exact native bridge로 쓰지 않는다.
+
+현재 내부 버전은 GitHub snapshot/native activity v6/v0.6, Recent Event
+schema/rule/ID v0.2/v0.5/v0.2, WorkStream reconstruction/ID v0.5/v0.5,
+Focus selection v0.2, shadow schema/resolver
+v0.2/v0.2다. live/monitor/replay는 v0.6/v0.6/v3이며 replay v2는 Active-only
+호환 경로로 보존한다. 반복 managed failure는 동일 privacy-safe
+fingerprint가 60초·sequence gap 3 경계 안에서 반복될 때만 제외한다.
+Recent Event/diagnostic/shadow detail은 각각 1,000/2,000/100개로 bounded하며
+초과분을 omitted count로 노출한다. Issue/PR lifecycle은 native anchor를
+사용해 terminal transition 전후 WorkStream identity를 안정적으로 유지한다.
+
+현재 connector가 transition timestamp를 증명하지 못하는 review-request 변화, CI 복구,
+merge-conflict 복구, command/test outcome은 v0.1 event로 추론하지 않는다. source 계약이
+확장되기 전까지 Attention Lab의 제외/coverage 진단으로 남긴다.

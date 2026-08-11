@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { createGitHubArtifactId } from "../src/artifacts/contracts";
 import { normalizeCodexSnapshotToWorkSignals } from "../src/connectors/codex/toWorkSignals";
 import { emptyCodexContentManifest } from "../src/connectors/codex/conversationContract";
 import type { CodexSnapshot } from "../src/connectors/codex/types";
@@ -9,6 +10,10 @@ import {
   runtimeWorkSignalSchema
 } from "../src/crossSource/schema";
 import {
+  GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION,
+  GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION,
   SNAPSHOT_VALIDITY_POLICY_VERSION
 } from "../src/crossSource/versions";
 import {
@@ -31,6 +36,13 @@ const options = {
     maxFutureClockSkewMs: 1_000
   }
 };
+const PUSH_HEAD_OID =
+  "0123456789abcdef0123456789abcdef01234567";
+const PUSH_ARTIFACT_ID = createGitHubArtifactId({
+  kind: "github_commit",
+  repositoryId: 101,
+  oid: PUSH_HEAD_OID
+});
 
 describe("GitHub runtime WorkSignal normalization", () => {
   it("is deterministic and preserves only source-supported meaning", () => {
@@ -70,6 +82,7 @@ describe("GitHub runtime WorkSignal normalization", () => {
     expect(workItems).toHaveLength(4);
     expect(deadlines).toHaveLength(1);
     expect(activities).toHaveLength(1);
+    expect(activities[0]?.facts).not.toHaveProperty("artifactId");
     expect(deadlines[0]).toMatchObject({
       attentionCapability: "candidate_input",
       facts: {
@@ -170,6 +183,256 @@ describe("GitHub runtime WorkSignal normalization", () => {
     expect(serialized).not.toContain('"urgent"');
     expect(serialized).not.toContain('"today"');
     expect(serialized).not.toContain('"nativeField"');
+  });
+
+  it("keeps legacy v3 push facts on the existing normalizer contract", () => {
+    const snapshot: GitHubSnapshot = {
+      ...githubSnapshot(),
+      schemaVersion: "github-snapshot-v3",
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 2,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: true
+      }
+    };
+    const result = normalizeGitHubSnapshotToWorkSignals(
+      snapshot,
+      options
+    );
+    expect(result.status).toBe("normalized");
+    if (result.status !== "normalized") return;
+    expect(result.batch.normalizerVersion).toBe(
+      GITHUB_ACTIONABILITY_WORK_SIGNAL_NORMALIZER_VERSION
+    );
+    const pushSignal = result.batch.signals.find(
+      (signal) => signal.kind === "activity_observation"
+    );
+    expect(pushSignal?.facts).not.toHaveProperty("artifactId");
+  });
+
+  it("normalizes v4 pushes with exact native identity and only an opaque artifact ID", () => {
+    const legacy = githubSnapshot();
+    const push = legacy.activities[0];
+    expect(push).toBeDefined();
+    if (!push) return;
+    const snapshot: GitHubSnapshot = {
+      ...legacy,
+      schemaVersion: "github-snapshot-v4",
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 2,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: true
+      },
+      activities: [{ ...push, artifactId: PUSH_ARTIFACT_ID }]
+    };
+
+    const result = normalizeGitHubSnapshotToWorkSignals(
+      snapshot,
+      options
+    );
+    expect(result.status).toBe("normalized");
+    if (result.status !== "normalized") return;
+    expect(result.batch).toMatchObject({
+      sourceSchemaVersion: "github-snapshot-v4",
+      normalizerVersion:
+        GITHUB_PUSH_ARTIFACT_WORK_SIGNAL_NORMALIZER_VERSION
+    });
+    expect(verifyRuntimeWorkSignalBatchIntegrity(result.batch)).toEqual({
+      ok: true,
+      issues: []
+    });
+
+    const pushSignal = result.batch.signals.find(
+      (signal) =>
+        signal.kind === "activity_observation" &&
+        signal.facts.activityKind === "push"
+    );
+    expect(pushSignal).toMatchObject({
+      subjectId: "github:activity:event-1",
+      sourceScopeId: "repository:101",
+      facts: {
+        activityKind: "push",
+        artifactId: PUSH_ARTIFACT_ID
+      },
+      evidence: [
+        {
+          type: "github_activity_record",
+          activityId: "event-1",
+          activityKind: "push"
+        }
+      ]
+    });
+    expect(JSON.stringify(result.batch)).not.toContain(PUSH_HEAD_OID);
+    if (pushSignal?.kind !== "activity_observation") return;
+    const { artifactId: _artifactId, ...legacyFacts } =
+      pushSignal.facts;
+    expect(
+      runtimeWorkSignalSchema.safeParse({
+        ...pushSignal,
+        facts: legacyFacts
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects v4 activities whose opaque artifact identity does not match push semantics", () => {
+    const legacy = githubSnapshot();
+    const push = legacy.activities[0];
+    expect(push).toBeDefined();
+    if (!push) return;
+    const v4Base = {
+      ...legacy,
+      schemaVersion: "github-snapshot-v4",
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 2,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: true
+      }
+    };
+
+    for (const activity of [
+      push,
+      {
+        ...push,
+        activityKind: "ref_created",
+        artifactId: PUSH_ARTIFACT_ID
+      }
+    ]) {
+      expect(
+        normalizeGitHubSnapshotToWorkSignals(
+          { ...v4Base, activities: [activity] },
+          options
+        )
+      ).toMatchObject({
+        status: "rejected",
+        failure: { code: "SNAPSHOT_PARSE_FAILED" }
+      });
+    }
+  });
+
+  it("normalizes v6 lifecycle activity with a canonical native work-item identity", () => {
+    const legacy = githubSnapshot();
+    const push = legacy.activities[0];
+    expect(push).toBeDefined();
+    if (!push) return;
+    const snapshot: GitHubSnapshot = {
+      ...legacy,
+      schemaVersion: "github-snapshot-v6",
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 2,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: true
+      },
+      activities: [
+        {
+          ...push,
+          artifactId: PUSH_ARTIFACT_ID,
+          subjectObjectId: null
+        },
+        {
+          id: "event-close-11",
+          source: "github",
+          kind: "user_activity",
+          activityKind: "issue_closed",
+          repositoryId: 101,
+          repositoryFullName: "acme/app",
+          occurredAt: "2026-07-26T11:59:30.000Z",
+          subjectType: "issue",
+          subjectNumber: 11,
+          subjectObjectId: 201,
+          subjectTitle: "PRIVATE_ACTIVITY_TITLE",
+          refName: null,
+          reviewState: null,
+          artifactId: null
+        }
+      ]
+    };
+
+    const result = normalizeGitHubSnapshotToWorkSignals(snapshot, options);
+    expect(result.status).toBe("normalized");
+    if (result.status !== "normalized") return;
+    expect(result.batch).toMatchObject({
+      sourceSchemaVersion: "github-snapshot-v6",
+      normalizerVersion:
+        GITHUB_NATIVE_ACTIVITY_WORK_SIGNAL_NORMALIZER_VERSION
+    });
+    const lifecycle = result.batch.signals.find(
+      (signal) =>
+        signal.kind === "activity_observation" &&
+        signal.facts.activityKind === "issue_closed"
+    );
+    expect(lifecycle).toMatchObject({
+      facts: {
+        subjectNumber: 11,
+        nativeSubjectId: "github:object:201",
+        artifactId: null
+      }
+    });
+    expect(verifyRuntimeWorkSignalBatchIntegrity(result.batch)).toEqual({
+      ok: true,
+      issues: []
+    });
+  });
+
+  it("reads v5 lifecycle identity with its frozen pre-canonical normalizer", () => {
+    const legacy = githubSnapshot();
+    const push = legacy.activities[0];
+    expect(push).toBeDefined();
+    if (!push) return;
+    const snapshot: GitHubSnapshot = {
+      ...legacy,
+      schemaVersion: "github-snapshot-v5",
+      actionabilityCoverage: {
+        state: "unavailable",
+        authoredPullRequestCount: 2,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: true
+      },
+      activities: [
+        {
+          ...push,
+          artifactId: PUSH_ARTIFACT_ID,
+          subjectObjectId: null
+        },
+        {
+          id: "event-close-v5",
+          source: "github",
+          kind: "user_activity",
+          activityKind: "pull_request_closed",
+          repositoryId: 101,
+          repositoryFullName: "acme/app",
+          occurredAt: "2026-07-26T11:59:30.000Z",
+          subjectType: "pull_request",
+          subjectNumber: 11,
+          subjectObjectId: 999,
+          subjectTitle: "PRIVATE_ACTIVITY_TITLE",
+          refName: null,
+          reviewState: null,
+          artifactId: null
+        }
+      ]
+    };
+
+    const result = normalizeGitHubSnapshotToWorkSignals(snapshot, options);
+    expect(result.status).toBe("normalized");
+    if (result.status !== "normalized") return;
+    expect(result.batch).toMatchObject({
+      sourceSchemaVersion: "github-snapshot-v5",
+      normalizerVersion:
+        GITHUB_NATIVE_ACTIVITY_PREVIOUS_WORK_SIGNAL_NORMALIZER_VERSION
+    });
+    expect(verifyRuntimeWorkSignalBatchIntegrity(result.batch)).toEqual({
+      ok: true,
+      issues: []
+    });
   });
 
   it("keeps positive tasks when activity coverage is unavailable", () => {

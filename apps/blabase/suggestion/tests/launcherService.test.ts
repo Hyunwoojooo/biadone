@@ -6,6 +6,7 @@ import type {
 } from "../src/attention/monitoringSchema";
 import { resolveActiveAttention } from "../src/attentionDecision";
 import { runPhase2AttentionRouter } from "../src/crossSource/runAttentionRouter";
+import { createUnavailableCurrentFocusProjection } from "../src/currentFocus";
 import {
   LauncherService,
   LauncherServiceError,
@@ -42,6 +43,24 @@ describe("LauncherService", () => {
     );
 
     expect(result.contract).toBe("blabase-launcher-attention-v2");
+    expect(result).toMatchObject({
+      currentFocusSummary: {
+        status: "unavailable",
+        displayLabel: null,
+        reasonCodes: ["FOCUS_PROJECTION_UNAVAILABLE"],
+        attentionSelectionEffect: "none"
+      },
+      recentWorkSummary: {
+        displayLabel: "Launcher recent work",
+        trackingState: "in_sync",
+        aheadCount: 0,
+        behindCount: 0,
+        correlation: "repository_scope_only",
+        presentation: "display_only",
+        attentionSelectionEffect: "none",
+        executionEffect: "none"
+      }
+    });
     expect(syncSources).toHaveBeenCalledWith({
       cwd: DATA_ROOT,
       env: expect.any(Object)
@@ -103,6 +122,77 @@ describe("LauncherService", () => {
       refreshSources: false,
       codeProvenance: provenance
     });
+  });
+
+  it("returns a managed owner status with the persisted root revision", async () => {
+    const rootId = `root_${"a".repeat(32)}`;
+    const resolveRootMarker = vi.fn(async () => ({
+      contract: "blabase-root-marker-v1" as const,
+      rootId
+    }));
+    const readSyncRevision = vi.fn(
+      async () => "pipeline:0123456789abcdef0123456789abcdef"
+    );
+    const service = serviceWith({
+      resolveRootMarker,
+      readSyncRevision
+    });
+
+    await expect(
+      service.handle(request("status.get", {}))
+    ).resolves.toEqual({
+      contract: "blabase-launcher-status-v1",
+      rootId,
+      sourceMode: "managed",
+      mutationAuthority: "launcher_agent",
+      syncRevision: "pipeline:0123456789abcdef0123456789abcdef"
+    });
+    expect(resolveRootMarker).toHaveBeenCalledWith(DATA_ROOT, "owner");
+    expect(readSyncRevision).toHaveBeenCalledWith(DATA_ROOT);
+  });
+
+  it("returns a non-mutating read-only status when no marker exists", async () => {
+    const resolveRootMarker = vi.fn(async () => null);
+    const readSyncRevision = vi.fn(async () => null);
+    const service = serviceWith(
+      { resolveRootMarker, readSyncRevision },
+      {
+        NODE_ENV: "test",
+        BLABASE_LAUNCHER_SOURCE_MODE: "read_only"
+      }
+    );
+
+    await expect(
+      service.handle(request("status.get", {}))
+    ).resolves.toEqual({
+      contract: "blabase-launcher-status-v1",
+      rootId: null,
+      sourceMode: "read_only",
+      mutationAuthority: "none",
+      syncRevision: null
+    });
+    expect(resolveRootMarker).toHaveBeenCalledWith(
+      DATA_ROOT,
+      "read_only"
+    );
+    expect(readSyncRevision).toHaveBeenCalledWith(DATA_ROOT);
+  });
+
+  it("sanitizes root storage failures", async () => {
+    const service = serviceWith({
+      resolveRootMarker: vi.fn(async () => {
+        throw new Error("private-root:/secret");
+      }),
+      readSyncRevision: vi.fn(async () => null)
+    });
+
+    const failure = await service
+      .handle(request("status.get", {}))
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "ROOT_CONTEXT_FAILED"
+    });
+    expect(String(failure)).not.toMatch(/private-root|secret/);
   });
 
   it("revalidates top identity and exact binding before opening Codex", async () => {
@@ -486,7 +576,21 @@ function evaluation(
         }
       ]
     } as AttentionMonitorRun,
-    replayArtifact: {} as AttentionReplayInputArtifact
+    replayArtifact: {} as AttentionReplayInputArtifact,
+    currentFocus: createUnavailableCurrentFocusProjection({
+      asOf: FIXED_NOW.toISOString()
+    }),
+    recentWorkPublicSummary: {
+      displayLabel: "Launcher recent work",
+      pushOccurredAt: "2026-08-02T02:58:30.000Z",
+      trackingState: "in_sync",
+      aheadCount: 0,
+      behindCount: 0,
+      correlation: "repository_scope_only",
+      presentation: "display_only",
+      attentionSelectionEffect: "none",
+      executionEffect: "none"
+    }
   };
 }
 
@@ -532,7 +636,11 @@ function command(): PublicWorkResumptionCommandStatus {
 }
 
 function request(
-  method: "attention.get" | "attention.execute" | "command.get",
+  method:
+    | "attention.get"
+    | "attention.execute"
+    | "command.get"
+    | "status.get",
   params: Record<string, unknown>
 ) {
   return launcherIpcRequestSchema.parse({

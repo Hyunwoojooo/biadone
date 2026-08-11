@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  sourceConnectionReturnUrl,
+  type SourceConnectionReturnStatus
+} from "../../../../sourceNavigation";
+import {
   isLocalNotionRequest,
   loadNotionConfig
 } from "../../../../../src/connectors/notion/config";
@@ -82,10 +86,13 @@ export async function GET(request: NextRequest) {
 
 function redirectWithClearedState(
   request: NextRequest,
-  status: string
+  status: SourceConnectionReturnStatus<"notion">
 ): NextResponse {
-  const destination = new URL("/", request.url);
-  destination.searchParams.set("notion", status);
+  const destination = sourceConnectionReturnUrl(
+    request.url,
+    "notion",
+    status
+  );
   const response = NextResponse.redirect(destination);
   response.cookies.set(NOTION_STATE_COOKIE, "", {
     httpOnly: true,

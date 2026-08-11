@@ -103,6 +103,56 @@ enum LauncherModelSmoke {
             ) == "request-11111111-2222-3333-4444-555555555555",
             "request ID"
         )
+        let initialReadOnlyStatus = try JSONDecoder().decode(
+            LauncherAgentStatus.self,
+            from: Data(
+                #"{"contract":"blabase-launcher-status-v1","rootId":null,"sourceMode":"read_only","mutationAuthority":"none","syncRevision":"sync-1"}"#.utf8
+            )
+        )
+        let refreshedReadOnlyStatus = try JSONDecoder().decode(
+            LauncherAgentStatus.self,
+            from: Data(
+                #"{"contract":"blabase-launcher-status-v1","rootId":"root_11111111111111111111111111111111","sourceMode":"read_only","mutationAuthority":"none","syncRevision":"sync-1"}"#.utf8
+            )
+        )
+        let dashboardRootContext = try JSONDecoder().decode(
+            DashboardRootContext.self,
+            from: Data(
+                #"{"contract":"blabase-root-context-v1","rootId":"root_11111111111111111111111111111111","mutationAuthority":"dashboard","syncRevision":"sync-1"}"#.utf8
+            )
+        )
+        var rootHandshakeEvents: [String] = []
+        var rootHandshakeStatuses = [
+            initialReadOnlyStatus,
+            refreshedReadOnlyStatus
+        ]
+        let rootHandshakeDecision = try await
+            LauncherSourceNavigationHandshake.evaluate(
+                getAgentStatus: {
+                    rootHandshakeEvents.append("agent")
+                    return rootHandshakeStatuses.removeFirst()
+                },
+                getDashboardContext: {
+                    rootHandshakeEvents.append("dashboard")
+                    return dashboardRootContext
+                }
+            )
+        try expect(
+            rootHandshakeEvents == ["agent", "dashboard", "agent"],
+            "first-use root handshake order"
+        )
+        try expect(
+            rootHandshakeDecision == .allowed,
+            "matching root and revision navigation"
+        )
+        try expectThrows("unknown launcher status field") {
+            _ = try JSONDecoder().decode(
+                LauncherAgentStatus.self,
+                from: Data(
+                    #"{"contract":"blabase-launcher-status-v1","rootId":"root_11111111111111111111111111111111","sourceMode":"read_only","mutationAuthority":"none","syncRevision":"sync-1","dataRootPath":"/private/root"}"#.utf8
+                )
+            )
+        }
         try expect(
             SafeURLPolicy.githubURL(
                 from: "https://github.com/biadone/blabase/issues/42"
@@ -134,6 +184,29 @@ enum LauncherModelSmoke {
                 baseURL: URL(string: "http://localhost:3102")!
             )?.absoluteString == "http://localhost:3102/sources",
             "local source connection destination"
+        )
+        try expect(
+            SafeURLPolicy.sourceConnectionURL(
+                for: .github,
+                baseURL: URL(string: "http://localhost:3102")!
+            )?.absoluteString ==
+                "http://localhost:3102/sources?source=github&entry=launcher#source-github",
+            "fixed GitHub source destination"
+        )
+        try expect(
+            SafeURLPolicy.sourceConnectionURL(
+                for: .googleCalendar,
+                baseURL: URL(string: "http://localhost:3102")!
+            )?.absoluteString ==
+                "http://localhost:3102/sources?source=google-calendar&entry=launcher#source-google-calendar",
+            "fixed calendar source destination"
+        )
+        try expect(
+            SafeURLPolicy.dashboardURL(
+                path: "/sources?returnTo=/private",
+                baseURL: URL(string: "http://localhost:3102")!
+            ) == nil,
+            "arbitrary dashboard query rejection"
         )
         try expect(
             SafeURLPolicy.dashboardBaseURL(

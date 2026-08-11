@@ -3223,6 +3223,339 @@
   - capture explicit feedback for wrong link/already done/not important/later and build a
     human-reviewed Developer Attention Golden Dataset
 
+## 2026-08-05 Phase 4C.3 source connection onboarding and root handshake v0.4
+
+- Date: 2026-08-05
+- Owner: Codex with human direction
+- Goal:
+  - macOS launcher의 네 source 진단을 실제 연결 화면으로 이어지는 provider별 동작으로
+    만들고 OAuth 종료 뒤 사용자가 시작한 source card로 복귀
+  - launcher가 선택한 read-only data root와 owner Work Cockpit이 같은 persisted store를
+    보는지 절대 경로를 노출하지 않고 확인한 뒤에만 source navigation 허용
+  - 아직 root-owning Connection Hub가 없는 managed development root는 연결 동작을
+    제공하는 것처럼 표시하지 않음
+- Affected pipeline stages:
+  - local root marker persistence와 persisted source-sync revision projection
+  - dashboard local root-context API
+  - launcher JSONL `status.get`, Swift dashboard preflight와 URL allowlist
+  - native settings/source recovery UI
+  - web `/sources` focus/navigation과 GitHub·Notion·Google OAuth return destination
+- Behavior before:
+  - launcher의 `/sources` 동작은 dashboard URL만 열어 선택 root와 같은 store인지
+    증명하지 않음
+  - 네 source card가 native에서 개별 연결 동작을 제공하지 않고 managed root도 연결할
+    수 있는 것처럼 안내
+  - OAuth callback과 GitHub installation return이 `/`로 돌아가 `/sources`에만 mount된
+    connector notice와 다음 단계를 보여주지 못함
+- Behavior after:
+  - owner가 `<root>/.local/root-context.json`에 stable opaque root ID를 atomic하게
+    생성하고 `.local` `0700`, marker `0600`, current UID/non-symlink를 강제. read-only
+    consumer는 missing/invalid marker를 만들거나 복구하지 않음
+  - dashboard `GET /api/system/root-context`와 launcher `status.get`이 path/secret 없이
+    root ID, mutation authority와 같은 persisted sync revision을 반환
+  - native는 initial Agent → dashboard → fresh Agent 순서로 확인하고 read-only,
+    authority, non-null root ID와 revision이 모두 맞을 때만 고정 source URL을 열음.
+    managed는 dashboard에 요청하기 전에 차단
+  - GitHub/Codex는 핵심, Notion/Calendar는 선택 source로 표시하고 unapplied root/URL
+    draft가 있으면 navigation과 retry를 취소·비활성화
+  - launcher entry는 exact `github|codex|notion|google-calendar`만 해당 card로 focus하며
+    arbitrary `returnTo`를 해석하지 않음
+  - GitHub/Notion/Calendar의 local/config/callback/install 결과는 provider-typed static
+    `/sources?<status>#source-*`로 돌아옴. GitHub account 승인 뒤 repository install은
+    card에서 별도 명시 단계로 진행
+- Versions before:
+  - local launcher contract: Phase 4C.2 v0.3
+  - launcher IPC envelope: `blabase-launcher-ipc-v1`
+  - root identity/status contract: 없음
+- Versions after:
+  - local launcher contract: Phase 4C.3 v0.4
+  - root marker: `blabase-root-marker-v1`
+  - dashboard root context: `blabase-root-context-v1`
+  - launcher status projection: `blabase-launcher-status-v1`
+  - launcher IPC envelope과 attention/execution projection: 기존 v1/v2/v1 유지
+  - Active Attention resolver, source snapshot schema와 connector collection semantics:
+    변경 없음
+- Code commit:
+  - base commit: `8e1da0a54a2d3a9c8710104816caafc9f04f23cd`
+  - base subject: `docs(blabase): synchronize attention engine records`
+  - evaluation-time implementation state: `dirty_worktree`; 이 record에서 commit을
+    생성하지 않음
+- Evaluation dataset and run:
+  - 새 dataset, Golden/Regression version, candidate/comparison run ID 없음
+  - root identity/control-plane, native/web navigation과 callback location만 변경하며
+    engine input, eligibility, filtering, ranking, selection과 explanation 의미를 바꾸지
+    않으므로 Golden Dataset과 semantic baseline은 재실행하지 않음
+- Commands executed:
+  - `npm test`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run build`
+  - focused Playwright `dashboard-navigation.spec.ts`
+  - `npm run launcher:swift:smoke`
+  - fresh Swift release build와 targeted XCTest-source typecheck
+  - `npm run launcher:package`
+  - local `/api/system/root-context`와 `/sources` runtime checks
+  - `git diff --check -- suggestion`
+- Verification and metrics:
+  - full Vitest: `91/91` files, `769/769` tests passed
+  - typecheck, ESLint, Next.js production build: passed
+  - focused browser navigation: `3/3` passed
+  - XCTest-independent launcher model smoke, fresh Swift release executable build와 targeted
+    root-context test typecheck: passed
+  - `.app`, bundled Agent hash/provenance, ad-hoc signature, compressed DMG checksum, mounted
+    DMG app signature: passed
+  - local dashboard root context와 packaged Agent의 read-only `status.get`이 같은 opaque
+    root ID와 `null` revision을 반환; migrated `.local` permission은 `0700`, marker는
+    `0600`; fixed `/sources` route returned HTTP 200
+  - rebuilt launcher process and local Work Cockpit were started for manual dogfood
+  - provider/model/prompt/token usage: `not_applicable`; no LLM or semantic evaluation run
+- Regressions or accepted exceptions:
+  - installed compatible Command Line Tools SDK에 XCTest module이 없어 full `swift test`는
+    실행하지 못함. full Xcode CI/XCUITest는 external beta gate로 유지
+  - `mutationAuthority`는 선언된 ownership이며 coordinator exclusive lease가 아님.
+    dashboard를 수동으로 같은 managed root에 붙이는 dual-writer를 API가 아직 차단하지
+    않음
+  - launcher preflight 이후 browser/OAuth mutation session이 expected root에
+    cryptographically bound되지는 않음. dashboard가 그 사이 다른 root로 재시작되는
+    TOCTOU는 internal operator boundary로 남음
+  - connector route는 development loopback 전용이고 GitHub/Notion/Google credential은
+    operator가 provision해야 하므로 zero-config external onboarding이 아님
+  - Orca computer-use runtime이 launch 직후 unavailable 상태로 종료되어 새 native UI의
+    accessibility screenshot은 확보하지 못함. native model/smoke/package checks와 기존
+    launcher process 실행은 통과
+- Privacy and retention impact:
+  - root ID는 random opaque identifier이며 API/IPC/URL에 절대 data-root path를 넣지 않음
+  - root context에는 credential, token, source content, prompt/answer와 native thread
+    identity가 없음
+  - OAuth state/cookie validation과 token store는 변경하지 않고 arbitrary return URL을
+    추가하지 않음
+  - 새 cloud telemetry, production data 수집, production→Gold 승격과 remote retention
+    없음
+- Compatibility:
+  - 기존 attention/execution JSONL method와 IPC v1 envelope는 유지되며 `status.get`만
+    additive하게 추가
+  - Swift/Node status contract는 같은 `.app` artifact로 함께 배포
+  - 기존 `/sources` 직접 접근과 Codex in-place 연결은 유지
+- Release decision:
+  - 이 Mac의 existing-root/read-only internal dogfood: 허용
+  - managed root source onboarding과 external beta: Connection Hub, product-owned OAuth,
+    lease/session proof, full Xcode tests, Developer ID signing/notarization 전까지 보류
+  - engine recommendation quality claim: 변경 없음
+- Rollback method:
+  - Swift host와 bundled Node Agent를 이전 Phase 4C.2 app artifact로 함께 복귀
+  - web source navigation/callback destination을 이전 `/` return으로 되돌릴 수 있음
+  - `.local/root-context.json`은 connector data와 독립인 opaque marker라 제거하지 않아도
+    이전 runtime에 영향 없음. 제거가 필요하면 owner가 중지된 상태에서 별도 검토
+- Follow-up work:
+  - coordinator exclusive lease와 connector mutation authority gate
+  - launcher-issued session proof를 OAuth state와 `/sources` mutation에 bind
+  - managed root를 단독 소유하는 bundled Connection Hub와 lifecycle management
+  - product-owned OAuth registration/broker, full Xcode XCTest/XCUITest, Developer ID signing
+    및 notarization
+
+## 2026-08-06 Phase 4B.1 Current WorkStream and Current Focus shadow v0.1
+
+- Date: 2026-08-06
+- Owner: Codex with human direction
+- Goal:
+  - 같은 `asOf`에 묶인 GitHub와 Codex의 최근 의미 이벤트로 사용자가 방금 하던
+    Current WorkStream과 Current Focus를 결정적으로 복원
+  - Current Focus와 기존 Next Attention을 분리하고, Focus가 기존 authority와
+    eligibility hard gate를 통과한 후보의 counterfactual 순서에만 영향을 주도록 제한
+  - Phase 1에서는 실제 추천을 바꾸지 않고 Work Cockpit과 Attention Lab에서 결과와
+    shadow 차이를 관찰
+- Affected pipeline stages:
+  - GitHub normalized batch와 managed Codex direct/historical evidence에서 별도 Recent
+    Meaningful Event projection 생성
+  - exact identity/relation/artifact evidence만 사용하는 Current WorkStream reconstruction
+  - currentness/completeness/conflict를 보존하는 Current Focus selection
+  - 기존 Active Attention 결과 위의 focus-aware shadow ranking
+  - attention API, monitor/replay, Work Cockpit, Attention Lab과 synthetic evaluation
+- Behavior before:
+  - Work Cockpit은 현재 intervention 추천만 표시하고 사용자가 최근 머물렀던 작업
+    흐름을 별도로 복원하지 않음
+  - 표시 전용 `ConnectorTimeline`의 시간 항목은 source lineage, shared `asOf`, authority,
+    currentness가 없어 엔진 입력으로 사용할 수 없음
+- Behavior after:
+  - `ConnectorTimeline`을 재사용하지 않고 source snapshot/batch, relation, artifact,
+    claim-authority hash와 모든 policy version을 고정한 별도 projection을 계산
+  - 이벤트는 `occurredAt`, source, kind, stable ID 순으로 결정적으로 정렬하며 오래된
+    이벤트는 bounded history일 뿐 합산 점수로 최신 이벤트를 역전하지 않음
+  - 제목/문장/시간 유사도는 grouping에 사용하지 않음. exact task relation이 없고
+    project mapping만 있으면 project-level WorkStream까지만 생성
+  - stale, partial, identity/authority conflict, latest-time tie와 dependency mismatch는
+    fail closed. Focus sidecar만 unavailable/unresolved가 되고 기존 Active 결과는 보존
+  - 정상 managed run은 Focus에 보이지만 사용자 개입 근거가 없으면 candidate를 만들지
+    않음. 완료/취소/merged, owner, conflict, deadline, blocker와 eligibility gate는 Focus가
+    역전하지 못함
+  - Notion과 Calendar는 engine input에서 제외된 context-only이며 Focus, WorkStream,
+    candidate, blocker, owner, completion, lane 또는 no-action coverage를 만들지 않음
+  - GitHub v6 push는 raw commit SHA를 snapshot 저장 전에 opaque artifact ID로 바꾼다.
+    기존 Artifact Relation v0.1은 commit을 계속 `not_observed`로 유지하며, 별도 Recent
+    Event projection만 active explicit attribution + exact work relation + 같은 batch의
+    opaque push ID/repository scope를 교차 검증한다. 따라서 기존 Active graph와 replay
+    hash는 바뀌지 않음
+  - GitHub v6 Issue/PR lifecycle activity는 `/search/issues` task binding과 같은 Issues
+    REST object ID로 canonicalize한 뒤 internal identity로 승격한다. 현재 task의 exact
+    repository/number mapping을 우선 사용하고, 없으면 authenticated
+    `/repos/{owner}/{repo}/issues/{number}` lookup을 최대 25개, concurrency 4로 제한한다.
+    lookup 실패/한도 도달은 activity coverage를 partial/truncated로 낮추고 해당 event를
+    제외한다. raw PullRequestEvent ID는 저장하거나 public projection에 노출하지 않음
+  - open-only task가 사라져도 v6 canonical identity로 attributed push, managed run,
+    close/merge를 하나의 exact WorkStream으로 복원한다. v5/v0.5와 v4/v0.4 reader
+    compatibility는 유지하되, pre-canonical v5 raw PR ID는 disappeared-task native bridge로
+    신뢰하지 않음
+  - 동일 managed failure는 privacy-safe fingerprint, 60초 window, 최대 sequence gap 3을
+    모두 만족할 때만 반복 관찰로 제외한다. event/diagnostic retention 초과와 shadow
+    100-row diagnostic 초과는 omitted count로 명시함
+  - GitHub task native lifecycle target을 안정 anchor로 사용해 open → merged/closed에서도
+    WorkStream ID와 유효한 explicit Focus confirmation을 유지함
+- Versions before:
+  - Recent Meaningful Event, Current WorkStream, Current Focus, Focus shadow: 없음
+  - live orchestrator: `attention-live-orchestrator-v0.5`
+  - monitor run: `attention-monitor-run-v0.5`
+  - replay input: `attention-replay-input-v2`
+- Versions after:
+  - GitHub snapshot/native activity normalizer: `github-snapshot-v6`,
+    `github-native-activity-identity-normalizer-v0.6`; v5/v0.5와 v4/v0.4 read
+    compatibility 유지
+  - Artifact Relation schema/resolver/evidence는 기존 경계를 유지:
+    `artifact-relation-schema-v0.1`, `managed-codex-explicit-artifact-resolver-v0.1`,
+    `explicit-user-native-artifact-evidence-v0.1`
+  - Recent event schema/rule/ID: `recent-meaningful-event-schema-v0.2`,
+    `github-managed-codex-meaningful-event-rule-v0.5`,
+    `recent-meaningful-event-id-v0.2`
+  - WorkStream schema/reconstruction/currentness/ID:
+    `current-workstream-schema-v0.1`, `exact-identity-current-workstream-v0.5`,
+    `current-workstream-currentness-policy-v0.1`, `current-workstream-id-v0.5`
+  - Focus schema/selection/ID: `current-focus-schema-v0.1`,
+    `recent-direct-current-focus-policy-v0.2`, `current-focus-id-v0.1`
+  - shadow schema/ranking/resolver/rollout:
+    `focus-aware-attention-shadow-schema-v0.2`, `focus-aware-ranking-policy-v0.1`,
+    `focus-aware-attention-shadow-resolver-v0.2`, `current-focus-shadow-rollout-v0.1`
+  - live orchestrator/monitor/failure/replay: `attention-live-orchestrator-v0.6`,
+    `attention-monitor-run-v0.6`, `attention-monitor-failure-v0.5`,
+    `attention-replay-input-v3`; released v2 remains Active-only replay compatible
+  - existing Active Attention input/result, candidate rule, eligibility, lane and ranking
+    policies: unchanged
+- Code commit:
+  - base commit: `783f70c120e6829f08e6caf9dd0ac6e51805b841`
+  - base subject: `feat(gptmemory): add conversation timeline and resume workspace`
+  - evaluation-time implementation state: `dirty_worktree`; 이 record에서 commit을
+    생성하지 않음. baseline code fingerprint SHA-256:
+    `baf18ac4689c56ff2e7b6226d19f8b9ff7c6c0f6f8ef32be84dd207a69ee277c`
+- Evaluation dataset and runs:
+  - separate mutable synthetic Dev Candidate:
+    `suggestion-current-focus-dev-v0.2`, revision 1, 13 cases, production data 없음
+  - dataset SHA-256:
+    `f595b6985ce0c5c957898f4cdaa536dca151f07a15f6cbb3c476f93f7a207277`
+  - config version/SHA-256: `current-focus-config-v0.3`,
+    `7bac6d17d0d786d025b50f65936d85a31d08b152ac6cd8edf2140b54722add89`
+  - deterministic run A:
+    `current_focus_run_7dd3b05598a2190390e83c83baa1a114`, passed 13/13
+  - deterministic run B:
+    `current_focus_run_8e99c6863bb089999ffd4b57eb85bc2b`, passed 13/13
+  - 두 run은 unique run ID와 실행 시각을 제외하고 dataset/config/version/code
+    fingerprint, counts, per-case input hash/projection/result, metrics, privacy,
+    comparison, review status와 limitations가 동일. stable comparison payload
+    SHA-256는 `ef8262628bf998cc773d15c43d0490d37097635c29f030332abd399c809144ab`
+  - unchanged Active Attention targeted baseline:
+    `active_attention_eval_run_7eabf55c31cf3c97297da53002636f2b`, passed 44/44
+  - Active dataset/materialized input SHA-256:
+    `fc8be53b229f4c685591e34b005a4e99fbf49eb7722cc86cd4aeab97f04c8a26`,
+    `baa7a6ec69173b4207e4409b900519c3148ad06995726aad78f9e2d6ef79f940`
+  - Active deterministic output SHA-256:
+    `6ce881d595ab1476e95f33710c5ee7c6cd9be412d492b2b79daa26faf71c0d55`
+  - unchanged Eligibility run:
+    `attention_eligibility_run_9923b28ff65ce26ae897d598a11f77aa`, passed 26/26,
+    projection-hash mismatch 0
+  - unchanged Artifact Relation run:
+    `artifact_relation_run_f417353eeda4375b09bc8e3bcaf9748f`, passed 32/32;
+    deterministic output
+    `c93da98c113dfe8d9187ba363b43f6c3027c6150396d039480079cab8b3c7d04`
+  - frozen Golden/Regression dataset은 수정하지 않았고 production conversation을
+    Dev Candidate로 승격하지 않음
+- Commands executed:
+  - `cd suggestion && npm test -- --run` for focused and full Vitest suites
+  - `cd suggestion && npm test`
+  - `cd suggestion && npm run typecheck`
+  - `cd suggestion && npm run lint`
+  - `cd suggestion && npm run build`
+  - `cd suggestion && npm run current-focus:baseline` twice
+  - `cd suggestion && npm run active-attention:baseline`
+  - `cd suggestion && npm run attention-eligibility:baseline`
+  - `cd suggestion && npm run artifact-relation:baseline`
+  - focused Playwright `current-focus-cockpit.spec.ts`
+  - `git diff --check`
+- Verification and metrics:
+  - required 13 synthetic scenarios: 13/13 passed
+  - focused engine/monitor/evaluation regression: 12 files, 161/161 tests passed
+  - full Vitest: 96/97 files and 853/854 tests passed. The sole failure is the unrelated
+    `codexConversationCollection.test.ts` fixture fixed at 2026-07-29; the production reader
+    correctly expires it under the real-clock seven-day retention policy on 2026-08-06
+  - typecheck, ESLint, Next.js production build, browser E2E 1/1, diff check: passed
+  - Current Focus precision `1.0`; abstention accuracy `1.0`; top-switch precision `1.0`
+  - context-only leakage `0`; eligibility diff `0`; stale/currentness violation `0`;
+    deterministic hash failure `0`; privacy sentinel leakage `0`; accepted dependency tamper `0`
+  - 1/13 counterfactual top switch, 0/13 actual selection changes;
+    `attentionSelectionEffect = "none"`
+  - existing Artifact/Eligibility/Active exact hashes restored and unchanged; replay v2
+    v0.1 artifact lineage regression passed
+  - provider/model/prompt/token usage: `not_applicable`; implementation and evaluation use no LLM
+- Regressions or accepted exceptions:
+  - review-request transition, CI recovery, merge-conflict recovery and command/test transition
+    timestamps are not available in current source contracts and are not inferred
+  - GitHub push-to-PR exact identity requires an existing explicit relation or verified artifact;
+    timing or title similarity never bridges the gap
+  - persistent create/change/clear UI and expiry storage for explicit user-confirmed Focus is not
+    part of Phase 1; the resolver accepts a validated explicit input when supplied
+  - synthetic Dev Candidate is mutable development evidence, not a human-approved Golden result
+  - full-suite clock-sensitive fixture failure is not caused by this engine change and was not
+    modified to keep unrelated user work untouched
+- Privacy and retention impact:
+  - public/API/monitor projections exclude credentials/tokens, absolute local paths, raw Codex
+    thread/run/execution IDs, raw command/prompt/conversation content and commit SHA
+  - public identities are opaque references; privacy sentinels cover Codex private fields and
+    context-only Notion/Calendar payloads
+  - evaluation artifacts are synthetic-only, local under `.local/evaluations/`, directory `0700`
+    and files `0600`; no remote telemetry added
+  - existing source retention remains unchanged: Codex conversation seven days and attention
+    monitor 30 days. The new projection adds no production source-content retention
+- Compatibility:
+  - attention API adds four sidecars: recent events, WorkStreams, Current Focus and Focus shadow
+  - monitor v0.6 stores only bounded status/hash/top/effect diagnostics. replay v3 recomputes and
+    verifies Focus and shadow; replay v2 and previous monitor v0.5 remain parseable as Active-only
+    history with artifact relation v0.1 pinned by regression
+  - genuine monitor v0.4 + replay v2 records validate their immutable envelope, artifact/input
+    hashes, run/analysis/session linkage, capture time and frozen historical dependency matrix.
+    Available batches require the historical live freshness policy v0.1 and exact historical
+    source/collector/normalizer tuple; the production GitHub collector `2026-03-10` is retained
+    and generic snapshot-policy or current eligibility relabels fail closed. Historical Active
+    resolver v0.3 is not retained, so a current v0.5 semantic result/hash is never treated as
+    equivalent
+  - Focus failure does not fail the request or mutate the existing Active result/hash/candidate
+    universe; legacy ChatGPT suggestion engine is untouched
+- Release decision:
+  - Phase 1 local shadow observation in Work Cockpit and Attention Lab: allowed
+  - Phase 2 Focus-aware selection activation: blocked pending human review, feature-flag policy
+    decision and targeted production-shadow evidence
+  - freezing a Current Focus Golden/Regression dataset: blocked pending lawful human review
+- Rollback method:
+  - disable/remove the Current Focus sidecar construction and shadow call from the v0.6 live
+    orchestrator/API and return to the v0.5 Active-only path
+  - monitor v0.6 records are additive; monitor v0.5 + replay v2 remains supported. GitHub
+    v6/v5/v4 snapshot readers and matching normalizers remain in place even if the writer or
+    Focus projection is disabled. No connector store, credential, Golden Dataset or production
+    conversation needs migration or deletion
+- Follow-up work:
+  - human review of the one counterfactual switch and real dogfood false-positive cases before
+    Phase 2
+  - decide versioned feature flag, explicit Focus create/change/clear UX and expiry policy
+  - extend source contracts only when direct trustworthy timestamps for currently unsupported
+    GitHub/Codex transitions can be collected
+  - fix the unrelated clock-sensitive conversation fixture by controlling test time in a separate
+    change
+
 ## 2026-08-08 Source sync cross-coordinator lost-update fix
 
 - Date: 2026-08-08
@@ -3282,3 +3615,234 @@
 - Follow-up work:
   - add a cross-process filesystem lease before permitting multiple writer processes for the same
     managed root
+
+## 2026-08-09 - GitHub reauthorization state reconciliation and Current Focus launcher presentation
+
+### Change identity
+
+- Change ID: `sync-reauth-focus-presentation-2026-08-09`
+- Code state: uncommitted working tree
+- Dataset: unchanged
+- Prompt/model/guardrail configuration: unchanged
+- Sync serialized schema: unchanged
+- Active Attention candidate, eligibility, ranking, and decision policies: unchanged
+- Current Focus selection policy: unchanged
+- Launcher contract: `blabase-launcher-attention-v2`, additive optional `currentFocusSummary`
+
+### Problem and evidence
+
+A successful GitHub OAuth callback could persist a new connector snapshot while a route-local sync coordinator continued to expose an older terminal `REAUTHORIZATION_REQUIRED` disabled state. The runtime coordinator registry was module-local, and an idle coordinator did not reconcile its cached projection with the durable latest store. Separately, the web and macOS empty-result presentation collapsed an observed Current Focus and a missing actionable candidate into the generic statement that one item could not be chosen safely.
+
+### Behavior change
+
+- Runtime coordinators are shared process-wide by normalized data directory through a `Symbol.for` registry.
+- Idle coordinators reconcile from the durable latest store before status, start, tick, sync, and connection-transition operations. In-flight attempts and pending or active transitions remain protected.
+- Persisted revision/state is authoritative while the coordinator is idle; wall-clock ordering is not used to reject a logically newer durable reauthorization result.
+- The launcher v2 projection may include a bounded, display-only `currentFocusSummary`. Missing and `null` remain valid for older producers and consumers.
+- Focus summary data cannot create a card, change candidate counts, modify eligibility or ranking, or enable an execution guard. Its selection effect is fixed to `none`.
+- Web and macOS no-action/insufficient-evidence copy now distinguishes an observed current workstream from the absence of a verified intervention candidate and keeps no-action claims scoped to the evaluated range.
+
+### Tests and review
+
+Added regression coverage for process-global runtime identity, stale disabled coordinator reconciliation after a separate reset and successful sync, logically newer durable state with an older wall-clock timestamp, launcher projection/service compatibility, Swift decoding and validation, presentation copy, and absence of Focus-driven execution behavior. Tests were added but not executed in this change session. Static QA found no remaining blocking or medium issue after corrections.
+
+### Privacy and retention
+
+No raw conversation, prompt, command, path, URL, thread identifier, native object identifier, commit SHA, credential, or token is added to the launcher projection. The optional summary contains only a bounded display label, canonical Focus reason codes, selected status, and `attentionSelectionEffect: none`. Storage locations, retention periods, and deletion behavior are unchanged.
+
+### Compatibility, rollback, and residual risk
+
+The launcher contract identifier remains v2 because the new field is optional/default-null and Swift uses optional decoding; older consumers ignore the unknown field. Rollback removes durable reconciliation/global runtime registry changes, the optional launcher summary, presentation branches, and their regression tests. Repository serialization remains process-local across separate OS processes, so filesystem-level lease/CAS is still a follow-up for true multi-process mutation authority. Low residual risks are adapter-normalization timestamp/timer churn, non-finally runtime-test cleanup, and minor Swift/TypeScript validation differences for Unicode length and unknown keys.
+
+## 2026-08-10 Recent Work repository-scope projection v0.1 evaluation checkpoint
+
+- Date: 2026-08-10
+- Owner: Codex with human direction
+- Goal:
+  - add a strict, reproducible evaluation harness for the already implemented
+    `recent-work-projection-v0.1` repository-scope/display-only sidecar
+  - cover current positive, boundary, mapping, rollout, privacy, determinism,
+    and no-effect behavior without representing the planned full continuation
+    system as implemented
+- Affected pipeline stages:
+  - new bounded synthetic Recent Work projection Dev Candidate and mutable config
+  - new strict evaluation run record and private `.local` baseline writer
+  - one fixed-clock paired `evaluateAttentionSnapshots` production integration
+    probe compares shadow and present over identical synthetic raw snapshots,
+    private context, clocks, and execution IDs
+  - no production resolver, connector, Current Focus, launcher, monitor, replay,
+    ranking, eligibility, or execution behavior is changed
+- Behavior before:
+  - targeted unit tests covered core Recent Work resolution and presentation,
+    but there was no versioned projection-specific dataset/config, aggregate
+    evaluator, private baseline artifact, or explicit human freeze/rollout gate
+- Behavior after:
+  - `suggestion-recent-work-projection-dev-v0.1` defines 23 bounded synthetic,
+    non-private case records and 28 runtime variants with distinct
+    `RW-PROJ-DEV-*` IDs
+  - the evaluator covers `shadow|present`, all five public tracking states,
+    focus 24-hour and Local Git five-minute boundaries, both +60-second future
+    skew boundaries, partial/stale/non-push/project-level Focus, missing,
+    different, removed, archived, duplicate and same-project multi-repository
+    mapping, unavailable/unborn Local Git, invalid rollout fallback, public
+    seconds-to-milliseconds canonicalization, privacy, deterministic direct
+    resolution, and Recent Work no-effect invariants
+  - one separately recorded production integration probe requires both Recent
+    Work projections to match and compares exact replay input/input hash, full
+    Active result, ordered candidate content, eligibility projection and
+    assessments, decision, and result hash; shadow public output must be null
+    while present public output must be non-null
+  - production-integration privacy checks materialize bounded synthetic config
+    path/label, GitHub login/repository/ref, Codex summary, installation secret,
+    and a source-boundary raw commit sentinel, and inspect the public Recent Work
+    and launcher-safe Recent Work/Current Focus surfaces
+  - raw prompt, command, and conversation bodies are explicitly classified as
+    unrepresentable in `ResolveRecentWorkInput`; they are not counted as
+    materialized zero-leak measurements
+  - removed and archived mapping cases are labeled
+    `upstream_filtered_runtime`: the input contains their honest absence from
+    the confirmed-link resolution, rather than pretending the Recent Work
+    resolver reads registry history
+  - `npm run recent-work:baseline` publishes a new private artifact
+    under `.local/evaluations/recent-work-projection/` with private `0700`
+    directories, a synced `0600` sibling temporary file, complete pre-link
+    byte/mode/inode validation, atomic hard-link no-clobber publication,
+    cleanup, code provenance, and canonical hashes
+- Versions before:
+  - Recent Meaningful Event rule:
+    `github-managed-codex-meaningful-event-rule-v0.6`
+  - Local Git snapshot/collector: `codex-local-git-snapshot-v1`,
+    `codex-local-git-metadata-v1`
+  - context registry: `work-context-registry-v1`, schema v1
+  - Recent Work projection/schema/resolver:
+    `recent-work-projection-v0.1`, `recent-work-schema-v0.1`,
+    `repository-scope-recent-work-resolver-v0.1`
+  - launcher attention: `blabase-launcher-attention-v2`, additive optional
+    Recent Work summary
+  - Active Attention input/result/resolver: existing v0.4/v0.5/v0.4
+- Versions after:
+  - all production versions above are unchanged
+  - new evaluation dataset/config remain mutable v0.1:
+    `recent-work-projection-evaluation-dataset-v0.1`,
+    `recent-work-projection-config-v0.1`
+  - corrected measurement semantics and the integration-probe shape use:
+    `recent-work-projection-evaluation-run-v0.2`,
+    `recent-work-projection-evaluation-policy-v0.2`
+  - prompt/model/LLM configuration is not applicable: this evaluator invokes
+    only deterministic production resolvers over bounded synthetic inputs
+  - no actor/origin provenance version, exact-commit policy, continuation
+    observation/context/offer, heartbeat/resume policy, four-mode rollout,
+    applied-selection, monitor v0.7, or replay v4 version is introduced
+- Code commit:
+  - `commitSha=null`, `codeState=dirty_worktree`
+  - evaluation-time dirty fingerprint:
+    `e945093bbf259f653a85a4263f75a7a9b99d0b7939e91e489357107b94c1ecdc`
+  - this post-run documentation-only record update changes the current dirty
+    worktree fingerprint. It does not change the runtime sources evaluated by
+    the historical run, and the historical fingerprint is not rewritten
+- Evaluation dataset version and SHA-256:
+  - mutable candidate: `suggestion-recent-work-projection-dev-v0.1`, revision 1
+  - lifecycle: `datasetSha256=null`, `immutableRef=null`, `frozenAt=null`
+  - config lifecycle: `configSha256=null`, `immutableRef=null`
+  - dataset candidate-payload SHA-256:
+    `8cea73e117622048907f46171daf7928cf6e2290cd24df2ca9a38d317ee9b182`
+  - exact materialized-input SHA-256:
+    `110dc54517198b8864854320e66a84563b3b1d101dd320a44d7f5c89b4eb8b8d`
+  - config candidate-payload SHA-256:
+    `fde94e2070121d65bc2a7dce399f8356f260cde9ee2c5a5025ef324f2b05717c`
+  - these execution hashes identify the mutable candidate and its exact input;
+    none is a frozen dataset SHA, immutable reference, or approval
+- Candidate run ID:
+  - `recent_work_run_9b9150ff2629744a1070846834df2cd5`
+  - started `2026-08-10T12:49:57.865Z`; completed
+    `2026-08-10T12:49:57.931Z`
+  - automatic status: passed; human review status: `not_started`
+- Comparison run ID:
+  - none; there is no same-frozen-input comparison or improvement claim
+- Commands executed:
+  - `npm run typecheck` — passed
+  - targeted Vitest run — `14` files, `104` tests passed
+  - `npm run recent-work:baseline` — passed
+  - lint, build, and Git commands are not part of this recorded verification
+- Metrics changed:
+  - cases: `23/23` passed; runtime variants: `28/28` measured and passed
+  - all recorded measurement-failure, status/reason, boundary, mapping,
+    rollout, canonicalization, determinism, privacy, replay-input,
+    candidate-universe, eligibility-projection, assessment, selection,
+    Active-result/result-hash, and Recent Work effect failure/diff counts: `0`
+  - all eight automatic gates: `true`
+  - this is one mutable Dev Candidate run, not a human-reviewed quality score,
+    frozen baseline comparison, or improvement claim
+  - fixture materialization and its canonical hash are inside the evaluator's
+    fail-closed boundary; a materialization failure records a sanitized reason,
+    null measurements, and `materializedInputSha256=null` rather than inventing
+    provenance or aborting the complete evaluation record
+- Private artifact:
+  - path:
+    `.local/evaluations/recent-work-projection/recent_work_run_9b9150ff2629744a1070846834df2cd5.json`
+  - run-record canonical-payload SHA-256:
+    `edc6dfaa2c4128af911364ed7687081d35883fdc9658087846a43fb5f60e4467`
+  - serialized file SHA-256:
+    `3094eaec2125df3f8002d9c9d190d623ac462c92c0c47668fd6e8ccc9efba85a`
+  - bytes: `46477`; mode: `0600`
+- Regressions or accepted exceptions:
+  - the current projection correlates repository scope only. It has no
+    actor/origin provenance or exact commit equality and cannot establish a
+    full continuation identity
+  - removed/archived/missing mappings are indistinguishable after the upstream
+    confirmed-link boundary except for synthetic case metadata; the resolver
+    correctly sees only link absence
+  - project-level Focus may produce display-only recent repository context; it
+    cannot create a candidate or an Attention, ranking, eligibility, or
+    execution effect
+  - the two-value presentation parser is not the proposed four-mode rollout;
+    invalid values only fall back to shadow
+  - there is no observation/context/offer lifecycle, heartbeat validation,
+    resume action, applied selection, monitor v0.7, or replay v4
+  - the dataset is builder-backed and mutable. It is not a frozen Regression,
+    Golden, Rolling, or Holdout result and contains no human-approved labels
+- Privacy or retention impact:
+  - dataset and integration-probe content is bounded synthetic/non-private;
+    no real production conversation, credential, token, identity, branch,
+    commit, prompt, command, thread ID, repository path, or local path is used
+  - synthetic private-shaped login/ref/path/label/summary/secret values are
+    materialized only in fixed production integration inputs and checked against
+    available public Recent Work and launcher-safe surfaces; artifacts record
+    hashes and field categories rather than copying those sentinel values
+  - only explicitly executed evaluation artifacts are written to `.local`;
+    no remote telemetry, production retention, source retention, or
+    production-to-Gold promotion is added
+- Compatibility:
+  - production Recent Work v0.1, Current Focus, Local Git v1, Active Attention,
+    launcher v2, monitor v0.6, and replay v3 contracts are unchanged
+  - the package script and evaluation modules are additive; older consumers do
+    not read evaluation artifacts
+- Release decision:
+  - the historical mutable-candidate automatic evaluation passed; human review
+    remains `not_started`
+  - projection default: remain shadow
+  - release decision: deferred; `frozenDatasetEligible=false`,
+    `presentRolloutEligible=false`, `activeEffectEligible=false`, and
+    `humanReviewRequired=true`
+  - dataset freeze, present rollout, any continuation mode, and any Attention
+    effect still require independent human review and a separate Release
+    Decision Record
+- Rollback method:
+  - remove the new dataset/config, builder, evaluator, runner, evaluator tests,
+    package script, and these checkpoint notes
+  - the recorded artifact is private local evidence and may be removed with the
+    evaluation tooling if this candidate run is intentionally discarded; no
+    production state, credential, connector store, schema migration, or frozen
+    dataset was created
+- Follow-up work:
+  - run lint or an additional clean-provenance evaluation if required by the
+    eventual release review; do not rewrite this dirty-worktree historical run
+  - review every case and the project-level display-only policy; record reviewer
+    decisions separately from automatic verdicts
+  - freeze a new dataset version and SHA only after materialized inputs and
+    labels receive human review; then record baseline/comparison run IDs on the
+    same frozen input if a behavior change is compared
+  - make separate product and release decisions before adding source-native
+    actor/origin provenance, exact commit equality, continuation
+    observation/context/offer, heartbeat/resume action, four-mode rollout,
+    applied selection, monitor v0.7, or replay v4

@@ -132,9 +132,7 @@ describe("GitHub connector routes", () => {
       })
     );
 
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("failed");
+    expectSourceRedirect(response, "failed");
   });
 
   it("reports a genuine state-bound OAuth cancellation", async () => {
@@ -147,9 +145,7 @@ describe("GitHub connector routes", () => {
       })
     );
 
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("cancelled");
+    expectSourceRedirect(response, "cancelled");
   });
 
   it("routes the post-OAuth snapshot collection through the coordinator", async () => {
@@ -204,9 +200,27 @@ describe("GitHub connector routes", () => {
     ).toBeLessThan(
       vi.mocked(syncRuntimeSources).mock.invocationCallOrder[0]!
     );
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("connected");
+    expectSourceRedirect(response, "connected");
+  });
+
+  it("returns authorization without an installation to the GitHub source panel", async () => {
+    setDevelopmentConfig();
+    vi.mocked(exchangeGitHubAuthorizationCode).mockResolvedValue(
+      storedTokens()
+    );
+    vi.mocked(readStoredGitHubSnapshot).mockResolvedValue(
+      githubSnapshot()
+    );
+
+    const response = await callback(
+      githubCallbackRequest({
+        cookieState: "expected-state",
+        queryState: "expected-state",
+        code: "oauth-code"
+      })
+    );
+
+    expectSourceRedirect(response, "installation_required");
   });
 
   it("reports sync pending when the coordinator records a GitHub failure", async () => {
@@ -235,9 +249,7 @@ describe("GitHub connector routes", () => {
     );
 
     expect(readStoredGitHubSnapshot).not.toHaveBeenCalled();
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("connected_sync_pending");
+    expectSourceRedirect(response, "connected_sync_pending");
   });
 
   it("keeps old GitHub credentials untouched when lineage reset persistence fails", async () => {
@@ -259,9 +271,7 @@ describe("GitHub connector routes", () => {
 
     expect(replaceStoredGitHubConnection).not.toHaveBeenCalled();
     expect(syncRuntimeSources).not.toHaveBeenCalled();
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("failed");
+    expectSourceRedirect(response, "failed");
   });
 
   it("rejects an installation return whose state does not match", async () => {
@@ -277,9 +287,7 @@ describe("GitHub connector routes", () => {
       )
     );
 
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("failed");
+    expectSourceRedirect(response, "failed");
   });
 
   it("routes an installation refresh through the coordinator", async () => {
@@ -318,9 +326,7 @@ describe("GitHub connector routes", () => {
       vi.mocked(replaceStoredGitHubConnection).mock
         .invocationCallOrder[0]!
     );
-    expect(new URL(requiredHeader(response, "location")).searchParams.get(
-      "github"
-    )).toBe("installation_updated");
+    expectSourceRedirect(response, "installation_updated");
   });
 
   it("returns unavailable immediately when the GitHub App config is invalid", async () => {
@@ -579,4 +585,12 @@ function requiredHeader(response: Response, name: string): string {
   const value = response.headers.get(name);
   if (!value) throw new Error(`missing ${name} header`);
   return value;
+}
+
+function expectSourceRedirect(response: Response, status: string): void {
+  const location = new URL(requiredHeader(response, "location"));
+  expect(location.pathname).toBe("/sources");
+  expect(location.searchParams.size).toBe(1);
+  expect(location.searchParams.get("github")).toBe(status);
+  expect(location.hash).toBe("#source-github");
 }

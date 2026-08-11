@@ -12,6 +12,11 @@ import type {
   CodexConnectionState,
   CodexContentMode
 } from "../src/connectors/codex/types";
+import {
+  buildCodexSessionPresentation,
+  hasCurrentCodexConversationContent
+} from "./codexSessionPresentation";
+import { SOURCE_CONNECTION_ANCHORS } from "./sourceNavigation";
 import { SourceSyncMeta } from "./sync/SourceSyncMeta";
 import { invalidateSourceConsumers } from "./sync/invalidationBus";
 import { requestSourceSync } from "./sync/sourceSyncClient";
@@ -361,7 +366,9 @@ export function CodexConnector() {
 
   return (
     <section
-      className="calendarSection"
+      className="calendarSection sourceConnectorTarget"
+      id={SOURCE_CONNECTION_ANCHORS.codex}
+      tabIndex={-1}
       aria-labelledby="codex-title"
       aria-busy={isBusy}
     >
@@ -750,56 +757,61 @@ function CodexConnectionBody({
 
       {previewSessions.length > 0 ? (
         <ol className="calendarEventList">
-          {previewSessions.map((session) => (
-            <li key={session.id}>
-              <time dateTime={session.updatedAt}>
-                {formatCodexTimestamp(session.updatedAt)} 활동
-              </time>
-              <span>
-                {session.taskSummary
-                  ? `${session.projectLabel} · ${session.taskSummary}`
-                  : `${session.projectLabel} · 작업 설명 없음`}
-              </span>
-              {connection.contentMode ===
-              "conversation_and_execution" ? (
-                <small>
-                  기록 {contentStateLabel(session.contentState)} · 마지막
-                  턴 {historicalTurnStatusLabel(
-                    session.historicalTurnStatus
-                  )}{" "}
-                  · 프롬프트 {session.userPromptCount} · 답변{" "}
-                  {session.agentResponseCount} · 명령{" "}
-                  {session.commandExecutionCount}
-                  {session.failedCommandCount > 0
-                    ? ` (실패 ${session.failedCommandCount})`
-                    : ""}
-                  {" · "}파일 변경 {session.fileChangeCount} · 도구{" "}
-                  {session.toolCallCount}
-                </small>
-              ) : null}
-              {connection.contentMode ===
-                "conversation_and_execution" &&
-              session.latestUserPromptExcerpt ? (
-                <small>
-                  최근 요청: {session.latestUserPromptExcerpt}
-                </small>
-              ) : null}
-              {connection.contentMode ===
-                "conversation_and_execution" &&
-              session.latestAgentResponseExcerpt ? (
-                <small>
-                  최근 답변: {session.latestAgentResponseExcerpt}
-                </small>
-              ) : null}
-              {connection.contentMode ===
-                "conversation_and_execution" &&
-              session.latestExecutionSummary ? (
-                <small>
-                  최근 실행: {session.latestExecutionSummary}
-                </small>
-              ) : null}
-            </li>
-          ))}
+          {previewSessions.map((session) => {
+            const presentation = buildCodexSessionPresentation(
+              session,
+              connection.contentMode
+            );
+            const hasCurrentConversationContent =
+              hasCurrentCodexConversationContent(
+                connection.contentMode,
+                session.contentState
+              );
+
+            return (
+              <li key={session.id}>
+                <time dateTime={session.updatedAt}>
+                  마지막 활동 {formatCodexTimestamp(session.updatedAt)}
+                </time>
+                <span className="codexSessionActivityText">
+                  {presentation.activityText}
+                </span>
+                <time dateTime={session.createdAt}>
+                  세션 시작 {formatCodexTimestamp(session.createdAt)}
+                </time>
+                <span>{presentation.originText}</span>
+                {connection.contentMode ===
+                "conversation_and_execution" ? (
+                  <small>
+                    기록 {contentStateLabel(session.contentState)} · 마지막
+                    턴 {historicalTurnStatusLabel(
+                      session.historicalTurnStatus
+                    )}{" "}
+                    · 프롬프트 {session.userPromptCount} · 답변{" "}
+                    {session.agentResponseCount} · 명령{" "}
+                    {session.commandExecutionCount}
+                    {session.failedCommandCount > 0
+                      ? ` (실패 ${session.failedCommandCount})`
+                      : ""}
+                    {" · "}파일 변경 {session.fileChangeCount} · 도구{" "}
+                    {session.toolCallCount}
+                  </small>
+                ) : null}
+                {hasCurrentConversationContent &&
+                session.latestAgentResponseExcerpt ? (
+                  <small>
+                    최근 답변: {session.latestAgentResponseExcerpt}
+                  </small>
+                ) : null}
+                {hasCurrentConversationContent &&
+                session.latestExecutionSummary ? (
+                  <small>
+                    최근 실행: {session.latestExecutionSummary}
+                  </small>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : (
         <p className="calendarEmpty">

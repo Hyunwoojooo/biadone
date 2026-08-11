@@ -1,5 +1,12 @@
+import { resolve } from "node:path";
+
 import { fetchAndStoreCodexSnapshot } from "../connectors/codex/appServer";
-import { readStoredCodexConfig } from "../connectors/codex/localStore";
+import { collectCodexLocalGitSnapshot } from "../connectors/codex/localGitCollector";
+import {
+  codexStoreGeneration,
+  readStoredCodexConfig,
+  writeStoredCodexLocalGitSnapshot
+} from "../connectors/codex/localStore";
 import { fetchAndStoreCalendarSnapshot } from "../connectors/googleCalendar/calendarApi";
 import { loadGoogleCalendarConfig } from "../connectors/googleCalendar/config";
 import { readStoredTokens as readStoredCalendarTokens } from "../connectors/googleCalendar/localStore";
@@ -58,20 +65,39 @@ type RuntimeEntry = {
   startRequested: boolean;
 };
 
-const runtimeEntries = new Map<string, RuntimeEntry>();
+const RUNTIME_ENTRIES_KEY = Symbol.for(
+  "blabase.source-sync.runtime-entries.v1"
+);
+
+function sharedRuntimeEntries(): Map<string, RuntimeEntry> {
+  const existing = Reflect.get(globalThis, RUNTIME_ENTRIES_KEY);
+  if (existing instanceof Map) {
+    return existing as Map<string, RuntimeEntry>;
+  }
+  const created = new Map<string, RuntimeEntry>();
+  Reflect.set(globalThis, RUNTIME_ENTRIES_KEY, created);
+  return created;
+}
+
+const runtimeEntries = sharedRuntimeEntries();
+
+function runtimeEntryKey(cwd: string): string {
+  return resolve(cwd);
+}
 
 export function getRuntimeSourceSyncCoordinator(
   cwd = process.cwd(),
   env: NodeJS.ProcessEnv = process.env
 ): SourceSyncCoordinator {
-  const existing = runtimeEntries.get(cwd);
+  const key = runtimeEntryKey(cwd);
+  const existing = runtimeEntries.get(key);
   if (existing) return existing.coordinator;
   loadSharedLocalEnv(env);
   const coordinator = new SourceSyncCoordinator({
     adapters: createRuntimeSourceSyncAdapters(cwd, env),
     repository: FileSystemSourceSyncRepository.fromCwd(cwd)
   });
-  runtimeEntries.set(cwd, {
+  runtimeEntries.set(key, {
     coordinator,
     startRequested: false
   });
@@ -83,7 +109,7 @@ export function ensureRuntimeSourceSyncStarted(
   env: NodeJS.ProcessEnv = process.env
 ): void {
   const coordinator = getRuntimeSourceSyncCoordinator(cwd, env);
-  const entry = runtimeEntries.get(cwd);
+  const entry = runtimeEntries.get(runtimeEntryKey(cwd));
   if (!entry || entry.startRequested) return;
   entry.startRequested = true;
   void coordinator.start().catch(() => {
@@ -96,7 +122,7 @@ export async function startRuntimeSourceSync(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<RuntimeSourceSyncStatusResponse> {
   const coordinator = getRuntimeSourceSyncCoordinator(cwd, env);
-  const entry = runtimeEntries.get(cwd);
+  const entry = runtimeEntries.get(runtimeEntryKey(cwd));
   if (entry) entry.startRequested = true;
   try {
     await coordinator.start();
@@ -210,6 +236,7 @@ export function createRuntimeSourceSyncAdapters(
     codex: {
       source: "codex",
       async sync(context) {
+        const expectedGeneration = codexStoreGeneration(cwd);
         const config = await readStoredCodexConfig(cwd);
         if (
           !config ||
@@ -227,6 +254,28 @@ export function createRuntimeSourceSyncAdapters(
             cwd,
             now: new Date(context.startedAt)
           });
+          try {
+            const selectedScopeIds = new Set(
+              config.selectedScopeIds
+            );
+            const localGitSnapshot =
+              await collectCodexLocalGitSnapshot({
+                installationSecret: config.installationSecret,
+                scopes: config.scopes.filter((scope) =>
+                  selectedScopeIds.has(scope.id)
+                ),
+                observedAt: context.startedAt
+              });
+            await writeStoredCodexLocalGitSnapshot(
+              localGitSnapshot,
+              config,
+              cwd,
+              expectedGeneration
+            );
+          } catch {
+            // Local Git is private, best-effort enrichment. Codex inventory
+            // remains authoritative for connector sync settlement.
+          }
           return createSourceSnapshotReceipt(
             `codex:${snapshot.fetchedAt}`,
             snapshot.sessions.length,

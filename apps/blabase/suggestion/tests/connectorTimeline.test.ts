@@ -152,8 +152,9 @@ describe("connector timeline", () => {
     expect(
       result.items.find((item) => item.kind === "codex_session")
     ).toMatchObject({
-      title: "연결 활동을 날짜순으로 더 구체적으로 보여줘",
-      detail: "blabase · 첫 요청 기준"
+      title: "blabase Codex 세션 활동",
+      detail:
+        "blabase · 마지막 활동 기준 · 최근 요청 확인 불가 · 첫 요청: 연결 활동을 날짜순으로 더 구체적으로 보여줘"
     });
 
     const notionPage = result.items.find(
@@ -198,6 +199,131 @@ describe("connector timeline", () => {
         truncated: false
       }
     ]);
+  });
+
+  it("pairs a Codex last-activity timestamp with the latest request", () => {
+    const result = buildConnectorTimeline({
+      googleCalendar: null,
+      notion: null,
+      github: null,
+      codex: codexSnapshot({
+        contentMode: "conversation_and_execution",
+        collectorVersion:
+          "codex-app-server-conversation-and-execution-v1",
+        conversationStoreSha256: "b".repeat(64),
+        conversationRetentionDays: 7,
+        sessions: [
+          {
+            ...codexSnapshot().sessions[0],
+            content: {
+              ...emptyCodexContentManifest(),
+              state: "complete",
+              contentSha256: "a".repeat(64),
+              contentSourceUpdatedAt:
+                "2026-07-25T13:00:00.000Z",
+              collectedAt: "2026-07-25T13:01:00.000Z",
+              expiresAt: "2026-08-01T13:01:00.000Z",
+              historicalTurnStatus: "completed",
+              latestTurnCompletedAt:
+                "2026-07-25T13:00:00.000Z",
+              turnCount: 2,
+              userPromptCount: 2,
+              agentResponseCount: 2,
+              reasonCodes: [],
+              latestUserPromptExcerpt: "테스트까지 확인해줘"
+            }
+          }
+        ]
+      })
+    });
+    if (result.status !== "ready") return;
+
+    expect(result.items[0]).toMatchObject({
+      occurredAt: "2026-07-25T13:00:00.000Z",
+      timestampKind: "last_activity",
+      title: "최근 요청: 테스트까지 확인해줘",
+      detail:
+        "blabase · 마지막 활동 기준 · 첫 요청: 연결 활동을 날짜순으로 더 구체적으로 보여줘"
+    });
+  });
+
+  it("does not pair stale Codex content with a newer activity timestamp", () => {
+    const session = codexSnapshot().sessions[0];
+    const result = buildConnectorTimeline({
+      googleCalendar: null,
+      notion: null,
+      github: null,
+      codex: codexSnapshot({
+        sessions: [
+          {
+            ...session,
+            content: {
+              ...emptyCodexContentManifest(),
+              state: "stale",
+              contentSha256: "c".repeat(64),
+              contentSourceUpdatedAt:
+                "2026-07-25T12:00:00.000Z",
+              collectedAt: "2026-07-25T12:01:00.000Z",
+              expiresAt: "2026-08-01T12:01:00.000Z",
+              historicalTurnStatus: "completed",
+              latestTurnCompletedAt:
+                "2026-07-25T12:00:00.000Z",
+              turnCount: 1,
+              userPromptCount: 1,
+              agentResponseCount: 1,
+              reasonCodes: ["THREAD_CHANGED_DURING_READ"],
+              latestUserPromptExcerpt: "이전 요청"
+            }
+          }
+        ]
+      })
+    });
+    if (result.status !== "ready") return;
+
+    expect(result.items[0]).toMatchObject({
+      title: "blabase Codex 세션 활동",
+      detail:
+        "blabase · 마지막 활동 기준 · 최근 요청 확인 불가 · 첫 요청: 연결 활동을 날짜순으로 더 구체적으로 보여줘"
+    });
+  });
+
+  it("does not present a partial collection as the latest Codex request", () => {
+    const session = codexSnapshot().sessions[0];
+    const result = buildConnectorTimeline({
+      googleCalendar: null,
+      notion: null,
+      github: null,
+      codex: codexSnapshot({
+        sessions: [
+          {
+            ...session,
+            content: {
+              ...emptyCodexContentManifest(),
+              state: "partial",
+              contentSha256: "d".repeat(64),
+              contentSourceUpdatedAt: session.updatedAt,
+              collectedAt: "2026-07-25T13:01:00.000Z",
+              expiresAt: "2026-08-01T13:01:00.000Z",
+              historicalTurnStatus: "completed",
+              latestTurnCompletedAt: session.updatedAt,
+              turnCount: 1,
+              userPromptCount: 1,
+              agentResponseCount: 1,
+              truncated: true,
+              reasonCodes: ["TURN_LIMIT"],
+              latestUserPromptExcerpt: "수집된 일부 요청"
+            }
+          }
+        ]
+      })
+    });
+    if (result.status !== "ready") return;
+
+    expect(result.items[0]).toMatchObject({
+      title: "blabase Codex 세션 활동",
+      detail:
+        "blabase · 마지막 활동 기준 · 최근 요청 확인 불가 · 첫 요청: 연결 활동을 날짜순으로 더 구체적으로 보여줘"
+    });
   });
 
   it("uses deterministic source and kind ordering for identical timestamps", () => {

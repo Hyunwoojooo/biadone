@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createGitHubArtifactId } from "../src/artifacts/contracts";
 import {
   DEFAULT_GITHUB_REDIRECT_URI,
   GITHUB_API_VERSION,
@@ -41,6 +42,13 @@ import {
 import type { GitHubSnapshot } from "../src/connectors/github/types";
 
 const temporaryDirectories: string[] = [];
+const PUSH_HEAD_OID =
+  "0123456789abcdef0123456789abcdef01234567";
+const PUSH_ARTIFACT_ID = createGitHubArtifactId({
+  kind: "github_commit",
+  repositoryId: 101,
+  oid: PUSH_HEAD_OID
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -283,7 +291,7 @@ describe("GitHub local connector", () => {
 
     expect(snapshot.user).toEqual({ id: 7, login: "nika" });
     expect(snapshot).toMatchObject({
-      schemaVersion: "github-snapshot-v3",
+      schemaVersion: "github-snapshot-v6",
       activityWindowStart: "2026-06-25T01:00:00.000Z",
       activitiesState: "available",
       activitiesTruncated: false,
@@ -477,7 +485,7 @@ describe("GitHub local connector", () => {
     });
 
     expect(snapshot).toMatchObject({
-      schemaVersion: "github-snapshot-v3",
+      schemaVersion: "github-snapshot-v6",
       actionabilityCoverage: {
         state: "complete",
         authoredPullRequestCount: 1,
@@ -543,6 +551,7 @@ describe("GitHub local connector", () => {
       title: string,
       merged = false
     ) => ({
+      id: 2_000 + number,
       number,
       title,
       merged,
@@ -554,6 +563,7 @@ describe("GitHub local connector", () => {
       title: string,
       isPullRequest = false
     ) => ({
+      id: 1_000 + number,
       number,
       title,
       body: "SECRET_ISSUE_BODY",
@@ -562,7 +572,7 @@ describe("GitHub local connector", () => {
     const events = [
       activityEvent("push", "PushEvent", "2026-07-25T00:15:00.000Z", {
         ref: "refs/heads/main",
-        head: "SECRET_PUSH_HEAD",
+        head: PUSH_HEAD_OID,
         before: "SECRET_PUSH_BEFORE",
         commits: [{ message: "SECRET_COMMIT_MESSAGE" }]
       }),
@@ -724,7 +734,8 @@ describe("GitHub local connector", () => {
         { action: "started" }
       ),
       activityEvent("push", "PushEvent", "2026-07-24T00:00:00.000Z", {
-        ref: "refs/heads/duplicate"
+        ref: "refs/heads/duplicate",
+        head: PUSH_HEAD_OID
       })
     ];
     const fetchMock = basicSnapshotFetchMock(() =>
@@ -764,8 +775,14 @@ describe("GitHub local connector", () => {
       repositoryFullName: "acme/alpha",
       subjectType: "branch",
       refName: "main",
-      reviewState: null
+      reviewState: null,
+      artifactId: PUSH_ARTIFACT_ID
     });
+    expect(
+      snapshot.activities
+        .filter((activity) => activity.activityKind !== "push")
+        .every((activity) => activity.artifactId === null)
+    ).toBe(true);
     expect(
       snapshot.activities
         .filter(
@@ -781,20 +798,24 @@ describe("GitHub local connector", () => {
     ).toMatchObject({
       activityKind: "pull_request_merged",
       subjectNumber: 24,
+      subjectObjectId: 1_024,
       subjectTitle: "합친 PR"
     });
+    expect(JSON.stringify(snapshot)).not.toContain('"subjectObjectId":2024');
+    expect(JSON.stringify(snapshot)).not.toContain(PUSH_HEAD_OID);
 
     const storedSnapshot = await readFile(
       join(githubLocalDirectory(cwd), "snapshot.json"),
       "utf8"
     );
     for (const sensitiveValue of [
-      "SECRET_PUSH_HEAD",
+      PUSH_HEAD_OID,
       "SECRET_PUSH_BEFORE",
       "SECRET_COMMIT_MESSAGE",
       "SECRET_REPOSITORY_DESCRIPTION",
       "SECRET_ISSUE_BODY",
       "SECRET_PR_URL",
+      "SECRET_PULL_REQUEST_ISSUE_LINK",
       "SECRET_COMMENT_TEXT",
       "SECRET_PULL_REQUEST_BODY",
       "SECRET_PULL_REQUEST_SHA",
@@ -837,7 +858,7 @@ describe("GitHub local connector", () => {
             `event-${offset}`,
             "PushEvent",
             new Date(baseTimestamp - offset * 1_000).toISOString(),
-            { ref: "refs/heads/main" }
+            { ref: "refs/heads/main", head: PUSH_HEAD_OID }
           );
         })
       );
@@ -879,7 +900,7 @@ describe("GitHub local connector", () => {
               Date.parse("2026-07-25T00:59:59.000Z") -
                 index * 1_000
             ).toISOString(),
-            { ref: "refs/heads/main" }
+            { ref: "refs/heads/main", head: PUSH_HEAD_OID }
           )
         )
       );
@@ -909,13 +930,13 @@ describe("GitHub local connector", () => {
           "valid",
           "PushEvent",
           "2026-07-25T00:59:00.000Z",
-          { ref: "refs/heads/main" }
+          { ref: "refs/heads/main", head: PUSH_HEAD_OID }
         ),
         activityEvent(
           "malformed",
           "PushEvent",
           "2026-07-25T00:58:00.000Z",
-          { ref: null }
+          { ref: "refs/heads/main", head: "not-a-commit-oid" }
         )
       ])
     );
@@ -929,8 +950,55 @@ describe("GitHub local connector", () => {
     expect(snapshot.activitiesState).toBe("partial");
     expect(snapshot.activitiesTruncated).toBe(false);
     expect(snapshot.activities).toEqual([
-      expect.objectContaining({ id: "valid", activityKind: "push" })
+      expect.objectContaining({
+        id: "valid",
+        activityKind: "push",
+        artifactId: PUSH_ARTIFACT_ID
+      })
     ]);
+    expect(JSON.stringify(snapshot)).not.toContain(PUSH_HEAD_OID);
+  });
+
+  it("fails PR lifecycle identity closed when the canonical Issues lookup is unavailable", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredGitHubTokens(storedTokens(), cwd);
+    const fetchMock = basicSnapshotFetchMock(
+      () =>
+        jsonResponse([
+          activityEvent(
+            "pr-merged-unresolved",
+            "PullRequestEvent",
+            "2026-07-25T00:59:00.000Z",
+            {
+              action: "closed",
+              pull_request: {
+                id: 9_501,
+                number: 42,
+                title: "PRIVATE_UNRESOLVED_PR_TITLE",
+                merged: true
+              }
+            }
+          )
+        ]),
+      {
+        pullRequestIssueResponse: () =>
+          jsonResponse({ message: "PRIVATE_IDENTITY_LOOKUP_FAILURE" }, 503)
+      }
+    );
+
+    const snapshot = await fetchAndStoreGitHubSnapshot(testConfig(), {
+      now: new Date("2026-07-25T01:00:00.000Z"),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      cwd
+    });
+
+    expect(snapshot.activitiesState).toBe("partial");
+    expect(snapshot.activitiesTruncated).toBe(false);
+    expect(snapshot.activities).toEqual([]);
+    expect(JSON.stringify(snapshot)).not.toContain("9501");
+    expect(JSON.stringify(snapshot)).not.toContain(
+      "PRIVATE_IDENTITY_LOOKUP_FAILURE"
+    );
   });
 
   it("keeps repositories and tasks when the Events request fails", async () => {
@@ -952,7 +1020,7 @@ describe("GitHub local connector", () => {
     });
 
     expect(snapshot).toMatchObject({
-      schemaVersion: "github-snapshot-v3",
+      schemaVersion: "github-snapshot-v6",
       activitiesState: "unavailable",
       activitiesTruncated: false,
       activities: [],
@@ -1008,6 +1076,88 @@ describe("GitHub local connector", () => {
       activitiesTruncated: false,
       activities: []
     });
+  });
+
+  it("reads legacy v2, v3, and v4 snapshots without changing their activity shape", async () => {
+    const cwd = await createTempDirectory();
+    await writeStoredGitHubTokens(storedTokens(), cwd);
+    const v2Snapshot: GitHubSnapshot = {
+      ...minimalGitHubSnapshot("2026-07-25T01:00:00.000Z"),
+      activities: [
+        {
+          id: "legacy-push",
+          source: "github",
+          kind: "user_activity",
+          activityKind: "push",
+          repositoryId: 101,
+          repositoryFullName: "acme/alpha",
+          occurredAt: "2026-07-25T00:59:00.000Z",
+          subjectType: "branch",
+          subjectNumber: null,
+          subjectTitle: null,
+          refName: "main",
+          reviewState: null
+        }
+      ]
+    };
+    await writeFile(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      JSON.stringify(v2Snapshot),
+      { mode: 0o600 }
+    );
+    const readV2 = await readStoredGitHubSnapshot(cwd);
+    expect(readV2).toEqual(v2Snapshot);
+    expect(readV2?.activities[0]).not.toHaveProperty("artifactId");
+
+    const v3Snapshot: GitHubSnapshot = {
+      ...v2Snapshot,
+      schemaVersion: "github-snapshot-v3",
+      actionabilityCoverage: {
+        state: "complete",
+        authoredPullRequestCount: 0,
+        attemptedCount: 0,
+        collectedCount: 0,
+        truncated: false
+      }
+    };
+    await writeFile(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      JSON.stringify(v3Snapshot),
+      { mode: 0o600 }
+    );
+    const readV3 = await readStoredGitHubSnapshot(cwd);
+    expect(readV3).toEqual(v3Snapshot);
+    expect(readV3?.activities[0]).not.toHaveProperty("artifactId");
+
+    const v4Snapshot: GitHubSnapshot = {
+      ...v3Snapshot,
+      schemaVersion: "github-snapshot-v4",
+      activities: [
+        { ...v3Snapshot.activities[0]!, artifactId: PUSH_ARTIFACT_ID }
+      ]
+    };
+    await writeFile(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      JSON.stringify(v4Snapshot),
+      { mode: 0o600 }
+    );
+    const readV4 = await readStoredGitHubSnapshot(cwd);
+    expect(readV4).toEqual(v4Snapshot);
+    expect(readV4?.activities[0]).not.toHaveProperty(
+      "subjectObjectId"
+    );
+
+    await writeFile(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      JSON.stringify({
+        ...v3Snapshot,
+        activities: [
+          { ...v3Snapshot.activities[0], artifactId: PUSH_ARTIFACT_ID }
+        ]
+      }),
+      { mode: 0o600 }
+    );
+    await expect(readStoredGitHubSnapshot(cwd)).resolves.toBeNull();
   });
 
   it("rotates both tokens after a 401 and retries with the new access token", async () => {
@@ -1404,7 +1554,12 @@ function searchResponse(items: unknown[]): Response {
 
 function basicSnapshotFetchMock(
   eventsResponse: (url: URL) => Response | Promise<Response>,
-  options: { issues?: unknown[] } = {}
+  options: {
+    issues?: unknown[];
+    pullRequestIssueResponse?: (
+      url: URL
+    ) => Response | Promise<Response>;
+  } = {}
 ) {
   return vi.fn(async (input: URL | RequestInfo) => {
     const url = requestUrl(input);
@@ -1438,6 +1593,22 @@ function basicSnapshotFetchMock(
     }
     if (url.pathname === "/users/nika/events") {
       return eventsResponse(url);
+    }
+    const pullRequestIssueMatch = url.pathname.match(
+      /^\/repos\/acme\/alpha\/issues\/([1-9][0-9]*)$/
+    );
+    if (pullRequestIssueMatch) {
+      if (options.pullRequestIssueResponse) {
+        return options.pullRequestIssueResponse(url);
+      }
+      const number = Number(pullRequestIssueMatch[1]);
+      return jsonResponse({
+        id: 1_000 + number,
+        number,
+        pull_request: {
+          url: "SECRET_PULL_REQUEST_ISSUE_LINK"
+        }
+      });
     }
     throw new Error(`unexpected URL: ${url.toString()}`);
   });

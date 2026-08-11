@@ -1218,7 +1218,7 @@ Developer Signal Intelligence v0.1은 GitHub authored PR actionability를 실제
 - Active input/result/policy/candidate/ranking/resolver:
   `v0.4 / v0.5 / v0.4 / v0.2 / v0.3 / v0.4`
 - live orchestrator/monitor/failure/replay:
-  `v0.5 / v0.5 / v0.4 / v2`
+  `v0.6 / v0.6 / v0.5 / v3`
 - Work Ledger, Candidate Funnel과 runtime projection: v0.1
 - Codex OpenLoop schema/rule/evidence/expiry: v1
 

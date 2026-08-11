@@ -273,12 +273,79 @@ final class LauncherModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(projection.decisionStatus, .suggested)
+        XCTAssertNil(projection.currentFocusSummary)
         XCTAssertEqual(projection.card?.title, "Phase 4C launcher 만들기")
         XCTAssertEqual(
             projection.card?.primaryAction,
             .openGitHub(
                 url: "https://github.com/biadone/blabase/issues/42"
             )
+        )
+    }
+
+    func testDecodesBoundedCurrentFocusSummaryWithoutAttentionEffect() throws {
+        let json = #"""
+        {
+          "contract":"blabase-launcher-attention-v2",
+          "resultId":"attention_result_11111111111111111111111111111111",
+          "asOf":"2026-08-03T00:00:00.000Z",
+          "decisionStatus":"no_action",
+          "decisionReasonCodes":["DECISION_SCOPED_NO_ACTION"],
+          "candidateCounts":{"eligible":0,"reviewRequired":0,"ineligible":1},
+          "sourceDiagnostics":[
+            {"source":"github","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"codex","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},
+            {"source":"notion","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null},
+            {"source":"google_calendar","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null}
+          ],
+          "currentFocusSummary":{
+            "status":"selected",
+            "displayLabel":"Launcher contract repair",
+            "reasonCodes":["FOCUS_LATEST_DIRECT_COMPLETE_EVENT"],
+            "attentionSelectionEffect":"none"
+          },
+          "card":null,
+          "clarificationQuestion":null,
+          "scopeStatement":"연결되고 갱신된 source만 평가했습니다.",
+          "unavailableSources":[],
+          "dashboardPath":"/"
+        }
+        """#.data(using: .utf8)!
+
+        let projection = try JSONDecoder().decode(
+            LauncherAttentionProjection.self,
+            from: json
+        )
+
+        XCTAssertEqual(projection.currentFocusSummary?.status, .selected)
+        XCTAssertEqual(
+            projection.currentFocusSummary?.displayLabel,
+            "Launcher contract repair"
+        )
+        let summary = try XCTUnwrap(projection.currentFocusSummary)
+        XCTAssertEqual(
+            summary.attentionSelectionEffect,
+            AttentionSelectionEffect.none
+        )
+        XCTAssertNil(projection.card)
+    }
+
+    func testCurrentFocusSummaryRequiresLabelOnlyWhenSelected() throws {
+        XCTAssertTrue(
+            AttentionCurrentFocusSummary(
+                status: .selected,
+                displayLabel: "Launcher contract repair",
+                reasonCodes: [.latestDirectCompleteEvent],
+                attentionSelectionEffect: .none
+            ).isValid
+        )
+        XCTAssertFalse(
+            AttentionCurrentFocusSummary(
+                status: .unresolved,
+                displayLabel: "must not leak",
+                reasonCodes: [.sourcePartial],
+                attentionSelectionEffect: .none
+            ).isValid
         )
     }
 
@@ -430,6 +497,130 @@ final class LauncherModelsTests: XCTestCase {
                 from: "https://app.blabase.com#private"
             )
         )
+    }
+
+    func testDecodesStrictOptionalRecentWorkSummary() throws {
+        let summary = #"{"displayLabel":"Launcher recent work","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"ahead","aheadCount":2,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#
+        let projectionJSON = #"{"contract":"blabase-launcher-attention-v2","resultId":"attention_result_11111111111111111111111111111111","asOf":"2026-08-03T00:00:00.000Z","decisionStatus":"no_action","decisionReasonCodes":["DECISION_SCOPED_NO_ACTION"],"candidateCounts":{"eligible":0,"reviewRequired":0,"ineligible":1},"sourceDiagnostics":[{"source":"github","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},{"source":"codex","state":"available","signalCount":1,"candidateSetComplete":true,"reasonCode":null},{"source":"notion","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null},{"source":"google_calendar","state":"unevaluated","signalCount":0,"candidateSetComplete":null,"reasonCode":null}],"currentFocusSummary":null,"recentWorkSummary":\#(summary),"card":null,"clarificationQuestion":null,"scopeStatement":"연결되고 갱신된 source만 평가했습니다.","unavailableSources":[],"dashboardPath":"/"}"#
+
+        let decoded = try JSONDecoder().decode(
+            LauncherAttentionProjection.self,
+            from: Data(projectionJSON.utf8)
+        )
+        XCTAssertEqual(
+            decoded.recentWorkSummary?.displayLabel,
+            "Launcher recent work"
+        )
+        XCTAssertEqual(decoded.recentWorkSummary?.trackingState, .ahead)
+        XCTAssertEqual(decoded.recentWorkSummary?.aheadCount, 2)
+        let encoded = try JSONEncoder().encode(decoded)
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                LauncherAttentionProjection.self,
+                from: encoded
+            ),
+            decoded
+        )
+
+        let nullJSON = projectionJSON.replacingOccurrences(
+            of: #""recentWorkSummary":\#(summary)"#,
+            with: #""recentWorkSummary":null"#
+        )
+        XCTAssertNil(
+            try JSONDecoder().decode(
+                LauncherAttentionProjection.self,
+                from: Data(nullJSON.utf8)
+            ).recentWorkSummary
+        )
+        let omittedJSON = projectionJSON.replacingOccurrences(
+            of: #""recentWorkSummary":\#(summary),"#,
+            with: ""
+        )
+        XCTAssertNil(
+            try JSONDecoder().decode(
+                LauncherAttentionProjection.self,
+                from: Data(omittedJSON.utf8)
+            ).recentWorkSummary
+        )
+
+        let unknownSummary = summary.replacingOccurrences(
+            of: #""executionEffect":"none""#,
+            with: #""executionEffect":"none","candidateId":"attention_11111111111111111111111111111111""#
+        )
+        let unknownJSON = projectionJSON.replacingOccurrences(
+            of: summary,
+            with: unknownSummary
+        )
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                LauncherAttentionProjection.self,
+                from: Data(unknownJSON.utf8)
+            )
+        )
+
+        let invalidTrackingSummaries = [
+            #"{"displayLabel":"x","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"in_sync","aheadCount":1,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#,
+            #"{"displayLabel":"x","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"ahead","aheadCount":0,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#,
+            #"{"displayLabel":"x","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"behind","aheadCount":0,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#,
+            #"{"displayLabel":"x","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"diverged","aheadCount":1,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#,
+            #"{"displayLabel":"x","pushOccurredAt":"2026-08-03T00:00:00.000Z","trackingState":"not_configured","aheadCount":0,"behindCount":0,"correlation":"repository_scope_only","presentation":"display_only","attentionSelectionEffect":"none","executionEffect":"none"}"#
+        ]
+        for invalidSummary in invalidTrackingSummaries {
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    AttentionRecentWorkSummary.self,
+                    from: Data(invalidSummary.utf8)
+                )
+            )
+        }
+
+        for invalidTimestamp in [
+            "2026-08-03T00:00Z",
+            "2026-08-03T00:00:00Z",
+            "2026-08-03T00:00:00.0Z",
+            "2026-08-03T00:00:00.0000Z",
+            "2026-08-03T00:00:00.000+00:00"
+        ] {
+            let invalidTimestampSummary = summary.replacingOccurrences(
+                of: "2026-08-03T00:00:00.000Z",
+                with: invalidTimestamp
+            )
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    AttentionRecentWorkSummary.self,
+                    from: Data(invalidTimestampSummary.utf8)
+                )
+            )
+        }
+
+        let utf16Boundary = AttentionRecentWorkSummary(
+            displayLabel: String(repeating: "😀", count: 120),
+            pushOccurredAt: "2026-08-03T00:00:00.000Z",
+            trackingState: .inSync,
+            aheadCount: 0,
+            behindCount: 0,
+            correlation: .repositoryScopeOnly,
+            presentation: .displayOnly,
+            attentionSelectionEffect: .none,
+            executionEffect: .none
+        )
+        XCTAssertEqual(utf16Boundary.displayLabel.utf16.count, 240)
+        XCTAssertTrue(utf16Boundary.isValid)
+        let overUtf16Boundary = AttentionRecentWorkSummary(
+            displayLabel: utf16Boundary.displayLabel + "x",
+            pushOccurredAt: utf16Boundary.pushOccurredAt,
+            trackingState: utf16Boundary.trackingState,
+            aheadCount: utf16Boundary.aheadCount,
+            behindCount: utf16Boundary.behindCount,
+            correlation: utf16Boundary.correlation,
+            presentation: utf16Boundary.presentation,
+            attentionSelectionEffect:
+                utf16Boundary.attentionSelectionEffect,
+            executionEffect: utf16Boundary.executionEffect
+        )
+        XCTAssertEqual(overUtf16Boundary.displayLabel.utf16.count, 241)
+        XCTAssertFalse(overUtf16Boundary.isValid)
+        XCTAssertThrowsError(try JSONEncoder().encode(overUtf16Boundary))
     }
 
     func testBoundsSupervisorRestarts() throws {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { managedCodexArtifactRelationProjectionSchema } from "../artifacts";
-import { claimAuthorityProjectionSchema } from "../claims";
+import { managedCodexArtifactRelationProjectionSchema } from "../artifacts/contracts";
+import { claimAuthorityProjectionSchema } from "../claims/contracts";
 import { phase2AttentionInputSchema } from "../crossSource/attentionSchema";
 import {
   compareRuntimeStrings,
@@ -20,7 +20,7 @@ import {
   ACTIVE_ATTENTION_RESULT_CONTRACT,
   PHASE2_ATTENTION_RESULT_CONTRACT
 } from "../crossSource/versions";
-import { attentionEligibilityShadowProjectionSchema } from "../eligibility";
+import { attentionEligibilityShadowProjectionSchema } from "../eligibility/contracts";
 import {
   managedCodexPublicProjectionSchema,
   managedCodexSemanticProjectionSchema
