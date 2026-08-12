@@ -16,15 +16,25 @@ import {
   type ContinuationExecutableEvaluationCase
 } from "./contracts";
 
+type EvaluationFixture = {
+  scenario: ContinuationExecutableEvaluationCase["scenario"];
+  materializedInput: unknown;
+  execute: () => ContinuationContractOracleSummary;
+};
+
 export type ContinuationDatasetEvaluation = {
   cases: ContinuationEvaluationCaseResult[];
   counts: {
     totalCaseCount: 22;
-    executableCaseCount: 12;
+    executableCaseCount: 21;
+    contractOracleCaseCount: 12;
+    resolverBehaviorCaseCount: 9;
     exactOraclePassCount: number;
     exactOracleFailureCount: number;
-    deferredCaseCount: 10;
-    notEvaluatedCaseCount: 10;
+    resolverBehaviorPassCount: number;
+    resolverBehaviorFailureCount: number;
+    deferredCaseCount: 1;
+    notEvaluatedCaseCount: 1;
     passCount: number;
   };
   metrics: ContinuationEvaluationMetrics;
@@ -32,7 +42,9 @@ export type ContinuationDatasetEvaluation = {
 };
 
 export type ContinuationEvaluationDependencies = {
-  buildFixture?: typeof buildContinuationEvaluationFixture;
+  buildFixture?: (
+    scenario: ContinuationExecutableEvaluationCase["scenario"]
+  ) => EvaluationFixture;
 };
 
 export function evaluateContinuationDataset(
@@ -47,19 +59,27 @@ export function evaluateContinuationDataset(
       item.measurementStatus === "measured"
   );
   const deferred = cases.filter((item) => item.measurementStatus === "not_evaluated");
-  const exactOraclePassCount = measured.filter((item) => item.passed).length;
+  const contractMeasured = measured.filter((item) => item.task === "contract_oracle");
+  const resolverMeasured = measured.filter((item) => item.task === "resolver_behavior");
+  const exactOraclePassCount = contractMeasured.filter((item) => item.passed).length;
+  const resolverBehaviorPassCount = resolverMeasured.filter((item) => item.passed).length;
   const criticalErrors = continuationEvaluationCriticalErrorCounts(cases);
   const counts = {
     totalCaseCount: 22 as const,
-    executableCaseCount: 12 as const,
+    executableCaseCount: 21 as const,
+    contractOracleCaseCount: 12 as const,
+    resolverBehaviorCaseCount: 9 as const,
     exactOraclePassCount,
     exactOracleFailureCount: 12 - exactOraclePassCount,
-    deferredCaseCount: 10 as const,
-    notEvaluatedCaseCount: 10 as const,
-    passCount: exactOraclePassCount
+    resolverBehaviorPassCount,
+    resolverBehaviorFailureCount: 9 - resolverBehaviorPassCount,
+    deferredCaseCount: 1 as const,
+    notEvaluatedCaseCount: 1 as const,
+    passCount: exactOraclePassCount + resolverBehaviorPassCount
   };
   const metrics = continuationEvaluationMetricsSchema.parse({
     exactOraclePassRate: exactOraclePassCount / 12,
+    resolverBehaviorPassRate: resolverBehaviorPassCount / 9,
     acceptableAt1: null,
     acceptableAt3: null,
     setupRouteAccuracy: null,
@@ -80,9 +100,9 @@ export function evaluateContinuationCase(
   evaluationCase: ContinuationEvaluationCase,
   dependencies: ContinuationEvaluationDependencies = {}
 ): ContinuationEvaluationCaseResult {
-  return evaluationCase.task === "contract_oracle"
-    ? evaluateExecutableCase(evaluationCase, dependencies)
-    : evaluateDeferredCase(evaluationCase);
+  return evaluationCase.caseId === "E1-RV-DT-001"
+    ? evaluateDeferredCase(evaluationCase)
+    : evaluateExecutableCase(evaluationCase, dependencies);
 }
 
 function evaluateExecutableCase(
@@ -234,6 +254,7 @@ function failedOracleSummary(): ContinuationContractOracleSummary {
     oracleCode: "CONTRACT_ORACLE_FAILED",
     contractOutcome: "rejected",
     decisionStatus: null,
+    coverageCode: null,
     prominentLane: null,
     invariantCodes: [],
     criticalErrorCodes: ["CONTRACT_INTEGRITY_FAILURE"]

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   adaptCodexContinuationObservations,
   adaptGitHubContinuationObservations,
-  continuationSourceAdapterBatchSchema
+  continuationSourceAdapterBatchSchema,
+  verifyContinuationIdentityBindingProof,
+  verifyContinuationSourceAdapterBatchProof
 } from "../src/continuation/adapters";
 
 const AS_OF = "2026-08-12T12:00:00.000Z";
@@ -12,6 +14,7 @@ const OPTIONS = {
   asOf: AS_OF,
   snapshotFreshnessCutoff: "2026-08-12T10:00:00.000Z"
 };
+const PROOF_OPTIONS = { installationSecret: OPTIONS.installationSecret };
 
 describe("Continuation source adapters", () => {
   it("projects only a recent GitHub v6 push into a sealed private observation", () => {
@@ -28,8 +31,10 @@ describe("Continuation source adapters", () => {
     });
     expect(result).toMatchObject({
       evaluatedAsOf: OPTIONS.asOf,
-      snapshotFreshnessCutoff: OPTIONS.snapshotFreshnessCutoff
+      snapshotFreshnessCutoff: OPTIONS.snapshotFreshnessCutoff,
+      sourceAssessment: { coverage: "complete", freshness: "fresh" }
     });
+    expect(verifyContinuationSourceAdapterBatchProof(result, PROOF_OPTIONS)).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(
       /octo|repo-name|refs\/heads|synthetic-installation-secret|artifact_[a-f0-9]/u
     );
@@ -61,6 +66,38 @@ describe("Continuation source adapters", () => {
       status: "unavailable",
       observations: []
     });
+  });
+
+  it("rejects legacy private batches and keyed-proof tampering", () => {
+    const result = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
+    expect(continuationSourceAdapterBatchSchema.safeParse({
+      ...result,
+      contract: "continuation-source-adapter-batch-v0.3",
+      schemaVersion: "continuation-source-adapter-batch-schema-v0.3"
+    }).success).toBe(false);
+    expect(verifyContinuationSourceAdapterBatchProof({
+      ...result,
+      batchProofHmac: "f".repeat(64)
+    }, PROOF_OPTIONS)).toBe(false);
+  });
+
+  it("fails closed for hostile identity proof values", () => {
+    const throwing = Object.defineProperty({}, "contract", {
+      get(): never {
+        throw new Error("hostile getter");
+      }
+    });
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+
+    for (const value of [throwing, cycle, BigInt(1)]) {
+      expect(() =>
+        verifyContinuationIdentityBindingProof(value, PROOF_OPTIONS)
+      ).not.toThrow();
+      expect(
+        verifyContinuationIdentityBindingProof(value, PROOF_OPTIONS)
+      ).toBe(false);
+    }
   });
 
   it("scopes opaque identities to the installation secret and remains deterministic", () => {
@@ -215,7 +252,7 @@ describe("Continuation source adapters", () => {
     );
     expect(github).toMatchObject({
       status: "unavailable",
-      evaluatedAsOf: null,
+      evaluatedAsOf: OPTIONS.asOf,
       snapshotFreshnessCutoff: null,
       observations: [],
       identityBindings: [],
@@ -223,7 +260,7 @@ describe("Continuation source adapters", () => {
     });
     expect(codex).toMatchObject({
       status: "unavailable",
-      evaluatedAsOf: null,
+      evaluatedAsOf: OPTIONS.asOf,
       snapshotFreshnessCutoff: null,
       observations: [],
       identityBindings: [],

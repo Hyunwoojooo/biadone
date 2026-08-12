@@ -391,27 +391,27 @@ MVP가 지원하는 capability는 `display | open_source | open_setup_surface`�
 
 ## 10. 결정론적 Continuity score
 
-Continuity score는 Continuation lane 안에서만 순서를 정하며 중요도를 나타내지 않는다.
+현재 R-003 v0.1 score는 shadow/dev 검증을 위한 **provisional ordering hypothesis**다. Continuation lane 내부 순서에만 사용하며 중요도, 완료 가능성, 확률 또는 release threshold를 나타내지 않는다.
 
-| 구성 요소 | 최대 점수 |
+| 구성 요소 | 현재 점수 |
 | --- | ---: |
-| Recency | 35 |
-| Exact corroboration | 25 |
-| Resumability | 20 |
-| Local continuity | 10 |
-| Explicit preference | 10 |
-| 합계 | 100 |
+| Recency | 35, 28, 21, 14 또는 7 |
+| Exact corroboration | 조건 충족 시 25, 그 외 0 |
+| Resumability | 0 |
+| Local continuity | 0 |
+| Explicit preference | 0 |
+| 현재 최대 합계 | 60 |
 
-세부 규칙은 versioned score policy에 기록한다.
+R-003 v0.1의 epoch-millisecond half-open recency bucket은 정확히 다음과 같다.
 
-- Recency는 2시간, 8시간, 24시간, 3일, 7일 bucket으로 계산하는 것을 초기안으로 한다.
-- 하나의 WorkContext에서는 최신 meaningful signal 하나만 recency 기여로 사용한다.
-- 이벤트 수가 많다는 이유로 점수가 중복 가산되지 않는다.
-- 결과 상위 3개에 동일 WorkContext가 두 번 이상 들어가지 않는 diversity cap을 기본으로 한다.
-- identity conflict는 candidate exclusion 사유다.
-- mapping absence는 exclusion이 아니라 Setup 상태와 capability 제한 사유다.
-- score가 같고 의미 있는 차이가 없으면 사용자가 선택하도록 alternative로 노출한다.
-- 그래도 순서가 필요하면 stable `candidateId` lexical order를 최종 deterministic tiebreak로 사용한다.
+- `[0, 2h) = 35`
+- `[2h, 8h) = 28`
+- `[8h, 24h) = 21`
+- `[24h, 72h) = 14`
+- `[72h, 168h) = 7`
+- future activity와 age `>= 168h`는 scoring input으로 허용하지 않는다.
+
+Exact corroboration 25점은 input-bound 검증된 `linked_workstream`, `evidenceBand=corroborated`, exact 두 source observation일 때만 부여한다. Setup candidate도 recency만 계산하지만 ready pool과 분리된다. Ready candidate가 하나라도 있으면 Setup은 선택 대상이 아니며, 그렇지 않을 때만 Setup pool을 사용한다. 각 pool은 score 내림차순, stable `candidateId` lexical 오름차순으로 정렬한다. Non-null WorkContext는 하나당 최대 한 후보만 선택하고 null-WorkContext Setup 후보는 자동 dedupe하지 않으며, 최종 선택은 primary 포함 최대 3개다.
 
 ## 11. Source 계약
 
@@ -480,6 +480,11 @@ Local Git은 raw file content, diff, command output 또는 전체 path를 public
 - 신선한 positive source-local evidence가 있으면 후보를 만들 수 있다.
 - 다른 source의 partial 또는 missing 상태는 caveat와 evidence band에 반영한다.
 - source-local 사실을 다른 source의 사실로 확장하지 않는다.
+- R-003의 decision coverage는 candidate evidence band와 분리해 authenticated GitHub/Codex batch source assessment에서 계산한다.
+- 두 required source가 exact resolver `asOf`에서 모두 available, complete, fresh이고 quality exclusion이 없을 때만 offer가 `COMPLETE`다. 별도 invalid/future/conflict/error exclusion이 있으면 valid offer를 유지할 수 있지만 coverage는 `SOURCE_LOCAL_PARTIAL`로 낮춘다.
+- 정상 empty/outside-window 결과는 동일한 complete/fresh 및 quality gate를 통과할 때만 `no_recent_context/COMPLETE`다. 빈 candidate 목록만으로 no-recent를 주장하지 않는다.
+- `setup_required`는 source collection이 complete여도 identity/actionability가 미완성이므로 항상 `SOURCE_LOCAL_PARTIAL`이다.
+- Candidate가 없고 safety/quality proof가 부족하면 `insufficient_evidence/INSUFFICIENT`, 두 required source가 unavailable이면 `unavailable/UNAVAILABLE`이다.
 
 ### 12.3 Conflict
 
@@ -721,6 +726,23 @@ Dataset 크기, annotator 수, disagreement 처리, confidence interval 및 실�
 | Monitor | two-lane 지원 버전 신규 |
 | Replay | two-lane provenance 지원 버전 신규 |
 | Launcher projection | v3 제안, older decoder compatibility 유지 |
+
+### 18.1.1 구현된 private R-003 checkpoint tuple
+
+2026-08-13의 unwired internal checkpoint는 다음 exact tuple을 사용한다. 이 표는 public release 또는 dataset freeze를 뜻하지 않는다.
+
+| 구성 요소 | Exact internal version |
+| --- | --- |
+| Private source adapter batch contract/schema/hash | v0.4; canonical whole-content HMAC, source assessment, all-status `evaluatedAsOf` |
+| R-001 identity input/result/schema/hash | v0.4; registry authority HMAC와 mandatory trusted `expectedRegistrySha256` |
+| R-002 derivation envelope/result/schema/hash | v0.3 |
+| R-002 derivation rule/config | v0.2 |
+| R-003 scoring result/schema, resolver, scoring policy | v0.1 |
+| R-003 resolution envelope/schema | v0.1 |
+| R-003 resolved-decision artifact/schema/hash | v0.1 |
+| Nested base Continuation Decision | 기존 v0.2; R-003 authenticity marker가 아니며 단독 소비 금지 |
+
+R-003 producer는 serialized artifacts만 받지 않는다. Original authenticated `ContinuationIdentityInput`, claimed R-001 result, R-002 envelope/result, explicit resolution envelope와 serialized artifact 밖의 installation secret을 요구한다. R-001을 재실행해 claimed result와 canonical-exact 비교하고 R-002 input-bound verifier를 실행한 뒤 전체 chain으로 decision을 만든다. Consumer의 `verifyContinuationDecisionAgainstInput`도 같은 chain을 재실행해 exact output을 비교한다. Installation secret은 저장·hash·출력하지 않는다. Current registry SHA, code commit SHA와 nullable dataset version/SHA pair는 caller artifact와 분리된 trusted expectations로 전달하며 exact 일치가 필요하다. 모든 source batch의 HMAC-bound `evaluatedAsOf`는 R-002/R-003 `asOf`와 같아야 한다. Base Decision v0.2가 nested body로 존재해도 distinct R-003 v0.1 resolved artifact와 input-bound verification 없이는 authentic resolver output으로 취급하지 않는다.
 
 ### 18.2 Bump 규칙
 

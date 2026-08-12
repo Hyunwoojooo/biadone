@@ -10,15 +10,35 @@ import {
   ACTIVE_ATTENTION_RESOLVER_VERSION,
   ACTIVE_ATTENTION_RESULT_CONTRACT,
   CONTINUATION_CANDIDATE_CONTRACT,
+  CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT,
+  CONTINUATION_CANDIDATE_DERIVATION_RESULT_CONTRACT,
+  CONTINUATION_CANDIDATE_DERIVATION_SCHEMA_VERSION,
   CONTINUATION_CANDIDATE_SCHEMA_VERSION,
+  CONTINUATION_CODEX_ADAPTER_VERSION,
+  CONTINUATION_CODEX_SOURCE_SCHEMA_VERSION,
   CONTINUATION_DECISION_CONTRACT,
   CONTINUATION_DECISION_SCHEMA_VERSION,
+  CONTINUATION_GITHUB_ADAPTER_VERSION,
+  CONTINUATION_GITHUB_SOURCE_SCHEMA_VERSION,
+  CONTINUATION_RESOLUTION_ENVELOPE_CONTRACT,
+  CONTINUATION_RESOLUTION_SCHEMA_VERSION,
+  CONTINUATION_RESOLVED_DECISION_CONTRACT,
+  CONTINUATION_RESOLVED_DECISION_SCHEMA_VERSION,
   CONTINUATION_RESOLVER_VERSION,
+  CONTINUATION_RULE_VERSION,
+  CONTINUATION_SCORING_POLICY_VERSION,
+  CONTINUATION_SCORING_RESULT_CONTRACT,
+  CONTINUATION_SCORING_SCHEMA_VERSION,
   WORK_SUGGESTION_BOARD_COMPOSER_VERSION,
   WORK_SUGGESTION_BOARD_INPUT_CONTRACT,
   WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
   WORK_SUGGESTION_BOARD_SCHEMA_VERSION
 } from "../../crossSource/versions";
+import {
+  CONTINUATION_IDENTITY_INPUT_CONTRACT,
+  CONTINUATION_IDENTITY_RESULT_CONTRACT,
+  CONTINUATION_IDENTITY_SCHEMA_VERSION
+} from "../../continuation/resolveIdentity";
 import { writePrivateEvaluationArtifact } from "../privateArtifactStore";
 import {
   CONTINUATION_EVALUATION_CONFIG_CANDIDATE_SHA256,
@@ -46,13 +66,17 @@ export function runContinuationEvaluation(input: {
   completedAt?: Date;
   code?: AttentionCodeProvenance;
   dataset?: ContinuationEvaluationDataset;
+} = {}, dependencies: {
+  now?: () => Date;
 } = {}): ContinuationEvaluationRunRecord {
-  const startedAt = input.startedAt ?? new Date();
-  const completedAt = input.completedAt ?? new Date();
+  const now = dependencies.now ?? (() => new Date());
+  const startedAt = input.startedAt ?? now();
   const dataset = continuationEvaluationDatasetSchema.parse(
     input.dataset ?? continuationEvaluationDataset
   );
+  const code = input.code ?? unavailableCodeProvenance();
   const evaluation = evaluateContinuationDataset(dataset);
+  const completedAt = input.completedAt ?? now();
   const versions = continuationEvaluationVersions();
   const deterministicOutputSha256 =
     continuationEvaluationDeterministicOutputSha256({
@@ -78,7 +102,9 @@ export function runContinuationEvaluation(input: {
     .filter((item) => !item.passed)
     .map((item) => ({
       caseId: item.caseId,
-      code: "CONTINUATION_EXACT_ORACLE_MISMATCH" as const
+      code: item.task === "contract_oracle"
+        ? "CONTINUATION_EXACT_ORACLE_MISMATCH" as const
+        : "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH" as const
     }));
   const content = {
     contract: CONTINUATION_EVALUATION_RUN_RECORD_CONTRACT,
@@ -110,7 +136,7 @@ export function runContinuationEvaluation(input: {
       candidatePayloadSha256: CONTINUATION_EVALUATION_CONFIG_CANDIDATE_SHA256
     },
     versions,
-    code: input.code ?? unavailableCodeProvenance(),
+    code,
     counts: evaluation.counts,
     metrics: evaluation.metrics,
     runtime: {
@@ -136,7 +162,7 @@ export function runContinuationEvaluation(input: {
     review: {
       automaticReviewStatus: status,
       humanReviewStatus: "not_started" as const,
-      qualityClaim: "contract_scaffold_validation_only" as const
+      qualityClaim: "contract_and_resolver_regression_only" as const
     },
     release: {
       releaseGateApplicable: false as const,
@@ -155,8 +181,8 @@ export function runContinuationEvaluation(input: {
     },
     limitations: [
       "Mutable synthetic Dev Candidate only; datasetSha256, configSha256, immutable references, frozenAt, baseline comparison, and human review remain absent.",
-      "Only 12 contract-oracle rows execute; the 10 resolver_behavior rows remain explicitly not_evaluated until their blocked tasks exist.",
-      "Acceptable@1, Acceptable@3, setup-route accuracy, runtime quality, release eligibility, and production generalization are not measured by contract_scaffold_validation."
+      "Twelve contract-oracle and nine authenticated resolver-behavior rows execute; only the B-001 cross-lane row remains explicitly not_evaluated.",
+      "Acceptable@1, Acceptable@3, setup-route accuracy, runtime quality, release eligibility, and production generalization are not measured by this regression checkpoint."
     ]
   };
   const record = {
@@ -228,8 +254,31 @@ export function continuationEvaluationVersions() {
     configVersion: continuationEvaluationConfig.version,
     continuationCandidateContract: CONTINUATION_CANDIDATE_CONTRACT,
     continuationCandidateSchemaVersion: CONTINUATION_CANDIDATE_SCHEMA_VERSION,
-    continuationDecisionContract: CONTINUATION_DECISION_CONTRACT,
-    continuationDecisionSchemaVersion: CONTINUATION_DECISION_SCHEMA_VERSION,
+    continuationGitHubSourceSchemaVersion: CONTINUATION_GITHUB_SOURCE_SCHEMA_VERSION,
+    continuationCodexSourceSchemaVersion: CONTINUATION_CODEX_SOURCE_SCHEMA_VERSION,
+    continuationGitHubAdapterVersion: CONTINUATION_GITHUB_ADAPTER_VERSION,
+    continuationCodexAdapterVersion: CONTINUATION_CODEX_ADAPTER_VERSION,
+    continuationSourceAdapterBatchContract: "continuation-source-adapter-batch-v0.4" as const,
+    continuationSourceAdapterBatchSchemaVersion: "continuation-source-adapter-batch-schema-v0.4" as const,
+    continuationIdentityInputContract: CONTINUATION_IDENTITY_INPUT_CONTRACT,
+    continuationIdentityResultContract: CONTINUATION_IDENTITY_RESULT_CONTRACT,
+    continuationIdentitySchemaVersion: CONTINUATION_IDENTITY_SCHEMA_VERSION,
+    continuationCandidateDerivationEnvelopeContract: CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT,
+    continuationCandidateDerivationResultContract: CONTINUATION_CANDIDATE_DERIVATION_RESULT_CONTRACT,
+    continuationCandidateDerivationSchemaVersion: CONTINUATION_CANDIDATE_DERIVATION_SCHEMA_VERSION,
+    continuationCandidateRuleVersion: CONTINUATION_RULE_VERSION,
+    continuationCandidateDerivationConfigVersion: "continuation-candidate-derivation-config-v0.2" as const,
+    continuationScoringResultContract: CONTINUATION_SCORING_RESULT_CONTRACT,
+    continuationScoringSchemaVersion: CONTINUATION_SCORING_SCHEMA_VERSION,
+    continuationScoringPolicyVersion: CONTINUATION_SCORING_POLICY_VERSION,
+    continuationResolutionEnvelopeContract: CONTINUATION_RESOLUTION_ENVELOPE_CONTRACT,
+    continuationResolutionSchemaVersion: CONTINUATION_RESOLUTION_SCHEMA_VERSION,
+    continuationResolutionConfigVersion: "continuation-resolution-config-v0.1" as const,
+    continuationResolvedDecisionContract: CONTINUATION_RESOLVED_DECISION_CONTRACT,
+    continuationResolvedDecisionSchemaVersion: CONTINUATION_RESOLVED_DECISION_SCHEMA_VERSION,
+    continuationBaseDecisionContract: CONTINUATION_DECISION_CONTRACT,
+    continuationBaseDecisionSchemaVersion: CONTINUATION_DECISION_SCHEMA_VERSION,
+    continuationBaseDecisionRole: "nested_not_authenticity_marker" as const,
     continuationResolverVersion: CONTINUATION_RESOLVER_VERSION,
     workSuggestionBoardInputContract: WORK_SUGGESTION_BOARD_INPUT_CONTRACT,
     workSuggestionBoardResultContract: WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
@@ -249,7 +298,9 @@ function contractScaffoldValidationPass(
   return (
     evaluation.counts.exactOraclePassCount === 12 &&
     evaluation.counts.exactOracleFailureCount === 0 &&
-    evaluation.counts.notEvaluatedCaseCount === 10 &&
+    evaluation.counts.resolverBehaviorPassCount === 9 &&
+    evaluation.counts.resolverBehaviorFailureCount === 0 &&
+    evaluation.counts.notEvaluatedCaseCount === 1 &&
     Object.values(evaluation.metrics.criticalErrors).every((count) => count === 0)
   );
 }

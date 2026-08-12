@@ -63,6 +63,7 @@ import {
   type ContinuationExecutableScenario,
   type ContinuationOracleInvariantCode
 } from "../../src/evaluation/continuation/contracts";
+import { buildContinuationResolverEvaluationFixture } from "./continuationResolverCaseBuilder";
 
 const STARTED_AT = "2026-08-02T02:59:00.000Z";
 const COMPLETED_AT = "2026-08-02T02:59:01.000Z";
@@ -112,6 +113,7 @@ export function buildContinuationEvaluationFixture(
     case "semantic_hash_runtime_metadata":
       return semanticHashFixture();
   }
+  return buildContinuationResolverEvaluationFixture(scenario);
 }
 
 function continuationReadyFixture(): ContinuationEvaluationFixture {
@@ -442,6 +444,7 @@ function summarize(input: {
   expectedCode: ContinuationContractOracleCode;
   contractOutcome: "accepted" | "rejected";
   decisionStatus: ContinuationContractOracleSummary["decisionStatus"];
+  coverageCode?: ContinuationContractOracleSummary["coverageCode"];
   prominentLane: ContinuationContractOracleSummary["prominentLane"];
   checks: OracleCheck[];
 }): ContinuationContractOracleSummary {
@@ -450,6 +453,17 @@ function summarize(input: {
     oracleCode: allPassed ? input.expectedCode : "CONTRACT_ORACLE_FAILED",
     contractOutcome: input.contractOutcome,
     decisionStatus: input.decisionStatus,
+    coverageCode: input.coverageCode ??
+      (input.decisionStatus === "offers_available" ||
+      input.decisionStatus === "no_recent_context"
+        ? "COMPLETE"
+        : input.decisionStatus === "setup_required"
+          ? "SOURCE_LOCAL_PARTIAL"
+          : input.decisionStatus === "insufficient_evidence"
+            ? "INSUFFICIENT"
+            : input.decisionStatus === "unavailable"
+              ? "UNAVAILABLE"
+              : null),
     prominentLane: input.prominentLane,
     invariantCodes: input.checks
       .filter((item) => item.passed)

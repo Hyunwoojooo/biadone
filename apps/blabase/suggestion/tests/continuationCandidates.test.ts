@@ -1123,7 +1123,7 @@ function makeIdentityResult(
   return continuationIdentityResultSchema.parse({
     ...content,
     resultSha256: runtimeSha256({
-      domain: "continuation-identity-result-hash-v0.3",
+      domain: "continuation-identity-result-hash-v0.4",
       result: content
     })
   });
@@ -1132,7 +1132,7 @@ function makeIdentityResult(
 function identityResultSha256(result: ContinuationIdentityResult): string {
   const { resultSha256: _resultSha256, ...content } = result;
   return runtimeSha256({
-    domain: "continuation-identity-result-hash-v0.3",
+    domain: "continuation-identity-result-hash-v0.4",
     result: content
   });
 }

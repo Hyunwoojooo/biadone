@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
@@ -41,9 +41,9 @@ export const CONTINUATION_IDENTITY_BINDING_PROOF_CONTRACT =
 export const CONTINUATION_IDENTITY_BINDING_PROOF_SCHEMA_VERSION =
   "continuation-identity-binding-proof-schema-v0.1" as const;
 
-const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.3" as const;
+const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.4" as const;
 const ADAPTER_BATCH_SCHEMA_VERSION =
-  "continuation-source-adapter-batch-schema-v0.3" as const;
+  "continuation-source-adapter-batch-schema-v0.4" as const;
 const ACTIVITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_GITHUB_ACTIVITIES = 10_000;
 const MAX_GITHUB_REPOSITORIES = 5_000;
@@ -187,24 +187,27 @@ export function verifyContinuationIdentityBindingProof(
   proofInput: unknown,
   optionsInput: { installationSecret: string }
 ): proofInput is ContinuationIdentityBindingProof {
-  const proof = continuationIdentityBindingProofSchema.safeParse(proofInput);
-  const options = identitySecretOptionsSchema.safeParse(optionsInput);
-  if (!proof.success || !options.success) return false;
-  const { proofSha256, ...content } = proof.data;
-  const expectedKeyId = `installation_key_${keyedDigest(
-    options.data.installationSecret,
-    "continuation-installation-key-id-v0.1",
-    "continuation-identity-binding"
-  ).slice(0, 32)}`;
-  return (
-    proof.data.keyId === expectedKeyId &&
-    proofSha256 ===
+  try {
+    const proof = continuationIdentityBindingProofSchema.safeParse(proofInput);
+    const options = identitySecretOptionsSchema.safeParse(optionsInput);
+    if (!proof.success || !options.success) return false;
+    const { proofSha256, ...content } = proof.data;
+    const expectedKeyId = `installation_key_${keyedDigest(
+      options.data.installationSecret,
+      "continuation-installation-key-id-v0.1",
+      "continuation-identity-binding"
+    ).slice(0, 32)}`;
+    return secureEqual(proof.data.keyId, expectedKeyId) && secureEqual(
+      proofSha256,
       keyedDigest(
         options.data.installationSecret,
         "continuation-identity-binding-proof-v0.1",
         content
       )
-  );
+    );
+  } catch {
+    return false;
+  }
 }
 
 const commonBatchShape = {
@@ -215,15 +218,24 @@ const commonBatchShape = {
     .string()
     .regex(/^[a-f0-9]{64}$/u)
     .nullable(),
-  evaluatedAsOf: z.string().datetime().nullable(),
+  evaluatedAsOf: z.string().datetime(),
   snapshotFreshnessCutoff: z.string().datetime().nullable(),
+  sourceAssessment: z
+    .object({
+      coverage: z.enum(["complete", "partial", "unknown"]),
+      freshness: z.enum(["fresh", "stale", "invalid", "unknown"])
+    })
+    .strict()
+    .nullable(),
   observations: z.array(continuationObservationSchema).max(10_000),
   identityBindings: z
     .array(continuationIdentityBindingProofSchema)
     .max(10_000),
   excludedCount: z.number().int().nonnegative().max(100_000),
   exclusions: z.array(exclusionCountSchema).max(16),
-  batchSha256: z.string().regex(/^[a-f0-9]{64}$/u)
+  batchSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  batchProofKeyId: z.string().regex(/^installation_key_[a-f0-9]{32}$/u),
+  batchProofHmac: z.string().regex(/^[a-f0-9]{64}$/u)
 };
 
 const githubBatchSchema = z
@@ -259,18 +271,17 @@ export const continuationSourceAdapterBatchSchema = z
     }
     if (
       (batch.status === "available") !==
-        (batch.evaluatedAsOf !== null) ||
+        (batch.snapshotFreshnessCutoff !== null) ||
       (batch.status === "available") !==
-        (batch.snapshotFreshnessCutoff !== null)
+        (batch.sourceAssessment !== null)
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["evaluatedAsOf"],
-        message: "Available adapter batches require exact freshness evaluation provenance"
+        message: "Adapter batch availability must match freshness provenance"
       });
     }
     if (
-      batch.evaluatedAsOf !== null &&
       batch.snapshotFreshnessCutoff !== null &&
       Date.parse(batch.snapshotFreshnessCutoff) >
         Date.parse(batch.evaluatedAsOf)
@@ -330,7 +341,11 @@ export const continuationSourceAdapterBatchSchema = z
         message: "Exclusions must be canonical and unique"
       });
     }
-    const { batchSha256: _storedHash, ...content } = batch;
+    const {
+      batchSha256: _storedHash,
+      batchProofHmac: _batchProofHmac,
+      ...content
+    } = batch;
     if (batch.batchSha256 !== adapterBatchSha256(content)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -395,6 +410,31 @@ export type ContinuationSourceAdapterOptions = {
   snapshotFreshnessCutoff: string;
 };
 
+export function verifyContinuationSourceAdapterBatchProof(
+  batchInput: unknown,
+  optionsInput: { installationSecret: string }
+): boolean {
+  try {
+    const batch = continuationSourceAdapterBatchSchema.safeParse(batchInput);
+    const options = identitySecretOptionsSchema.safeParse(optionsInput);
+    if (!batch.success || !options.success) return false;
+    const {
+      batchSha256: _batchSha256,
+      batchProofHmac,
+      ...content
+    } = batch.data;
+    return secureEqual(
+      batch.data.batchProofKeyId,
+      batchProofKeyIdFor(options.data.installationSecret)
+    ) && secureEqual(
+      batchProofHmac,
+      batchProofHmacFor(options.data.installationSecret, content)
+    );
+  } catch {
+    return false;
+  }
+}
+
 const optionsSchema = z
   .object({
     installationSecret: z.string().min(1).max(1_024),
@@ -419,7 +459,7 @@ export function adaptGitHubContinuationObservations(
   try {
     return adaptGitHubContinuationObservationsUnchecked(input, optionsInput);
   } catch {
-    return unavailableBatch("github", "SOURCE_REJECTED");
+    return unavailableBatch("github", "SOURCE_REJECTED", optionsInput);
   }
 }
 
@@ -429,14 +469,14 @@ function adaptGitHubContinuationObservationsUnchecked(
 ): ContinuationSourceAdapterBatch {
   const options = optionsSchema.safeParse(optionsInput);
   if (!options.success) {
-    return unavailableBatch("github", "SOURCE_REJECTED");
+    return unavailableBatch("github", "SOURCE_REJECTED", optionsInput);
   }
   const rawVersion = schemaVersionOf(input);
   if (input === null || input === undefined) {
-    return unavailableBatch("github", "SNAPSHOT_MISSING");
+    return unavailableBatch("github", "SNAPSHOT_MISSING", options.data);
   }
   if (rawVersion !== CONTINUATION_GITHUB_SOURCE_SCHEMA_VERSION) {
-    return unavailableBatch("github", "UNSUPPORTED_SOURCE_VERSION");
+    return unavailableBatch("github", "UNSUPPORTED_SOURCE_VERSION", options.data);
   }
   if (
     arrayLength(input, "activities") > MAX_GITHUB_ACTIVITIES ||
@@ -444,17 +484,17 @@ function adaptGitHubContinuationObservationsUnchecked(
     arrayLength(input, "tasks") > MAX_GITHUB_TASKS ||
     arrayLength(input, "installations") > MAX_GITHUB_INSTALLATIONS
   ) {
-    return unavailableBatch("github", "INPUT_LIMIT_EXCEEDED");
+    return unavailableBatch("github", "INPUT_LIMIT_EXCEEDED", options.data);
   }
   const validated = validateGitHubSnapshot(input);
   if (validated.status !== "ok") {
-    return unavailableBatch("github", "SOURCE_REJECTED");
+    return unavailableBatch("github", "SOURCE_REJECTED", options.data);
   }
   const { artifact } = validated;
   const asOfMs = Date.parse(options.data.asOf);
   const snapshotMs = Date.parse(artifact.fetchedAt);
   if (snapshotMs > asOfMs) {
-    return unavailableBatch("github", "SNAPSHOT_FROM_FUTURE");
+    return unavailableBatch("github", "SNAPSHOT_FROM_FUTURE", options.data);
   }
   const exclusions = new Map<ExclusionReason, number>();
   if (artifact.payload.activitiesState === "unavailable") {
@@ -465,7 +505,12 @@ function adaptGitHubContinuationObservationsUnchecked(
       [],
       [],
       exclusions,
-      options.data
+      options.data,
+      sourceAssessment(
+        true,
+        snapshotMs,
+        options.data.snapshotFreshnessCutoff
+      )
     );
   }
 
@@ -586,7 +631,16 @@ function adaptGitHubContinuationObservationsUnchecked(
     observations,
     identityBindings,
     exclusions,
-    options.data
+    options.data,
+    sourceAssessment(
+      artifact.payload.truncated ||
+        artifact.payload.activitiesTruncated ||
+        artifact.payload.activitiesState !== "available" ||
+        Date.parse(artifact.payload.activityWindowStart) >
+          asOfMs - ACTIVITY_WINDOW_MS,
+      snapshotMs,
+      options.data.snapshotFreshnessCutoff
+    )
   );
 }
 
@@ -597,7 +651,7 @@ export function adaptCodexContinuationObservations(
   try {
     return adaptCodexContinuationObservationsUnchecked(input, optionsInput);
   } catch {
-    return unavailableBatch("codex", "SOURCE_REJECTED");
+    return unavailableBatch("codex", "SOURCE_REJECTED", optionsInput);
   }
 }
 
@@ -607,30 +661,30 @@ function adaptCodexContinuationObservationsUnchecked(
 ): ContinuationSourceAdapterBatch {
   const options = optionsSchema.safeParse(optionsInput);
   if (!options.success) {
-    return unavailableBatch("codex", "SOURCE_REJECTED");
+    return unavailableBatch("codex", "SOURCE_REJECTED", optionsInput);
   }
   const rawVersion = schemaVersionOf(input);
   if (input === null || input === undefined) {
-    return unavailableBatch("codex", "SNAPSHOT_MISSING");
+    return unavailableBatch("codex", "SNAPSHOT_MISSING", options.data);
   }
   if (rawVersion !== CONTINUATION_CODEX_SOURCE_SCHEMA_VERSION) {
-    return unavailableBatch("codex", "UNSUPPORTED_SOURCE_VERSION");
+    return unavailableBatch("codex", "UNSUPPORTED_SOURCE_VERSION", options.data);
   }
   if (
     arrayLength(input, "sessions") > MAX_CODEX_SESSIONS ||
     arrayLength(input, "scopeIds") > MAX_CODEX_SCOPE_IDS
   ) {
-    return unavailableBatch("codex", "INPUT_LIMIT_EXCEEDED");
+    return unavailableBatch("codex", "INPUT_LIMIT_EXCEEDED", options.data);
   }
   const validated = validateCodexSnapshot(input);
   if (validated.status !== "ok") {
-    return unavailableBatch("codex", "SOURCE_REJECTED");
+    return unavailableBatch("codex", "SOURCE_REJECTED", options.data);
   }
   const { artifact } = validated;
   const asOfMs = Date.parse(options.data.asOf);
   const snapshotMs = Date.parse(artifact.fetchedAt);
   if (snapshotMs > asOfMs) {
-    return unavailableBatch("codex", "SNAPSHOT_FROM_FUTURE");
+    return unavailableBatch("codex", "SNAPSHOT_FROM_FUTURE", options.data);
   }
   const exclusions = new Map<ExclusionReason, number>();
   const eligible = artifact.payload.sessions.filter((session) => {
@@ -741,7 +795,20 @@ function adaptCodexContinuationObservationsUnchecked(
     observations,
     identityBindings,
     exclusions,
-    options.data
+    options.data,
+    sourceAssessment(
+      artifact.payload.truncated ||
+        Date.parse(artifact.payload.lookbackStart) >
+          asOfMs - ACTIVITY_WINDOW_MS ||
+        artifact.payload.sessions.some((session) =>
+          session.content.truncated ||
+          ["partial", "stale", "failed", "expired"].includes(
+            session.content.state
+          )
+        ),
+      snapshotMs,
+      options.data.snapshotFreshnessCutoff
+    )
   );
 }
 
@@ -797,7 +864,11 @@ function availableBatch(
   observationsInput: ContinuationObservation[],
   identityBindingsInput: ContinuationIdentityBindingProof[],
   exclusionMap: Map<ExclusionReason, number>,
-  evaluation: { asOf: string; snapshotFreshnessCutoff: string }
+  evaluation: ContinuationSourceAdapterOptions,
+  assessment: {
+    coverage: "complete" | "partial";
+    freshness: "fresh" | "stale";
+  }
 ): ContinuationSourceAdapterBatch {
   return sealBatch({
     source,
@@ -805,40 +876,53 @@ function availableBatch(
     sourceSnapshotSha256,
     evaluatedAsOf: evaluation.asOf,
     snapshotFreshnessCutoff: evaluation.snapshotFreshnessCutoff,
+    sourceAssessment: assessment,
     observations: [...observationsInput].sort((left, right) =>
       compareRuntimeStrings(left.observationId, right.observationId)
     ),
     identityBindings: dedupeCanonical(identityBindingsInput),
     exclusions: exclusionCounts(exclusionMap)
-  });
+  }, evaluation.installationSecret);
 }
 
 function unavailableBatch(
   source: AdapterSource,
-  reasonCode: ExclusionReason
+  reasonCode: ExclusionReason,
+  optionsInput: unknown
 ): ContinuationSourceAdapterBatch {
+  const options = optionsSchema.safeParse(optionsInput);
+  const installationSecret = options.success
+    ? options.data.installationSecret
+    : signingSecretForRejectedOptions(optionsInput);
   return sealBatch({
     source,
     status: "unavailable",
     sourceSnapshotSha256: null,
-    evaluatedAsOf: null,
+    evaluatedAsOf: options.success
+      ? options.data.asOf
+      : rejectedEvaluationAsOf(optionsInput),
     snapshotFreshnessCutoff: null,
+    sourceAssessment: null,
     observations: [],
     identityBindings: [],
     exclusions: [{ reasonCode, count: 1 }]
-  });
+  }, installationSecret);
 }
 
 function sealBatch(input: {
   source: AdapterSource;
   status: "available" | "unavailable";
   sourceSnapshotSha256: string | null;
-  evaluatedAsOf: string | null;
+  evaluatedAsOf: string;
   snapshotFreshnessCutoff: string | null;
+  sourceAssessment: {
+    coverage: "complete" | "partial" | "unknown";
+    freshness: "fresh" | "stale" | "invalid" | "unknown";
+  } | null;
   observations: ContinuationObservation[];
   identityBindings: ContinuationIdentityBindingProof[];
   exclusions: Array<{ reasonCode: ExclusionReason; count: number }>;
-}): ContinuationSourceAdapterBatch {
+}, installationSecret: string): ContinuationSourceAdapterBatch {
   const versions =
     input.source === "github"
       ? {
@@ -858,25 +942,97 @@ function sealBatch(input: {
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     evaluatedAsOf: input.evaluatedAsOf,
     snapshotFreshnessCutoff: input.snapshotFreshnessCutoff,
+    sourceAssessment: input.sourceAssessment,
     observations: input.observations,
     identityBindings: input.identityBindings,
     excludedCount: input.exclusions.reduce(
       (total, exclusion) => total + exclusion.count,
       0
     ),
-    exclusions: input.exclusions
+    exclusions: input.exclusions,
+    batchProofKeyId: batchProofKeyIdFor(installationSecret)
   };
   return continuationSourceAdapterBatchSchema.parse({
     ...content,
-    batchSha256: adapterBatchSha256(content)
+    batchSha256: adapterBatchSha256(content),
+    batchProofHmac: batchProofHmacFor(installationSecret, content)
   });
 }
 
 function adapterBatchSha256(value: unknown): string {
   return runtimeSha256({
-    domain: "continuation-source-adapter-batch-hash-v0.3",
+    domain: "continuation-source-adapter-batch-hash-v0.4",
     batch: value
   });
+}
+
+function batchProofKeyIdFor(installationSecret: string): string {
+  return `installation_key_${keyedDigest(
+    installationSecret,
+    "continuation-adapter-batch-key-id-v0.1",
+    "continuation-source-adapter-batch"
+  ).slice(0, 32)}`;
+}
+
+function batchProofHmacFor(
+  installationSecret: string,
+  content: unknown
+): string {
+  return keyedDigest(
+    installationSecret,
+    "continuation-source-adapter-batch-proof-v0.4",
+    content
+  );
+}
+
+function sourceAssessment(
+  partial: boolean,
+  snapshotMs: number,
+  snapshotFreshnessCutoff: string
+): { coverage: "complete" | "partial"; freshness: "fresh" | "stale" } {
+  return {
+    coverage: partial ? "partial" : "complete",
+    freshness:
+      snapshotMs < Date.parse(snapshotFreshnessCutoff) ? "stale" : "fresh"
+  };
+}
+
+function signingSecretForRejectedOptions(value: unknown): string {
+  try {
+    if (typeof value !== "object" || value === null) {
+      return "invalid-continuation-adapter-options";
+    }
+    const candidate = Reflect.get(value, "installationSecret");
+    return typeof candidate === "string" && candidate.length > 0 && candidate.length <= 1_024
+      ? candidate
+      : "invalid-continuation-adapter-options";
+  } catch {
+    return "invalid-continuation-adapter-options";
+  }
+}
+
+function rejectedEvaluationAsOf(value: unknown): string {
+  try {
+    if (typeof value !== "object" || value === null) {
+      return "1970-01-01T00:00:00.000Z";
+    }
+    const candidate = Reflect.get(value, "asOf");
+    return typeof candidate === "string" &&
+      Number.isInteger(Date.parse(candidate))
+      ? new Date(Date.parse(candidate)).toISOString()
+      : "1970-01-01T00:00:00.000Z";
+  } catch {
+    return "1970-01-01T00:00:00.000Z";
+  }
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    timingSafeEqual(leftBuffer, rightBuffer)
+  );
 }
 
 function keyedDigest(

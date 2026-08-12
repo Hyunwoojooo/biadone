@@ -18,8 +18,11 @@ import {
   createContinuationIdentityBindingProof
 } from "../src/continuation/adapters";
 import {
-  CONTINUATION_IDENTITY_INPUT_CONTRACT,
-  CONTINUATION_IDENTITY_SCHEMA_VERSION,
+  createContinuationObservationId,
+  sealContinuationObservation
+} from "../src/continuation/contracts";
+import {
+  createContinuationIdentityInput,
   resolveContinuationIdentity
 } from "../src/continuation/resolveIdentity";
 
@@ -51,7 +54,7 @@ describe("Continuation R-001 identity resolution", () => {
     const originals = [...codex.observations, ...github.observations];
     const result = resolveContinuationIdentity(
       input(registry, [codex, github]),
-      { installationSecret: SECRET }
+      identityOptions(registry)
     );
 
     expect(result.ok).toBe(true);
@@ -106,9 +109,10 @@ describe("Continuation R-001 identity resolution", () => {
       explicitUserConfirmation: true
     }).registry;
     const github = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
-    const result = resolveContinuationIdentity(input(registry, [github]), {
-      installationSecret: SECRET
-    });
+    const result = resolveContinuationIdentity(
+      input(registry, [github]),
+      identityOptions(registry)
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -133,9 +137,10 @@ describe("Continuation R-001 identity resolution", () => {
       explicitUserConfirmation: true
     }).registry;
     const github = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
-    const result = resolveContinuationIdentity(input(registry, [github]), {
-      installationSecret: SECRET
-    });
+    const result = resolveContinuationIdentity(
+      input(registry, [github]),
+      identityOptions(registry)
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -160,20 +165,23 @@ describe("Continuation R-001 identity resolution", () => {
         structuredClone(github.identityBindings[0]!)
       ]
     });
+    const validInput = input(registry, [github]);
 
     expect(
-      resolveContinuationIdentity(input(registry, [missing]), {
-        installationSecret: SECRET
-      })
+      resolveContinuationIdentity(
+        { ...validInput, adapterBatches: [missing] },
+        identityOptions(registry)
+      )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(
-      resolveContinuationIdentity(input(registry, [duplicate]), {
-        installationSecret: SECRET
-      })
+      resolveContinuationIdentity(
+        { ...validInput, adapterBatches: [duplicate] },
+        identityOptions(registry)
+      )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
   });
 
-  it("returns conflict for distinct valid proofs that bind one identity to multiple scopes", () => {
+  it("rejects an added proof when the whole-batch authority proof is unchanged", () => {
     const registry = registryWithProject();
     const github = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
     const conflictingProof = createContinuationIdentityBindingProof(
@@ -197,17 +205,10 @@ describe("Continuation R-001 identity resolution", () => {
         )
       )
     });
-    const result = resolveContinuationIdentity(input(registry, [conflicting]), {
-      installationSecret: SECRET
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.result.resolutions[0]).toMatchObject({
-      status: "conflict",
-      workContextId: null,
-      reasonCodes: ["IDENTITY_BINDING_CONFLICT"]
-    });
+    expect(resolveContinuationIdentity(
+      input(registry, [conflicting]),
+      identityOptions(registry)
+    )).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
   });
 
   it("rejects copied or tampered binding proofs and the wrong installation secret", () => {
@@ -219,21 +220,76 @@ describe("Continuation R-001 identity resolution", () => {
     const tamperedWithValidBatchHash = resealBatch(tampered);
 
     expect(
-      resolveContinuationIdentity(input(registry, [tamperedWithValidBatchHash]), {
-        installationSecret: SECRET
-      })
+      resolveContinuationIdentity(
+        input(registry, [tamperedWithValidBatchHash]),
+        identityOptions(registry)
+      )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(
       resolveContinuationIdentity(input(registry, [github]), {
+        ...identityOptions(registry),
         installationSecret: "different-installation-secret"
       })
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(
       resolveContinuationIdentity(
         { ...input(registry, [github]), bindings: [] },
-        { installationSecret: SECRET }
+        identityOptions(registry)
       )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
+  });
+
+  it("rejects unkeyed reseals of every security-relevant observation field", () => {
+    const registry = registryWithProject();
+    const github = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
+    const original = github.observations[0]!;
+    const { observationSha256: _observationSha256, ...content } = original;
+    const earlierObservedAt = "2026-08-12T11:29:59.999Z";
+    const variants = [
+      { ...content, terminalState: "active" as const },
+      { ...content, sourceCoverage: "partial" as const },
+      { ...content, snapshotFreshness: "stale" as const },
+      { ...content, errorCodes: ["SYNTHETIC_ERROR"] },
+      { ...content, conflictCodes: ["SYNTHETIC_CONFLICT"] },
+      { ...content, evidenceRefs: [`evidence_${"f".repeat(32)}`] },
+      {
+        ...content,
+        observationId: createContinuationObservationId({
+          sourceIdentity: content.sourceIdentity,
+          sourceRecordRef: content.sourceRecordRef,
+          observedAt: earlierObservedAt
+        }),
+        observedAt: earlierObservedAt,
+        expiresAt: "2026-08-19T11:29:59.999Z",
+        payload: {
+          kind: "github_push" as const,
+          pushOccurredAt: earlierObservedAt
+        }
+      }
+    ];
+
+    for (const variant of variants) {
+      const observation = sealContinuationObservation(variant);
+      const tampered = resealBatch({
+        ...structuredClone(github),
+        observations: [observation]
+      });
+      expect(resolveContinuationIdentity(
+        input(registry, [tampered]),
+        identityOptions(registry)
+      )).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
+    }
+    const assessmentTampered = resealBatch({
+      ...structuredClone(github),
+      sourceAssessment: {
+        coverage: "partial" as const,
+        freshness: "fresh" as const
+      }
+    });
+    expect(resolveContinuationIdentity(
+      input(registry, [assessmentTampered]),
+      identityOptions(registry)
+    )).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
   });
 
   it("is deterministic for source input permutations", () => {
@@ -250,12 +306,14 @@ describe("Continuation R-001 identity resolution", () => {
     };
     const leftBatch = adaptGitHubContinuationObservations(leftSnapshot, OPTIONS);
     const rightBatch = adaptGitHubContinuationObservations(rightSnapshot, OPTIONS);
-    const left = resolveContinuationIdentity(input(registry, [leftBatch]), {
-      installationSecret: SECRET
-    });
-    const right = resolveContinuationIdentity(input(registry, [rightBatch]), {
-      installationSecret: SECRET
-    });
+    const left = resolveContinuationIdentity(
+      input(registry, [leftBatch]),
+      identityOptions(registry)
+    );
+    const right = resolveContinuationIdentity(
+      input(registry, [rightBatch]),
+      identityOptions(registry)
+    );
 
     expect(left).toEqual(right);
   });
@@ -264,23 +322,45 @@ describe("Continuation R-001 identity resolution", () => {
     const registry = registryWithProject();
     const github = adaptGitHubContinuationObservations(githubSnapshot(), OPTIONS);
     const valid = input(registry, [github]);
+    const authorityTamperedRegistry = confirmProjectMapping(registry, {
+      scope: githubScope("10"),
+      projectId: PROJECT_A,
+      confirmedAt: "2026-08-12T00:01:00.000Z",
+      explicitUserConfirmation: true
+    }).registry;
+    expect(
+      resolveContinuationIdentity(
+        valid,
+        identityOptions(authorityTamperedRegistry)
+      )
+    ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
+    expect(
+      resolveContinuationIdentity(
+        { ...valid, registry: authorityTamperedRegistry },
+        identityOptions(registry)
+      )
+    ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(
       resolveContinuationIdentity(
         {
           ...valid,
           registry: { ...registry, registrySha256: "0".repeat(64) }
         },
-        { installationSecret: SECRET }
+        identityOptions(registry)
       )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(
       resolveContinuationIdentity(
-        { ...valid, schemaVersion: "continuation-identity-schema-v9" },
-        { installationSecret: SECRET }
+        {
+          ...valid,
+          contract: "continuation-identity-input-v0.3",
+          schemaVersion: "continuation-identity-schema-v0.3"
+        },
+        identityOptions(registry)
       )
     ).toEqual({ ok: false, code: "IDENTITY_INPUT_REJECTED" });
     expect(() =>
-      resolveContinuationIdentity(BigInt(1), { installationSecret: SECRET })
+      resolveContinuationIdentity(BigInt(1), identityOptions(registry))
     ).not.toThrow();
   });
 });
@@ -311,23 +391,33 @@ function input(
     ReturnType<typeof adaptCodexContinuationObservations>
   >
 ) {
-  return {
-    contract: CONTINUATION_IDENTITY_INPUT_CONTRACT,
-    schemaVersion: CONTINUATION_IDENTITY_SCHEMA_VERSION,
+  return createContinuationIdentityInput({
     registry,
     adapterBatches
+  }, identityOptions(registry));
+}
+
+function identityOptions(registry: { registrySha256: string }) {
+  return {
+    installationSecret: SECRET,
+    expectedRegistrySha256: registry.registrySha256
   };
 }
 
 function resealBatch<T extends { batchSha256: string }>(batch: T): T {
-  const { batchSha256: _batchSha256, ...content } = batch;
+  const {
+    batchSha256: _batchSha256,
+    batchProofHmac,
+    ...content
+  } = batch as T & { batchProofKeyId: string; batchProofHmac: string };
   return {
-    ...batch,
+    ...content,
     batchSha256: runtimeSha256({
-      domain: "continuation-source-adapter-batch-hash-v0.3",
+      domain: "continuation-source-adapter-batch-hash-v0.4",
       batch: content
-    })
-  };
+    }),
+    batchProofHmac
+  } as T;
 }
 
 function githubSnapshot() {

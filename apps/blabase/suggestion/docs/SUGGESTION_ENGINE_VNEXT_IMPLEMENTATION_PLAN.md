@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Status | **Implementation in progress — R-002 implemented and validated; R-003 next; release not approved** |
+| Status | **Implementation in progress — R-003 synthetic resolver checkpoint implemented and validated; B-001 next; release not approved** |
 | Date | 2026-08-13 |
 | Owner | User (product decision and release approver); Codex (AI implementation executor and record author) |
 | Authority | `SUGGESTION_ENGINE_VNEXT_TECH_SPEC.md` |
@@ -29,7 +29,7 @@
 - GitHub repository, Codex session, local workspace를 사용자 중심으로 묶는 first-class WorkContext가 없다.
 - mapping 부재와 partial coverage가 현재 제품에서 전체 추천 실패처럼 보인다.
 - 기존 historical exact-resumption 계획은 broad source-local Continuation MVP와 분리되지 않았다.
-- E-001, S-001, R-001과 R-002의 pure unwired checkpoint가 구현됐으며, 다음 engine task는 R-003 scoring/resolution이다. API, UI, runtime, Board, persistence, monitor와 action은 아직 연결되지 않았다.
+- E-001 v0.2 scaffold와 authenticated resolver integration, S-001, R-001, R-002, R-003의 pure unwired synthetic regression checkpoint가 구현·검증됐다. 12 contract oracle과 9 resolver behavior row가 통과했고 B-001 cross-lane row 1개만 deferred다. 다음 code task는 B-001이며 trusted R-003 input-bound verifier seam만 소비해야 한다. API, UI, runtime, Board, persistence, monitor와 action은 아직 연결되지 않았다.
 
 이 상태는 아래 task별 기록과 2026-08-13 KST automated validation 결과를 함께 반영하며, production activation이나 release를 의미하지 않는다.
 
@@ -52,16 +52,21 @@
 D-001 Product decisions + draft ECR
   └── C-001 Contracts/version ledger
         ├── E-001 Dataset/evaluator scaffolding [done] ─┐
-        ├── S-001 Source adapters v0.3 [done] ──────────┤
-        └── R-001 Identity/mapping v0.3 [done] ─────────┤
+        ├── S-001 private adapter batch v0.4 [done] ────┤
+        └── R-001 Identity/mapping v0.4 [done] ─────────┤
                                                        ▼
-                                      R-002 Candidate derivation v0.2 [done]
+                         R-002 Candidate envelope/result v0.3 [done]
+                                (rule/config v0.2)
                                                        │
                                                        ▼
-                                      R-003 Score/resolver shadow [next]
-                                                     │
+                              R-003 Score/resolver core v0.1 [done]
+                                      │                    │
+                                      ▼                    ▼
+                    E-001 resolver integration       B-001 Board composer
+                              [done]                    [next code task]
+                                      └──────────────┬─────┘
                                                      ▼
-                                            B-001 Board composer
+                                      shadow-use approval remains pending
                                                      │
                                                      ▼
                                             A-001 APIs
@@ -82,7 +87,7 @@ E-001 + R-003 + B-001 + A-001 + U-001 + X-001 + L-001 + M-001
          └── P-001 Human review, freeze, staged rollout
 ```
 
-`R-002`의 `E-001`, `S-001`, `R-001` dependency는 충족됐고 pure candidate derivation checkpoint가 구현·검증됐다. 다음 task는 `R-003`이며, R-003 behavior는 별도 evaluator integration과 human gate 전에는 production path에 연결하지 않는다.
+`R-003` core와 E-001 v0.2의 9개 resolver behavior row 연결은 구현·검증됐다. B-001 cross-lane row는 Board 구현까지 유일하게 deferred다. B-001은 artifact schema 성공만 신뢰하지 않고 R-003의 original-input-bound verifier를 필수 seam으로 사용해야 한다. 어떤 R-003/Board behavior도 human gate 전에는 production path에 연결하지 않는다.
 
 ## 5. MVP 범위
 
@@ -140,9 +145,9 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - source-local, mapping missing, conflict, stale, terminal, dedupe, privacy, board precedence 사례를 합성 데이터로 작성한다.
 - human labels와 provisional quality gate의 형식을 정의한다.
 
-**Status (2026-08-12):** `E-001` 구현과 automated evaluation checkpoint가 완료됐다. Targeted Vitest 3개 파일은 39/39, 최종 typecheck와 lint는 pass했고 `npm run continuation:baseline`도 pass했다. Baseline run `continuation_eval_run_df5a85b1e2bb784355c035969f835380`은 22개 중 executable contract oracle 12개를 모두 통과시켰고 10개 resolver behavior case는 `not_evaluated`로 deferred했다. `exactOraclePassRate=1`, 모든 recorded critical failure count는 0, automatic review는 passed이며 human review는 `not_started`다. Private artifact와 전체 hash/provenance는 Draft ECR의 E-001 section에 기록됐다. Dataset은 여전히 mutable Dev Candidate이고 frozen dataset, human-approved Gold, comparison/improvement, resolver quality 또는 release claim이 아니다. Release는 deferred, `releaseEligible=false`이고 관련 flag는 off다. `HS-001` pass는 contract-level evidence만 제공하며 Active runtime integration equivalence는 deferred다.
+**Status (2026-08-13):** `E-001` v0.2 authenticated resolver integration과 automated evaluation checkpoint가 완료됐다. Final typecheck, targeted Vitest 8 files/112 tests와 lint가 pass했고 두 authoritative `npm run continuation:baseline` 실행도 pass했다. 22개 중 12 contract oracle과 실제 authenticated S-001→R-001→R-002→R-003 chain을 사용하는 9 resolver behavior case가 모두 통과했으며, B-001 cross-lane row 1개만 `not_evaluated`다. 모든 critical error count는 0이고 automatic review는 passed, human review는 `not_started`다. Dataset `suggestion-continuation-dev-v0.1` revision 2는 여전히 mutable/unfrozen이며 dataset/config SHA는 null이다. Acceptable@1/3과 setup quality는 null이고 release gate는 적용되지 않으며 decision은 deferred다. 기존 v0.1 JSON과 historical run은 변경하지 않았다. Final run IDs, private artifact metadata와 exact shared hashes는 ECR의 E-001 v0.2 section에 기록했다.
 
-**Exit gate:** E-001 scaffold와 automated evaluation checkpoint는 충족했다. Resolver behavior 10개 평가, human review, immutable dataset freeze, same-input comparison과 release gate는 후속 task로 열려 있다.
+**Exit gate:** E-001 contract/resolver synthetic checkpoint는 충족했다. B-001 cross-lane row, human review, immutable dataset freeze, same-input comparison과 release gate는 후속 task로 열려 있다.
 
 ### Phase 3. Source adapters
 
@@ -150,7 +155,7 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - commit subject, diff, raw prompt 또는 path를 추가 수집하지 않는다.
 - source-local identity와 snapshot/activity time을 분리한다.
 
-**Status (2026-08-13):** `S-001`의 pure adapter 구현과 automated validation이 완료됐다. GitHub snapshot v6와 Codex snapshot v3를 각각 `continuation-github-adapter-v0.1`, `continuation-codex-adapter-v0.1`로 projection하며, 출력 Observation/Input은 v0.2다. R-002 freshness hardening으로 private adapter batch contract/schema/hash는 v0.2에서 v0.3으로 전환됐고 available batch에 exact `evaluatedAsOf`와 `snapshotFreshnessCutoff`를 hash-bound provenance로 추가했다. Unavailable batch는 두 값을 null로 유지한다. Adapter는 shadow-only이고 runtime, API, UI, persistence 또는 monitor에 연결되지 않았다. Keyed opaque references만 보존하며 raw repository/session identity, 이름, URL, path, prompt/summary text, commit text와 diff를 추가 수집하거나 출력하지 않는다. Activity window는 정확히 7일이고 stale/partial metadata와 metadata-only Codex count 0은 inactivity로 과장하지 않는다. 2026-08-13 KST 최종 실행에서 typecheck, targeted Vitest 5 files/70 tests와 lint가 pass했다. G2 privacy human approval은 pending이다.
+**Status (2026-08-13):** `S-001`의 pure adapter 구현과 automated validation이 완료됐다. GitHub snapshot v6와 Codex snapshot v3를 각각 `continuation-github-adapter-v0.1`, `continuation-codex-adapter-v0.1`로 projection하며, 출력 Observation/Input은 v0.2다. Private adapter batch contract/schema/hash는 v0.4이며 observations, identity bindings, exclusions, source assessment와 evaluation provenance를 포함한 canonical whole content를 installation-secret HMAC으로 인증한다. `evaluatedAsOf`는 available/unavailable 모두에 존재해 과거 failure assertion의 replay를 막고, available batch는 `snapshotFreshnessCutoff`와 `complete | partial | unknown` source assessment를 함께 묶는다. Adapter는 shadow-only이고 runtime, API, UI, persistence 또는 monitor에 연결되지 않았다. Secret과 raw repository/session identity, 이름, URL, path, prompt/summary text, commit text와 diff는 저장·출력하지 않는다. Activity window는 정확히 7일이고 stale/partial metadata와 metadata-only Codex count 0은 inactivity로 과장하지 않는다. 2026-08-13 KST 최종 실행에서 typecheck, targeted Vitest 7 files/89 tests와 lint가 pass했다. G2 privacy human approval은 pending이다.
 
 **Exit gate:** adapter unit cases가 source fact를 과장하지 않고 versioned observation을 만든다.
 
@@ -161,11 +166,13 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - `R-003`에서 score, diversity cap, conflict exclusion, deterministic tiebreak를 구현한다.
 - resolver output은 shadow storage/monitoring에만 기록하고 UI에 표시하지 않는다.
 
-**R-001 status (2026-08-13):** Pure identity resolver input/result/schema/hash는 v0.2에서 v0.3으로 전환됐다. Resolver는 private adapter batch v0.3 proof를 기존과 같이 별도 `installationSecret`으로 검증하고, terminal explicit-user confirmed registry decision과 scope binding이 일치할 때만 WorkContext를 부여한다. 결과는 resolution source마다 exact adapter-batch hash, `evaluatedAsOf`와 `snapshotFreshnessCutoff`를 canonical freshness evaluation으로 전달한다. Proof 누락/동일 중복은 input reject, 서로 다른 유효 proof의 다중 scope는 `conflict/null`, confirmed mapping 부재나 terminal remove/unmapped는 `setup_needed/null`이다. 동일 exact source identity의 status/WorkContext/reason 의미가 불일치하면 downstream R-002가 fail closed한다. Persistence, API, UI, runtime wiring, auto-confirmation 또는 project auto-selection은 없다. 2026-08-13 KST 최종 실행에서 typecheck, targeted Vitest 5 files/70 tests와 lint가 pass했다. Persistent mapping/correction/removal은 post-MVP human gate이며 G2는 pending이다.
+**R-001 status (2026-08-13):** Pure identity input/result/schema/hash는 v0.4다. Input builder는 registry 전체를 별도 domain의 installation-secret HMAC으로 인증하고 resolver는 caller artifact의 HMAC만으로 currentness를 추정하지 않는다. 별도 trusted option `expectedRegistrySha256`가 현재 registry와 정확히 일치해야 mapping을 수행한다. Resolver는 private adapter batch v0.4 whole-content proof와 identity binding proof를 검증하고, terminal explicit-user confirmed registry decision과 scope binding이 일치할 때만 WorkContext를 부여한다. 결과는 available-empty source까지 포함해 exact adapter-batch hash, `evaluatedAsOf`와 `snapshotFreshnessCutoff`를 canonical freshness evaluation으로 전달한다. Proof 누락/동일 중복은 input reject, 서로 다른 유효 proof의 다중 scope는 `conflict/null`, confirmed mapping 부재나 terminal remove/unmapped는 `setup_needed/null`이다. Persistence, API, UI, runtime wiring, auto-confirmation 또는 project auto-selection은 없다. 2026-08-13 KST 최종 실행에서 typecheck, targeted Vitest 7 files/89 tests와 lint가 pass했다. Persistent mapping/correction/removal은 post-MVP human gate이며 G2는 pending이다.
 
-**R-002 status (2026-08-13):** Deterministic candidate derivation envelope/result/schema/rule v0.2가 구현·검증됐다. Fresh mapped GitHub/Codex observation은 display-only/null-target single-source candidate가 되고, exact same WorkContext의 GitHub+Codex만 corroborated `linked_workstream`으로 결합한다. 이름/시간 유사성은 사용하지 않는다. `setup_needed`와 `conflict`는 각각 reason-bound deterministic private descriptor를 가진 non-executable `workspace_mapping` Setup candidate가 되며 conflict는 ready candidate가 아니다. Admission은 exact 7-day expiry, nonfuture/nonterminal/no observation conflict/error와 R-001 freshness provenance를 요구한다. Partial/unknown coverage와 terminal unknown은 caveat로만 허용한다. Output은 candidate ID순 canonical이고 score/breakdown은 R-003 전까지 모두 0이다. Result schema는 artifact integrity만 검증하며 provenance-sensitive consumer는 exact R-001 input과 envelope로 rederive/canonical compare하는 input-bound verifier를 사용해야 한다. API, UI, runtime, Board, persistence, monitor와 E-001 rows는 연결하지 않았다. Targeted validation은 5 files/70 tests, typecheck와 lint 모두 pass했다. 다음 engine task는 `R-003`다.
+**R-002 status (2026-08-13):** Deterministic candidate derivation envelope/result/schema/hash는 v0.3이고 rule/config는 v0.2다. Fresh mapped GitHub/Codex observation은 display-only/null-target single-source candidate가 되고, exact same WorkContext의 GitHub+Codex만 corroborated `linked_workstream`으로 결합한다. 이름/시간 유사성은 사용하지 않는다. `setup_needed`와 `conflict`는 각각 reason-bound deterministic private descriptor를 가진 non-executable `workspace_mapping` Setup candidate가 되며 conflict는 ready candidate가 아니다. Admission은 exact 7-day expiry, nonfuture/nonterminal/no observation conflict/error와 R-001 freshness provenance를 요구한다. Partial/unknown coverage와 terminal unknown은 caveat로만 허용한다. Result schema는 artifact integrity를 검증하고 provenance-sensitive consumer는 exact R-001 input과 envelope로 rederive/canonical compare하는 input-bound verifier를 사용해야 한다. API, UI, runtime, Board, persistence, monitor와 E-001 rows는 연결하지 않았다.
 
-**Exit gate:** deterministic replay와 dev dataset evaluation 결과를 실제 run provenance와 함께 기록할 수 있어야 한다.
+**R-003 status (2026-08-13):** Provisional deterministic scoring/resolution core와 E-001 v0.2 synthetic resolver checkpoint가 구현·검증됐다. Scoring result/schema, resolver와 scoring policy, resolution envelope/schema 및 distinct resolved-decision artifact/schema/hash는 v0.1이다. Resolver는 original authenticated R-001 input과 out-of-band trust expectations로 full chain을 재검증한다. Ready pool은 Setup보다 항상 우선하고 score 내림차순/`candidateId` 오름차순, WorkContext당 최대 1개, 전체 최대 3개로 선택한다. Full authenticated two-source complete/fresh coverage이고 quality exclusion이 없을 때만 offer가 `COMPLETE`; proven normal empty는 `no_recent_context/COMPLETE`; Setup은 항상 `SOURCE_LOCAL_PARTIAL`이다. Final validation은 typecheck, targeted Vitest 8 files/112 tests와 lint pass이며 E-001은 12/12 contract와 9/9 resolver rows를 통과했다. 이는 `contract_and_resolver_regression_only` evidence이며 quality, shadow activation 또는 release 승인이 아니다.
+
+**Exit gate:** Core deterministic replay, Dev dataset resolver integration과 private evaluation-run provenance 기록은 충족했다. B-001, human review, G2/G3/G8와 shadow/release 승인은 미충족이다.
 
 ### Phase 5. Board composer와 Active byte equivalence
 
@@ -245,11 +252,11 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `D-001` | 제품 결정 및 draft ECR | User + Codex | 없음 | `docs/ENGINE_CHANGE_RECORD.md`, vNext 문서 | 승인된 MVP 정책 로그, responsibility assignment, draft ECR, privacy/rollback 계획 | **Complete for planning on 2026-08-12** | AI document QA; human product decision recorded | **C-001 may start; release remains unapproved** |
 | `C-001` | 계약과 version ledger | Engine architect | `D-001` | `src/continuation/contracts.ts`, `src/suggestionBoard/contracts.ts`, version registry | Zod/TS schema, canonical hash 계약, compatibility matrix | unknown/mixed version fail-closed 규칙 포함 | Contract unit tests, typecheck | Required for contract freeze candidate |
-| `E-001` | Dataset builder와 evaluator | Evaluation owner | `C-001` | `eval/synthetic/continuation*`, `src/evaluation/continuation/*`, `tools/run-continuation-baseline.ts`, `.local/` private artifacts | mutable dev dataset, case/config/run schema, evaluator, bounded private-artifact runner | **Implementation and automated evaluation checkpoint complete on 2026-08-12.** 12/12 executable contract oracles passed; 10 resolver behavior cases remain deferred | Targeted Vitest 39/39, final typecheck pass, lint pass, `npm run continuation:baseline` pass; run `continuation_eval_run_df5a85b1e2bb784355c035969f835380` | Human review not started; not frozen or Gold; release deferred, not eligible, flags off |
-| `S-001` | GitHub/Codex adapters | Connector owner | `C-001` | `src/continuation/adapters.ts`, `src/continuation/index.ts` | v6/v3 → Observation v0.2 + private batch v0.3 HMAC/freshness provenance | **Implemented and automatically validated locally.** Pure unwired projection, hash-bound evaluation time/cutoff, keyed opaque references, exact 7-day window, partial/count-0 semantics | 2026-08-13 KST: typecheck pass; targeted Vitest 5 files/70 tests pass; lint pass | G2 privacy sign-off required before activation |
-| `R-001` | WorkContext identity resolution | Identity owner | `C-001`, `S-001` | `src/continuation/resolveIdentity.ts`, `src/continuation/index.ts` | v0.3 verified private proof + canonical source freshness evaluations → mapped/setup/conflict | **Implemented and automatically validated locally.** Exact confirmed mapping only; inconsistent identity meaning and invalid proof fail closed; persistence/API/UI/runtime/auto-selection 없음 | 2026-08-13 KST: typecheck pass; targeted Vitest 5 files/70 tests pass; lint pass | G2 pending; persistent mapping/correction은 post-MVP human gate; activation/release unapproved |
-| `R-002` | Candidate derivation | Engine implementer | `E-001`, `S-001`, `R-001` | `src/continuation/deriveCandidates.ts`, `src/continuation/index.ts` | v0.2 single-source/linked/setup candidates, exact exclusions/caveats, input-bound verifier | **Implemented and automatically validated locally.** Exact 7-day/freshness provenance, same-WorkContext-only linking, display-only mapped candidates, non-executable setup descriptors, canonical IDs/hashes, zero R-002 score | 2026-08-13 KST: typecheck pass; targeted Vitest 5 files/70 tests pass; lint pass; evaluator/baseline deferred | G2 and shadow activation approvals pending; no release claim |
-| `R-003` | Score와 Continuation resolver | Engine implementer | `R-002` | `src/continuation/scoreContinuity.ts`, `src/continuation/resolveContinuation.ts` | deterministic scoring, diversity, tiebreak, decision hash | 동일 input/permutation에서 결과 동일 | Resolver unit, replay, dev dataset eval | Shadow activation approval required |
+| `E-001` | Dataset builder와 evaluator | Evaluation owner | `C-001` | `eval/synthetic/continuation*`, `src/evaluation/continuation/*`, `tools/run-continuation-baseline.ts`, `.local/` private artifacts | v0.2 mutable dev dataset/evaluator, authenticated R-003 fixtures, bounded private-artifact runner | **v0.2 synthetic regression checkpoint complete on 2026-08-13.** 12/12 contract + 9/9 resolver passed; only B-001 row deferred | Typecheck pass; targeted Vitest 8 files/112 tests pass; lint pass; final runs `continuation_eval_run_bb3fa6da77edc64e74d976bbe1a8999e`, `continuation_eval_run_a74dc27b4c9b6fa9a78e72ad4b668966` pass | Human review not started; mutable/unfrozen, not Gold; quality/release deferred, flags off |
+| `S-001` | GitHub/Codex adapters | Connector owner | `C-001` | `src/continuation/adapters.ts`, `src/continuation/index.ts` | v6/v3 → Observation v0.2 + private batch v0.4 whole-content HMAC/source assessment/evaluation time | **Implemented and automatically validated locally.** Pure unwired projection, all-status replay-bound evaluation time, available cutoff/assessment, exact 7-day window, partial/count-0 semantics | 2026-08-13 KST: typecheck pass; targeted Vitest 7 files/89 tests pass; lint pass | G2 privacy sign-off required before activation |
+| `R-001` | WorkContext identity resolution | Identity owner | `C-001`, `S-001` | `src/continuation/resolveIdentity.ts`, `src/continuation/index.ts` | v0.4 authenticated registry/batches + trusted current registry SHA → mapped/setup/conflict | **Implemented and automatically validated locally.** Exact confirmed mapping only; registry rollback, inconsistent identity meaning and invalid proof fail closed; persistence/API/UI/runtime/auto-selection 없음 | 2026-08-13 KST: typecheck pass; targeted Vitest 7 files/89 tests pass; lint pass | G2 pending; persistent mapping/correction은 post-MVP human gate; activation/release unapproved |
+| `R-002` | Candidate derivation | Engine implementer | `E-001`, `S-001`, `R-001` | `src/continuation/deriveCandidates.ts`, `src/continuation/index.ts` | envelope/result/schema v0.3, rule/config v0.2; exact candidates and input-bound verifier | **Implemented and automatically validated locally.** Exact 7-day/freshness provenance, same-WorkContext-only linking, display-only mapped candidates, non-executable setup descriptors, canonical IDs/hashes | 2026-08-13 KST: typecheck pass; targeted Vitest 7 files/89 tests pass; lint pass; evaluator/baseline deferred | G2 and shadow activation approvals pending; no release claim |
+| `R-003` | Score와 Continuation resolver | Engine implementer | `R-002` | `src/continuation/scoreContinuity.ts`, `src/continuation/resolveContinuation.ts` | v0.1 provisional score/result/resolver/resolution envelope/distinct decision artifact, full input-bound verifier | **Core and E-001 v0.2 synthetic checkpoint complete.** Deterministic score/selection, authenticated coverage, trusted expectations and full-chain verification; 9/9 resolver rows pass | 2026-08-13 KST: typecheck pass; targeted Vitest 8 files/112 tests pass; lint pass; two authoritative baseline runs pass | G2/G3/G8 and shadow activation approval pending; no recommendation-quality/release claim |
 | `B-001` | Work Suggestion Board composer | Engine architect | `R-003` | `src/suggestionBoard/composeBoard.ts` | precedence, dedupe, primary/alternatives projection | Active fact 재판정 없음, mixed version fail closed | Board regression, Active byte-equivalence | Dual-lane flag approval required |
 | `A-001` | Continuation/Board API | API owner | `B-001` | `app/api/continuation/route.ts`, `app/api/work-board/route.ts`, `app/api/continuation/open/route.ts` | GET decision/board, POST offer action contract | native identifier 미노출, same-origin/local-only, typed errors | API contract/integration tests | Public API review required |
 | `U-001` | 웹 UI | Web owner | `A-001` | `app/WorkCockpit.tsx`, client projection/components | lane별 UI, bounded copy, CTA, caveat | no-action 문구 모순 제거, primary 1 + alt ≤2 | Component/manual accessibility/UX checks | Copy and privacy approval required |
@@ -367,7 +374,7 @@ npm run build
 npm run continuation:baseline
 ```
 
-`npm run continuation:baseline`은 `E-001`에서 wiring되고 2026-08-12에 실행되어 pass했다. Run ID, private artifact, dataset/config/artifact hashes, counts와 historical dirty-worktree fingerprint는 Engine Change Record의 E-001 section에 기록됐다. 이후 문서-only 기록 변경은 해당 run 당시 fingerprint를 바꿔 쓰지 않으며 baseline 재실행을 요구하지 않는다.
+`npm run continuation:baseline`은 `E-001`에서 wiring됐다. Historical v0.1 run은 그대로 보존되며, 2026-08-13 v0.2의 final authoritative runs `continuation_eval_run_bb3fa6da77edc64e74d976bbe1a8999e`와 `continuation_eval_run_a74dc27b4c9b6fa9a78e72ad4b668966`도 pass했다. Private artifact metadata, exact dataset/materialized/config/deterministic hashes, counts와 dirty-worktree fingerprint는 Engine Change Record의 E-001 sections에 기록됐다. 이후 문서-only 기록 변경은 해당 run provenance를 바꿔 쓰지 않으며 baseline 재실행을 요구하지 않는다.
 
 ## 11. Engine Change Record와 release provenance
 
@@ -505,13 +512,14 @@ Deferred 항목은 이 문서의 MVP acceptance에 포함하지 않는다. 각 �
 
 ## 17. 현재 작업 상태 (2026-08-13)
 
-- `D-001`, `C-001`, `E-001`, `S-001`, `R-001`과 `R-002`의 pure unwired checkpoint가 완료됐다. 다음 engine task는 `R-003` deterministic scoring/resolution이다. API, UI, runtime, Board, persistence, monitor, action과 production flag wiring은 아직 없다.
-- R-002 freshness hardening에서 private S-001 adapter batch는 v0.2→v0.3으로 전환해 available batch의 exact evaluation time/cutoff를 hash-bound했고, R-001 input/result/schema는 v0.2→v0.3으로 전환해 canonical per-source freshness evaluations를 전달한다. Legacy exact-v0.2 private S-001/R-001 artifacts는 v0.3 경계에서 fail closed하며, persisted/production artifact가 없어 migration은 없다.
-- R-002 derivation envelope/result/schema/rule은 내부 v0.2다. Fresh mapped single-source는 display-only candidate, exact same WorkContext의 GitHub+Codex는 linked candidate, setup/conflict는 non-executable private setup descriptor가 된다. Exact 7-day interval과 R-001 provenance를 적용하고 partial/unknown/terminal-unknown은 bounded caveat로만 표현한다. 모든 R-002 score는 0이며 R-003가 scoring과 decision을 소유한다.
-- Result schema는 artifact integrity boundary이고, particular R-001 input에서의 derivation authenticity가 필요한 consumer는 input-bound rederive verifier를 사용해야 한다. S-001은 trusted private producer로 유지하며 G2 privacy human approval은 pending이다.
-- 2026-08-13 KST 최종 validation에서 `npm run typecheck`, targeted Vitest 5 files/70 tests와 `npm run lint`가 모두 pass했다. 이 checkpoint는 contract/provenance/candidate regression evidence이며 quality baseline이나 release evidence가 아니다.
-- `HS-001`을 포함한 executable contract oracle 12개는 모두 pass했고, resolver behavior 10개는 R-003/B-001 evaluator integration까지 deferred/`not_evaluated`다.
-- Evaluator는 구조상 evaluation-only이며 R-002와 production consumer에 연결되지 않았다. `HS-001` pass는 contract-level evidence이고 Active의 실제 runtime input, candidate universe, eligibility, ordering, result byte 및 hash에 대한 runtime integration equivalence는 deferred다. R-002 evaluator integration은 R-003/B-001 또는 별도 evaluation task로 미룬다.
+- `D-001`, `C-001`, E-001 v0.2 authenticated resolver integration, `S-001`, `R-001`, `R-002`와 `R-003` core의 pure unwired synthetic checkpoint가 완료됐다. API, UI, runtime, Board, persistence, monitor, action과 production flag wiring은 아직 없다.
+- Exact internal tuple은 private adapter batch v0.4, R-001 identity input/result/schema/hash v0.4, R-002 envelope/result/schema/hash v0.3와 rule/config v0.2, R-003 scoring result/schema/resolver/scoring policy v0.1, resolution envelope/schema v0.1, distinct resolved-decision artifact/schema/hash v0.1, E-001 dataset/case contract v0.2, evaluator config v0.2와 evaluator/run policy v0.2다. Base Decision v0.2는 nested body일 뿐 authenticity marker가 아니다.
+- S-001 v0.4는 canonical whole-batch HMAC, source assessment와 모든 status의 `evaluatedAsOf`를 묶는다. R-001 v0.4는 registry authority HMAC에 더해 trusted current `expectedRegistrySha256`를 요구한다. R-003는 모든 batch time을 exact resolver `asOf`에 묶고 trusted registry/code/dataset expectations를 확인한다. Legacy 또는 mixed tuple은 fail closed하며 persisted/production artifact가 없어 migration은 없다.
+- R-002는 display-only mapped candidate, exact same-WorkContext linked candidate와 non-executable Setup descriptor를 canonical하게 derivation한다. R-003는 full original input에서 R-001을 재실행하고 R-002 input-bound verifier를 거친 뒤 provisional score와 selection을 적용한다. Ready는 Setup보다 우선하며 최대 3개, score/candidate-ID order와 WorkContext diversity를 사용한다.
+- Full authenticated two-source complete/fresh proof에 quality exclusion이 없을 때만 offer가 `COMPLETE`다. Normal empty/outside-window의 `no_recent_context`도 동일 proof를 요구하며 Setup은 항상 partial이다. Artifact schema는 local integrity boundary이고 provenance-sensitive consumer는 full-chain `verifyContinuationDecisionAgainstInput`을 사용해야 한다.
+- 2026-08-13 KST 최종 validation에서 `npm run typecheck`, targeted Vitest 8 files/112 tests와 `npm run lint`가 모두 pass했다. 두 final E-001 runs도 22 total, 21 measured/pass, 12/12 contract, 9/9 resolver, 1 B-001 deferred와 critical error 0으로 pass했다. 이 checkpoint는 contract/provenance/scoring/resolver regression evidence이며 quality baseline이나 release evidence가 아니다.
+- E-001 v0.2는 actual authenticated chain을 사용하는 9 resolver row를 측정한다. Codex historical-completed metadata는 live terminal authority가 아니므로 terminal unknown의 bounded semantics를 검증한다. Same-name oracle은 이름만으로 link/auto-confirm하지 않고 Setup으로 남는다는 의미이며 fabricated identity conflict를 주장하지 않는다. B-001 cross-lane case만 Board 구현까지 deferred다.
+- Evaluator는 구조상 evaluation-only이며 production consumer에 연결되지 않았다. Active의 실제 runtime input, candidate universe, eligibility, ordering, result byte/hash equivalence도 deferred다. 다음 code task는 B-001이고, outer R-003 artifact와 mandatory input-bound verifier를 함께 소비해야 한다.
 - Dataset은 mutable Dev Candidate이며 freeze 또는 human-approved Gold가 아니다. Human review는 시작되지 않았고 comparison, improvement, resolver quality, release readiness 또는 rollout도 주장하거나 승인하지 않는다.
-- Targeted Vitest 3개 파일 39/39, 최종 typecheck, lint와 `npm run continuation:baseline`이 pass했다. Run `continuation_eval_run_df5a85b1e2bb784355c035969f835380`의 private artifact와 hashes는 Draft ECR에 기록됐다. Release는 deferred이고 `releaseEligible=false`다.
+- Historical v0.1 JSON과 run `continuation_eval_run_df5a85b1e2bb784355c035969f835380`은 다시 쓰지 않았다. Final v0.2 runs는 comparison/improvement run이 아니며 Acceptable@1/3과 setup quality는 null이다. Dataset은 `suggestion-continuation-dev-v0.1` revision 2 mutable/unfrozen, automatic review passed, human review `not_started`, release deferred다. G2/G3/G8 및 shadow/presentation approval은 pending이다.
 - 새 production dependency는 추가하지 않았다.

@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { z } from "zod";
 
 import {
@@ -23,23 +25,28 @@ import {
 import {
   continuationSourceAdapterBatchSchema,
   createContinuationScopeBindingRef,
+  verifyContinuationSourceAdapterBatchProof,
   verifyContinuationIdentityBindingProof,
-  type ContinuationIdentityBindingProof
+  type ContinuationIdentityBindingProof,
+  type ContinuationSourceAdapterBatch
 } from "./adapters";
 
 export const CONTINUATION_IDENTITY_INPUT_CONTRACT =
-  "continuation-identity-input-v0.3" as const;
+  "continuation-identity-input-v0.4" as const;
 export const CONTINUATION_IDENTITY_RESULT_CONTRACT =
-  "continuation-identity-result-v0.3" as const;
+  "continuation-identity-result-v0.4" as const;
 export const CONTINUATION_IDENTITY_SCHEMA_VERSION =
-  "continuation-identity-schema-v0.3" as const;
+  "continuation-identity-schema-v0.4" as const;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const observationIdSchema = z
   .string()
   .regex(/^continuation_observation_[a-f0-9]{32}$/u);
 const resolverOptionsSchema = z
-  .object({ installationSecret: z.string().min(1).max(1_024) })
+  .object({
+    installationSecret: z.string().min(1).max(1_024),
+    expectedRegistrySha256: sha256Schema
+  })
   .strict();
 
 const sourceFreshnessEvaluationSchema = z
@@ -67,6 +74,10 @@ export const continuationIdentityInputSchema = z
     contract: z.literal(CONTINUATION_IDENTITY_INPUT_CONTRACT),
     schemaVersion: z.literal(CONTINUATION_IDENTITY_SCHEMA_VERSION),
     registry: workContextRegistrySchema,
+    registryAuthorityKeyId: z
+      .string()
+      .regex(/^installation_key_[a-f0-9]{32}$/u),
+    registryAuthorityHmac: sha256Schema,
     adapterBatches: z.array(continuationSourceAdapterBatchSchema).max(2)
   })
   .strict()
@@ -206,11 +217,17 @@ function refineIdentityResultContent(result: z.infer<typeof identityResultConten
   const evaluationSources = result.sourceFreshnessEvaluations.map(
     (evaluation) => evaluation.source
   );
-  if (runtimeCanonicalJson(resolutionSources) !== runtimeCanonicalJson(evaluationSources)) {
+  if (
+    resolutionSources.some(
+      (source) =>
+        (source !== "github" && source !== "codex") ||
+        !evaluationSources.includes(source)
+    )
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["sourceFreshnessEvaluations"],
-      message: "Resolved observation sources require exact freshness evaluations"
+      message: "Resolved observation sources require freshness evaluations"
     });
   }
   if (!isCanonical(result.resolutions.map((item) => item.observationId))) {
@@ -224,22 +241,82 @@ function refineIdentityResultContent(result: z.infer<typeof identityResultConten
 
 export type ContinuationIdentityInput = z.infer<typeof continuationIdentityInputSchema>;
 export type ContinuationIdentityResult = z.infer<typeof continuationIdentityResultSchema>;
+export type ContinuationIdentityResolverOptions = z.infer<
+  typeof resolverOptionsSchema
+>;
 export type ContinuationIdentityBoundaryResult =
   | { ok: true; result: ContinuationIdentityResult }
   | { ok: false; code: "IDENTITY_INPUT_REJECTED" };
 
-export function resolveContinuationIdentity(input: unknown, optionsInput: { installationSecret: string }): ContinuationIdentityBoundaryResult {
+export function createContinuationIdentityInput(
+  value: {
+    registry: WorkContextRegistry;
+    adapterBatches: ContinuationSourceAdapterBatch[];
+  },
+  optionsInput: ContinuationIdentityResolverOptions
+): ContinuationIdentityInput {
+  const options = resolverOptionsSchema.parse(optionsInput);
+  const registry = workContextRegistrySchema.parse(value.registry);
+  if (!secureEqual(registry.registrySha256, options.expectedRegistrySha256)) {
+    throw new TypeError("WorkContext registry does not match trusted authority");
+  }
+  return continuationIdentityInputSchema.parse({
+    contract: CONTINUATION_IDENTITY_INPUT_CONTRACT,
+    schemaVersion: CONTINUATION_IDENTITY_SCHEMA_VERSION,
+    registry,
+    registryAuthorityKeyId: registryAuthorityKeyId(
+      options.installationSecret
+    ),
+    registryAuthorityHmac: registryAuthorityHmac(
+      registry,
+      options.installationSecret
+    ),
+    adapterBatches: [...value.adapterBatches].sort((left, right) =>
+      compareRuntimeStrings(left.source, right.source)
+    )
+  });
+}
+
+export function resolveContinuationIdentity(input: unknown, optionsInput: ContinuationIdentityResolverOptions): ContinuationIdentityBoundaryResult {
   try {
     const parsed = continuationIdentityInputSchema.safeParse(input);
     const options = resolverOptionsSchema.safeParse(optionsInput);
     if (!parsed.success || !options.success) return { ok: false, code: "IDENTITY_INPUT_REJECTED" };
     const batches = parsed.data.adapterBatches;
+    if (
+      !secureEqual(
+        parsed.data.registryAuthorityKeyId,
+        registryAuthorityKeyId(options.data.installationSecret)
+      ) ||
+      !secureEqual(
+        parsed.data.registry.registrySha256,
+        options.data.expectedRegistrySha256
+      ) ||
+      !secureEqual(
+        parsed.data.registryAuthorityHmac,
+        registryAuthorityHmac(
+          parsed.data.registry,
+          options.data.installationSecret
+        )
+      ) ||
+      batches.some(
+        (batch) => !verifyContinuationSourceAdapterBatchProof(batch, {
+          installationSecret: options.data.installationSecret
+        })
+      )
+    ) {
+      return { ok: false, code: "IDENTITY_INPUT_REJECTED" };
+    }
     const proofs = batches.flatMap((batch) => batch.identityBindings);
-    if (proofs.some((proof) => !verifyContinuationIdentityBindingProof(proof, options.data))) {
+    if (proofs.some((proof) => !verifyContinuationIdentityBindingProof(proof, {
+      installationSecret: options.data.installationSecret
+    }))) {
       return { ok: false, code: "IDENTITY_INPUT_REJECTED" };
     }
     const proofGroups = groupProofs(proofs);
-    const scopeIndex = indexRegistryScopes(parsed.data.registry, options.data);
+    const scopeIndex = indexRegistryScopes(parsed.data.registry, {
+      installationSecret: options.data.installationSecret
+    });
     const observations = batches.flatMap((batch) => batch.observations).sort((left, right) => compareRuntimeStrings(left.observationId, right.observationId));
     if (observations.some((observation) => (proofGroups.get(identityKey(observation.sourceIdentity)) ?? []).length === 0)) {
       return { ok: false, code: "IDENTITY_INPUT_REJECTED" };
@@ -254,11 +331,11 @@ export function resolveContinuationIdentity(input: unknown, optionsInput: { inst
       registrySha256: parsed.data.registry.registrySha256,
       sourceBatchSha256s: batches.map((batch) => batch.batchSha256).sort(compareRuntimeStrings),
       sourceFreshnessEvaluations: batches
-        .filter((batch) => batch.observations.length > 0)
+        .filter((batch) => batch.status === "available")
         .map((batch) => ({
           source: batch.source,
           batchSha256: batch.batchSha256,
-          evaluatedAsOf: batch.evaluatedAsOf!,
+          evaluatedAsOf: batch.evaluatedAsOf,
           snapshotFreshnessCutoff: batch.snapshotFreshnessCutoff!
         }))
         .sort((left, right) => compareRuntimeStrings(left.source, right.source)),
@@ -315,7 +392,44 @@ function resolution(observation: ContinuationObservation, status: "mapped" | "se
 }
 
 function identityKey(identity: ContinuationSourceIdentity): string { return runtimeCanonicalJson(identity); }
-function identityResultSha256(value: unknown): string { return runtimeSha256({ domain: "continuation-identity-result-hash-v0.3", result: value }); }
+function identityResultSha256(value: unknown): string { return runtimeSha256({ domain: "continuation-identity-result-hash-v0.4", result: value }); }
+
+function registryAuthorityKeyId(installationSecret: string): string {
+  return `installation_key_${keyedDigest(
+    installationSecret,
+    "continuation-registry-authority-key-id-v0.1",
+    "work-context-registry"
+  ).slice(0, 32)}`;
+}
+
+function registryAuthorityHmac(
+  registry: WorkContextRegistry,
+  installationSecret: string
+): string {
+  return keyedDigest(
+    installationSecret,
+    "continuation-registry-authority-proof-v0.1",
+    registry
+  );
+}
+
+function keyedDigest(
+  installationSecret: string,
+  domain: string,
+  value: unknown
+): string {
+  return createHmac("sha256", installationSecret)
+    .update(domain)
+    .update("\0")
+    .update(runtimeCanonicalJson(value))
+    .digest("hex");
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
 function countStatuses(resolutions: Array<{ status: "mapped" | "setup_needed" | "conflict" }>): Record<"mapped" | "setup_needed" | "conflict", number> {
   const counts = { mapped: 0, setup_needed: 0, conflict: 0 };
   for (const item of resolutions) counts[item.status] += 1;

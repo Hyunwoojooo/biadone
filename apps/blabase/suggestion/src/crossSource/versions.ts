@@ -293,13 +293,31 @@ export const CONTINUATION_CANDIDATE_SCHEMA_VERSION =
   "continuation-candidate-schema-v0.1" as const;
 
 export const CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT =
-  "continuation-candidate-derivation-envelope-v0.2" as const;
+  "continuation-candidate-derivation-envelope-v0.3" as const;
 
 export const CONTINUATION_CANDIDATE_DERIVATION_RESULT_CONTRACT =
-  "continuation-candidate-derivation-result-v0.2" as const;
+  "continuation-candidate-derivation-result-v0.3" as const;
 
 export const CONTINUATION_CANDIDATE_DERIVATION_SCHEMA_VERSION =
-  "continuation-candidate-derivation-schema-v0.2" as const;
+  "continuation-candidate-derivation-schema-v0.3" as const;
+
+export const CONTINUATION_SCORING_RESULT_CONTRACT =
+  "continuation-scoring-result-v0.1" as const;
+
+export const CONTINUATION_SCORING_SCHEMA_VERSION =
+  "continuation-scoring-schema-v0.1" as const;
+
+export const CONTINUATION_RESOLUTION_ENVELOPE_CONTRACT =
+  "continuation-resolution-envelope-v0.1" as const;
+
+export const CONTINUATION_RESOLUTION_SCHEMA_VERSION =
+  "continuation-resolution-schema-v0.1" as const;
+
+export const CONTINUATION_RESOLVED_DECISION_CONTRACT =
+  "continuation-resolved-decision-v0.1" as const;
+
+export const CONTINUATION_RESOLVED_DECISION_SCHEMA_VERSION =
+  "continuation-resolved-decision-schema-v0.1" as const;
 
 export const CONTINUATION_SETUP_TARGET_POLICY_VERSION =
   "continuation-private-setup-descriptor-v0.1" as const;
@@ -333,6 +351,9 @@ export const CONTINUATION_SCORING_POLICY_VERSION =
 
 export const CONTINUATION_RESOLVER_VERSION =
   "continuation-resolver-v0.1" as const;
+
+export const CONTINUATION_COVERAGE_POLICY_VERSION =
+  "continuation-conservative-coverage-v0.1" as const;
 
 export const CONTINUATION_ACTION_POLICY_VERSION =
   "continuation-link-only-action-policy-v0.1" as const;

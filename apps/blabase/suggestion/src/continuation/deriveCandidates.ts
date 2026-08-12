@@ -253,7 +253,7 @@ export function continuationCandidateDerivationResultSha256(
   const { resultSha256: _resultSha256, ...content } =
     value as ContinuationCandidateDerivationResult;
   return runtimeSha256({
-    domain: "continuation-candidate-derivation-result-hash-v0.2",
+    domain: "continuation-candidate-derivation-result-hash-v0.3",
     result: content
   });
 }

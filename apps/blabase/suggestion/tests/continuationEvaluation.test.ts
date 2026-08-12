@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { buildContinuationEvaluationFixture } from "../eval/synthetic/continuationCaseBuilder";
 import {
+  buildContinuationResolverEvaluationFixture,
+  type ContinuationResolverEvaluationMaterializedInput
+} from "../eval/synthetic/continuationResolverCaseBuilder";
+import legacyDatasetArtifact from "../eval/synthetic/continuationEvaluationCases.v0.1.json";
+import legacyConfigArtifact from "../eval/synthetic/continuationEvaluationConfig.v0.1.json";
+import {
   CONTINUATION_EVALUATION_CONFIG_CANDIDATE_SHA256,
   CONTINUATION_EVALUATION_DATASET_CANDIDATE_SHA256,
   CONTINUATION_EVALUATION_CASE_IDS,
@@ -27,11 +33,13 @@ const CODE = {
   codeFingerprintSha256: "a".repeat(64)
 };
 
-describe("E-001 Continuation contract-scaffold evaluation", () => {
-  it("loads the exact mutable 12 executable plus 10 deferred matrix", () => {
+describe("E-001 Continuation contract and resolver regression evaluation", () => {
+  it("loads the exact mutable 21 measured plus 1 deferred matrix", () => {
     expect(continuationEvaluationDataset).toMatchObject({
+      contract: "continuation-evaluation-dataset-v0.2",
+      schemaVersion: "continuation-evaluation-case-v0.2",
       datasetVersion: "suggestion-continuation-dev-v0.1",
-      datasetRevision: 1,
+      datasetRevision: 2,
       datasetClass: "dev_candidate",
       dataOrigin: "bounded_synthetic",
       containsProductionData: false,
@@ -40,6 +48,21 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
         datasetSha256: null,
         immutableRef: null,
         frozenAt: null
+      },
+      evaluatorConfig: {
+        candidateRef: "eval/synthetic/continuationEvaluationConfig.v0.2.json",
+        version: "continuation-evaluation-config-v0.2"
+      }
+    });
+    expect(continuationEvaluationConfig).toMatchObject({
+      version: "continuation-evaluation-config-v0.2",
+      purpose: "contract_and_resolver_regression",
+      taskBoundary: "continuation_regression_validation",
+      matrix: {
+        executableContractOracleCaseCount: 12,
+        executableResolverBehaviorCaseCount: 9,
+        deferredResolverBehaviorCaseCount: 1,
+        deferredRowsPassCounted: false
       }
     });
     expect(continuationEvaluationDataset.cases.map((item) => item.caseId)).toEqual(
@@ -51,31 +74,94 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     expect(
       continuationEvaluationDataset.cases.filter((item) => item.task === "resolver_behavior")
     ).toHaveLength(10);
+    expect(
+      continuationEvaluationDataset.cases.filter(
+        (item) =>
+          item.task === "resolver_behavior" &&
+          !("measurementStatus" in item.expected)
+      )
+    ).toHaveLength(9);
+    expect(
+      continuationEvaluationDataset.cases.filter(
+        (item) =>
+          item.task === "resolver_behavior" &&
+          "measurementStatus" in item.expected
+      )
+    ).toHaveLength(1);
     expect(CONTINUATION_EVALUATION_DATASET_CANDIDATE_SHA256).toMatch(/^[a-f0-9]{64}$/u);
     expect(CONTINUATION_EVALUATION_CONFIG_CANDIDATE_SHA256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("passes all 12 exact contract oracles while never pass-counting deferred rows", () => {
+  it("preserves the v0.1 dataset and config artifacts byte-semantically", () => {
+    expect(legacyDatasetArtifact).toMatchObject({
+      contract: "continuation-evaluation-dataset-v0.1",
+      schemaVersion: "continuation-evaluation-case-v0.1",
+      datasetVersion: "suggestion-continuation-dev-v0.1",
+      datasetRevision: 1
+    });
+    expect(legacyConfigArtifact).toMatchObject({
+      version: "continuation-evaluation-config-v0.1",
+      purpose: "contract_scaffold_validation",
+      taskBoundary: "contract_scaffold_validation"
+    });
+    expect(sha256Canonical(legacyDatasetArtifact)).toBe(
+      "c834c86ab9b37822b58debd9c6f08dab9a481cb87e9a1183cf8153a63ada7b98"
+    );
+    expect(sha256Canonical(legacyConfigArtifact)).toBe(
+      "4624f4c404c995ddce6bc0c6bda94c2dcf00247fa26344477669a15631f99de9"
+    );
+  });
+
+  it("passes all 12 contract and 9 resolver measurements without pass-counting deferred rows", () => {
     const record = evaluation();
 
     expect(continuationEvaluationRunRecordSchema.parse(record)).toEqual(record);
     expect(record.status).toBe("passed");
     expect(record.counts).toEqual({
       totalCaseCount: 22,
-      executableCaseCount: 12,
+      executableCaseCount: 21,
+      contractOracleCaseCount: 12,
+      resolverBehaviorCaseCount: 9,
       exactOraclePassCount: 12,
       exactOracleFailureCount: 0,
-      deferredCaseCount: 10,
-      notEvaluatedCaseCount: 10,
-      passCount: 12
+      resolverBehaviorPassCount: 9,
+      resolverBehaviorFailureCount: 0,
+      deferredCaseCount: 1,
+      notEvaluatedCaseCount: 1,
+      passCount: 21
     });
     expect(record.metrics.exactOraclePassRate).toBe(1);
+    expect(record.metrics.resolverBehaviorPassRate).toBe(1);
     expect(record.metrics.acceptableAt1).toBeNull();
     expect(record.metrics.acceptableAt3).toBeNull();
     expect(record.metrics.setupRouteAccuracy).toBeNull();
     expect(record.metrics.setupRuntimeQuality).toBeNull();
     expect(record.metrics.releaseGateApplicable).toBe(false);
     expect(Object.values(record.metrics.criticalErrors).every((count) => count === 0)).toBe(true);
+    expect(record.versions).toMatchObject({
+      continuationGitHubSourceSchemaVersion: "github-snapshot-v6",
+      continuationCodexSourceSchemaVersion: "codex-snapshot-v3",
+      continuationSourceAdapterBatchContract: "continuation-source-adapter-batch-v0.4",
+      continuationSourceAdapterBatchSchemaVersion:
+        "continuation-source-adapter-batch-schema-v0.4",
+      continuationIdentityInputContract: "continuation-identity-input-v0.4",
+      continuationIdentityResultContract: "continuation-identity-result-v0.4",
+      continuationIdentitySchemaVersion: "continuation-identity-schema-v0.4",
+      continuationCandidateDerivationEnvelopeContract:
+        "continuation-candidate-derivation-envelope-v0.3",
+      continuationCandidateDerivationResultContract:
+        "continuation-candidate-derivation-result-v0.3",
+      continuationCandidateDerivationSchemaVersion:
+        "continuation-candidate-derivation-schema-v0.3",
+      continuationScoringResultContract: "continuation-scoring-result-v0.1",
+      continuationScoringSchemaVersion: "continuation-scoring-schema-v0.1",
+      continuationResolutionEnvelopeContract: "continuation-resolution-envelope-v0.1",
+      continuationResolutionSchemaVersion: "continuation-resolution-schema-v0.1",
+      continuationResolvedDecisionContract: "continuation-resolved-decision-v0.1",
+      continuationResolvedDecisionSchemaVersion:
+        "continuation-resolved-decision-schema-v0.1",
+      continuationResolverVersion: "continuation-resolver-v0.1"
+    });
     expect(
       record.cases
         .filter((item) => item.measurementStatus === "measured")
@@ -92,7 +178,7 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     expect(record.review).toEqual({
       automaticReviewStatus: "passed",
       humanReviewStatus: "not_started",
-      qualityClaim: "contract_scaffold_validation_only"
+      qualityClaim: "contract_and_resolver_regression_only"
     });
     expect(record.release).toEqual({
       releaseGateApplicable: false,
@@ -103,19 +189,72 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     });
   });
 
-  it("keeps every resolver row explicitly blocked and not evaluated", () => {
+  it("measures all 9 resolver rows through accepted and input-bound R-003 artifacts", () => {
+    const resolverRows = evaluation().cases.filter(
+      (item): item is MeasuredEvaluationRow =>
+        item.task === "resolver_behavior" &&
+        item.measurementStatus === "measured"
+    );
+
+    expect(resolverRows).toHaveLength(9);
+    expect(
+      resolverRows.every(
+        (item) =>
+          item.outcome === "measured_pass" &&
+          item.passed === true &&
+          item.actual.invariantCodes.includes("R003_ARTIFACT_SCHEMA_ACCEPTED") &&
+          item.actual.invariantCodes.includes("R003_INPUT_BOUND_VERIFIED")
+      )
+    ).toBe(true);
+
+    expectResolverSummary(resolverRows, "E1-RV-GH-001", {
+      decisionStatus: "offers_available",
+      coverageCode: "COMPLETE"
+    });
+    expectResolverSummary(resolverRows, "E1-RV-GH-002", {
+      decisionStatus: "insufficient_evidence",
+      coverageCode: "INSUFFICIENT"
+    });
+    expectResolverSummary(resolverRows, "E1-RV-CX-002", {
+      oracleCode: "CODEX_HISTORICAL_COMPLETION_BOUNDED",
+      decisionStatus: "offers_available",
+      coverageCode: "COMPLETE",
+      invariantCodes: ["NO_FALSE_STATUS_CLAIM", "TERMINAL_STATE_UNKNOWN"]
+    });
+    expectResolverSummary(resolverRows, "E1-RV-FR-001", {
+      decisionStatus: "offers_available",
+      coverageCode: "SOURCE_LOCAL_PARTIAL"
+    });
+    expectResolverSummary(resolverRows, "E1-RV-ID-001", {
+      oracleCode: "SAME_NAME_IDENTITIES_NOT_AUTO_MERGED",
+      decisionStatus: "setup_required",
+      coverageCode: "SOURCE_LOCAL_PARTIAL",
+      invariantCodes: ["SAME_NAME_IDENTITIES_NOT_AUTO_MERGED"]
+    });
+    expectResolverSummary(resolverRows, "E1-RV-TM-001", {
+      decisionStatus: "offers_available",
+      coverageCode: "COMPLETE",
+      invariantCodes: ["TOP_THREE_BOUNDED"]
+    });
+  });
+
+  it("keeps only the cross-lane dedupe row blocked by B-001 and not evaluated", () => {
     const deferred = evaluation().cases.filter(
       (item) => item.measurementStatus === "not_evaluated"
     );
 
-    expect(deferred).toHaveLength(10);
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]).toMatchObject({
+      caseId: "E1-RV-DT-001",
+      blockedByTask: "B-001"
+    });
     expect(
       deferred.every(
         (item) =>
           item.task === "resolver_behavior" &&
           item.outcome === "not_evaluated" &&
           item.passed === null &&
-          item.blockedByTask !== null &&
+          item.blockedByTask === "B-001" &&
           item.forbiddenInvariants.length > 0 &&
           item.materializedInputSha256 === null &&
           item.actualSummarySha256 === null &&
@@ -190,6 +329,118 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     expect(artifact.canonicalPayloadSha256).toBe(sha256Canonical(content));
   });
 
+  it("captures default completion after evaluation through the injected clock", () => {
+    const times = [
+      new Date("2026-08-13T06:00:00.000Z"),
+      new Date("2026-08-13T06:00:00.250Z")
+    ];
+    let callCount = 0;
+    const record = runContinuationEvaluation(
+      { code: CODE },
+      {
+        now: () => {
+          const value = times[callCount];
+          callCount += 1;
+          if (!value) throw new TypeError("Unexpected evaluation clock read.");
+          return value;
+        }
+      }
+    );
+
+    expect(callCount).toBe(2);
+    expect(record.startedAt).toBe("2026-08-13T06:00:00.000Z");
+    expect(record.completedAt).toBe("2026-08-13T06:00:00.250Z");
+    expect(record.latencyMs).toBe(250);
+
+    const injected = runContinuationEvaluation(
+      { startedAt: STARTED_AT, completedAt: COMPLETED_AT, code: CODE },
+      { now: () => { throw new TypeError("Injected timestamps must bypass the clock."); } }
+    );
+    expect(injected.startedAt).toBe(STARTED_AT.toISOString());
+    expect(injected.completedAt).toBe(COMPLETED_AT.toISOString());
+  });
+
+  it("hashes resolver fixtures from pre-execution inputs, never oracle outputs", () => {
+    const fixture = buildContinuationResolverEvaluationFixture(
+      "resolver_github_recent"
+    );
+    const materialized = fixture.materializedInput as
+      ContinuationResolverEvaluationMaterializedInput;
+    const descriptor = materialized.primary;
+    const inputSha256 = sha256Canonical(materialized);
+    expect(JSON.stringify(materialized)).not.toContain(
+      "synthetic-e001-installation-secret"
+    );
+    expect(materialized).not.toHaveProperty("identityResult");
+    expect(materialized).not.toHaveProperty("derivationResult");
+    expect(materialized).not.toHaveProperty("resolved");
+    const baseline = evaluateContinuationDataset(continuationEvaluationDataset);
+    const expectationChanged = structuredClone(continuationEvaluationDataset);
+    const expected = expectationChanged.cases.find(
+      (item) => item.caseId === "E1-RV-GH-001"
+    );
+    if (!expected || "measurementStatus" in expected.expected) {
+      throw new TypeError("Missing measured resolver expectation.");
+    }
+    expected.expected.oracleCode = "STALE_GITHUB_ACTIVITY_EXCLUDED";
+    const drifted = evaluateContinuationDataset(
+      loadContinuationEvaluationDataset(expectationChanged)
+    );
+
+    expect(drifted.materializedInputSha256).toBe(
+      baseline.materializedInputSha256
+    );
+
+    const rawChanged = structuredClone(materialized);
+    rawChanged.primary.sourceSnapshots.github.fetchedAt =
+      "2026-08-13T11:41:00.000Z";
+    const registryChanged = structuredClone(materialized);
+    registryChanged.primary.registrySha256 = "0".repeat(64);
+    const envelopeChanged = structuredClone(materialized);
+    envelopeChanged.primary.resolutionEnvelope.run.codeCommitSha = "e".repeat(40);
+
+    expect(sha256Canonical(rawChanged)).not.toBe(inputSha256);
+    expect(sha256Canonical(registryChanged)).not.toBe(inputSha256);
+    expect(sha256Canonical(envelopeChanged)).not.toBe(inputSha256);
+
+    descriptor.sourceSnapshots.github.fetchedAt =
+      "2026-08-13T11:41:00.000Z";
+    expect(fixture.execute).toThrow(
+      "Synthetic resolver input descriptor integrity check failed."
+    );
+  });
+
+  it("binds the tie permutation input into materialized fixture hashing", () => {
+    const fixture = buildContinuationResolverEvaluationFixture(
+      "resolver_tie_determinism"
+    );
+    const materialized = fixture.materializedInput as
+      ContinuationResolverEvaluationMaterializedInput;
+    if (materialized.permutation === null) {
+      throw new TypeError("Tie fixture must bind its permutation input.");
+    }
+    const inputSha256 = sha256Canonical(materialized);
+
+    const rawChanged = structuredClone(materialized);
+    rawChanged.permutation!.sourceSnapshots.github.activities[0]!.occurredAt =
+      "2026-08-13T11:29:00.000Z";
+    const registryChanged = structuredClone(materialized);
+    registryChanged.permutation!.registrySha256 = "1".repeat(64);
+    const envelopeChanged = structuredClone(materialized);
+    envelopeChanged.permutation!.derivationEnvelope.asOf =
+      "2026-08-13T11:59:59.000Z";
+
+    expect(sha256Canonical(rawChanged)).not.toBe(inputSha256);
+    expect(sha256Canonical(registryChanged)).not.toBe(inputSha256);
+    expect(sha256Canonical(envelopeChanged)).not.toBe(inputSha256);
+
+    materialized.permutation.sourceSnapshots.github.fetchedAt =
+      "2026-08-13T11:41:00.000Z";
+    expect(fixture.execute).toThrow(
+      "Synthetic resolver input descriptor integrity check failed."
+    );
+  });
+
   it("detects validly-shaped mutable expectation drift without freezing the candidate", () => {
     const tampered = structuredClone(continuationEvaluationDataset);
     const first = tampered.cases[0];
@@ -207,6 +458,9 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
 
     expect(record.status).toBe("failed");
     expect(record.counts.exactOraclePassCount).toBe(11);
+    expect(record.counts.resolverBehaviorPassCount).toBe(9);
+    expect(record.counts.resolverBehaviorFailureCount).toBe(0);
+    expect(record.counts.passCount).toBe(20);
     expect(record.errors).toContainEqual({
       caseId: "E1-CT-001",
       code: "CONTINUATION_EXACT_ORACLE_MISMATCH"
@@ -251,8 +505,11 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     expect(() => loadContinuationEvaluationDataset(wrongStage)).toThrow();
 
     const wrongBlocker = structuredClone(continuationEvaluationDataset);
-    const deferred = wrongBlocker.cases[12]!;
-    if (deferred.task !== "resolver_behavior") {
+    const deferred = wrongBlocker.cases[21]!;
+    if (
+      deferred.task !== "resolver_behavior" ||
+      !("measurementStatus" in deferred.expected)
+    ) {
       throw new TypeError("Missing deferred case for blocker mutation.");
     }
     deferred.expected.blockedByTask = "R-003";
@@ -345,7 +602,7 @@ describe("E-001 Continuation contract-scaffold evaluation", () => {
     }
   });
 
-it("turns fixture materialization failures into 12 failed measurements", () => {
+it("turns fixture materialization failures into 21 failed measurements", () => {
   const result = evaluateContinuationDataset(continuationEvaluationDataset, {
       buildFixture: () => {
         throw new TypeError("synthetic fixture construction failure");
@@ -355,7 +612,7 @@ it("turns fixture materialization failures into 12 failed measurements", () => {
       (item) => item.measurementStatus === "measured"
     );
 
-    expect(measured).toHaveLength(12);
+    expect(measured).toHaveLength(21);
     expect(
       measured.every(
         (item) =>
@@ -366,8 +623,9 @@ it("turns fixture materialization failures into 12 failed measurements", () => {
       )
     ).toBe(true);
     expect(result.counts.exactOracleFailureCount).toBe(12);
-    expect(result.counts.notEvaluatedCaseCount).toBe(10);
-  expect(result.metrics.criticalErrors.contractIntegrityFailureCount).toBe(12);
+    expect(result.counts.resolverBehaviorFailureCount).toBe(9);
+    expect(result.counts.notEvaluatedCaseCount).toBe(1);
+  expect(result.metrics.criticalErrors.contractIntegrityFailureCount).toBe(21);
 });
 
 it("isolates a mismatched fixture scenario as one materialization failure", () => {
@@ -398,9 +656,10 @@ it("isolates a mismatched fixture scenario as one materialization failure", () =
   });
   expect(
     result.cases.filter((item) => item.outcome === "measured_pass")
-  ).toHaveLength(11);
+  ).toHaveLength(20);
   expect(result.counts.exactOracleFailureCount).toBe(1);
-  expect(result.counts.notEvaluatedCaseCount).toBe(10);
+  expect(result.counts.resolverBehaviorFailureCount).toBe(0);
+  expect(result.counts.notEvaluatedCaseCount).toBe(1);
 });
 
 it("isolates an invalid oracle summary as one execution failure", () => {
@@ -430,9 +689,80 @@ it("isolates an invalid oracle summary as one execution failure", () => {
   expect(failed?.materializedInputSha256).toMatch(/^[a-f0-9]{64}$/);
   expect(
     result.cases.filter((item) => item.outcome === "measured_pass")
-  ).toHaveLength(11);
+  ).toHaveLength(20);
   expect(result.counts.exactOracleFailureCount).toBe(1);
-  expect(result.counts.notEvaluatedCaseCount).toBe(10);
+  expect(result.counts.resolverBehaviorFailureCount).toBe(0);
+  expect(result.counts.notEvaluatedCaseCount).toBe(1);
+});
+
+it("isolates an invalid resolver summary to one resolver measurement", () => {
+  const targetCase = continuationEvaluationDataset.cases.find(
+    (item) => item.caseId === "E1-RV-GH-001"
+  );
+  if (!targetCase) {
+    throw new TypeError("The measured GitHub resolver case is required.");
+  }
+
+  const result = evaluateContinuationDataset(continuationEvaluationDataset, {
+    buildFixture: (scenario) => {
+      const built = buildContinuationEvaluationFixture(scenario);
+      return scenario === targetCase.scenario
+        ? { ...built, execute: () => ({} as never) }
+        : built;
+    }
+  });
+  const failed = result.cases.find((item) => item.caseId === targetCase.caseId);
+
+  expect(failed).toMatchObject({
+    caseId: "E1-RV-GH-001",
+    task: "resolver_behavior",
+    outcome: "measured_fail",
+    passed: false,
+    errorCode: "CASE_EXECUTION_FAILED",
+    deterministicReplayMatched: false
+  });
+  expect(result.counts).toMatchObject({
+    exactOraclePassCount: 12,
+    exactOracleFailureCount: 0,
+    resolverBehaviorPassCount: 8,
+    resolverBehaviorFailureCount: 1,
+    notEvaluatedCaseCount: 1,
+    passCount: 20
+  });
+  expect(result.cases.filter((item) => item.outcome === "measured_pass")).toHaveLength(20);
+
+  const driftedDataset = structuredClone(continuationEvaluationDataset);
+  const expectedResolver = driftedDataset.cases.find(
+    (item) => item.caseId === "E1-RV-GH-001"
+  );
+  if (
+    !expectedResolver ||
+    "measurementStatus" in expectedResolver.expected
+  ) {
+    throw new TypeError("The measured GitHub resolver expectation is required.");
+  }
+  expectedResolver.expected.oracleCode = "STALE_GITHUB_ACTIVITY_EXCLUDED";
+  const driftedRun = runContinuationEvaluation({
+    startedAt: STARTED_AT,
+    completedAt: COMPLETED_AT,
+    code: CODE,
+    dataset: loadContinuationEvaluationDataset(driftedDataset)
+  });
+  expect(driftedRun.status).toBe("failed");
+  expect(driftedRun.counts).toMatchObject({
+    exactOraclePassCount: 12,
+    exactOracleFailureCount: 0,
+    resolverBehaviorPassCount: 8,
+    resolverBehaviorFailureCount: 1,
+    notEvaluatedCaseCount: 1,
+    passCount: 20
+  });
+  expect(driftedRun.errors).toEqual([
+    {
+      caseId: "E1-RV-GH-001",
+      code: "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH"
+    }
+  ]);
 });
 
   it("stores only the bounded run record through the private artifact boundary", async () => {
@@ -464,8 +794,13 @@ it("isolates an invalid oracle summary as one execution failure", () => {
 
     expect(result.record.status).toBe("passed");
     expect(result.storedArtifact.mode).toBe(0o600);
-    expect(writtenContents).toContain("contract_scaffold_validation_only");
-    expect(writtenContents).not.toMatch(/source_ref_|private_target_|continuation_observation_/u);
+    expect(writtenContents).toContain("contract_and_resolver_regression_only");
+    expect(writtenContents).not.toMatch(
+      /synthetic-e001-installation-secret|private-sentinel|source_ref_|private_target_|continuation_observation_/u
+    );
+    expect(writtenContents).not.toContain("/Users/private");
+    expect(writtenContents).not.toContain("https://private.example");
+    expect(writtenContents).not.toContain("f".repeat(40));
     expect(writtenContents).not.toContain("/private/evaluation/native-locator");
     expect(writtenContents).not.toContain('"payload"');
   });
@@ -500,6 +835,36 @@ function evaluation() {
     completedAt: COMPLETED_AT,
     code: CODE
   });
+}
+
+type MeasuredEvaluationRow = Extract<
+  ReturnType<typeof evaluation>["cases"][number],
+  { measurementStatus: "measured" }
+>;
+
+function expectResolverSummary(
+  rows: readonly MeasuredEvaluationRow[],
+  caseId: string,
+  expected: {
+    oracleCode?: MeasuredEvaluationRow["actual"]["oracleCode"];
+    decisionStatus: MeasuredEvaluationRow["actual"]["decisionStatus"];
+    coverageCode: MeasuredEvaluationRow["actual"]["coverageCode"];
+    invariantCodes?: readonly (
+      MeasuredEvaluationRow["actual"]["invariantCodes"][number]
+    )[];
+  }
+): void {
+  const row = rows.find((item) => item.caseId === caseId);
+  expect(row, `Missing measured resolver row ${caseId}.`).toBeDefined();
+  if (!row) return;
+  expect(row.actual).toMatchObject({
+    ...(expected.oracleCode ? { oracleCode: expected.oracleCode } : {}),
+    decisionStatus: expected.decisionStatus,
+    coverageCode: expected.coverageCode
+  });
+  for (const invariantCode of expected.invariantCodes ?? []) {
+    expect(row.actual.invariantCodes).toContain(invariantCode);
+  }
 }
 
 function resealDeterministicAndArtifact(
