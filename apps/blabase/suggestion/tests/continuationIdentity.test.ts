@@ -57,6 +57,20 @@ describe("Continuation R-001 identity resolution", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.result.mappedCount).toBe(2);
+    expect(result.result.sourceFreshnessEvaluations).toEqual([
+      {
+        source: "codex",
+        batchSha256: codex.batchSha256,
+        evaluatedAsOf: OPTIONS.asOf,
+        snapshotFreshnessCutoff: OPTIONS.snapshotFreshnessCutoff
+      },
+      {
+        source: "github",
+        batchSha256: github.batchSha256,
+        evaluatedAsOf: OPTIONS.asOf,
+        snapshotFreshnessCutoff: OPTIONS.snapshotFreshnessCutoff
+      }
+    ]);
     expect(result.result.resolutions.map((item) => item.workContextId)).toEqual([
       PROJECT_A,
       PROJECT_A
@@ -310,7 +324,7 @@ function resealBatch<T extends { batchSha256: string }>(batch: T): T {
   return {
     ...batch,
     batchSha256: runtimeSha256({
-      domain: "continuation-source-adapter-batch-hash-v0.2",
+      domain: "continuation-source-adapter-batch-hash-v0.3",
       batch: content
     })
   };

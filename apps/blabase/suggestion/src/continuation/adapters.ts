@@ -41,9 +41,9 @@ export const CONTINUATION_IDENTITY_BINDING_PROOF_CONTRACT =
 export const CONTINUATION_IDENTITY_BINDING_PROOF_SCHEMA_VERSION =
   "continuation-identity-binding-proof-schema-v0.1" as const;
 
-const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.2" as const;
+const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.3" as const;
 const ADAPTER_BATCH_SCHEMA_VERSION =
-  "continuation-source-adapter-batch-schema-v0.2" as const;
+  "continuation-source-adapter-batch-schema-v0.3" as const;
 const ACTIVITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_GITHUB_ACTIVITIES = 10_000;
 const MAX_GITHUB_REPOSITORIES = 5_000;
@@ -215,6 +215,8 @@ const commonBatchShape = {
     .string()
     .regex(/^[a-f0-9]{64}$/u)
     .nullable(),
+  evaluatedAsOf: z.string().datetime().nullable(),
+  snapshotFreshnessCutoff: z.string().datetime().nullable(),
   observations: z.array(continuationObservationSchema).max(10_000),
   identityBindings: z
     .array(continuationIdentityBindingProofSchema)
@@ -253,6 +255,30 @@ export const continuationSourceAdapterBatchSchema = z
         code: z.ZodIssueCode.custom,
         path: ["sourceSnapshotSha256"],
         message: "Available adapter batches require an exact source snapshot hash"
+      });
+    }
+    if (
+      (batch.status === "available") !==
+        (batch.evaluatedAsOf !== null) ||
+      (batch.status === "available") !==
+        (batch.snapshotFreshnessCutoff !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["evaluatedAsOf"],
+        message: "Available adapter batches require exact freshness evaluation provenance"
+      });
+    }
+    if (
+      batch.evaluatedAsOf !== null &&
+      batch.snapshotFreshnessCutoff !== null &&
+      Date.parse(batch.snapshotFreshnessCutoff) >
+        Date.parse(batch.evaluatedAsOf)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["snapshotFreshnessCutoff"],
+        message: "Freshness cutoff cannot follow its evaluation time"
       });
     }
     if (batch.status === "unavailable" && batch.observations.length !== 0) {
@@ -438,7 +464,8 @@ function adaptGitHubContinuationObservationsUnchecked(
       artifact.sourceSnapshotSha256,
       [],
       [],
-      exclusions
+      exclusions,
+      options.data
     );
   }
 
@@ -558,7 +585,8 @@ function adaptGitHubContinuationObservationsUnchecked(
     artifact.sourceSnapshotSha256,
     observations,
     identityBindings,
-    exclusions
+    exclusions,
+    options.data
   );
 }
 
@@ -712,7 +740,8 @@ function adaptCodexContinuationObservationsUnchecked(
     artifact.sourceSnapshotSha256,
     observations,
     identityBindings,
-    exclusions
+    exclusions,
+    options.data
   );
 }
 
@@ -767,12 +796,15 @@ function availableBatch(
   sourceSnapshotSha256: string,
   observationsInput: ContinuationObservation[],
   identityBindingsInput: ContinuationIdentityBindingProof[],
-  exclusionMap: Map<ExclusionReason, number>
+  exclusionMap: Map<ExclusionReason, number>,
+  evaluation: { asOf: string; snapshotFreshnessCutoff: string }
 ): ContinuationSourceAdapterBatch {
   return sealBatch({
     source,
     status: "available",
     sourceSnapshotSha256,
+    evaluatedAsOf: evaluation.asOf,
+    snapshotFreshnessCutoff: evaluation.snapshotFreshnessCutoff,
     observations: [...observationsInput].sort((left, right) =>
       compareRuntimeStrings(left.observationId, right.observationId)
     ),
@@ -789,6 +821,8 @@ function unavailableBatch(
     source,
     status: "unavailable",
     sourceSnapshotSha256: null,
+    evaluatedAsOf: null,
+    snapshotFreshnessCutoff: null,
     observations: [],
     identityBindings: [],
     exclusions: [{ reasonCode, count: 1 }]
@@ -799,6 +833,8 @@ function sealBatch(input: {
   source: AdapterSource;
   status: "available" | "unavailable";
   sourceSnapshotSha256: string | null;
+  evaluatedAsOf: string | null;
+  snapshotFreshnessCutoff: string | null;
   observations: ContinuationObservation[];
   identityBindings: ContinuationIdentityBindingProof[];
   exclusions: Array<{ reasonCode: ExclusionReason; count: number }>;
@@ -820,6 +856,8 @@ function sealBatch(input: {
     ...versions,
     status: input.status,
     sourceSnapshotSha256: input.sourceSnapshotSha256,
+    evaluatedAsOf: input.evaluatedAsOf,
+    snapshotFreshnessCutoff: input.snapshotFreshnessCutoff,
     observations: input.observations,
     identityBindings: input.identityBindings,
     excludedCount: input.exclusions.reduce(
@@ -836,7 +874,7 @@ function sealBatch(input: {
 
 function adapterBatchSha256(value: unknown): string {
   return runtimeSha256({
-    domain: "continuation-source-adapter-batch-hash-v0.2",
+    domain: "continuation-source-adapter-batch-hash-v0.3",
     batch: value
   });
 }

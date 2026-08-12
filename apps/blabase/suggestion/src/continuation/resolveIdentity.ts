@@ -28,11 +28,11 @@ import {
 } from "./adapters";
 
 export const CONTINUATION_IDENTITY_INPUT_CONTRACT =
-  "continuation-identity-input-v0.2" as const;
+  "continuation-identity-input-v0.3" as const;
 export const CONTINUATION_IDENTITY_RESULT_CONTRACT =
-  "continuation-identity-result-v0.2" as const;
+  "continuation-identity-result-v0.3" as const;
 export const CONTINUATION_IDENTITY_SCHEMA_VERSION =
-  "continuation-identity-schema-v0.2" as const;
+  "continuation-identity-schema-v0.3" as const;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const observationIdSchema = z
@@ -41,6 +41,26 @@ const observationIdSchema = z
 const resolverOptionsSchema = z
   .object({ installationSecret: z.string().min(1).max(1_024) })
   .strict();
+
+const sourceFreshnessEvaluationSchema = z
+  .object({
+    source: z.enum(["github", "codex"]),
+    batchSha256: sha256Schema,
+    evaluatedAsOf: z.string().datetime(),
+    snapshotFreshnessCutoff: z.string().datetime()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      Date.parse(value.snapshotFreshnessCutoff) > Date.parse(value.evaluatedAsOf)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["snapshotFreshnessCutoff"],
+        message: "Freshness cutoff cannot follow its evaluation time"
+      });
+    }
+  });
 
 export const continuationIdentityInputSchema = z
   .object({
@@ -119,6 +139,9 @@ const identityResultContentObjectSchema = z
     registryContract: z.literal(WORK_CONTEXT_REGISTRY_CONTRACT),
     registrySha256: sha256Schema,
     sourceBatchSha256s: z.array(sha256Schema).max(2),
+    sourceFreshnessEvaluations: z
+      .array(sourceFreshnessEvaluationSchema)
+      .max(2),
     mappedCount: z.number().int().nonnegative().max(10_000),
     setupNeededCount: z.number().int().nonnegative().max(10_000),
     conflictCount: z.number().int().nonnegative().max(10_000),
@@ -141,6 +164,54 @@ export const continuationIdentityResultSchema = identityResultContentObjectSchem
 function refineIdentityResultContent(result: z.infer<typeof identityResultContentObjectSchema>, context: z.RefinementCtx): void {
   if (!isCanonical(result.sourceBatchSha256s)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["sourceBatchSha256s"], message: "Source batch hashes must be canonical and unique" });
+  }
+  if (
+    !isCanonical(
+      result.sourceFreshnessEvaluations.map((evaluation) => evaluation.source)
+    )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceFreshnessEvaluations"],
+      message: "Source freshness evaluations must be canonical and source-unique"
+    });
+  }
+  if (
+    new Set(
+      result.sourceFreshnessEvaluations.map(
+        (evaluation) => evaluation.batchSha256
+      )
+    ).size !== result.sourceFreshnessEvaluations.length
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceFreshnessEvaluations"],
+      message: "Each source freshness evaluation must bind a unique adapter batch"
+    });
+  }
+  if (
+    result.sourceFreshnessEvaluations.some(
+      (evaluation) => !result.sourceBatchSha256s.includes(evaluation.batchSha256)
+    )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceFreshnessEvaluations"],
+      message: "Source freshness evaluation must bind a recorded adapter batch"
+    });
+  }
+  const resolutionSources = [...new Set(
+    result.resolutions.map((resolution) => resolution.observation.sourceIdentity.source)
+  )].sort(compareRuntimeStrings);
+  const evaluationSources = result.sourceFreshnessEvaluations.map(
+    (evaluation) => evaluation.source
+  );
+  if (runtimeCanonicalJson(resolutionSources) !== runtimeCanonicalJson(evaluationSources)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourceFreshnessEvaluations"],
+      message: "Resolved observation sources require exact freshness evaluations"
+    });
   }
   if (!isCanonical(result.resolutions.map((item) => item.observationId))) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["resolutions"], message: "Identity resolutions must be canonical and unique" });
@@ -182,6 +253,15 @@ export function resolveContinuationIdentity(input: unknown, optionsInput: { inst
       registryContract: WORK_CONTEXT_REGISTRY_CONTRACT,
       registrySha256: parsed.data.registry.registrySha256,
       sourceBatchSha256s: batches.map((batch) => batch.batchSha256).sort(compareRuntimeStrings),
+      sourceFreshnessEvaluations: batches
+        .filter((batch) => batch.observations.length > 0)
+        .map((batch) => ({
+          source: batch.source,
+          batchSha256: batch.batchSha256,
+          evaluatedAsOf: batch.evaluatedAsOf!,
+          snapshotFreshnessCutoff: batch.snapshotFreshnessCutoff!
+        }))
+        .sort((left, right) => compareRuntimeStrings(left.source, right.source)),
       mappedCount: counts.mapped,
       setupNeededCount: counts.setup_needed,
       conflictCount: counts.conflict,
@@ -235,7 +315,7 @@ function resolution(observation: ContinuationObservation, status: "mapped" | "se
 }
 
 function identityKey(identity: ContinuationSourceIdentity): string { return runtimeCanonicalJson(identity); }
-function identityResultSha256(value: unknown): string { return runtimeSha256({ domain: "continuation-identity-result-hash-v0.2", result: value }); }
+function identityResultSha256(value: unknown): string { return runtimeSha256({ domain: "continuation-identity-result-hash-v0.3", result: value }); }
 function countStatuses(resolutions: Array<{ status: "mapped" | "setup_needed" | "conflict" }>): Record<"mapped" | "setup_needed" | "conflict", number> {
   const counts = { mapped: 0, setup_needed: 0, conflict: 0 };
   for (const item of resolutions) counts[item.status] += 1;

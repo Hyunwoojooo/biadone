@@ -292,6 +292,18 @@ export const CONTINUATION_INPUT_SCHEMA_VERSION =
 export const CONTINUATION_CANDIDATE_SCHEMA_VERSION =
   "continuation-candidate-schema-v0.1" as const;
 
+export const CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT =
+  "continuation-candidate-derivation-envelope-v0.2" as const;
+
+export const CONTINUATION_CANDIDATE_DERIVATION_RESULT_CONTRACT =
+  "continuation-candidate-derivation-result-v0.2" as const;
+
+export const CONTINUATION_CANDIDATE_DERIVATION_SCHEMA_VERSION =
+  "continuation-candidate-derivation-schema-v0.2" as const;
+
+export const CONTINUATION_SETUP_TARGET_POLICY_VERSION =
+  "continuation-private-setup-descriptor-v0.1" as const;
+
 export const CONTINUATION_DECISION_SCHEMA_VERSION =
   "continuation-decision-schema-v0.2" as const;
 
@@ -314,7 +326,7 @@ export const CONTINUATION_SNAPSHOT_FRESHNESS_POLICY_VERSION =
   "continuation-source-freshness-policy-v0.1" as const;
 
 export const CONTINUATION_RULE_VERSION =
-  "continuation-candidate-rule-v0.1" as const;
+  "continuation-candidate-rule-v0.2" as const;
 
 export const CONTINUATION_SCORING_POLICY_VERSION =
   "continuation-scoring-policy-v0.1" as const;

@@ -26,6 +26,10 @@ describe("Continuation source adapters", () => {
       snapshotFreshness: "fresh",
       terminalState: "unknown"
     });
+    expect(result).toMatchObject({
+      evaluatedAsOf: OPTIONS.asOf,
+      snapshotFreshnessCutoff: OPTIONS.snapshotFreshnessCutoff
+    });
     expect(JSON.stringify(result)).not.toMatch(
       /octo|repo-name|refs\/heads|synthetic-installation-secret|artifact_[a-f0-9]/u
     );
@@ -211,12 +215,16 @@ describe("Continuation source adapters", () => {
     );
     expect(github).toMatchObject({
       status: "unavailable",
+      evaluatedAsOf: null,
+      snapshotFreshnessCutoff: null,
       observations: [],
       identityBindings: [],
       exclusions: [{ reasonCode: "SOURCE_REJECTED", count: 1 }]
     });
     expect(codex).toMatchObject({
       status: "unavailable",
+      evaluatedAsOf: null,
+      snapshotFreshnessCutoff: null,
       observations: [],
       identityBindings: [],
       exclusions: [{ reasonCode: "SOURCE_REJECTED", count: 1 }]
