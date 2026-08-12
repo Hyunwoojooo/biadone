@@ -751,7 +751,7 @@ export function runRecentWorkEvaluation(
     limitations: [
       "Mutable synthetic Dev Candidate only; datasetSha256, immutableRef, frozenAt, baseline/comparison run IDs, and human review remain absent.",
       "The paired production integration probe is a same-run shadow/present invariant check, not a formal baseline comparison or release result.",
-      "This evaluates repository-scope-only display projection v0.1, not actor/origin provenance, exact commit equality, continuation observation/context/offer contracts, heartbeat validation, or resume actions.",
+      "This evaluates repository-scope-only display projection v0.2; the verified-push fallback is covered by a targeted resolver regression rather than a new frozen dataset case. It does not evaluate actor/origin provenance, exact commit equality, continuation observation/context/offer contracts, heartbeat validation, or resume actions.",
       "Removed and archived mapping cases enter at the confirmed-link boundary as explicit upstream-filtered absence; this evaluator does not pretend the Recent Work resolver reads registry history.",
       "The only rollout parser is shadow or present with invalid values defaulting to shadow; four-mode continuation rollout, applied selection, monitor v0.7, and replay v4 do not exist here."
     ]
@@ -1004,7 +1004,7 @@ function evaluateVariant(
     const privacyLeakageCount = publicPrivacyLeakageCount(
       firstSummary,
       fixture.forbiddenPublicValues,
-      first.match
+      first.match?.matchKind === "confirmed_focus"
         ? [
             first.match.linkId,
             first.match.projectId,
@@ -1013,7 +1013,12 @@ function evaluateVariant(
             first.match.registrySha256,
             first.match.localGitSnapshotSha256
           ]
-        : []
+        : first.match
+          ? [
+              first.match.githubBatchSha256,
+              first.match.activitySignalSha256
+            ]
+          : []
     );
     const actualReasonCode = first.reasonCodes[0] ?? null;
     const assertionFailures = [

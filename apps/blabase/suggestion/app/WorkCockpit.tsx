@@ -439,8 +439,9 @@ export function RecentWorkCard({
         </div>
       </div>
       <p className="recentWorkBoundary">
-        확인된 저장소와 Codex 범위의 상관관계만 표시합니다. commit 동일성을
-        주장하거나 추천·실행을 변경하지 않습니다.
+        검증된 GitHub push를 최근 작업 맥락으로만 표시합니다. 우선순위나
+        처리 필요성을 단정하지 않으며 추천 순위나 실행에는 영향을 주지
+        않습니다.
       </p>
     </section>
   );

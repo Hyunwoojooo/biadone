@@ -35,13 +35,13 @@ export type ResolveRecentWorkInput = {
   localGitSnapshot: CodexLocalGitSnapshot | null;
 };
 
-export function resolveRecentWork(
+function resolveExactRecentWork(
   input: ResolveRecentWorkInput
 ): RecentWorkProjection {
   const focus = input.currentFocus.selectedFocus;
   const focusEvent = focus?.latestMeaningfulEvent ?? null;
   const inputSha256 = runtimeSha256({
-    domain: "recent-work-input-v0.1",
+    domain: "recent-work-input-v0.2",
     asOf: input.asOf,
     currentFocusProjectionSha256: input.currentFocus.projectionSha256,
     focusEventSha256: focusEvent?.eventSha256 ?? null,
@@ -51,7 +51,10 @@ export function resolveRecentWork(
       input.localGitSnapshot?.snapshotSha256 ?? null
   });
   const unavailable = (
-    reasonCode: Exclude<RecentWorkReasonCode, "RECENT_WORK_MATCHED">
+    reasonCode: Exclude<
+      RecentWorkReasonCode,
+      "RECENT_WORK_MATCHED" | "RECENT_WORK_PUSH_ACTIVITY_MATCHED"
+    >
   ) =>
     createUnavailableRecentWorkProjection({
       asOf: input.asOf,
@@ -176,6 +179,7 @@ export function resolveRecentWork(
     status: "matched",
     reasonCodes: ["RECENT_WORK_MATCHED"],
     match: {
+      matchKind: "confirmed_focus",
       linkId: link.linkId,
       projectId: focus.projectId,
       displayLabel: safeDisplayLabel(focus.displayLabel),
@@ -188,6 +192,68 @@ export function resolveRecentWork(
       focusEventSha256: event.eventSha256,
       registrySha256: link.registrySha256,
       localGitSnapshotSha256: localGitSnapshot.snapshotSha256
+    },
+    presentationDisposition: "sidecar_only",
+    correlationBasis: "repository_scope_only",
+    attentionSelectionEffect: "none",
+    candidateEligibilityEffect: "none",
+    rankingEffect: "none",
+    executionEffect: "none"
+  });
+}
+
+export function resolveRecentWork(
+  input: ResolveRecentWorkInput
+): RecentWorkProjection {
+  const exact = resolveExactRecentWork(input);
+  if (exact.status === "matched") return exact;
+
+  const asOfMs = Date.parse(input.asOf);
+  const push = input.githubBatch?.signals
+    .filter(
+      (signal) =>
+        signal.kind === "activity_observation" &&
+        signal.facts.activityKind === "push" &&
+        signal.completeness === "complete" &&
+        signal.sourceUpdatedAt !== null &&
+        /^repository:[0-9]+$/u.test(signal.sourceScopeId) &&
+        Date.parse(signal.sourceUpdatedAt) >=
+          asOfMs - RECENT_WORK_FOCUS_MAX_AGE_MS &&
+        Date.parse(signal.sourceUpdatedAt) <=
+          asOfMs + RECENT_WORK_MAX_FUTURE_SKEW_MS
+    )
+    .sort((left, right) => {
+      const occurredAtDifference =
+        Date.parse(right.sourceUpdatedAt!) -
+        Date.parse(left.sourceUpdatedAt!);
+      return occurredAtDifference !== 0
+        ? occurredAtDifference
+        : left.signalId.localeCompare(right.signalId);
+    })[0];
+
+  if (push === undefined || push.sourceUpdatedAt === null) return exact;
+
+  const needsScopeSelection = input.confirmedLinks.status === "conflict";
+  return sealRecentWorkProjection({
+    contract: RECENT_WORK_PROJECTION_CONTRACT,
+    schemaVersion: RECENT_WORK_SCHEMA_VERSION,
+    resolverVersion: RECENT_WORK_RESOLVER_VERSION,
+    asOf: input.asOf,
+    inputSha256: exact.inputSha256,
+    status: "matched",
+    reasonCodes: ["RECENT_WORK_PUSH_ACTIVITY_MATCHED"],
+    match: {
+      matchKind: "verified_push_activity",
+      displayLabel: needsScopeSelection
+        ? "최근 GitHub push · 작업 공간 선택 필요"
+        : "최근 GitHub push · 로컬 작업 공간 연결 필요",
+      pushOccurredAt: push.sourceUpdatedAt,
+      trackingState: "not_configured",
+      aheadCount: null,
+      behindCount: null,
+      correlation: "repository_scope_only",
+      githubBatchSha256: input.githubBatch!.batchSha256,
+      activitySignalSha256: push.signalHash
     },
     presentationDisposition: "sidecar_only",
     correlationBasis: "repository_scope_only",

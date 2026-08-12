@@ -3,11 +3,11 @@ import { z } from "zod";
 import { runtimeSha256 } from "../crossSource/canonicalHash";
 
 export const RECENT_WORK_PROJECTION_CONTRACT =
-  "recent-work-projection-v0.1" as const;
+  "recent-work-projection-v0.2" as const;
 export const RECENT_WORK_SCHEMA_VERSION =
-  "recent-work-schema-v0.1" as const;
+  "recent-work-schema-v0.2" as const;
 export const RECENT_WORK_RESOLVER_VERSION =
-  "repository-scope-recent-work-resolver-v0.1" as const;
+  "repository-scope-recent-work-resolver-v0.2" as const;
 export const RECENT_WORK_FOCUS_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 export const RECENT_WORK_LOCAL_GIT_MAX_AGE_MS = 5 * 60 * 1_000;
 export const RECENT_WORK_MAX_FUTURE_SKEW_MS = 60 * 1_000;
@@ -27,6 +27,7 @@ const trackingCountSchema = z.number().int().min(0).max(100_000);
 
 export const recentWorkReasonCodeSchema = z.enum([
   "RECENT_WORK_MATCHED",
+  "RECENT_WORK_PUSH_ACTIVITY_MATCHED",
   "RECENT_WORK_FOCUS_UNAVAILABLE",
   "RECENT_WORK_FOCUS_NOT_GITHUB_PUSH",
   "RECENT_WORK_FOCUS_NOT_CURRENT",
@@ -43,8 +44,9 @@ export const recentWorkReasonCodeSchema = z.enum([
   "RECENT_WORK_DEPENDENCY_MISMATCH"
 ]);
 
-export const recentWorkMatchSchema = z
+const confirmedRecentWorkMatchSchema = z
   .object({
+    matchKind: z.literal("confirmed_focus"),
     linkId: z
       .string()
       .regex(/^repository_scope_link_[a-f0-9]{32}$/u),
@@ -91,6 +93,25 @@ export const recentWorkMatchSchema = z
     }
   });
 
+const verifiedPushActivityMatchSchema = z
+  .object({
+    matchKind: z.literal("verified_push_activity"),
+    displayLabel: z.string().min(1).max(240),
+    pushOccurredAt: timestampSchema,
+    trackingState: z.literal("not_configured"),
+    aheadCount: z.null(),
+    behindCount: z.null(),
+    correlation: z.literal("repository_scope_only"),
+    githubBatchSha256: sha256Schema,
+    activitySignalSha256: sha256Schema
+  })
+  .strict();
+
+export const recentWorkMatchSchema = z.union([
+  confirmedRecentWorkMatchSchema,
+  verifiedPushActivityMatchSchema
+]);
+
 const recentWorkProjectionContentSchema = z
   .object({
     contract: z.literal(RECENT_WORK_PROJECTION_CONTRACT),
@@ -128,7 +149,10 @@ export const recentWorkProjectionSchema = recentWorkProjectionContentSchema
       (projection.status === "matched") !==
       (projection.match !== null) ||
       (projection.status === "matched" &&
-        !projection.reasonCodes.includes("RECENT_WORK_MATCHED"))
+        !projection.reasonCodes.includes("RECENT_WORK_MATCHED") &&
+        !projection.reasonCodes.includes(
+          "RECENT_WORK_PUSH_ACTIVITY_MATCHED"
+        ))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -222,14 +246,17 @@ export function recentWorkProjectionSha256(
   const { projectionSha256: _projectionSha256, ...content } =
     projection as RecentWorkProjection;
   return runtimeSha256({
-    domain: "recent-work-projection-v0.1",
+    domain: "recent-work-projection-v0.2",
     projection: content
   });
 }
 
 export function createUnavailableRecentWorkProjection(input: {
   asOf: string;
-  reasonCode: Exclude<RecentWorkReasonCode, "RECENT_WORK_MATCHED">;
+  reasonCode: Exclude<
+    RecentWorkReasonCode,
+    "RECENT_WORK_MATCHED" | "RECENT_WORK_PUSH_ACTIVITY_MATCHED"
+  >;
   inputSha256?: string;
 }): RecentWorkProjection {
   return sealRecentWorkProjection({
@@ -240,7 +267,7 @@ export function createUnavailableRecentWorkProjection(input: {
     inputSha256:
       input.inputSha256 ??
       runtimeSha256({
-        domain: "recent-work-unavailable-input-v0.1",
+        domain: "recent-work-unavailable-input-v0.2",
         asOf: input.asOf,
         reasonCode: input.reasonCode
       }),

@@ -252,3 +252,123 @@ export const FOCUS_AWARE_ATTENTION_SHADOW_RESOLVER_VERSION =
 
 export const CURRENT_FOCUS_SHADOW_ROLLOUT_VERSION =
   "current-focus-shadow-rollout-v0.1" as const;
+
+export const CONTINUATION_CONTEXT_LINK_PROJECTION_CONTRACT =
+  "continuation-context-link-projection-v0.1" as const;
+
+export const CONTINUATION_OBSERVATION_CONTRACT =
+  "continuation-observation-v0.2" as const;
+
+export const CONTINUATION_INPUT_CONTRACT =
+  "continuation-input-v0.2" as const;
+
+export const CONTINUATION_CANDIDATE_CONTRACT =
+  "continuation-candidate-v0.1" as const;
+
+export const CONTINUATION_DECISION_CONTRACT =
+  "continuation-decision-v0.2" as const;
+
+export const CONTINUATION_PUBLIC_DECISION_CONTRACT =
+  "continuation-public-decision-v0.1" as const;
+
+export const CONTINUATION_PRIVATE_ACTION_OFFER_CONTRACT =
+  "continuation-private-action-offer-v0.1" as const;
+
+export const CONTINUATION_ACTION_OFFER_CONTRACT =
+  CONTINUATION_PRIVATE_ACTION_OFFER_CONTRACT;
+
+export const CONTINUATION_PUBLIC_ACTION_REF_CONTRACT =
+  "continuation-public-action-ref-v0.1" as const;
+
+export const CONTINUATION_CONTEXT_LINK_SCHEMA_VERSION =
+  "continuation-context-link-schema-v0.1" as const;
+
+export const CONTINUATION_OBSERVATION_SCHEMA_VERSION =
+  "continuation-observation-schema-v0.2" as const;
+
+export const CONTINUATION_INPUT_SCHEMA_VERSION =
+  "continuation-input-schema-v0.2" as const;
+
+export const CONTINUATION_CANDIDATE_SCHEMA_VERSION =
+  "continuation-candidate-schema-v0.1" as const;
+
+export const CONTINUATION_DECISION_SCHEMA_VERSION =
+  "continuation-decision-schema-v0.2" as const;
+
+export const CONTINUATION_PUBLIC_DECISION_SCHEMA_VERSION =
+  "continuation-public-decision-schema-v0.1" as const;
+
+export const CONTINUATION_ACTION_OFFER_SCHEMA_VERSION =
+  "continuation-action-offer-schema-v0.1" as const;
+
+export const CONTINUATION_ID_POLICY_VERSION =
+  "continuation-id-policy-v0.1" as const;
+
+export const CONTINUATION_OBSERVATION_ID_POLICY_VERSION =
+  "continuation-observation-id-policy-v0.2" as const;
+
+export const CONTINUATION_ACTIVITY_WINDOW_POLICY_VERSION =
+  "continuation-activity-window-7d-v0.1" as const;
+
+export const CONTINUATION_SNAPSHOT_FRESHNESS_POLICY_VERSION =
+  "continuation-source-freshness-policy-v0.1" as const;
+
+export const CONTINUATION_RULE_VERSION =
+  "continuation-candidate-rule-v0.1" as const;
+
+export const CONTINUATION_SCORING_POLICY_VERSION =
+  "continuation-scoring-policy-v0.1" as const;
+
+export const CONTINUATION_RESOLVER_VERSION =
+  "continuation-resolver-v0.1" as const;
+
+export const CONTINUATION_ACTION_POLICY_VERSION =
+  "continuation-link-only-action-policy-v0.1" as const;
+
+export const CONTINUATION_PUBLIC_PROJECTION_POLICY_VERSION =
+  "continuation-local-public-projection-v0.1" as const;
+
+export const CONTINUATION_GITHUB_SOURCE_SCHEMA_VERSION =
+  "github-snapshot-v6" as const;
+
+export const CONTINUATION_CODEX_SOURCE_SCHEMA_VERSION =
+  "codex-snapshot-v3" as const;
+
+export const CONTINUATION_LOCAL_GIT_SOURCE_SCHEMA_VERSION =
+  "codex-local-git-snapshot-v1" as const;
+
+export const CONTINUATION_GITHUB_ADAPTER_VERSION =
+  "continuation-github-adapter-v0.1" as const;
+
+export const CONTINUATION_CODEX_ADAPTER_VERSION =
+  "continuation-codex-adapter-v0.1" as const;
+
+export const CONTINUATION_LOCAL_GIT_ADAPTER_VERSION =
+  "continuation-local-git-adapter-v0.1" as const;
+
+export const WORK_SUGGESTION_BOARD_INPUT_CONTRACT =
+  "work-suggestion-board-input-v0.2" as const;
+
+export const WORK_SUGGESTION_BOARD_RESULT_CONTRACT =
+  "work-suggestion-board-result-v0.2" as const;
+
+export const WORK_SUGGESTION_BOARD_CONTRACT =
+  WORK_SUGGESTION_BOARD_RESULT_CONTRACT;
+
+export const WORK_SUGGESTION_BOARD_PUBLIC_CONTRACT =
+  "work-suggestion-board-public-v0.1" as const;
+
+export const WORK_SUGGESTION_BOARD_SCHEMA_VERSION =
+  "work-suggestion-board-schema-v0.2" as const;
+
+export const WORK_SUGGESTION_BOARD_PUBLIC_SCHEMA_VERSION =
+  "work-suggestion-board-schema-v0.1" as const;
+
+export const WORK_SUGGESTION_BOARD_COMPOSER_VERSION =
+  "work-suggestion-board-composer-v0.1" as const;
+
+export const WORK_SUGGESTION_BOARD_PRECEDENCE_POLICY_VERSION =
+  "attention-continuation-setup-precedence-v0.1" as const;
+
+export const WORK_SUGGESTION_BOARD_ID_POLICY_VERSION =
+  "work-suggestion-board-id-policy-v0.1" as const;

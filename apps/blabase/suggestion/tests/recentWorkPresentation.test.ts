@@ -32,4 +32,25 @@ describe("Recent Work presentation", () => {
     expect(markup).not.toContain("<button");
     expect(markup).not.toContain("<a ");
   });
+
+  it("shows scope selection guidance instead of hiding verified work", () => {
+    const markup = renderToStaticMarkup(
+      createElement(RecentWorkCard, {
+        summary: {
+          displayLabel: "최근 GitHub push · 작업 공간 선택 필요",
+          pushOccurredAt: "2026-08-09T11:00:00.000Z",
+          trackingState: "not_configured",
+          aheadCount: null,
+          behindCount: null,
+          correlation: "repository_scope_only",
+          presentation: "display_only",
+          attentionSelectionEffect: "none",
+          executionEffect: "none"
+        }
+      })
+    );
+    expect(markup).toContain("작업 공간 선택 필요");
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain("<a ");
+  });
 });

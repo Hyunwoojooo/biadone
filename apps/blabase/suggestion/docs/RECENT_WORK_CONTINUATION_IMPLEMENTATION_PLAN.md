@@ -6,7 +6,7 @@ Relationship: additive to `CURRENT_FOCUS_IMPLEMENTATION_PLAN.md`; it does not
 replace or activate Current Focus Phase 2
 
 Current implementation checkpoint (2026-08-10): the shipped code is only the
-additive `recent-work-projection-v0.1` repository-scope, display-only sidecar.
+additive `recent-work-projection-v0.2` repository-scope, display-only sidecar.
 It correlates one confirmed repository-scope link, a Current Focus GitHub push,
 and Local Git v1 state, with `shadow` as the default and optional `present`.
 It does not implement the actor/origin, exact-commit, observation/context/offer,
@@ -321,7 +321,7 @@ retention or remote telemetry. Synthetic evaluation artifacts stay in
 | Current WorkStream | schema v0.1, reconstruction v0.5 | unchanged | Continuation does not add grouping edges |
 | Current Focus | schema v0.1, selection v0.2 | unchanged in shadow | No selection semantics change before human approval |
 | Focus-aware shadow | schema v0.2, resolver v0.2 | unchanged | Still `attentionSelectionEffect=none` |
-| Current repository-scope Recent Work | projection/schema/resolver v0.1/v0.1/v0.1 | unchanged | Implemented display-only capability; default remains shadow and no present rollout is approved |
+| Current repository-scope Recent Work | projection/schema/resolver v0.2/v0.2/v0.2 | unchanged | A complete, recent individual GitHub push may be shown when Focus abstains; it remains display-only and creates no Attention effect |
 | Recent Work projection evaluation | dataset/config v0.1/v0.1; run/policy v0.2/v0.2 | mutable checkpoint | Synthetic Dev Candidate only; no frozen hash, run, approval, or release claim |
 | Push observation/context/offer | none | v0.1 each | New additive sidecars |
 | Work resumption | schema/protocol v1 | unchanged | Reuse explicit-user open command and 30-second TTL |

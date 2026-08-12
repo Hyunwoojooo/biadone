@@ -1,0 +1,422 @@
+{
+  "contract": "continuation-evaluation-dataset-v0.1",
+  "schemaVersion": "continuation-evaluation-case-v0.1",
+  "datasetVersion": "suggestion-continuation-dev-v0.1",
+  "datasetRevision": 1,
+  "datasetClass": "dev_candidate",
+  "split": "development",
+  "taskBoundary": "contract_scaffold_validation",
+  "dataOrigin": "bounded_synthetic",
+  "containsProductionData": false,
+  "createdAt": "2026-08-12T03:00:00.000Z",
+  "lifecycle": {
+    "state": "mutable",
+    "datasetSha256": null,
+    "immutableRef": null,
+    "frozenAt": null
+  },
+  "evaluatorConfig": {
+    "candidateRef": "eval/synthetic/continuationEvaluationConfig.v0.1.json",
+    "version": "continuation-evaluation-config-v0.1"
+  },
+  "cases": [
+    {
+      "caseId": "E1-CT-001",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "ready display Continuation seals with bounded authority",
+      "scenario": "continuation_ready",
+      "expected": {
+        "oracleCode": "CONTINUATION_READY_ACCEPTED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "offers_available",
+        "prominentLane": null,
+        "invariantCodes": [
+          "CONTINUATION_INTEGRITY_VERIFIED",
+          "CONTINUATION_SCHEMA_ACCEPTED",
+          "EXECUTION_POLICY_READ_ONLY"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["continuation", "contract", "positive"]
+    },
+    {
+      "caseId": "E1-CT-002",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "setup Continuation remains navigation only",
+      "scenario": "continuation_setup",
+      "expected": {
+        "oracleCode": "CONTINUATION_SETUP_ACCEPTED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "setup_required",
+        "prominentLane": null,
+        "invariantCodes": [
+          "CONTINUATION_INTEGRITY_VERIFIED",
+          "EXECUTION_POLICY_READ_ONLY",
+          "SETUP_CAPABILITY_BOUNDED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["continuation", "contract", "setup"]
+    },
+    {
+      "caseId": "E1-CT-003",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "empty Continuation is explicit and actionless",
+      "scenario": "continuation_empty",
+      "expected": {
+        "oracleCode": "CONTINUATION_EMPTY_ACCEPTED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "no_recent_context",
+        "prominentLane": null,
+        "invariantCodes": [
+          "EMPTY_DECISION_ACTIONLESS",
+          "EXECUTION_POLICY_READ_ONLY"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["continuation", "contract", "empty"]
+    },
+    {
+      "caseId": "E1-CT-004",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "tampered Continuation artifact hash is rejected",
+      "scenario": "continuation_tamper",
+      "expected": {
+        "oracleCode": "CONTINUATION_TAMPER_REJECTED",
+        "contractOutcome": "rejected",
+        "decisionStatus": null,
+        "prominentLane": null,
+        "invariantCodes": ["TAMPER_REJECTED"],
+        "criticalErrorCodes": []
+      },
+      "labels": ["continuation", "contract", "integrity"]
+    },
+    {
+      "caseId": "E1-CT-005",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "future capability cannot become an available decision",
+      "scenario": "future_capability_block",
+      "expected": {
+        "oracleCode": "CONTINUATION_FUTURE_CAPABILITY_REJECTED",
+        "contractOutcome": "rejected",
+        "decisionStatus": null,
+        "prominentLane": null,
+        "invariantCodes": ["FUTURE_CAPABILITY_BLOCKED"],
+        "criticalErrorCodes": []
+      },
+      "labels": ["capability", "contract", "safety"]
+    },
+    {
+      "caseId": "E1-CT-006",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "public Continuation rejects private locator text",
+      "scenario": "public_privacy_rejection",
+      "expected": {
+        "oracleCode": "CONTINUATION_PRIVATE_IDENTIFIER_REJECTED",
+        "contractOutcome": "rejected",
+        "decisionStatus": null,
+        "prominentLane": null,
+        "invariantCodes": ["PRIVATE_IDENTIFIER_REJECTED"],
+        "criticalErrorCodes": []
+      },
+      "labels": ["contract", "privacy", "public_projection"]
+    },
+    {
+      "caseId": "E1-BD-001",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "Board contract enforces Attention precedence and rejects a wrong lane",
+      "scenario": "board_attention_precedence",
+      "expected": {
+        "oracleCode": "BOARD_ATTENTION_PRECEDENCE_CONTRACT_ENFORCED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "offers_available",
+        "prominentLane": "attention",
+        "invariantCodes": [
+          "ACTIVE_OBJECT_UNCHANGED",
+          "ACTIVE_RESULT_HASH_UNCHANGED",
+          "ATTENTION_PRIMARY",
+          "EXECUTION_POLICY_READ_ONLY",
+          "WRONG_LANE_MUTATION_REJECTED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["attention", "board", "precedence"]
+    },
+    {
+      "caseId": "E1-BD-002",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "Board contract enforces Continuation fallback and rejects a wrong lane",
+      "scenario": "board_continuation_fallback",
+      "expected": {
+        "oracleCode": "BOARD_CONTINUATION_PRECEDENCE_CONTRACT_ENFORCED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "offers_available",
+        "prominentLane": "continuation",
+        "invariantCodes": [
+          "CONTINUATION_PRIMARY",
+          "EXECUTION_POLICY_READ_ONLY",
+          "WRONG_LANE_MUTATION_REJECTED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["board", "continuation", "precedence"]
+    },
+    {
+      "caseId": "E1-BD-003",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "Board contract enforces Setup fallback and rejects a wrong lane",
+      "scenario": "board_setup_fallback",
+      "expected": {
+        "oracleCode": "BOARD_SETUP_PRECEDENCE_CONTRACT_ENFORCED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "setup_required",
+        "prominentLane": "setup",
+        "invariantCodes": [
+          "EXECUTION_POLICY_READ_ONLY",
+          "SETUP_PRIMARY",
+          "WRONG_LANE_MUTATION_REJECTED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["board", "precedence", "setup"]
+    },
+    {
+      "caseId": "E1-BD-004",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "Board contract enforces an empty result and rejects a wrong lane",
+      "scenario": "board_empty",
+      "expected": {
+        "oracleCode": "BOARD_EMPTY_PRECEDENCE_CONTRACT_ENFORCED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "no_recent_context",
+        "prominentLane": "none",
+        "invariantCodes": [
+          "EMPTY_BOARD",
+          "EXECUTION_POLICY_READ_ONLY",
+          "WRONG_LANE_MUTATION_REJECTED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["board", "empty", "precedence"]
+    },
+    {
+      "caseId": "E1-BD-005",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "mixed Continuation version is rejected at the Board boundary",
+      "scenario": "board_mixed_version",
+      "expected": {
+        "oracleCode": "BOARD_MIXED_VERSION_REJECTED",
+        "contractOutcome": "rejected",
+        "decisionStatus": null,
+        "prominentLane": null,
+        "invariantCodes": ["MIXED_VERSION_REJECTED"],
+        "criticalErrorCodes": []
+      },
+      "labels": ["board", "compatibility", "contract"]
+    },
+    {
+      "caseId": "E1-HS-001",
+      "task": "contract_oracle",
+      "evaluationStage": "contract_scaffold",
+      "title": "semantic hashes ignore volatile Continuation run metadata",
+      "scenario": "semantic_hash_runtime_metadata",
+      "expected": {
+        "oracleCode": "SEMANTIC_HASH_VOLATILE_METADATA_ISOLATED",
+        "contractOutcome": "accepted",
+        "decisionStatus": "offers_available",
+        "prominentLane": "attention",
+        "invariantCodes": [
+          "ACTIVE_OBJECT_UNCHANGED",
+          "ACTIVE_RESULT_HASH_UNCHANGED",
+          "ARTIFACT_HASH_CHANGED",
+          "BOARD_SEMANTIC_HASH_STABLE",
+          "CONTINUATION_SEMANTIC_HASH_STABLE",
+          "HASH_HELPER_MATCHED"
+        ],
+        "criticalErrorCodes": []
+      },
+      "labels": ["active_attention", "hash", "semantic"]
+    },
+    {
+      "caseId": "E1-RV-GH-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "fresh GitHub activity yields bounded single-source Continuation",
+      "scenario": "resolver_github_recent",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "RECENT_GITHUB_ACTIVITY_BOUNDED",
+        "blockedByTask": "R-002",
+        "forbiddenInvariants": [
+          "MUST_NOT_CLAIM_COMPLETION",
+          "MUST_NOT_CLAIM_URGENCY",
+          "MUST_NOT_EXPOSE_PRIVATE_IDENTIFIERS"
+        ]
+      },
+      "labels": ["deferred", "github", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-GH-002",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "stale GitHub activity cannot become current",
+      "scenario": "resolver_github_stale",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "STALE_GITHUB_ACTIVITY_EXCLUDED",
+        "blockedByTask": "S-001",
+        "forbiddenInvariants": [
+          "MUST_NOT_ADMIT_STALE_ACTIVITY",
+          "MUST_NOT_CLAIM_URGENCY"
+        ]
+      },
+      "labels": ["deferred", "freshness", "github"]
+    },
+    {
+      "caseId": "E1-RV-CX-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "metadata-only Codex activity stays bounded",
+      "scenario": "resolver_codex_metadata",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "CODEX_METADATA_ONLY_BOUNDED",
+        "blockedByTask": "R-002",
+        "forbiddenInvariants": [
+          "MUST_NOT_CLAIM_COMPLETION",
+          "MUST_NOT_CLAIM_URGENCY",
+          "MUST_NOT_EXPOSE_PRIVATE_IDENTIFIERS"
+        ]
+      },
+      "labels": ["codex", "deferred", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-CX-002",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "terminal Codex history cannot become current work",
+      "scenario": "resolver_codex_terminal",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "TERMINAL_CODEX_ACTIVITY_EXCLUDED",
+        "blockedByTask": "R-002",
+        "forbiddenInvariants": [
+          "MUST_NOT_ADMIT_TERMINAL_ACTIVITY",
+          "MUST_NOT_CLAIM_COMPLETION"
+        ]
+      },
+      "labels": ["codex", "deferred", "terminal"]
+    },
+    {
+      "caseId": "E1-RV-FR-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "future activity is rejected at freshness admission",
+      "scenario": "resolver_future_activity",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "FUTURE_ACTIVITY_REJECTED",
+        "blockedByTask": "S-001",
+        "forbiddenInvariants": [
+          "MUST_NOT_ADMIT_STALE_ACTIVITY",
+          "MUST_NOT_CLAIM_URGENCY"
+        ]
+      },
+      "labels": ["deferred", "freshness", "future_timestamp"]
+    },
+    {
+      "caseId": "E1-RV-FR-002",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "partial source coverage remains caveated",
+      "scenario": "resolver_partial_coverage",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "PARTIAL_COVERAGE_CAVEATED",
+        "blockedByTask": "R-003",
+        "forbiddenInvariants": [
+          "MUST_NOT_CLAIM_URGENCY",
+          "MUST_NOT_EXPOSE_PRIVATE_IDENTIFIERS"
+        ]
+      },
+      "labels": ["coverage", "deferred", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-PC-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "resolver output never emits private values",
+      "scenario": "resolver_privacy_boundary",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "PRIVATE_VALUES_REMAIN_LOCAL",
+        "blockedByTask": "R-003",
+        "forbiddenInvariants": [
+          "MUST_NOT_AUTO_EXECUTE",
+          "MUST_NOT_EXPOSE_PRIVATE_IDENTIFIERS"
+        ]
+      },
+      "labels": ["deferred", "privacy", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-ID-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "same-name and conflicting identity never auto-link",
+      "scenario": "resolver_identity_conflict",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "IDENTITY_CONFLICT_EXCLUDED",
+        "blockedByTask": "R-001",
+        "forbiddenInvariants": [
+          "MUST_NOT_AUTO_CONFIRM_IDENTITY",
+          "MUST_NOT_DEDUPE_CONFLICT_AS_MATCH",
+          "MUST_NOT_EXPOSE_PRIVATE_IDENTIFIERS"
+        ]
+      },
+      "labels": ["deferred", "identity", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-TM-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "ties and permutations resolve deterministically",
+      "scenario": "resolver_tie_determinism",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "DETERMINISTIC_TIEBREAK_PRESERVED",
+        "blockedByTask": "R-003",
+        "forbiddenInvariants": ["MUST_NOT_USE_UNSTABLE_TIEBREAK"]
+      },
+      "labels": ["deferred", "determinism", "resolver_behavior"]
+    },
+    {
+      "caseId": "E1-RV-DT-001",
+      "task": "resolver_behavior",
+      "evaluationStage": "resolver_behavior",
+      "title": "cross-lane dedupe preserves valid Attention",
+      "scenario": "resolver_cross_lane_dedupe",
+      "expected": {
+        "measurementStatus": "not_evaluated",
+        "oracleCode": "CROSS_LANE_DEDUPE_PRESERVES_ATTENTION",
+        "blockedByTask": "B-001",
+        "forbiddenInvariants": [
+          "MUST_NOT_AUTO_EXECUTE",
+          "MUST_NOT_CHANGE_ACTIVE_ATTENTION"
+        ]
+      },
+      "labels": ["board", "dedupe", "deferred"]
+    }
+  ]
+}

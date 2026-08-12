@@ -3846,3 +3846,164 @@ The launcher contract identifier remains v2 because the new field is optional/de
     actor/origin provenance, exact commit equality, continuation
     observation/context/offer, heartbeat/resume action, four-mode rollout,
     applied selection, monitor v0.7, or replay v4
+
+## 2026-08-11 — Verified GitHub push Recent Work fallback v0.2
+
+- Change type: deterministic engine behavior change; display-only sidecar
+- Behavior before:
+  - Recent Work required a selected Current Focus and one confirmed exact
+    GitHub repository to Codex scope link.
+  - a complete recent push was hidden whenever aggregate GitHub coverage was
+    partial or repository-scope mapping was unresolved.
+- Behavior after:
+  - the existing exact Focus/link path remains first priority.
+  - if that path abstains, one individually complete GitHub push with a valid
+    repository scope and source timestamp inside the existing 24-hour window
+    may produce a display-only Recent Work summary.
+  - mapping conflict is presented as `작업 공간 선택 필요`; absence of a
+    confirmed link is presented as a local-workspace connection requirement.
+  - the fallback cannot create or modify an Active Attention candidate,
+    eligibility, ranking, decision, primary action, or execution authority.
+- Versions before:
+  - projection/schema/resolver v0.1/v0.1/v0.1
+- Versions after:
+  - projection/schema/resolver v0.2/v0.2/v0.2
+  - Active Attention, Current Focus, Local Git, launcher v2, monitor, and replay
+    versions are unchanged.
+- Evidence and privacy:
+  - only normalized push kind, complete signal state, bounded source time,
+    opaque repository scope validity, signal hash, and batch hash are consumed.
+  - public output contains no repository ID, scope ID, commit SHA, ref, URL,
+    path, message, credential, or raw GitHub payload.
+  - no production conversation or connector data is added to a dataset.
+- Evaluation status:
+  - unit regressions were added for Focus abstention, fresh complete push,
+    mapping conflict guidance, shadow suppression, present projection, privacy,
+    and display-only effects.
+  - `npm run typecheck` passed.
+  - targeted Vitest passed: 7 files, 49 tests. The new verified-push fallback
+    has its own resolver and presentation regressions.
+  - `npm run lint` passed.
+  - `npm run build` passed with Next.js 15.5.21 after the final v0.2 source
+    and evaluation metadata changes.
+  - live local `GET /api/attention` in `present` mode returned `status=ready`,
+    `currentFocus.status=unresolved`, and a non-null display-only Recent Work
+    summary with both Attention-selection and execution effects equal to `none`.
+  - mutable v0.2 baseline run
+    `recent_work_run_e376c022b3ac0f706d959543470b2700` passed at
+    `2026-08-11T12:42:12.482Z`–`2026-08-11T12:42:12.523Z` with 23/23 cases,
+    28/28 variants, all eight automatic gates true, and every privacy,
+    replay-input, candidate, eligibility, assessment, selection, Active result,
+    result-hash, and Recent Work effect failure/diff count equal to zero.
+  - code fingerprint:
+    `31d13fa255c18d3d18b88e16460cfe790e2b4eab7f28c007e7eee9e787a889a3`.
+    Subsequent evidence-only ECR edits change the current dirty-worktree
+    fingerprint but do not rewrite the runtime sources evaluated by this run.
+  - dataset candidate/materialized/config hashes remain
+    `8cea73e117622048907f46171daf7928cf6e2290cd24df2ca9a38d317ee9b182`,
+    `110dc54517198b8864854320e66a84563b3b1d101dd320a44d7f5c89b4eb8b8d`,
+    and `fde94e2070121d65bc2a7dce399f8356f260cde9ee2c5a5025ef324f2b05717c`.
+  - private artifact:
+    `.local/evaluations/recent-work-projection/recent_work_run_e376c022b3ac0f706d959543470b2700.json`;
+    canonical/file hashes
+    `544590f498df98ff753c87ed91a700d753b289c8345c400b7e1c97d6a2cf0311` /
+    `c331e2285e23d6cf0073ed0b06273a02b66c3d6a4e4768de333b0ed0f40fee50`,
+    46605 bytes, mode 0600.
+  - the mutable 23-case dataset remains the exact-link regression set; the new
+    fallback is targeted-test evidence, not a frozen dataset case or a formal
+    comparison/improvement claim.
+  - automatic checks are complete; release/present approval remains deferred
+    until the independent human release gate is recorded.
+- Rollback:
+  - return presentation mode to `shadow`, or revert the v0.2 fallback and
+version constants. No persisted-state or schema migration is required.
+
+## 2026-08-12 — Suggestion Engine vNext Draft ECR v0.1
+
+- Status: **Draft — planning complete for `D-001`; implementation and release not approved by this record**
+- Date: 2026-08-12
+- Product decision owner: User
+- Implementation executor and record author: Codex (AI)
+- Technical QA reviewer: `qa_reviewer` agent (AI, advisory; not a human reviewer or release authority)
+- Human dataset reviewers/adjudicator: Pending
+- Release approver: User; release decision pending
+- Goal: Preserve the existing strict Active Attention lane while adding independent Continuation and Setup lanes plus a deterministic Proposal Router that can surface recent GitHub/Codex work without claiming unverified urgency, importance, ownership, or completion state.
+- Affected pipeline stages: Planned new Continuation observation/candidate/identity/score/resolver contracts, Work Suggestion Board composer, evaluation, monitoring/replay, additive APIs, web presentation, later mapping/action and launcher integration. Existing Active Attention candidate admission, eligibility, ranking, result and result hash are protected invariants.
+- Behavior before: Active Attention is the only actionable recommendation lane. Recent Work v0.2 is display-only and may show a generic verified-push fallback, while ordinary Codex inventory and source-local activity cannot produce a ranked continuation proposal. `Attention.no_action` can therefore appear to users as if no useful next step exists.
+- Planned behavior after: All valid Active Attention remains primary. When no valid Attention exists, a deterministic Continuation candidate may become primary; Attention, Continuation and Setup remain separately labeled lanes. A fresh single-source GitHub push or Codex session may be displayed with bounded non-urgent copy. Missing mapping becomes a navigation-only Setup action instead of candidate exclusion. MVP actions are limited to `display`, `open_source` and `open_setup_surface` and cannot persist mapping or selection, resume a session, fill a prompt, execute a command, retry, or mutate a source.
+- Approved MVP product policy: Activity window 7 days with source snapshot freshness versioned separately; exact remote match may prefill a proposal but persistent mapping requires explicit confirmation; verified repository/project names may be shown in local web/macOS surfaces but raw names are excluded from external telemetry, monitor, replay and evaluation artifacts; explicit feedback alone may affect bounded Continuation ranking; clicks and non-response are analytics-only and not Gold; deterministic rules only.
+- Deferred product direction: Post-MVP may auto-fill a bounded prompt draft into a reviewable composer after exact-target and action-time revalidation. Automatic prompt send, approval, command execution, retry or external mutation is not approved and requires a separate schema, ECR, security/privacy review and explicit human gate.
+- Versions before: Existing Active Attention versions unchanged; Recent Work projection v0.2 remains display-only/no-effect; GitHub snapshot v6 and Codex snapshot v3 are existing inputs.
+- Versions after: Proposed, not implemented or released. New Continuation observation/candidate/identity/rule/score/resolver v1 and Work Suggestion Board/composer v1. Monitor, replay, API, resumption and launcher version changes remain task-specific proposals and must be recorded when contracts are implemented. Unknown or mixed version tuples must fail closed for Continuation/Board without changing Active Attention.
+- Code commit: Not applicable for this planning-only draft. No semantic engine code was changed by `D-001`; no clean commit SHA or dirty-run fingerprint is claimed.
+- Evaluation dataset version and SHA-256: Not created. Planned families are mutable Continuation Dev Candidate, human-reviewed frozen Continuation Regression, frozen Board Regression, private dogfood and locked holdout.
+- Candidate run ID: Not created.
+- Comparison run ID: Not created.
+- Commands executed: Documentation inspection and editing only. No engine typecheck, lint, unit/integration test, build, baseline, launcher smoke, evaluation run or Git command was executed for this draft.
+- Metrics changed: None measured. Provisional hypotheses, not achieved results: human-reviewed `Acceptable@1 >= 75%`, `Acceptable@3 >= 90%`, and critical safety/identity/privacy/Active-result-diff errors equal to zero. Actual thresholds require review against the same frozen materialized input.
+- Regressions or accepted exceptions: None evaluated or accepted. Production clicks, non-response, AI evaluator verdicts and synthetic labels are not human-approved Gold.
+- Privacy or retention impact: MVP reuses bounded existing GitHub v6 and Codex v3 metadata and does not add commit subjects, diffs, file paths, raw prompts/answers, commands or outputs. Repository/project names are sensitive local display data. Exact retention durations, deletion verification, telemetry policy and human dataset lawful-basis review remain pending gates.
+- Compatibility: `/api/attention`, Active Attention candidate universe, eligibility, ranking, result and hash must remain byte-equivalent for the same input. Recent Work v0.2 keeps its current meaning. New contracts are additive and feature-gated; older consumers must ignore optional data or fail closed according to their declared reader contract.
+- Release decision: **Deferred.** Implementation, automated verification, advisory AI technical QA of implementation, human dataset review, frozen same-input comparison, privacy/retention approval and explicit user release approval remain pending. Default rollout remains `off` or `shadow`.
+- Rollback method: Disable `continuationAction`, then `continuationPresentation`, restore `boardComposer=legacy`, and set `continuationResolution=shadow|off`. Active Attention remains independently available throughout rollback.
+- Follow-up work: `C-001` contract/version ledger is next. Before semantic implementation, open the implementation section of this Draft ECR with exact affected files and proposed versions. Then build the mutable dataset/evaluator before resolver behavior, prove Active byte-equivalence, complete human dataset review/freeze, record real run IDs/hashes, and obtain separate presentation, action and release approvals.
+
+### C-001 hash-contract correction — 2026-08-12
+
+- Status: Implemented locally as a pre-`E-001` contract correction; not released and not a contract-freeze approval.
+- Goal and behavior after: Continuation decisions and Work Suggestion Board results now carry a stable `semanticResultSha256` in addition to the existing full-artifact `resultSha256`. Continuation semantics omit run, candidate/observation ID and private locator lineage. Board semantics hash only contract/version/policy/as-of values, explicit ordered item semantics (lane, optional WorkContext, label/summary, timestamps, evidence/capability and target-capability presence), and execution policy; Active/Continuation dependency hashes and Board/source IDs remain artifact lineage. Full artifact hashes and Board dependencies continue binding supplied semantic hashes, lane artifact hashes and IDs, while semantic field changes alter the semantic and full artifact hashes.
+- Versions before: Internal Continuation decision contract/schema/hash domain v0.1; internal Board input/result/schema/hash domains v0.1. Public Continuation and Board DTO contracts are v0.1.
+- Versions after: Internal Continuation decision contract/schema/full-hash/semantic-hash domains v0.2; internal Board input/result/schema/full-hash/semantic-hash domains v0.2. No legacy adapter was added because no production or persisted vNext artifact exists. Public Continuation and Board DTO shapes, contracts and schema literals remain v0.1 through separate public schema constants. Active Attention contracts and hashes are unchanged.
+- Affected files: `src/crossSource/versions.ts`, `src/continuation/contracts.ts`, `src/suggestionBoard/contracts.ts` and their targeted contract tests.
+- Evaluation dataset and runs: No dataset version, dataset SHA-256, candidate run ID or comparison run ID was created. This correction establishes the hash contract consumed by `E-001`.
+- Commands executed: Per orchestration instruction, no test, typecheck, lint, build, baseline, evaluation or Git command was executed by this correction task. Targeted tests were authored for run/locator stability, semantic changes, tamper rejection, Board lineage and public projection privacy; execution remains pending parent verification.
+- Privacy or retention impact: None. Semantic projections omit run metadata, candidate artifact hashes and private target locator references; public DTOs expose neither private hash. No production data, raw conversation or private evaluation artifact was read or written.
+- Rollback: Revert the additive semantic hash fields and restore only the new internal Continuation decision and Board domains to v0.1 before any artifact is persisted. Active Attention remains untouched.
+
+### E-001 dataset/evaluator scaffold and runner wiring — 2026-08-12
+
+- Status: Implemented locally; the E-001 automated evaluation checkpoint completed on 2026-08-12. Twelve executable contract oracles passed and ten resolver-behavior cases remain deferred. Human review, dataset freeze, Gold promotion, resolver quality evaluation, release and rollout remain incomplete or unapproved.
+- Goal and behavior after: A bounded synthetic Continuation Dev Candidate, strict case/config/run-record contracts, deterministic contract-scaffold evaluator, private atomic artifact path and CLI runner are now wired before resolver behavior. The runner resolves code provenance from the current working directory, persists only under `.local/evaluations/continuation/`, prints only status, run ID, artifact path, hashes and aggregate counts, and returns a nonzero exit status when scaffold validation fails. It does not print raw cases or privacy sentinels.
+- Versions before: No E-001 Continuation evaluation dataset, case, config, run-record or evaluation-policy contract existed. The internal Continuation decision and Work Suggestion Board dual-hash contracts were already v0.2 as recorded in the preceding C-001 correction; E-001 had no production consumer.
+- Versions after: Mutable candidate contracts `continuation-evaluation-dataset-v0.1`, `continuation-evaluation-case-v0.1`, `continuation-evaluation-config-v0.1`, `continuation-evaluation-run-v0.1` and `continuation-contract-scaffold-evaluation-v0.1`. These version labels identify development artifacts; they do not make the dataset frozen or human-approved Gold. Internal Continuation/Board dual-hash remains v0.2, and the new evaluator is structurally evaluation-only with no production consumer wired. Exact Active runtime and byte/hash equivalence is not inferred from that structural isolation.
+- Affected files: `eval/synthetic/continuationCaseBuilder.ts`, `eval/synthetic/continuationEvaluationCases.v0.1.json`, `eval/synthetic/continuationEvaluationConfig.v0.1.json`, `src/evaluation/continuation/*`, `tests/continuationEvaluation.test.ts`, `tools/run-continuation-baseline.ts`, `package.json`, this Draft ECR and the vNext implementation plan.
+- Evaluation dataset and config: The input remains a mutable synthetic Dev Candidate, not a frozen dataset or human-approved Gold. Dataset candidate SHA-256 is `c834c86ab9b37822b58debd9c6f08dab9a481cb87e9a1183cf8153a63ada7b98`; materialized dataset SHA-256 is `32d70998725cee9730533f0cf80442324a84c4425d4da660cb11d112717c2ffe`. Config candidate SHA-256 is `4624f4c404c995ddce6bc0c6bda94c2dcf00247fa26344477669a15631f99de9`; deterministic config SHA-256 is `bd5cd9bdd46134eb1e162f5bb3282d72ebf47c60b53ea241c3bc378d6245ca2d`. The frozen `datasetSha256` and `configSha256` fields remain `null`.
+- Evaluation run and artifact: Run `continuation_eval_run_df5a85b1e2bb784355c035969f835380` started and completed at `2026-08-12T12:43:25.306Z`. Its private artifact is `.local/evaluations/continuation/continuation_eval_run_df5a85b1e2bb784355c035969f835380.json`, 32400 bytes with mode 0600. Canonical artifact-payload SHA-256 is `a0415e30359a2edc1e943e19ae3b507cbf7e2db0b350c3d3346209939c4f1bcc`; the recorded stored-artifact SHA-256 and independently checked file SHA-256 both equal `0d5797a2b85af65548d2c92c0e25449d6af50ce143723856928921c174f32427`.
+- Code provenance: The run recorded `commit=null`, state `dirty_worktree`, and fingerprint `302444b13f840627e6e57f21140b134fe6dccdc795680b6d030f8d409212271f`. The documentation-only evidence edits made after the run can change the current dirty-worktree fingerprint; the recorded fingerprint is historical run-time provenance, and no baseline rerun is required for these docs-only changes.
+- Commands executed: Targeted Vitest for three files passed 39/39; `npm run typecheck` passed after correcting a test-only fixture whose environment object omitted required `NODE_ENV`; `npm run lint` passed before that test-only correction, with production/source semantics unaffected; and `npm run continuation:baseline` passed. The initial typecheck failure was limited to that test fixture. Build was not run for this checkpoint.
+- Metrics and review: 22 total cases were recorded: 12 executable, 12 passed, 0 failed, and 10 deferred/`not_evaluated`. `exactOraclePassRate=1`, all recorded critical failure counts are zero, automatic review passed, and human review is `not_started`. These scaffold results do not establish `Acceptable@1`, `Acceptable@3`, setup-route accuracy, resolver quality, production generalization, comparison improvement, or release quality. No comparison run or improvement claim is made.
+- Regressions or accepted exceptions: No executable contract oracle failed. Ten resolver-behavior cases are deliberately deferred until their resolver/board dependencies land; automatic output and synthetic labels are not human-approved Gold.
+- Privacy or retention impact: Synthetic bounded inputs only; no production conversation was promoted or read. Future run artifacts are private local files under `.local/` written atomically with restrictive permissions. Console output excludes raw cases and sentinel values. No new remote telemetry or production retention path was added.
+- Compatibility and release decision: The contract-level `HS-001` oracle executed and passed. That is the only Active-equivalence claim from this checkpoint; runtime integration equivalence for Active input, candidate universe, eligibility, ordering, result bytes and hash remains deferred. Release remains **deferred**, `releaseEligible=false`, and all Continuation presentation/action/resolution flags remain off.
+- Rollback: Remove the additive E-001 synthetic artifacts, evaluator module, CLI runner and package script. No production state, persisted schema migration or Active rollback is required.
+- Follow-up work: Complete the deferred resolver/board tasks and evaluate their ten behavior cases, begin human review, create and freeze a separately reviewed immutable dataset version, run same-frozen-input comparisons, and obtain separate privacy, presentation, action and release approvals.
+
+### C-002 Observation identity and provenance correction — 2026-08-12
+
+- Status: Implemented locally as an internal contract correction; validation was not run by this task and release remains deferred.
+- Goal and behavior after: Continuation Observation v0.2 accepts a zero `boundedActivityCount` as metadata-only Codex presence without inferring inactivity. Logical Observation identity is derived from an adapter-provided opaque source identity, a distinct event-level `sourceRecordRef`, and source activity time; it no longer depends on refresh-specific `snapshotCapturedAt` or mutable payload fields. The sealed artifact still hashes snapshot capture time, payload, supporting evidence, and provenance, so refreshed artifacts can differ while retaining one logical event ID.
+- Provenance: Every Observation now binds exact source snapshot schema, adapter version, and `sourceSnapshotSha256`. GitHub/Codex observations must match the corresponding available input dependency tuple and snapshot hash. Mixed or unknown tuples fail closed. Local Git provenance constants are reserved for the existing local payload shape, but no Local Git v2 adapter or runtime wiring is added.
+- Opaque reference boundary: Source identities, source-record references, and evidence references are format-validated opaque values supplied by adapters. Adapters are responsible for keyed HMAC derivation; installation secrets, HMAC keys, raw repository/session IDs, URLs, paths, prompts, commit text, diffs, and source payloads are not fields in this contract.
+- Versions before: Observation contract/schema/hash domain and identity behavior v0.1.
+- Versions after: Observation contract/schema/hash domain v0.2, a narrow `continuation-observation-id-policy-v0.2`, and the enclosing Continuation input contract/schema/hash domain v0.2. The shared non-Observation ID policy, Candidate, Decision, Board, public DTO, Active Attention, and source snapshot contracts are unchanged. GitHub/Codex adapter labels remain v0.1 because their first implementation is not yet persisted or released.
+- Legacy compatibility: No v0.1 reader or migration adapter was added because no production, persisted, or released vNext Observation artifact exists. A v0.1 artifact is rejected by the strict v0.2 boundary.
+- Tests authored: Metadata-only count zero, refresh-stable logical ID with artifact-hash change, supporting-evidence stability/canonical order, same-time distinct source-record identity, semantically equivalent timestamp normalization, exact provenance tuple, dependency cross-provenance, tamper rejection, and non-throwing safe parsing. Per task instruction, tests, typecheck, lint, build, baseline, evaluation, and Git commands were not run.
+- Dataset and evaluation: No dataset content, frozen version/hash, evaluation run, comparison run, or metric changed. The existing E-001 historical run is not rewritten and does not validate C-002.
+- Privacy and retention impact: No new persistence or retention path. Only keyed opaque references and source artifact SHA-256 values are added to the private internal contract; the installation secret is never stored in an Observation. G2 human privacy approval remains required before adapter activation.
+- Rollback: Before any Observation is persisted, revert the v0.2 Observation fields/identity/hash constants and the matching tests. No state migration, public API rollback, or Active Attention change is required.
+
+### S-001 GitHub/Codex source adapters — 2026-08-12
+
+- Status: Implemented locally and awaiting automated validation. The adapters are pure, shadow-only and unwired; they are not connected to runtime collection, resolver, persistence, API, UI, monitoring or action paths. Release and activation remain deferred.
+- Owner: Connector owner implementation by Codex; human privacy approver is pending.
+- Goal and behavior after: Exact GitHub snapshot v6 and Codex snapshot v3 inputs can be projected into sealed Continuation Observation v0.2 artifacts without inferring a WorkContext or action. Activity eligibility uses the exact seven-day interval `(asOf - 7 days, asOf]`; snapshot freshness remains a separate caller-supplied cutoff. Future activity fails closed, stale snapshots remain explicitly stale, and partial source collection remains partial rather than being promoted to complete coverage. Codex metadata-only presence may emit `boundedActivityCount=0`; zero means no bounded activity count was available from that metadata, not proven inactivity.
+- Versions before: Observation and enclosing Continuation input contracts were v0.2 after C-002, but no GitHub or Codex Continuation adapter implementation existed. GitHub snapshot schema was v6 and Codex snapshot schema was v3.
+- Versions after: `continuation-github-adapter-v0.1` and `continuation-codex-adapter-v0.1`, consuming exact GitHub snapshot v6 and Codex snapshot v3 and emitting Continuation Observation/Input v0.2. No public DTO, source snapshot, Candidate, Decision, Board, Active Attention or Recent Work version changed.
+- Affected pipeline stages and files: Additive private source projection under `src/continuation/adapters/*`, its `src/continuation/index.ts` export, and targeted adapter tests. Candidate derivation, identity mapping, ranking, resolver behavior and product presentation remain out of scope.
+- Dataset and evaluation: No dataset content, version, SHA-256, evaluation run, comparison run or metric changed. A baseline rerun is not applicable to this unconnected adapter checkpoint: the E-001 mutable dataset still defers resolver behavior and does not exercise source adapters. The historical E-001 run is not rewritten and does not validate S-001.
+- Commands executed: Documentation inspection and editing only for this record update. Adapter tests were authored, but typecheck, unit tests, lint, build, baseline, evaluation and Git commands have not been run for S-001.
+- Privacy and retention impact: No new collection, persistence, telemetry or retention path is wired. Adapter outputs retain only keyed-HMAC opaque source, record and evidence references plus bounded metadata and source artifact provenance. Installation HMAC keys and raw repository/session IDs, repository/project names, URLs, refs, SHAs, paths, prompts, summaries, commands, outputs, commit text, diffs and source payloads are prohibited from adapter output. G2 human privacy approval remains required before activation.
+- Regressions or accepted exceptions: None evaluated or accepted. Source partiality, stale state and metadata-only count zero are preserved explicitly so downstream work cannot overstate source facts. Unit coverage is authored but unverified until the targeted checks run.
+- Compatibility and release decision: The change is additive and has no production consumer. Active Attention and current Recent Work behavior remain unchanged. Release is **deferred**; source-adapter activation, R-001/R-002 work and any presentation remain prohibited until required validation and human gates are completed.
+- Rollback: Remove the GitHub/Codex adapter files, their Continuation barrel export and targeted adapter tests. Because the adapters are unwired and no artifacts are persisted, no data migration, public API rollback or Active Attention rollback is required.
+- Follow-up work: Run the targeted adapter tests, typecheck and lint; resolve any failures; record exact validation evidence; obtain G2 privacy human sign-off; then keep `R-001` and `R-002` pending until their own dependency and approval gates are satisfied.
