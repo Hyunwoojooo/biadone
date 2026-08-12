@@ -193,6 +193,36 @@ describe("Continuation source adapters", () => {
     });
   });
 
+  it("fails closed without throwing when unknown source objects have hostile getters", () => {
+    const hostile = Object.defineProperty({}, "schemaVersion", {
+      get(): never {
+        throw new Error("hostile getter");
+      }
+    });
+
+    const github = adaptGitHubContinuationObservations(hostile, OPTIONS);
+    const codex = adaptCodexContinuationObservations(hostile, OPTIONS);
+
+    expect(continuationSourceAdapterBatchSchema.safeParse(github).success).toBe(
+      true
+    );
+    expect(continuationSourceAdapterBatchSchema.safeParse(codex).success).toBe(
+      true
+    );
+    expect(github).toMatchObject({
+      status: "unavailable",
+      observations: [],
+      identityBindings: [],
+      exclusions: [{ reasonCode: "SOURCE_REJECTED", count: 1 }]
+    });
+    expect(codex).toMatchObject({
+      status: "unavailable",
+      observations: [],
+      identityBindings: [],
+      exclusions: [{ reasonCode: "SOURCE_REJECTED", count: 1 }]
+    });
+  });
+
   it("excludes an entire conflicting GitHub duplicate identity group", () => {
     const snapshot = githubSnapshot();
     snapshot.activities = [

@@ -4,11 +4,17 @@ import { z } from "zod";
 
 import {
   continuationObservationSchema,
+  continuationSourceIdentitySchema,
   createContinuationObservationId,
   sealContinuationObservation,
   type ContinuationObservation,
-  type ContinuationObservationContent
+  type ContinuationObservationContent,
+  type ContinuationSourceIdentity
 } from "./contracts";
+import {
+  sourceScopeRefSchema,
+  type SourceScopeRef
+} from "../context/contracts";
 import {
   compareRuntimeStrings,
   runtimeCanonicalJson,
@@ -30,9 +36,14 @@ import {
   validateGitHubSnapshot
 } from "../crossSource/validateSnapshots";
 
-const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.1" as const;
+export const CONTINUATION_IDENTITY_BINDING_PROOF_CONTRACT =
+  "continuation-identity-binding-proof-v0.1" as const;
+export const CONTINUATION_IDENTITY_BINDING_PROOF_SCHEMA_VERSION =
+  "continuation-identity-binding-proof-schema-v0.1" as const;
+
+const ADAPTER_BATCH_CONTRACT = "continuation-source-adapter-batch-v0.2" as const;
 const ADAPTER_BATCH_SCHEMA_VERSION =
-  "continuation-source-adapter-batch-schema-v0.1" as const;
+  "continuation-source-adapter-batch-schema-v0.2" as const;
 const ACTIVITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_GITHUB_ACTIVITIES = 10_000;
 const MAX_GITHUB_REPOSITORIES = 5_000;
@@ -63,6 +74,139 @@ const exclusionCountSchema = z
   })
   .strict();
 
+const bindableSourceIdentitySchema = z.union([
+  continuationSourceIdentitySchema.and(
+    z.object({ source: z.literal("github") }).passthrough()
+  ),
+  continuationSourceIdentitySchema.and(
+    z.object({ source: z.literal("codex") }).passthrough()
+  )
+]);
+
+const identityBindingProofShape = {
+  contract: z.literal(CONTINUATION_IDENTITY_BINDING_PROOF_CONTRACT),
+  schemaVersion: z.literal(
+    CONTINUATION_IDENTITY_BINDING_PROOF_SCHEMA_VERSION
+  ),
+  sourceIdentity: bindableSourceIdentitySchema,
+  scopeBindingRef: z.string().regex(/^scope_binding_ref_[a-f0-9]{32}$/u),
+  sourceSnapshotSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  adapterVersion: z.union([
+    z.literal(CONTINUATION_GITHUB_ADAPTER_VERSION),
+    z.literal(CONTINUATION_CODEX_ADAPTER_VERSION)
+  ]),
+  keyId: z.string().regex(/^installation_key_[a-f0-9]{32}$/u)
+} as const;
+
+const identityBindingProofContentSchema = z
+  .object(identityBindingProofShape)
+  .strict();
+
+export const continuationIdentityBindingProofSchema = z
+  .object({
+    ...identityBindingProofShape,
+    proofSha256: z.string().regex(/^[a-f0-9]{64}$/u)
+  })
+  .strict()
+  .superRefine((proof, context) => {
+    const expectedAdapterVersion =
+      proof.sourceIdentity.source === "github"
+        ? CONTINUATION_GITHUB_ADAPTER_VERSION
+        : CONTINUATION_CODEX_ADAPTER_VERSION;
+    if (proof.adapterVersion !== expectedAdapterVersion) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["adapterVersion"],
+        message: "Identity binding proof adapter provenance mismatch"
+      });
+    }
+  });
+
+export type ContinuationIdentityBindingProof = z.infer<
+  typeof continuationIdentityBindingProofSchema
+>;
+
+const identitySecretOptionsSchema = z
+  .object({ installationSecret: z.string().min(1).max(1_024) })
+  .strict();
+
+export function createContinuationScopeBindingRef(
+  sourceScopeInput: unknown,
+  optionsInput: { installationSecret: string }
+): string {
+  const sourceScope = sourceScopeRefSchema.parse(sourceScopeInput);
+  const options = identitySecretOptionsSchema.parse(optionsInput);
+  return `scope_binding_ref_${keyedDigest(
+    options.installationSecret,
+    "continuation-scope-binding-ref-v0.1",
+    sourceScope
+  ).slice(0, 32)}`;
+}
+
+export function createContinuationIdentityBindingProof(
+  input: {
+    sourceIdentity: ContinuationSourceIdentity;
+    sourceScope: SourceScopeRef;
+    sourceSnapshotSha256: string;
+    adapterVersion:
+      | typeof CONTINUATION_GITHUB_ADAPTER_VERSION
+      | typeof CONTINUATION_CODEX_ADAPTER_VERSION;
+  },
+  optionsInput: { installationSecret: string }
+): ContinuationIdentityBindingProof {
+  const options = identitySecretOptionsSchema.parse(optionsInput);
+  const sourceIdentity = bindableSourceIdentitySchema.parse(input.sourceIdentity);
+  const sourceScope = sourceScopeRefSchema.parse(input.sourceScope);
+  if (sourceIdentity.source !== sourceScope.source) {
+    throw new Error("Identity binding source mismatch");
+  }
+  const content = identityBindingProofContentSchema.parse({
+    contract: CONTINUATION_IDENTITY_BINDING_PROOF_CONTRACT,
+    schemaVersion: CONTINUATION_IDENTITY_BINDING_PROOF_SCHEMA_VERSION,
+    sourceIdentity,
+    scopeBindingRef: createContinuationScopeBindingRef(sourceScope, options),
+    sourceSnapshotSha256: input.sourceSnapshotSha256,
+    adapterVersion: input.adapterVersion,
+    keyId: `installation_key_${keyedDigest(
+      options.installationSecret,
+      "continuation-installation-key-id-v0.1",
+      "continuation-identity-binding"
+    ).slice(0, 32)}`
+  });
+  return continuationIdentityBindingProofSchema.parse({
+    ...content,
+    proofSha256: keyedDigest(
+      options.installationSecret,
+      "continuation-identity-binding-proof-v0.1",
+      content
+    )
+  });
+}
+
+export function verifyContinuationIdentityBindingProof(
+  proofInput: unknown,
+  optionsInput: { installationSecret: string }
+): proofInput is ContinuationIdentityBindingProof {
+  const proof = continuationIdentityBindingProofSchema.safeParse(proofInput);
+  const options = identitySecretOptionsSchema.safeParse(optionsInput);
+  if (!proof.success || !options.success) return false;
+  const { proofSha256, ...content } = proof.data;
+  const expectedKeyId = `installation_key_${keyedDigest(
+    options.data.installationSecret,
+    "continuation-installation-key-id-v0.1",
+    "continuation-identity-binding"
+  ).slice(0, 32)}`;
+  return (
+    proof.data.keyId === expectedKeyId &&
+    proofSha256 ===
+      keyedDigest(
+        options.data.installationSecret,
+        "continuation-identity-binding-proof-v0.1",
+        content
+      )
+  );
+}
+
 const commonBatchShape = {
   contract: z.literal(ADAPTER_BATCH_CONTRACT),
   schemaVersion: z.literal(ADAPTER_BATCH_SCHEMA_VERSION),
@@ -72,6 +216,9 @@ const commonBatchShape = {
     .regex(/^[a-f0-9]{64}$/u)
     .nullable(),
   observations: z.array(continuationObservationSchema).max(10_000),
+  identityBindings: z
+    .array(continuationIdentityBindingProofSchema)
+    .max(10_000),
   excludedCount: z.number().int().nonnegative().max(100_000),
   exclusions: z.array(exclusionCountSchema).max(16),
   batchSha256: z.string().regex(/^[a-f0-9]{64}$/u)
@@ -115,6 +262,13 @@ export const continuationSourceAdapterBatchSchema = z
         message: "Unavailable adapter batches cannot carry observations"
       });
     }
+    if (batch.status === "unavailable" && batch.identityBindings.length !== 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["identityBindings"],
+        message: "Unavailable adapter batches cannot carry identity bindings"
+      });
+    }
     if (
       batch.excludedCount !==
       batch.exclusions.reduce((total, item) => total + item.count, 0)
@@ -130,6 +284,17 @@ export const continuationSourceAdapterBatchSchema = z
         code: z.ZodIssueCode.custom,
         path: ["observations"],
         message: "Observations must be canonical and unique"
+      });
+    }
+    if (
+      !isCanonical(batch.identityBindings, (item) =>
+        runtimeCanonicalJson(item)
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["identityBindings"],
+        message: "Identity bindings must be canonical and unique"
       });
     }
     if (!isCanonical(batch.exclusions, (item) => item.reasonCode)) {
@@ -162,6 +327,36 @@ export const continuationSourceAdapterBatchSchema = z
         break;
       }
     }
+    for (const proof of batch.identityBindings) {
+      if (
+        proof.sourceIdentity.source !== batch.source ||
+        proof.adapterVersion !== batch.adapterVersion ||
+        proof.sourceSnapshotSha256 !== batch.sourceSnapshotSha256
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["identityBindings"],
+          message: "Identity binding provenance does not match its adapter batch"
+        });
+        break;
+      }
+    }
+    const observationIdentities = new Set(
+      batch.observations.map((item) => identityKey(item.sourceIdentity))
+    );
+    const proofIdentities = new Set(
+      batch.identityBindings.map((item) => identityKey(item.sourceIdentity))
+    );
+    if (
+      observationIdentities.size !== proofIdentities.size ||
+      [...observationIdentities].some((identity) => !proofIdentities.has(identity))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["identityBindings"],
+        message: "Identity bindings must cover the exact observation identity set"
+      });
+    }
   });
 
 export type ContinuationSourceAdapterBatch = z.infer<
@@ -192,6 +387,17 @@ const optionsSchema = z
   });
 
 export function adaptGitHubContinuationObservations(
+  input: unknown,
+  optionsInput: ContinuationSourceAdapterOptions
+): ContinuationSourceAdapterBatch {
+  try {
+    return adaptGitHubContinuationObservationsUnchecked(input, optionsInput);
+  } catch {
+    return unavailableBatch("github", "SOURCE_REJECTED");
+  }
+}
+
+function adaptGitHubContinuationObservationsUnchecked(
   input: unknown,
   optionsInput: ContinuationSourceAdapterOptions
 ): ContinuationSourceAdapterBatch {
@@ -227,7 +433,13 @@ export function adaptGitHubContinuationObservations(
   const exclusions = new Map<ExclusionReason, number>();
   if (artifact.payload.activitiesState === "unavailable") {
     addExclusion(exclusions, "ACTIVITIES_UNAVAILABLE");
-    return availableBatch("github", artifact.sourceSnapshotSha256, [], exclusions);
+    return availableBatch(
+      "github",
+      artifact.sourceSnapshotSha256,
+      [],
+      [],
+      exclusions
+    );
   }
 
   const repositories = new Set(
@@ -257,7 +469,7 @@ export function adaptGitHubContinuationObservations(
     }
     return true;
   });
-  const observations = dedupeRecords(
+  const retained = dedupeRecords(
     eligible,
     (activity) =>
       opaqueRef(
@@ -267,7 +479,8 @@ export function adaptGitHubContinuationObservations(
         activity.id
       ),
     exclusions
-  ).map((activity) => {
+  );
+  const observations = retained.map((activity) => {
     const sourceIdentity = {
       source: "github" as const,
       opaqueId: opaqueRef(
@@ -317,10 +530,50 @@ export function adaptGitHubContinuationObservations(
       ]
     });
   });
-  return availableBatch("github", artifact.sourceSnapshotSha256, observations, exclusions);
+  const identityBindings = retained.map((activity) =>
+    createContinuationIdentityBindingProof(
+      {
+        sourceIdentity: {
+          source: "github",
+          opaqueId: opaqueRef(
+            "source_ref",
+            options.data.installationSecret,
+            "github-repository-v0.1",
+            activity.repositoryId
+          )
+        },
+        sourceScope: {
+          source: "github",
+          resourceType: "repository",
+          opaqueId: String(activity.repositoryId)
+        },
+        sourceSnapshotSha256: artifact.sourceSnapshotSha256,
+        adapterVersion: CONTINUATION_GITHUB_ADAPTER_VERSION
+      },
+      { installationSecret: options.data.installationSecret }
+    )
+  );
+  return availableBatch(
+    "github",
+    artifact.sourceSnapshotSha256,
+    observations,
+    identityBindings,
+    exclusions
+  );
 }
 
 export function adaptCodexContinuationObservations(
+  input: unknown,
+  optionsInput: ContinuationSourceAdapterOptions
+): ContinuationSourceAdapterBatch {
+  try {
+    return adaptCodexContinuationObservationsUnchecked(input, optionsInput);
+  } catch {
+    return unavailableBatch("codex", "SOURCE_REJECTED");
+  }
+}
+
+function adaptCodexContinuationObservationsUnchecked(
   input: unknown,
   optionsInput: ContinuationSourceAdapterOptions
 ): ContinuationSourceAdapterBatch {
@@ -368,7 +621,7 @@ export function adaptCodexContinuationObservations(
     }
     return true;
   });
-  const observations = dedupeRecords(
+  const retained = dedupeRecords(
     eligible,
     (session) =>
       opaqueRef(
@@ -378,7 +631,8 @@ export function adaptCodexContinuationObservations(
         session.id
       ),
     exclusions
-  ).map((session) => {
+  );
+  const observations = retained.map((session) => {
     const sourceIdentity = {
       source: "codex" as const,
       opaqueId: opaqueRef(
@@ -430,7 +684,36 @@ export function adaptCodexContinuationObservations(
       ]
     });
   });
-  return availableBatch("codex", artifact.sourceSnapshotSha256, observations, exclusions);
+  const identityBindings = retained.map((session) =>
+    createContinuationIdentityBindingProof(
+      {
+        sourceIdentity: {
+          source: "codex",
+          opaqueId: opaqueRef(
+            "source_ref",
+            options.data.installationSecret,
+            "codex-session-v0.1",
+            session.id
+          )
+        },
+        sourceScope: {
+          source: "codex",
+          resourceType: "scope",
+          opaqueId: session.scopeId
+        },
+        sourceSnapshotSha256: artifact.sourceSnapshotSha256,
+        adapterVersion: CONTINUATION_CODEX_ADAPTER_VERSION
+      },
+      { installationSecret: options.data.installationSecret }
+    )
+  );
+  return availableBatch(
+    "codex",
+    artifact.sourceSnapshotSha256,
+    observations,
+    identityBindings,
+    exclusions
+  );
 }
 
 type AdapterSource = "github" | "codex";
@@ -483,6 +766,7 @@ function availableBatch(
   source: AdapterSource,
   sourceSnapshotSha256: string,
   observationsInput: ContinuationObservation[],
+  identityBindingsInput: ContinuationIdentityBindingProof[],
   exclusionMap: Map<ExclusionReason, number>
 ): ContinuationSourceAdapterBatch {
   return sealBatch({
@@ -492,6 +776,7 @@ function availableBatch(
     observations: [...observationsInput].sort((left, right) =>
       compareRuntimeStrings(left.observationId, right.observationId)
     ),
+    identityBindings: dedupeCanonical(identityBindingsInput),
     exclusions: exclusionCounts(exclusionMap)
   });
 }
@@ -505,6 +790,7 @@ function unavailableBatch(
     status: "unavailable",
     sourceSnapshotSha256: null,
     observations: [],
+    identityBindings: [],
     exclusions: [{ reasonCode, count: 1 }]
   });
 }
@@ -514,6 +800,7 @@ function sealBatch(input: {
   status: "available" | "unavailable";
   sourceSnapshotSha256: string | null;
   observations: ContinuationObservation[];
+  identityBindings: ContinuationIdentityBindingProof[];
   exclusions: Array<{ reasonCode: ExclusionReason; count: number }>;
 }): ContinuationSourceAdapterBatch {
   const versions =
@@ -534,6 +821,7 @@ function sealBatch(input: {
     status: input.status,
     sourceSnapshotSha256: input.sourceSnapshotSha256,
     observations: input.observations,
+    identityBindings: input.identityBindings,
     excludedCount: input.exclusions.reduce(
       (total, exclusion) => total + exclusion.count,
       0
@@ -548,9 +836,33 @@ function sealBatch(input: {
 
 function adapterBatchSha256(value: unknown): string {
   return runtimeSha256({
-    domain: "continuation-source-adapter-batch-hash-v0.1",
+    domain: "continuation-source-adapter-batch-hash-v0.2",
     batch: value
   });
+}
+
+function keyedDigest(
+  installationSecret: string,
+  domain: string,
+  value: unknown
+): string {
+  return createHmac("sha256", installationSecret)
+    .update(domain)
+    .update("\0")
+    .update(runtimeCanonicalJson(value))
+    .digest("hex");
+}
+
+function identityKey(identity: ContinuationSourceIdentity): string {
+  return runtimeCanonicalJson(identity);
+}
+
+function dedupeCanonical<T>(values: T[]): T[] {
+  return [...new Map(
+    values.map((value) => [runtimeCanonicalJson(value), value] as const)
+  ).entries()]
+    .sort(([left], [right]) => compareRuntimeStrings(left, right))
+    .map(([, value]) => value);
 }
 
 function opaqueRef(
