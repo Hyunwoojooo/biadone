@@ -9,9 +9,15 @@ import type {
   SemanticContinuationWorkBoardResponse
 } from "../src/semanticContinuation/contracts";
 import { parseDisplayOnlyWorkBoard } from "./attentionClient";
+import {
+  isContinuationSetupOpenedResponse,
+  requestContinuationSetupAction
+} from "./continuationSetupActionClient";
 
 const LANE_ORDER = ["attention", "continuation", "setup"] as const;
 export const WORK_BOARD_EXPIRY_TIMER_CHUNK_MS = 60_000;
+export const WORK_BOARD_SETUP_ACTION_ERROR_COPY =
+  "설정 화면을 열지 못했습니다. 제안을 새로 확인한 뒤 다시 시도해주세요.";
 
 const LANE_COPY = {
   attention: {
@@ -42,8 +48,7 @@ const CAVEAT_COPY = {
   CAVEAT_GITHUB_PR_ACTIONABILITY_PARTIAL: "GitHub 처리 가능성 일부",
   CAVEAT_MANAGED_FAILURE_INSPECTION_ONLY: "실패 상태 확인 전용",
   CAVEAT_REVIEW_DRAFT_UNKNOWN: "초안 상태 확인 필요",
-  CAVEAT_UPSTREAM_OBJECTS_REMAIN_NON_CANDIDATES:
-    "상위 객체는 후보에서 제외됨",
+  CAVEAT_UPSTREAM_OBJECTS_REMAIN_NON_CANDIDATES: "상위 객체는 후보에서 제외됨",
   EXPLICIT_MAPPING_CONFIRMATION_REQUIRED: "연결 확인 필요",
   IDENTITY_CLARIFICATION_REQUIRED: "작업 연결 확인 필요",
   SOURCE_COVERAGE_PARTIAL: "소스 범위 일부",
@@ -59,12 +64,14 @@ export function WorkSuggestionBoardPanel({
   response,
   loadError = null,
   loading = false,
-  now
+  now,
+  setupActionEnabled = false
 }: {
   response: SemanticContinuationWorkBoardResponse | null;
   loadError?: string | null;
   loading?: boolean;
   now?: Date;
+  setupActionEnabled?: boolean;
 }) {
   const [clockMs, setClockMs] = useState<number | null>(() =>
     now === undefined ? null : now.getTime()
@@ -104,7 +111,11 @@ export function WorkSuggestionBoardPanel({
         <div>
           <p className="eyebrow">Work Board</p>
           <h2 id="work-suggestion-board-title">확인할 작업 제안</h2>
-          <p>표시 전용이며 이 화면에서 실행하거나 변경하지 않습니다.</p>
+          <p>
+            {setupActionEnabled
+              ? "제안을 표시하며 연결 항목은 명시적으로 설정 화면만 엽니다."
+              : "표시 전용이며 이 화면에서 실행하거나 변경하지 않습니다."}
+          </p>
         </div>
         {feed === null ? null : (
           <time dateTime={feed.generatedAt}>
@@ -125,7 +136,12 @@ export function WorkSuggestionBoardPanel({
       ) : (
         <div className="workSuggestionBoardLanes">
           {LANE_ORDER.map((lane) => (
-            <LaneColumn key={lane} lane={lane} items={feed.lanes[lane]} />
+            <LaneColumn
+              key={lane}
+              lane={lane}
+              items={feed.lanes[lane]}
+              setupActionEnabled={setupActionEnabled}
+            />
           ))}
         </div>
       )}
@@ -142,8 +158,7 @@ export function scheduleWorkBoardExpiryTicks(
     cancel: (handle: unknown) => void;
   } = {
     now: () => Date.now(),
-    schedule: (callback, delayMs) =>
-      window.setTimeout(callback, delayMs),
+    schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
     cancel: (handle) => window.clearTimeout(handle as number)
   }
 ): () => void {
@@ -170,7 +185,15 @@ export function scheduleWorkBoardExpiryTicks(
   };
 }
 
-function LaneColumn({ lane, items }: { lane: Lane; items: DisplayItem[] }) {
+function LaneColumn({
+  lane,
+  items,
+  setupActionEnabled
+}: {
+  lane: Lane;
+  items: DisplayItem[];
+  setupActionEnabled: boolean;
+}) {
   const copy = LANE_COPY[lane];
   return (
     <section className={`workSuggestionLane workSuggestionLane-${lane}`}>
@@ -191,6 +214,9 @@ function LaneColumn({ lane, items }: { lane: Lane; items: DisplayItem[] }) {
                   ))}
                 </ul>
               )}
+              {lane === "setup" && setupActionEnabled ? (
+                <SetupSurfaceAction key={item.itemRef} itemRef={item.itemRef} />
+              ) : null}
             </li>
           ))}
         </ol>
@@ -202,6 +228,7 @@ function LaneColumn({ lane, items }: { lane: Lane; items: DisplayItem[] }) {
 type EvidenceBand = keyof typeof EVIDENCE_COPY;
 type CaveatCode = keyof typeof CAVEAT_COPY;
 type DisplayItem = {
+  itemRef: string;
   title: string;
   evidenceBand: EvidenceBand;
   caveatCodes: CaveatCode[];
@@ -223,15 +250,84 @@ function createDisplayFeed(
     if (isExpired(entry, nowMs)) continue;
     const title =
       entry.lane === "continuation"
-        ? overlayByItemRef.get(entry.item.itemRef) ?? entry.item.title
+        ? (overlayByItemRef.get(entry.item.itemRef) ?? entry.item.title)
         : entry.item.title;
     lanes[entry.lane].push({
+      itemRef: entry.item.itemRef,
       title,
       evidenceBand: entry.item.evidenceBand as EvidenceBand,
       caveatCodes: [...entry.item.caveatCodes] as CaveatCode[]
     });
   }
   return { generatedAt: response.base.board.generatedAt, lanes };
+}
+
+type SetupActionState = "idle" | "pending" | "opened" | "error";
+
+function SetupSurfaceAction({ itemRef }: { itemRef: string }) {
+  const [state, setState] = useState<SetupActionState>("idle");
+  const openSetupSurface = useMemo(
+    () => createWorkSuggestionSetupActionActivation(itemRef, setState),
+    [itemRef]
+  );
+
+  const isDisabled = state !== "idle";
+  return (
+    <div className="workSuggestionSetupAction" aria-busy={state === "pending"}>
+      <button
+        type="button"
+        disabled={isDisabled}
+        onClick={() => void openSetupSurface()}
+      >
+        {state === "pending" || state === "opened"
+          ? "설정 화면 여는 중"
+          : state === "error"
+            ? "설정 화면 열기 실패"
+            : "설정 화면 열기"}
+      </button>
+      {state === "error" ? (
+        <p role="alert">{WORK_BOARD_SETUP_ACTION_ERROR_COPY}</p>
+      ) : null}
+    </div>
+  );
+}
+
+export async function runWorkSuggestionSetupAction(
+  itemRef: string,
+  request: (input: {
+    itemRef: string;
+    explicitUserAction: true;
+  }) => Promise<unknown> = requestContinuationSetupAction,
+  navigate: (path: "/projects") => void = (path) => window.location.assign(path)
+): Promise<void> {
+  const opened = await request({ itemRef, explicitUserAction: true });
+  if (!isContinuationSetupOpenedResponse(opened)) {
+    throw new TypeError("Invalid setup action response.");
+  }
+  navigate("/projects");
+}
+
+export function createWorkSuggestionSetupActionActivation(
+  itemRef: string,
+  setState: (state: SetupActionState) => void,
+  run: (itemRef: string) => Promise<void> = runWorkSuggestionSetupAction
+): () => Promise<void> {
+  let inFlight = false;
+  let attempted = false;
+  return async () => {
+    if (inFlight || attempted) return;
+    inFlight = true;
+    attempted = true;
+    setState("pending");
+    try {
+      await run(itemRef);
+      setState("opened");
+    } catch {
+      setState("error");
+    } finally {
+      inFlight = false;
+    }
+  };
 }
 
 function orderedEntries(response: WorkBoardReadyResponse): BoardEntry[] {
@@ -254,8 +350,7 @@ function overlayMap(
 
 function isExpired(entry: BoardEntry, nowMs: number): boolean {
   return (
-    entry.item.expiresAt !== null &&
-    nowMs >= Date.parse(entry.item.expiresAt)
+    entry.item.expiresAt !== null && nowMs >= Date.parse(entry.item.expiresAt)
   );
 }
 

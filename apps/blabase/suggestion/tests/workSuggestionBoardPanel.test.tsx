@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createWorkSuggestionSetupActionActivation,
+  runWorkSuggestionSetupAction,
   scheduleWorkBoardExpiryTicks,
   WorkSuggestionBoardPanel,
   WORK_BOARD_EXPIRY_TIMER_CHUNK_MS
@@ -73,17 +75,20 @@ describe("WorkSuggestionBoardPanel", () => {
       entry.item.expiresAt = new Date(expiresAt).toISOString();
     }
     const ticks: number[] = [];
-    const cancel = scheduleWorkBoardExpiryTicks(expiresAt, (nowMs) => {
-      ticks.push(nowMs);
-    }, {
-      now: () => Date.now(),
-      schedule: (callback, delayMs) => setTimeout(callback, delayMs),
-      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
-    });
-
-    expect(render(response, new Date(start))).toContain(
-      "최근 작업 이어가기"
+    const cancel = scheduleWorkBoardExpiryTicks(
+      expiresAt,
+      (nowMs) => {
+        ticks.push(nowMs);
+      },
+      {
+        now: () => Date.now(),
+        schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+        cancel: (handle) =>
+          clearTimeout(handle as ReturnType<typeof setTimeout>)
+      }
     );
+
+    expect(render(response, new Date(start))).toContain("최근 작업 이어가기");
     expect(vi.getTimerCount()).toBe(1);
     vi.advanceTimersByTime(WORK_BOARD_EXPIRY_TIMER_CHUNK_MS - 1);
     expect(ticks).toEqual([]);
@@ -179,13 +184,120 @@ describe("WorkSuggestionBoardPanel", () => {
     expect(markup).not.toMatch(/(?:data-|href=|onclick=)/iu);
     expect(markup).not.toContain('aria-live="assertive"');
   });
+
+  it("renders exactly one Setup CTA only behind the explicit capability prop", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const disabled = render(readyFeed());
+    expect(disabled).not.toContain("설정 화면 열기");
+    expect(disabled).not.toMatch(/<(?:button|a|form)\b/u);
+
+    const enabled = render(readyFeed(), undefined, true);
+    expect(enabled.match(/<button\b/gu)).toHaveLength(1);
+    expect(enabled).toContain("설정 화면 열기");
+    expect(enabled.indexOf("설정 화면 열기")).toBeGreaterThan(
+      enabled.indexOf("작업공간 연결하기")
+    );
+    expect(enabled.indexOf("설정 화면 열기")).toBeGreaterThan(
+      enabled.indexOf("연결할 일")
+    );
+    expect(enabled).not.toMatch(/(?:item_ref_|offer_|action_ref_)/u);
+    expect(enabled).not.toMatch(/(?:href|data-[^=]+)=/iu);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("hardcodes navigation only after an exact opened response", async () => {
+    const navigate = vi.fn();
+    const request = vi.fn().mockResolvedValue({
+      contract: "continuation-setup-action-api-v0.1",
+      status: "opened",
+      destination: "project_mappings",
+      navigateTo: "/projects"
+    });
+    await runWorkSuggestionSetupAction(SETUP_REF, request, navigate);
+    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith({
+      itemRef: SETUP_REF,
+      explicitUserAction: true
+    });
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith("/projects");
+
+    for (const hostile of [
+      {
+        contract: "continuation-setup-action-api-v0.1",
+        status: "opened",
+        destination: "project_mappings",
+        navigateTo: "https://hostile.example"
+      },
+      {
+        contract: "continuation-setup-action-api-v0.1",
+        status: "opened",
+        destination: "native_app",
+        navigateTo: "/projects"
+      }
+    ]) {
+      const rejectedNavigate = vi.fn();
+      await expect(
+        runWorkSuggestionSetupAction(
+          SETUP_REF,
+          vi.fn().mockResolvedValue(hostile),
+          rejectedNavigate
+        )
+      ).rejects.toThrow("Invalid setup action response.");
+      expect(rejectedNavigate).not.toHaveBeenCalled();
+    }
+  });
+
+  it("coalesces pending activations, does not retry, and exposes bounded states", async () => {
+    let resolveRun!: () => void;
+    const run = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRun = resolve;
+        })
+    );
+    const states: string[] = [];
+    const activate = createWorkSuggestionSetupActionActivation(
+      SETUP_REF,
+      (state) => states.push(state),
+      run
+    );
+    const first = activate();
+    const second = activate();
+    expect(run).toHaveBeenCalledOnce();
+    expect(states).toEqual(["pending"]);
+    resolveRun();
+    await Promise.all([first, second]);
+    expect(states).toEqual(["pending", "opened"]);
+    await activate();
+    expect(run).toHaveBeenCalledOnce();
+
+    const failedRun = vi.fn().mockRejectedValue(new Error("private detail"));
+    const failedStates: string[] = [];
+    const fail = createWorkSuggestionSetupActionActivation(
+      SETUP_REF,
+      (state) => failedStates.push(state),
+      failedRun
+    );
+    await fail();
+    expect(failedRun).toHaveBeenCalledOnce();
+    expect(failedStates).toEqual(["pending", "error"]);
+    await fail();
+    expect(failedRun).toHaveBeenCalledOnce();
+  });
 });
 
-function render(response: SemanticContinuationWorkBoardResponse, now?: Date) {
+function render(
+  response: SemanticContinuationWorkBoardResponse,
+  now?: Date,
+  setupActionEnabled = false
+) {
   return renderToStaticMarkup(
     createElement(WorkSuggestionBoardPanel, {
       response,
-      now: now ?? new Date("2026-08-13T09:30:00.000Z")
+      now: now ?? new Date("2026-08-13T09:30:00.000Z"),
+      setupActionEnabled
     })
   );
 }

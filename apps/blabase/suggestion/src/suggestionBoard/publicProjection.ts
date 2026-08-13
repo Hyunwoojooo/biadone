@@ -30,6 +30,21 @@ const publicProjectionKeySchema = z
   .string()
   .regex(/^[a-f0-9]{64}$/u);
 
+/**
+ * Server-private correlation helper for an already-authenticated Board item.
+ * The returned value is public-opaque, but this helper grants no action
+ * authority and must never be used to infer a private target.
+ */
+export function projectWorkSuggestionBoardPublicItemRef(
+  sourceItemRef: string,
+  projectionKeyInput: string
+): string {
+  const projectionKey = publicProjectionKeySchema.parse(
+    projectionKeyInput
+  );
+  return opaque(projectionKey, "item", sourceItemRef);
+}
+
 export function projectWorkSuggestionBoardPublic(
   boardInput: WorkSuggestionBoardResult,
   projectionKeyInput: string

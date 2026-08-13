@@ -1,6 +1,13 @@
 import { createHmac, randomBytes } from "node:crypto";
 
 import {
+  createContinuationSetupActionAuthority
+} from "../continuation/actions/authority";
+import type {
+  ContinuationSetupActionBinding,
+  ContinuationSetupActionIssuanceAudit
+} from "../continuation/actions/contracts";
+import {
   evaluateCurrentAttentionWithLiveInputs,
   type LiveAttentionCapturedInputs
 } from "../attention/liveAttention";
@@ -19,11 +26,14 @@ import {
 } from "../continuation/adapters";
 import {
   CONTINUATION_CANDIDATE_DERIVATION_CONFIG,
-  deriveContinuationCandidates
+  deriveContinuationCandidates,
+  type ContinuationCandidateDerivationResult
 } from "../continuation/deriveCandidates";
 import {
   createContinuationIdentityInput,
-  resolveContinuationIdentity
+  resolveContinuationIdentity,
+  type ContinuationIdentityInput,
+  type ContinuationIdentityResult
 } from "../continuation/resolveIdentity";
 import {
   CONTINUATION_RESOLUTION_CONFIG,
@@ -44,8 +54,14 @@ import {
 } from "./monitoringSchema";
 import {
   projectActiveOnlyWorkSuggestionBoardPublic,
+  projectWorkSuggestionBoardPublicItemRef,
   projectWorkSuggestionBoardPublic
 } from "./publicProjection";
+import {
+  createWorkSuggestionBoardSourceItemRef,
+  type WorkSuggestionBoardPublic,
+  type WorkSuggestionBoardResult
+} from "./contracts";
 import {
   createSemanticContinuationWorkBoardResponse,
   type SemanticContinuationWorkBoardResponse
@@ -206,7 +222,52 @@ type CapturedContinuationResolution =
 export type CapturedBoardResolution = {
   response: WorkBoardApiResponse;
   continuation: CapturedContinuationResolution;
+  /** Server-private action correlation; never part of a public response. */
+  setupActionAuthorities: CapturedSetupActionAuthority[];
 };
+
+export type CapturedSetupActionBinding = ContinuationSetupActionBinding;
+
+export type CapturedSetupActionAuthority = {
+  capability: "open_setup_surface";
+  destination: "project_mappings";
+  binding: CapturedSetupActionBinding;
+};
+
+export type LiveContinuationSetupActionAuthority = {
+  asOf: string;
+  installationSecret: string;
+  setupActionAuthorities: CapturedSetupActionAuthority[];
+};
+
+/**
+ * Executes exactly one preserve capture and returns only server-private Setup
+ * action authority derived from the same successful public Board projection.
+ */
+export async function evaluateLiveContinuationSetupActionAuthority(input?: {
+  cwd?: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}): Promise<LiveContinuationSetupActionAuthority | null> {
+  const { captured, resolution } =
+    await captureLiveWorkSuggestionBoardResolution(input);
+  const installationSecret =
+    captured.codexConfig?.installationSecret ?? null;
+  if (
+    installationSecret === null ||
+    !INSTALLATION_SECRET_PATTERN.test(installationSecret) ||
+    resolution.response.status !== "ready" ||
+    resolution.response.mode !== "full" ||
+    resolution.continuation.kind !== "resolved"
+  ) {
+    return null;
+  }
+  return {
+    asOf: captured.asOf,
+    installationSecret,
+    setupActionAuthorities: resolution.setupActionAuthorities
+  };
+}
 
 export function composeCapturedBoardResolution(
   captured: LiveAttentionCapturedInputs
@@ -219,7 +280,8 @@ export function composeCapturedBoardResolution(
   ) {
     return {
       response: unavailableProjectionKey(),
-      continuation: { kind: "unavailable" }
+      continuation: { kind: "unavailable" },
+      setupActionAuthorities: []
     };
   }
   const projectionKey = deriveProjectionKey(installationSecret);
@@ -250,19 +312,22 @@ export function composeCapturedBoardResolution(
     reasonCode: WorkBoardFallbackReasonCode
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
-    continuation: { kind: "unavailable" }
+    continuation: { kind: "unavailable" },
+    setupActionAuthorities: []
   });
   const insufficient = (
     reasonCode: WorkBoardFallbackReasonCode
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
-    continuation: { kind: "insufficient" }
+    continuation: { kind: "insufficient" },
+    setupActionAuthorities: []
   });
   const failed = (
     reasonCode: WorkBoardFallbackReasonCode
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
-    continuation: { kind: "error" }
+    continuation: { kind: "error" },
+    setupActionAuthorities: []
   });
 
   try {
@@ -392,20 +457,39 @@ export function composeCapturedBoardResolution(
       return failed("BOARD_COMPOSITION_REJECTED");
     }
     try {
+      const publicBoard = projectWorkSuggestionBoardPublic(
+        composed.board,
+        projectionKey
+      );
+      let setupActionAuthorities: CapturedSetupActionAuthority[] = [];
+      try {
+        setupActionAuthorities = deriveSetupActionAuthorities(
+          composed.board,
+          publicBoard,
+          resolved.result,
+          identityInput,
+          identity.result,
+          derivation.result,
+          projectionKey,
+          installationSecret,
+          captured.codeProvenance
+        );
+      } catch {
+        // Action authority is strictly additive. A private correlation failure
+        // must disable Setup actions without changing the existing Board.
+      }
       return {
         response: workBoardApiResponseSchema.parse({
           status: "ready",
           mode: "full",
           reasonCode: null,
-          board: projectWorkSuggestionBoardPublic(
-            composed.board,
-            projectionKey
-          )
+          board: publicBoard
         }),
         continuation: {
           kind: "resolved",
           decision: resolved.result
-        }
+        },
+        setupActionAuthorities
       };
     } catch {
       return failed("BOARD_PUBLIC_PROJECTION_REJECTED");
@@ -413,9 +497,153 @@ export function composeCapturedBoardResolution(
   } catch {
     return {
       response: activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE"),
-      continuation: { kind: "error" }
+      continuation: { kind: "error" },
+      setupActionAuthorities: []
     };
   }
+}
+
+function deriveSetupActionAuthorities(
+  board: WorkSuggestionBoardResult,
+  publicBoard: WorkSuggestionBoardPublic,
+  resolved: ContinuationResolvedDecision,
+  identityInput: ContinuationIdentityInput,
+  identityResult: ContinuationIdentityResult,
+  derivationResult: ContinuationCandidateDerivationResult,
+  projectionKey: string,
+  installationSecret: string,
+  codeProvenance: AttentionCodeProvenance
+): CapturedSetupActionAuthority[] {
+  const publicItems = [
+    ...(publicBoard.primary === null ? [] : [publicBoard.primary]),
+    ...publicBoard.alternatives
+  ];
+  const candidates = [
+    ...(resolved.decision.primary === null
+      ? []
+      : [resolved.decision.primary]),
+    ...resolved.decision.alternatives
+  ];
+  const internalItems = [
+    ...(board.primary === null ? [] : [board.primary]),
+    ...board.alternatives
+  ];
+  if (
+    codeProvenance.codeCommitSha !== resolved.decision.run.codeCommitSha ||
+    !["clean_commit", "declared_commit"].includes(
+      codeProvenance.codeState
+    ) ||
+    codeProvenance.codeFingerprintSha256 !== null
+  ) {
+    throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+  }
+  const sourceBatches = (["codex", "github"] as const).map((source) => {
+    const assessment = resolved.sourceAssessments.find(
+      (candidate) => candidate.source === source
+    );
+    const dependency = resolved.decision.run.dependencies[source];
+    if (assessment === undefined) {
+      throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+    }
+    return {
+      source,
+      batchSha256: assessment.batchSha256,
+      snapshotSha256:
+        dependency.state === "available"
+          ? dependency.snapshotSha256
+          : null
+    };
+  }) as ContinuationSetupActionIssuanceAudit["sourceBatches"];
+
+  return internalItems.flatMap((item) => {
+    if (item.lane !== "setup") return [];
+    const candidate = candidates.find(
+      (value) =>
+        createWorkSuggestionBoardSourceItemRef({
+          lane: "setup",
+          sourceStableId: value.candidateId
+        }) === item.sourceItemRef
+    );
+    if (
+      candidate === undefined ||
+      candidate.candidateKind !== "workspace_mapping" ||
+      candidate.workContextId !== null ||
+      candidate.evidenceBand !== "setup" ||
+      candidate.availability !== "setup_required" ||
+      candidate.capability !== "open_setup_surface" ||
+      candidate.privateActionTarget?.capability !== "open_setup_surface"
+    ) {
+      throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+    }
+    const setupReason = candidate.reasonCodes.find(
+      (reason): reason is
+        | "IDENTITY_MAPPING_NOT_CONFIRMED"
+        | "IDENTITY_BINDING_CONFLICT" =>
+        reason === "IDENTITY_MAPPING_NOT_CONFIRMED" ||
+        reason === "IDENTITY_BINDING_CONFLICT"
+    );
+    if (setupReason === undefined) {
+      throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+    }
+    const derivationCandidate = derivationResult.candidates.find(
+      (value) => value.candidateId === candidate.candidateId
+    );
+    if (derivationCandidate === undefined) {
+      throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+    }
+    const itemRef = projectWorkSuggestionBoardPublicItemRef(
+      item.sourceItemRef,
+      projectionKey
+    );
+    const publicItem = publicItems.find(
+      (value) =>
+        value.lane === "setup" &&
+        value.item.itemRef === itemRef &&
+        value.item.kind === "workspace_mapping" &&
+        value.item.evidenceBand === "setup" &&
+        value.item.capability === "display" &&
+        value.item.action === null &&
+        value.item.expiresAt === candidate.expiresAt
+    );
+    if (publicItem === undefined) {
+      throw new TypeError("SETUP_ACTION_AUTHORITY_REJECTED");
+    }
+    return [
+      {
+        capability: "open_setup_surface" as const,
+        destination: "project_mappings" as const,
+        binding: {
+          authority: createContinuationSetupActionAuthority({
+            installationSecret,
+            itemRef,
+            candidate: derivationCandidate,
+            identityInput,
+            identityResult,
+            derivationResult,
+            codeProvenance
+          }),
+          issuanceAudit: {
+            candidateSha256: candidate.candidateSha256,
+            privateTargetRef: candidate.privateActionTarget.targetRef,
+            generatedAt: resolved.decision.asOf,
+            continuationResolvedResultSha256: resolved.resultSha256,
+            continuationDecisionResultSha256:
+              resolved.decision.resultSha256,
+            continuationDecisionSemanticResultSha256:
+              resolved.decision.semanticResultSha256,
+            continuationResolutionInputSha256:
+              resolved.decision.run.inputSha256,
+            identityResultSha256: resolved.identityResultSha256,
+            derivationResultSha256: resolved.derivationResultSha256,
+            scoringResultSha256: resolved.scoringResultSha256,
+            registrySha256:
+              resolved.decision.run.dependencies.workContextRegistrySha256,
+            sourceBatches
+          }
+        }
+      }
+    ];
+  });
 }
 
 function deriveProjectionKey(installationSecret: string): string {

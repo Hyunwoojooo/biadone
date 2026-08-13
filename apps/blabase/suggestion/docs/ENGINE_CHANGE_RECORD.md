@@ -4831,3 +4831,144 @@ version constants. No persisted-state or schema migration is required.
   removes the new panel/client boundary and WorkCockpit Board state/fetch while
   restoring the unchanged existing Active diagnostic; no data migration or
   server rollback is needed.
+
+### X-001 Setup-only explicit action gateway — 2026-08-13
+
+- **Status and scope:** Implemented and automatically validated locally as the
+  first bounded X-001 slice. The only activated capability is a Setup-lane
+  `workspace_mapping/open_setup_surface` item, and the only destination is the
+  same-origin project-mapping surface `/projects`. This slice does not activate
+  the legacy `actionRef` scaffold, `open_source`, mapping save/preselection,
+  session selection/resumption, launcher/native open, command/prompt execution,
+  automatic retry, telemetry or external mutation.
+- **Human authority and owner:** The user explicitly approved this exact slice
+  on 2026-08-13: random 256-bit `offerId`, 30-second TTL, expiry-bound 24-hour
+  private-event retention window, `project_mappings → /projects`, explicit click,
+  fresh action-time revalidation and consume-before-return. The user remains
+  product/privacy/release owner. Codex is implementation/record owner; AI QA is
+  advisory and does not substitute for G2/G3, manual privacy/accessibility or
+  release approval. `open_source`, exact resume and launcher remain unapproved.
+- **Versions before and after:** Before this slice there was no implemented
+  Continuation action route or local action store. The wire API and action
+  policy remain `continuation-setup-action-*-v0.1`; the internal canonical
+  authority/schema/policy and current-secret key namespace are v0.1. The
+  persisted private offer/event/store/schema plus revalidation and retention
+  policy are v0.2 because they replace the initial volatile whole-artifact
+  currentness tuple with the separated authority/audit model. Existing Work
+  Board public v0.1, semantic
+  presentation v0.2, `continuation-read-api-v0.1`, preserve-capture v0.1 and
+  S1/R1/R2/R3/B1/E-001 contracts, schemas, hashes, ranking and datasets are
+  unchanged. Existing GET responses remain display-only with `action:null`.
+- **Issuance and currentness binding:** After an explicit Setup click,
+  `POST /api/continuation/offers` acquires the shared action root lock, performs
+  exactly one fresh preserve capture inside that lock and correlates the
+  supplied public opaque itemRef to the exact visible internal Setup candidate.
+  The v0.2 issuance audit retains the capture-volatile candidate/legacy-target,
+  R3 decision/result/input, R1/R2/scoring, full registry and source batch/
+  snapshot hashes. They prove what was evaluated at issuance but are not used
+  for later equality. `continuation-setup-action-authority-v0.1` instead binds
+  the current secret's action key namespace, fixed policy/destination, itemRef,
+  logical workspace-mapping candidate and observation set, observedAt/expiry,
+  Setup reason, action-only stable target, HMAC digests of source identity/R1
+  resolution/binding set/relevant mapping state, R1/R2 policy tuple and typed
+  clean/declared code provenance. Raw scope/work-context/project/decision IDs
+  appear only as digest inputs and are not persisted. Request as-of, run IDs,
+  scored candidate hash, legacy private target, full registry SHA and batch/
+  result hashes are deliberately audit-only. Thus fresh evaluator entropy does
+  not make a logically unchanged Setup action stale, while a logical identity,
+  resolution/reason/mapping, observation, expiry, policy/destination or code
+  change does.
+- **Store and lifecycle:** `.local/continuation-actions` is private 0700 with
+  0600 files. A dedicated no-follow, inode-checked root lock serializes the
+  capture/correlation and store operation for both issue and open. Each
+  installation secret derives its own `authKeyId` directory; routes open only
+  that exact namespace and never enumerate, migrate or reuse an older one.
+  Secret rotation therefore starts with an empty usable namespace, while an
+  old offer remains unreadable and returns 409. Offers use 32 random bytes,
+  expire at `min(issuedAt+30s,candidate expiry)`, and one active offer per item
+  supersedes the older handle. HMAC-authenticated append events form a hash
+  chain. Expired offer bytes have retention deadline `offer.expiresAt+24h`;
+  other terminal events use `occurredAt+24h`. There is no background cleanup:
+  the next authorized operation in the current namespace removes a fully
+  closed prefix whose deadlines passed. The 2,048-event bound reserves one
+  terminal slot per active offer, preventing cap exhaustion from blocking an
+  already-issued offer's consume/terminalization.
+- **Open and race policy:** `POST /api/continuation/open` accepts only
+  `{offerId,explicitUserAction:true}`. Inside the same linearized lock it samples
+  authoritative wall time, performs one new preserve capture, reconstructs the
+  exact stable Setup authority, verifies unused/current/unexpired state and
+  durably appends `consumed` before returning exact
+  `{status:"opened",destination:"project_mappings",navigateTo:"/projects"}`.
+  Parallel consume has one winner. Replay, expiry, supersession, candidate or
+  source/code/registry rebound, corrupt/wrong-secret/missing authority all
+  become sanitized 409 without retry.
+- **HTTP, UI and privacy:** Both POST routes gate local-only, exact same-origin,
+  exact default-off `BLABASE_CONTINUATION_SETUP_ACTION_ENABLED`, configured
+  Basic auth, valid auth, exact JSON content type, declared/streamed 512-byte
+  maximum and strict body schema before capture/store work. Responses use
+  no-store, restrictive CSP, no-referrer, nosniff and frame deny. Global Next
+  document headers also set `frame-ancestors 'none'` and `X-Frame-Options: DENY`
+  so the authenticated CTA and `/projects` surface cannot be framed. The Work
+  Cockpit receives only the server-side boolean flag. Only a displayed Setup
+  card renders `설정 화면 열기`; no Attention/Continuation CTA is added. The
+  client issues and immediately consumes once, keeps offerId in call-local
+  memory, accepts exact fixed response keys only and hardcodes `/projects`.
+  Offer/private target/candidate/source/hash/secret values are absent from DOM,
+  accessibility text, data attributes, URL and console.
+- **Validation evidence:** From `suggestion/`, the final targeted command passed
+  23 files and 183/183 tests at the current checkpoint. It covers strict
+  contracts/HMAC/hash tamper, secret-derived namespace/target verification,
+  wrong secret and secret rotation, 30-second/candidate TTL, expiry+24-hour
+  anchor compaction, private modes, restart, idempotent issue, supersession,
+  corrupt/pending/symlink failure, durable/replay/parallel consume, delayed
+  under-lock expiry, terminal-capacity reservation, every approved logical
+  authority invalidator versus audit-only drift, shifted-as-of fresh capture,
+  one-capture gateway, route gate order/body bounds/503/500/409 privacy,
+  end-to-end issue/open, exact client parsing/navigation, Setup-only UI flag,
+  global `/` and `/projects` anti-framing headers and existing Work Board/
+  Continuation/preserve/core compatibility. `npm run typecheck`, `npm run lint`
+  and `git diff --check` passed. Exact targeted command:
+
+  ```text
+  npm test -- --run tests/continuationActionContracts.test.ts tests/continuationActionStore.test.ts tests/continuationSetupActionGateway.test.ts tests/continuationSetupActionRoutes.test.ts tests/continuationSetupActionIntegration.test.ts tests/continuationSetupActionClient.test.ts tests/continuationSetupActionUiFlag.test.tsx tests/workSuggestionBoardPanel.test.tsx tests/workCockpitBoardIntegration.test.ts tests/workBoardDisplayClient.test.ts tests/workBoardRoute.test.ts tests/workBoardIntentRoute.test.ts tests/continuationReadRoute.test.ts tests/continuationReadClient.test.ts tests/liveWorkBoardShadow.test.ts tests/livePreserveIntegratedFixture.test.ts tests/preserveCapture.test.ts tests/preserveAuthoritySnapshot.test.ts tests/suggestionBoardContracts.test.ts tests/suggestionBoardComposer.test.ts tests/continuationContracts.test.ts tests/continuationResolver.test.ts tests/semanticValidationHttpIsolation.test.ts
+  npm run typecheck
+  npm run lint
+  git diff --check
+  ```
+
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `9603843349b3165d2c76150a41d23fd705d88c28`. The shared worktree remains
+  uncommitted. Policy `x001-setup-action-worktree-sha256-v2` sorts
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for the exact 28 implementation/test paths: the four Work Cockpit page/
+  component/style files; three Setup HTTP route/helper files; browser client;
+  `next.config.ts`; all six `src/continuation/actions` files; `liveShadow.ts` and
+  `publicProjection.ts`; and tests `continuationActionContracts`,
+  `continuationActionStore`, `continuationSetupActionGateway`,
+  `continuationSetupActionRoutes`, `continuationSetupActionIntegration`,
+  `continuationSetupActionClient`, `continuationSetupActionUiFlag`,
+  `workSuggestionBoardPanel`, `workCockpitBoardIntegration`,
+  `liveWorkBoardShadow` and `workBoardRoute`. Base blobs use repository paths prefixed with
+  `apps/blabase/`; worktree paths and records use the displayed `suggestion/`
+  paths, POSIX permission digits from `stat -f '%Lp'`, file bytes use
+  `shasum -a 256`, and records use `LC_ALL=C sort | shasum -a 256`. Docs and
+  unrelated dirty paths are excluded. Fingerprint at this checkpoint:
+  `4280e3dde1f5d9984ab021c50cc3890a111aee3ed98adc9c04fc44a0513c5ce4`.
+- **Dataset and baseline decision:** No Golden/Regression/E-001 row, source
+  normalization, identity, candidate admission, ranking, resolver, Board order,
+  existing public projection or production conversation changed. X-001 only
+  authenticates an already-derived Setup descriptor after explicit action, so
+  a comparable core semantic baseline is N/A; action lifecycle/security and
+  compatibility regression are the relevant evidence.
+- **Residual risk, rollback and gates:** The local HMAC store has the existing
+  same-user rollback/identical-ABA threat; it is not a remote anti-rollback
+  authority, and TTL relies on the trusted system wall clock. Lock acquisition
+  is bounded and crash-left locks/temporary files fail closed for manual
+  recovery rather than unsafe takeover. Inactive secret namespaces are neither
+  enumerated nor automatically cleaned by routes; explicit maintenance is a
+  follow-up, while current-namespace retention is enforced on the next
+  authorized operation. Manual authenticated browser
+  smoke, 320px/200% zoom/keyboard/VoiceOver/Safari, copy/privacy, G2/G3 and
+  release approval remain pending. Rollback disables/removes the action flag,
+  routes/client/CTA and private store while leaving the unchanged display-only
+  Work Board and formal Continuation GET intact.

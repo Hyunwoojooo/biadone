@@ -36,6 +36,7 @@ import {
   composeCapturedBoard,
   composeCapturedBoardResolution,
   evaluateLiveContinuationRead,
+  evaluateLiveContinuationSetupActionAuthority,
   evaluateLiveSemanticWorkSuggestionBoard,
   evaluateLiveWorkSuggestionBoard
 } from "../src/suggestionBoard/liveShadow";
@@ -400,6 +401,96 @@ describe("live Work Board shadow", () => {
     });
   });
 
+  it("correlates a public Setup item to its exact private candidate in one capture", async () => {
+    const captured = capturedInput({ mapContinuation: false });
+    const publicBefore = JSON.stringify(composeCapturedBoard(captured));
+    liveAttentionMock.capture.mockReset();
+    liveAttentionMock.capture.mockResolvedValue(captured);
+
+    const authority = await evaluateLiveContinuationSetupActionAuthority({
+      cwd: "/synthetic/workspace",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" }
+    });
+
+    expect(liveAttentionMock.capture).toHaveBeenCalledTimes(1);
+    expect(authority).not.toBeNull();
+    const setup = authority?.setupActionAuthorities[0];
+    expect(setup).toMatchObject({
+      capability: "open_setup_surface",
+      destination: "project_mappings",
+      binding: {
+        authority: {
+          codeCommitSha: BOARD_FIXTURE_CODE_SHA,
+          candidateExpiresAt: "2026-08-09T02:30:00.000Z"
+        },
+        issuanceAudit: {
+          generatedAt: ACTIVE_FIXTURE_AS_OF,
+          sourceBatches: [{ source: "codex" }, { source: "github" }]
+        }
+      }
+    });
+    expect(setup?.binding.authority.itemRef).toMatch(/^item_ref_/u);
+    expect(setup?.binding.authority.candidateId).toMatch(
+      /^continuation_candidate_/u
+    );
+    expect(setup?.binding.issuanceAudit.privateTargetRef).toMatch(
+      /^private_target_/u
+    );
+
+    const publicResponse = composeCapturedBoard(captured);
+    expect(JSON.stringify(publicResponse)).toBe(publicBefore);
+    expect(publicResponse.status).toBe("ready");
+    if (publicResponse.status !== "ready") return;
+    const publicSetup = [
+      ...(publicResponse.board.primary === null
+        ? []
+        : [publicResponse.board.primary]),
+      ...publicResponse.board.alternatives
+    ].find((item) => item.lane === "setup");
+    expect(publicSetup?.item.itemRef).toBe(setup?.binding.authority.itemRef);
+    expect(JSON.stringify(publicResponse)).not.toMatch(
+      /(?:private_target_|continuation_candidate_|candidateSha256|setupActionAuthorities)/u
+    );
+  });
+
+  it("keeps fresh Setup authority stable across an exact shifted as-of while audit lineage drifts", async () => {
+    const captured = capturedInput({ mapContinuation: false });
+    const shiftedAsOf = "2026-08-02T03:00:01.000Z";
+    const shifted = withCapturedAsOf(captured, shiftedAsOf);
+    liveAttentionMock.capture.mockReset();
+    liveAttentionMock.capture
+      .mockResolvedValueOnce(captured)
+      .mockResolvedValueOnce(shifted);
+
+    const first = await evaluateLiveContinuationSetupActionAuthority({
+      cwd: "/synthetic/workspace",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" }
+    });
+    const second = await evaluateLiveContinuationSetupActionAuthority({
+      cwd: "/synthetic/workspace",
+      now: new Date(shiftedAsOf),
+      env: { NODE_ENV: "test" }
+    });
+
+    const firstBinding = first?.setupActionAuthorities[0]?.binding;
+    const secondBinding = second?.setupActionAuthorities[0]?.binding;
+    expect(liveAttentionMock.capture).toHaveBeenCalledTimes(2);
+    expect(firstBinding?.authority).toEqual(secondBinding?.authority);
+    expect(firstBinding?.authority.authoritySha256).toBe(
+      secondBinding?.authority.authoritySha256
+    );
+    expect(firstBinding?.issuanceAudit.generatedAt).toBe(ACTIVE_FIXTURE_AS_OF);
+    expect(secondBinding?.issuanceAudit.generatedAt).toBe(shiftedAsOf);
+    expect(
+      firstBinding?.issuanceAudit.continuationResolvedResultSha256
+    ).not.toBe(secondBinding?.issuanceAudit.continuationResolvedResultSha256);
+    expect(
+      firstBinding?.issuanceAudit.continuationDecisionResultSha256
+    ).not.toBe(secondBinding?.issuanceAudit.continuationDecisionResultSha256);
+  });
+
   it("preserves verified Active output when Continuation prerequisites fail", () => {
     const captured = capturedInput();
     const resolution = composeCapturedBoardResolution({
@@ -490,8 +581,12 @@ describe("live Work Board shadow", () => {
   });
 });
 
-function capturedInput(): LiveAttentionCapturedInputs {
-  const fixture = authenticBoardFixture();
+function capturedInput(
+  options: { mapContinuation?: boolean } = {}
+): LiveAttentionCapturedInputs {
+  const fixture = authenticBoardFixture({
+    mapContinuation: options.mapContinuation
+  });
   return {
     evaluated: {
       result: fixture.bundle.active
@@ -512,6 +607,27 @@ function capturedInput(): LiveAttentionCapturedInputs {
       codeCommitSha: BOARD_FIXTURE_CODE_SHA,
       codeState: "clean_commit",
       codeFingerprintSha256: null
+    }
+  };
+}
+
+function withCapturedAsOf(
+  captured: LiveAttentionCapturedInputs,
+  asOf: string
+): LiveAttentionCapturedInputs {
+  const {
+    resultSha256: _resultSha256,
+    ...activeContent
+  } = captured.evaluated.result;
+  return {
+    ...captured,
+    asOf,
+    evaluated: {
+      ...captured.evaluated,
+      result: sealActiveAttentionResult({
+        ...activeContent,
+        asOf
+      })
     }
   };
 }

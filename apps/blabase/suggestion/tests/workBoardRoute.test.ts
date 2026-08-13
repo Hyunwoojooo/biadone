@@ -128,6 +128,24 @@ describe("GET /api/work-board", () => {
     expect(evaluateLiveSemanticWorkSuggestionBoard).toHaveBeenCalledOnce();
   });
 
+  it("keeps the GET bytes actionless when the separate Setup action flag is enabled", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
+    vi.stubEnv("BLABASE_CONTINUATION_SETUP_ACTION_ENABLED", "true");
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    vi.mocked(evaluateLiveSemanticWorkSuggestionBoard).mockResolvedValue(
+      semanticReadyResponse as never
+    );
+
+    const response = await GET(localRequest(true));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual(semanticReadyResponse);
+    expect(JSON.stringify(body)).not.toMatch(/offerId|open_setup_surface/u);
+    expect(evaluateLiveSemanticWorkSuggestionBoard).toHaveBeenCalledOnce();
+  });
+
   it("sanitizes evaluator failures and keeps security headers", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");

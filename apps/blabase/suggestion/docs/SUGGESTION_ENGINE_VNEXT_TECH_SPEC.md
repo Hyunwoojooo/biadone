@@ -602,7 +602,7 @@ Action 규칙은 다음과 같다.
 
 - 모든 action은 explicit user gesture 이후에만 실행한다.
 - action 시점에 offer TTL, source binding, WorkContext link, session heartbeat를 재검증한다.
-- exact resume offer의 권장 TTL은 30초이며 사람 승인 후 확정한다.
+- X-001 Setup surface offer TTL은 30초로 확정한다. Exact resume TTL은 별도 사람 승인 전까지 미확정이다.
 - 검증 실패, scope 변경, session 삭제 또는 heartbeat 만료 시 `409 Conflict`로 중단한다.
 - action failure를 자동 retry하지 않는다.
 - MVP action 과정에서는 prompt를 생성하거나 입력하지 않는다.
@@ -626,18 +626,21 @@ Post-MVP 목표에는 exact target을 대상으로 bounded template prompt 초�
 | --- | --- | --- |
 | `GET` | `/api/continuation` | 구현됨: strict display-only `continuation-read-api-v0.1` 조회 |
 | `GET` | `/api/work-board` | 구현됨: local Work Suggestion Board/semantic presentation 조회 |
-| `POST` | `/api/continuation/open` | 계획 전용, 미구현: 명시적 offer action 요청 및 재검증 |
+| `POST` | `/api/continuation/offers` | 구현됨(X-001 Setup-only): wire API v0.1, explicit Setup click의 current public itemRef로 30초 offer 발급 |
+| `POST` | `/api/continuation/open` | 구현됨(X-001 Setup-only): internal authority/store v0.2 재검증, random offerId 선소비 후 fixed `/projects` 응답 |
 
 `/api/work-board`는 동일한 versioned evidence envelope에서 이미 계산된 lane 결과를 합성해야 한다. Attention을 다시 해석하거나 Continuation 데이터를 Attention에 주입하지 않는다.
 
-`POST /api/continuation/open`은 client가 native path, URL 또는 session ID를 전달하지 않도록 `offerId`만 받는 구조를 기본으로 한다. same-origin 및 local-only 정책을 적용하고 실패 시 명시적 error code를 반환한다.
+두 POST는 local-only → exact same-origin → exact default-off flag → configured Basic auth → valid auth → bounded JSON → strict schema 순서를 적용한다. Issue는 `{itemRef,explicitUserAction:true}`, open은 `{offerId,explicitUserAction:true}`만 받으며 native path, URL, session ID 또는 private target은 받지 않는다. Offer expiry는 `min(issuedAt+30초,candidate expiry)`다. 발급 당시의 scored candidate hash, legacy private target, generatedAt, R1/R2/R3/input/result hash, full registry SHA와 source batch/snapshot hash는 v0.2 issuance audit에 보존하지만 currentness equality에는 사용하지 않는다. Fresh capture마다 바뀌는 request asOf/run artifact가 정상 offer를 무효화하지 않도록, 별도 `continuation-setup-action-authority-v0.1`은 current secret의 action-specific HMAC namespace에서 fixed destination policy, itemRef, workspace-mapping candidate ID/kind/null-context, logical source-observation set와 observedAt/expiry, Setup reason, stable action target, source identity·R1 resolution·binding set, relevant mapping state, R1/R2 contract/policy tuple, typed clean/declared code provenance만 canonical하게 묶는다. Raw scope/work-context/project/decision ID는 persisted projection에 저장하지 않고 digest input으로만 사용하며, unrelated registry edit는 relevant mapping digest를 바꾸지 않는다.
+
+Issue와 Open은 `.local/continuation-actions`의 같은 cross-process root lock 안에서 각각 정확히 한 번 fresh preserve capture를 수행한다. Store는 current installation secret에서 파생한 `authKeyId` namespace만 직접 열며 다른 namespace를 enumerate, migrate 또는 reuse하지 않는다. Secret rotation은 새 empty namespace에서 새 offer를 허용하고 old offer는 409로 fail closed한다. Open은 fresh authority equality와 live candidate를 확인한 뒤 durable consume하고 exact `{destination:"project_mappings",navigateTo:"/projects"}`만 반환한다. Replay/expired/superseded/rebound/corrupt/wrong-secret/missing은 sanitized 409이며 자동 retry하지 않는다. Expired offer의 retention deadline은 offer expiry+24시간이고, consumed/superseded/revalidation-failed는 terminal time+24시간이다. Background cleanup은 없으며 다음 authorized current-namespace operation에서 deadline이 지난 closed prefix를 제거한다. Event cap은 active offer마다 terminal slot을 예약해 이미 발급된 offer의 consume/terminalization을 막지 않는다.
 
 ### 15.1 A-001 action-disabled local shadow monitoring slice (implemented 2026-08-13)
 
 - 첫 A-001 slice는 full Continuation/action API가 아니라 action-disabled local Work Board shadow monitoring boundary다. 한 request의 단일 bounded live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain에 전달하고, authenticated result의 public Work Suggestion Board v0.1 display-only projection만 additive wrapper contract로 반환한다.
 - `GET /api/work-board`는 exact `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED` flag 뒤에 있고 default-off다. Local-only 및 safe-origin 경계를 적용하며 response는 `Cache-Control: no-store`다.
 - Attention Lab panel은 이 public projection만 표시한다. Shadow Board를 안전하게 만들 수 없으면 bounded Active-only fallback을 유지하고 Continuation의 현재성, 긴급성 또는 action authority를 추론하지 않는다.
-- 이 historical Work Board slice 자체는 action/offer 실행, source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit integration 또는 Continuation endpoint를 포함하지 않았다. 이후 PR-002에서 coherent preserve capture를 연결했고, 15.1.5에서 같은 capture/R3 결과를 재사용하는 별도 display-only `GET /api/continuation`을 추가했다. `POST /api/continuation/open`은 여전히 구현하지 않았다. Preserve read는 code-controlled lease, recovery, temporary-file cleanup 또는 disk retention maintenance를 수행하지 않으며 OS-managed `atime` access accounting은 invariant 밖이다.
+- 이 historical Work Board slice 자체는 action/offer 실행, source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit integration 또는 Continuation endpoint를 포함하지 않았다. 이후 PR-002에서 coherent preserve capture를 연결했고, 15.1.5에서 같은 capture/R3 결과를 재사용하는 별도 display-only `GET /api/continuation`을 추가했다. X-001은 그 GET/public projection을 바꾸지 않고 별도 Setup-only POST issue/open과 private action store를 추가했다. Preserve read는 code-controlled lease, recovery, temporary-file cleanup 또는 disk retention maintenance를 수행하지 않으며 OS-managed `atime` access accounting은 invariant 밖이다.
 - New `publicTextSafety.ts`는 public contracts/projection의 fail-closed boundary다. Credential-shaped public text가 감지되면 public Board wrapper를 반환하지 않는다. Private target, native identifier, raw source data와 credential-shaped text는 public wrapper 밖에 남는다.
 - Public Board contract/schema는 v0.1 그대로다. Core engine input, admission, ranking, resolution, output semantics와 hashes, E-001 v0.3 revision 3 dataset/config/evaluator tuple은 변경되지 않는다.
 - PR-001 preserve-only store API는 PR-002에서 Work Board의 live capture에 연결됐다. 기존 `/api/attention`과 caller는 default `maintain`을 유지하며, Work Board만 `preserve`를 내부 강제한다. Production G2/G3는 automated preserve wiring만으로 열리지 않으며 manual authenticated browser/privacy review와 human approval까지 blocked다.
@@ -1062,6 +1065,7 @@ Dataset 크기, annotator 수, disagreement 처리, confidence interval 및 실�
 | Continuation identity policy | v1 신규 |
 | Continuation action policy | v1 신규 |
 | Work Suggestion Board | public v0.1 유지; unwired internal input/result/schema/hash v0.3 checkpoint |
+| Continuation Setup action | wire `continuation-setup-action-api-v0.1`, action policy v0.1 유지; internal authority/schema/policy/namespace v0.1; private offer/event/store/schema와 revalidation/retention v0.2; 30초 TTL, expiry 기준 최대 24시간 lazy retention |
 | Work resumption protocol | exact resume 단계에서 v2 제안, v1 reader compatibility 유지 |
 | Monitor | two-lane 지원 버전 신규 |
 | Replay | two-lane provenance 지원 버전 신규 |

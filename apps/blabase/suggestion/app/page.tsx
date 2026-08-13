@@ -18,7 +18,11 @@ export default function TodayPage() {
       </header>
 
       <WeeklyOutcome />
-      <WorkCockpit />
+      <WorkCockpit
+        setupActionEnabled={
+          process.env.BLABASE_CONTINUATION_SETUP_ACTION_ENABLED === "true"
+        }
+      />
     </main>
   );
 }

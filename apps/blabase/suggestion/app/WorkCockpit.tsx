@@ -117,10 +117,12 @@ export function displayBoardStateFromResult(
 
 export function WorkCockpit({
   loadAttention = fetchAttention,
-  loadWorkBoard = fetchDisplayOnlyWorkBoard
+  loadWorkBoard = fetchDisplayOnlyWorkBoard,
+  setupActionEnabled = false
 }: {
   loadAttention?: typeof fetchAttention;
   loadWorkBoard?: typeof fetchDisplayOnlyWorkBoard;
+  setupActionEnabled?: boolean;
 } = {}) {
   const [payload, setPayload] = useState<AttentionApiResponse | null>(
     null
@@ -318,6 +320,7 @@ export function WorkCockpit({
         response={workBoard}
         loadError={workBoardError}
         loading={isLoading}
+        setupActionEnabled={setupActionEnabled}
       />
 
       <header className="activeAttentionDiagnosticHeader">

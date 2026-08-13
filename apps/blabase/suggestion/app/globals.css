@@ -1297,6 +1297,49 @@ summary {
   font-weight: 680;
 }
 
+.workSuggestionSetupAction {
+  display: grid;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.workSuggestionSetupAction button {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid rgb(65 87 144 / 24%);
+  border-radius: 9px;
+  background: #fff;
+  color: #42598f;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.workSuggestionSetupAction button:hover:not(:disabled) {
+  border-color: #42598f;
+  background: #f0f4ff;
+}
+
+.workSuggestionSetupAction button:focus-visible {
+  outline: 3px solid rgb(66 89 143 / 20%);
+  outline-offset: 2px;
+}
+
+.workSuggestionSetupAction button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.workSuggestionSetupAction[aria-busy="true"] button:disabled {
+  cursor: wait;
+}
+
+.workSuggestionSetupAction > p {
+  margin: 0;
+  color: var(--error);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .workSuggestionEmpty,
 .workSuggestionBoardError {
   margin: 0;

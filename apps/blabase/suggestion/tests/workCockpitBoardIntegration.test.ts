@@ -116,8 +116,9 @@ describe("WorkCockpit canonical Work Board integration", () => {
       "utf8"
     );
     expect(panelSource).not.toMatch(/\.focus\s*\(|scrollIntoView|autoFocus/u);
-    expect(panelSource).not.toMatch(
-      /window\.location|document\.activeElement/u
+    expect(panelSource).not.toMatch(/document\.activeElement/u);
+    expect(panelSource.match(/window\.location\.assign\(path\)/gu)).toHaveLength(
+      1
     );
     expect(cockpitSource).not.toMatch(/\.focus\s*\(|scrollIntoView|autoFocus/u);
     expect(`${panelSource}\n${cockpitSource}`).not.toContain(
