@@ -172,7 +172,7 @@ type AttentionSnapshots = {
   recentWorkPresentationMode?: RecentWorkPresentationMode;
 };
 
-type EvaluatedAttention = {
+export type EvaluatedAttention = {
   result: ActiveAttentionResult;
   baseResult: ReturnType<typeof runPhase2AttentionRouter>;
   eligibilityProjection: AttentionEligibilityShadowProjection;
@@ -185,6 +185,17 @@ type EvaluatedAttention = {
   recentWorkPublicSummary: RecentWorkPublicSummary | null;
   run: AttentionMonitorRun;
   replayArtifact: AttentionReplayInputArtifact;
+};
+
+export type LiveAttentionCapturedInputs = {
+  evaluated: EvaluatedAttention;
+  asOf: string;
+  github: LiveSourceSnapshot<GitHubSnapshot>;
+  codex: LiveSourceSnapshot<CodexSnapshot>;
+  registry: WorkContextRegistry | null;
+  registryStatus: "available" | "missing" | "invalid";
+  codexConfig: StoredCodexConfig | null;
+  codeProvenance: AttentionCodeProvenance;
 };
 
 export function asEphemeralAttentionPreview(
@@ -210,6 +221,22 @@ export async function evaluateCurrentAttention(input?: {
   executionIds?: AttentionExecutionIds;
   codeProvenance?: AttentionCodeProvenance;
 }): Promise<EvaluatedAttention> {
+  return (await evaluateCurrentAttentionWithLiveInputs(input)).evaluated;
+}
+
+/**
+ * Captures each private live dependency once so sibling shadow engines can use
+ * the exact same raw snapshots, registry and as-of without rereading stores.
+ */
+export async function evaluateCurrentAttentionWithLiveInputs(input?: {
+  cwd?: string;
+  now?: Date;
+  startedAt?: Date;
+  env?: NodeJS.ProcessEnv;
+  refreshSources?: boolean;
+  executionIds?: AttentionExecutionIds;
+  codeProvenance?: AttentionCodeProvenance;
+}): Promise<LiveAttentionCapturedInputs> {
   const cwd = input?.cwd ?? process.cwd();
   const startedAtMs =
     input?.startedAt?.getTime() ?? input?.now?.getTime() ?? Date.now();
@@ -222,23 +249,22 @@ export async function evaluateCurrentAttention(input?: {
       env
     });
   }
+  const codexConfig = await readStoredCodexConfig(cwd);
   const [
     github,
     codex,
     googleCalendar,
     notion,
-    codeProvenance,
-    codexConfig,
+    capturedCodeProvenance,
     localGitSnapshot
   ] =
     await Promise.all([
     readGitHubSource(cwd, new Date(startedAtMs), env),
-    readCodexSource(cwd),
+    readCodexSource(cwd, codexConfig),
     readCalendarSource(cwd),
     readNotionSource(cwd),
     input?.codeProvenance ??
       resolveAttentionCodeProvenance(cwd, env),
-    readStoredCodexConfig(cwd),
     readStoredCodexLocalGitSnapshot(cwd)
   ]);
   const sourceScopes = attentionSourceScopes({
@@ -288,7 +314,7 @@ export async function evaluateCurrentAttention(input?: {
     store: workflowStore,
     asOf
   });
-  return evaluateAttentionSnapshots({
+  const evaluated = evaluateAttentionSnapshots({
     github,
     codex,
     googleCalendar,
@@ -323,8 +349,18 @@ export async function evaluateCurrentAttention(input?: {
       ? () => startedAtMs
       : () => Date.now(),
     executionIds: input?.executionIds,
-    ...codeProvenance
+    ...capturedCodeProvenance
   });
+  return {
+    evaluated,
+    asOf,
+    github,
+    codex,
+    registry,
+    registryStatus: registryRead.status,
+    codexConfig,
+    codeProvenance: capturedCodeProvenance
+  };
 }
 
 export function evaluateAttentionSnapshots(input: AttentionSnapshots & {
@@ -1088,12 +1124,10 @@ async function readGitHubSource(
 }
 
 async function readCodexSource(
-  cwd: string
+  cwd: string,
+  config: StoredCodexConfig | null
 ): Promise<LiveSourceSnapshot<CodexSnapshot>> {
-  const [config, snapshot] = await Promise.all([
-    readStoredCodexConfig(cwd),
-    readStoredCodexSnapshot(cwd)
-  ]);
+  const snapshot = await readStoredCodexSnapshot(cwd);
   if (
     !config ||
     config.selectedScopeIds.length === 0 ||

@@ -632,6 +632,16 @@ Post-MVP 목표에는 exact target을 대상으로 bounded template prompt 초�
 
 `POST /api/continuation/open`은 client가 native path, URL 또는 session ID를 전달하지 않도록 `offerId`만 받는 구조를 기본으로 한다. same-origin 및 local-only 정책을 적용하고 실패 시 명시적 error code를 반환한다.
 
+### 15.1 A-001 action-disabled local shadow monitoring slice (implemented 2026-08-13)
+
+- 첫 A-001 slice는 full Continuation/action API가 아니라 action-disabled local Work Board shadow monitoring boundary다. 한 request의 단일 bounded live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain에 전달하고, authenticated result의 public Work Suggestion Board v0.1 display-only projection만 additive wrapper contract로 반환한다.
+- `GET /api/work-board`는 exact `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED` flag 뒤에 있고 default-off다. Local-only 및 safe-origin 경계를 적용하며 response는 `Cache-Control: no-store`다.
+- Attention Lab panel은 이 public projection만 표시한다. Shadow Board를 안전하게 만들 수 없으면 bounded Active-only fallback을 유지하고 Continuation의 현재성, 긴급성 또는 action authority를 추론하지 않는다.
+- 이 slice는 action/offer 실행, source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit integration, `GET /api/continuation`, `POST /api/continuation/open`을 포함하지 않는다. 하지만 reused existing Attention/store read path는 lease를 획득하고 bounded recovery, temporary-file cleanup 또는 retention maintenance를 수행할 수 있다. 따라서 transport GET은 filesystem-byte-pure 또는 zero-local-mutation contract가 아니다.
+- New `publicTextSafety.ts`는 public contracts/projection의 fail-closed boundary다. Credential-shaped public text가 감지되면 public Board wrapper를 반환하지 않는다. Private target, native identifier, raw source data와 credential-shaped text는 public wrapper 밖에 남는다.
+- Public Board contract/schema는 v0.1 그대로다. Core engine input, admission, ranking, resolution, output semantics와 hashes, E-001 v0.3 revision 3 dataset/config/evaluator tuple은 변경되지 않는다.
+- Known local maintenance side-effect residual은 Medium이다. Default-off flag 아래 bounded local review에만 수용되며, production G2/G3는 preserve-mode read 또는 atomic snapshot path가 구현·검증될 때까지 blocked다.
+
 ## 16. Feedback와 Gold 승격
 
 ### 16.1 Explicit feedback taxonomy
@@ -876,15 +886,12 @@ Rollback 중에도 `/api/attention`과 Active Attention 경로는 변경하지 �
 | Threshold promotion | 실제 frozen evaluation 결과로 75/90 가설을 유지·조정할지 결정 |
 | Commit subject 수집 | MVP 이후 별도 privacy 및 retention 검토 |
 
-## 22. Planning-only 확인
+## 22. 현재 구현 경계 (2026-08-13)
 
-이 문서는 canonical proposal 초안이다. 아직 다음 상태를 주장하지 않는다.
+이 문서는 canonical 정책과 contract 경계를 유지한다. 현재 A-001 상태는 다음의 좁은 local monitoring checkpoint로 제한된다.
 
-- 구현, dataset freeze, rollout 또는 release 승인
-- Engine Change Record 승인
-- dataset freeze 또는 hash 확정
-- evaluator 실행 또는 baseline 결과
-- run ID 생성
-- 구현 완료
-- 테스트 통과
-- rollout 또는 release readiness
+- Action-disabled local Work Board shadow slice는 구현됐고 2026-08-13 KST current-head validation에서 `npm run typecheck`, targeted Vitest 5 files/52 tests (`liveWorkBoardShadow`, `workBoardRoute`, `suggestionBoardContracts`, `continuationContracts`, `continuationResolver`)와 `npm run lint`가 모두 pass했다. 이 run은 `publicTextSafety.ts`와 명시된 local-side-effect boundary를 포함한다.
+- Baseline은 N/A다. 이 slice는 core engine ranking/input/output semantics를 바꾸지 않았고 E-001 v0.3 revision 3 dataset도 변경하지 않았다.
+- 새 Board/result persistence, telemetry, source refresh 또는 production-conversation promotion은 없다. 기존 Attention/store의 bounded lease/recovery/temp cleanup/retention maintenance는 가능하므로 filesystem-byte-pure read 또는 zero local mutation을 주장하지 않는다.
+- Medium residual은 local review에만 수용된다. G2 privacy와 G3 production shadow/dual-lane gate는 preserve-mode 또는 atomic snapshot path 전까지 blocked다. Full action API, public rollout, WorkCockpit/Continuation endpoint integration, dataset freeze, release 또는 release readiness는 완료·승인됐다고 주장하지 않는다.
+- 다음 안전한 task는 preserve-mode 또는 atomic snapshot path를 구현·검증한 뒤, default-off/on local API와 Attention Lab manual smoke, safe-origin/no-store/credential-shaped public-text rejection 및 Active-only fallback review를 수행하는 것이다. 해당 증거와 human gate 전에는 production exposure나 action/Board-result-persistence 범위를 확장하지 않는다.

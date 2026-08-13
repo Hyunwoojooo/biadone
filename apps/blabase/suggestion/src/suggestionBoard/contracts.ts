@@ -30,6 +30,7 @@ import {
   WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
   WORK_SUGGESTION_BOARD_SCHEMA_VERSION
 } from "../crossSource/versions";
+import { containsCredentialShapedPublicText } from "../publicTextSafety";
 
 export const WORK_SUGGESTION_BOARD_INPUT_HASH_DOMAIN =
   "work-suggestion-board-input-hash-v0.3" as const;
@@ -307,8 +308,8 @@ const publicAttentionItemObjectSchema = z
     itemRef: publicItemRefSchema,
     workContextRef: publicWorkContextRefSchema.nullable(),
     kind: z.enum(["active_attention", "attention_clarification"]),
-    title: publicSafeTextSchema(120),
-    summary: publicSafeTextSchema(240),
+    title: publicOutputTextSchema(120),
+    summary: publicOutputTextSchema(240),
     observedAt: timestampSchema.nullable(),
     expiresAt: timestampSchema.nullable(),
     evidenceBand: z.literal("verified_attention"),
@@ -938,6 +939,13 @@ function publicSafeTextSchema(maxLength: number) {
         ),
       "Public Board text contains a forbidden native identifier or locator"
     );
+}
+
+function publicOutputTextSchema(maxLength: number) {
+  return publicSafeTextSchema(maxLength).refine(
+    (value) => !containsCredentialShapedPublicText(value),
+    "Public Board text contains a credential-shaped value"
+  );
 }
 
 function withoutField<T extends object>(

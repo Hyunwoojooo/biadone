@@ -38,6 +38,7 @@ import {
   CONTINUATION_SCORING_POLICY_VERSION,
   CONTINUATION_SNAPSHOT_FRESHNESS_POLICY_VERSION
 } from "../crossSource/versions";
+import { containsCredentialShapedPublicText } from "../publicTextSafety";
 
 const timestampSchema = z.string().datetime();
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -1470,12 +1471,13 @@ function publicSafeTextSchema(maxLength: number) {
     .max(maxLength)
     .superRefine((value, context) => {
       if (
-        publicSafeTextForbiddenPatterns.some((pattern) => pattern.test(value))
+        publicSafeTextForbiddenPatterns.some((pattern) => pattern.test(value)) ||
+        containsCredentialShapedPublicText(value)
       ) {
         addIssue(
           context,
           [],
-          "Public text contains a private identifier, location, URL, SHA, or control character"
+          "Public text contains a private identifier, location, URL, SHA, credential, or control character"
         );
       }
     });

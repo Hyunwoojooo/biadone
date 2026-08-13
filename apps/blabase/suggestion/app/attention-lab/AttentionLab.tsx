@@ -18,9 +18,14 @@ import type {
   AttentionEligibilityAssessment,
   AttentionEligibilityShadowProjection
 } from "../../src/eligibility/contracts";
+import type {
+  WorkBoardApiResponse,
+  WorkBoardReadyResponse
+} from "../../src/suggestionBoard/monitoringSchema";
 import {
   fetchAttention,
-  fetchAttentionHistory
+  fetchAttentionHistory,
+  fetchWorkBoard
 } from "../attentionClient";
 import { syncInvalidationBus } from "../sync/invalidationBus";
 import {
@@ -36,6 +41,10 @@ export function AttentionLab() {
   );
   const [history, setHistory] =
     useState<AttentionHistoryResponse | null>(null);
+  const [workBoard, setWorkBoard] =
+    useState<WorkBoardApiResponse | null>(null);
+  const [workBoardLoadFailed, setWorkBoardLoadFailed] =
+    useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     null
   );
@@ -53,15 +62,19 @@ export function AttentionLab() {
       interactiveSequenceRef.current = sequence;
       setIsLoading(true);
       setLoadError(null);
+      setWorkBoardLoadFailed(false);
     }
     try {
-      const [nextCurrent, nextHistory] = await Promise.all([
+      const [nextCurrent, nextHistory, nextWorkBoard] = await Promise.all([
         fetchAttention(false),
-        fetchAttentionHistory()
+        fetchAttentionHistory(),
+        fetchWorkBoard().catch(() => null)
       ]);
       if (sequence !== sequenceRef.current) return;
       setCurrent(nextCurrent);
       setHistory(nextHistory);
+      setWorkBoard(nextWorkBoard);
+      setWorkBoardLoadFailed(nextWorkBoard === null);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -76,6 +89,8 @@ export function AttentionLab() {
     } catch {
       if (sequence !== sequenceRef.current) return;
       if (!silent) {
+        setWorkBoard(null);
+        setWorkBoardLoadFailed(true);
         setLoadError(
           "Attention 실행 기록을 불러오지 못했습니다. 로컬 서버 상태를 확인해주세요."
         );
@@ -96,14 +111,20 @@ export function AttentionLab() {
     interactiveSequenceRef.current = sequence;
     setIsRefreshing(true);
     setLoadError(null);
+    setWorkBoardLoadFailed(false);
     try {
       const attention = await fetchAttention(true);
       if (sequence !== sequenceRef.current) return false;
       setCurrent(attention);
 
-      const nextHistory = await fetchAttentionHistory();
+      const [nextHistory, nextWorkBoard] = await Promise.all([
+        fetchAttentionHistory(),
+        fetchWorkBoard().catch(() => null)
+      ]);
       if (sequence !== sequenceRef.current) return false;
       setHistory(nextHistory);
+      setWorkBoard(nextWorkBoard);
+      setWorkBoardLoadFailed(nextWorkBoard === null);
       if (
         nextHistory.status === "ready" &&
         nextHistory.entries.length > 0
@@ -113,6 +134,8 @@ export function AttentionLab() {
       return attention.status !== "error";
     } catch {
       if (sequence !== sequenceRef.current) return false;
+      setWorkBoard(null);
+      setWorkBoardLoadFailed(true);
       setLoadError(
         "새 평가 또는 실행 기록을 갱신하지 못했습니다. 로컬 서버 상태를 확인해주세요."
       );
@@ -219,6 +242,10 @@ export function AttentionLab() {
         <div className="labNotice">{history.message}</div>
       ) : null}
 
+      <ContinuationShadowPanel
+        response={workBoard}
+        loadFailed={workBoardLoadFailed}
+      />
       <CurrentFocusDiagnosticsPanel response={current} />
       <EligibilityShadowPanel
         projection={
@@ -250,6 +277,196 @@ export function AttentionLab() {
       ) : null}
     </main>
   );
+}
+
+type WorkBoardDisplayItem = NonNullable<
+  WorkBoardReadyResponse["board"]["primary"]
+>;
+
+function ContinuationShadowPanel({
+  response,
+  loadFailed
+}: {
+  response: WorkBoardApiResponse | null;
+  loadFailed: boolean;
+}) {
+  const state = continuationShadowState(response, loadFailed);
+
+  return (
+    <section
+      className="labEligibilityPanel"
+      aria-labelledby="continuation-shadow-title"
+      aria-live="polite"
+    >
+      <div className="labPanelHeader">
+        <div>
+          <p className="eyebrow">Read-only preview</p>
+          <h2 id="continuation-shadow-title">Continuation shadow</h2>
+        </div>
+        <span>{state.label}</span>
+      </div>
+      <p className="labEligibilityBoundary">
+        Attention, Continuation, Setup의 표시 순서만 미리 확인합니다. 이
+        패널에서는 항목을 열거나 실행하거나 저장하지 않습니다.
+      </p>
+
+      {response?.status === "ready" ? (
+        <WorkBoardPreview response={response} />
+      ) : (
+        <p className="labEmpty" role={loadFailed ? "alert" : "status"}>
+          {state.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function WorkBoardPreview({
+  response
+}: {
+  response: WorkBoardReadyResponse;
+}) {
+  const { board } = response;
+  return (
+    <>
+      {response.mode === "active_only_fallback" ? (
+        <p className="labEligibilityCoverage">
+          Continuation 결과를 사용할 수 없어 검증된 Attention 항목만
+          표시합니다.
+        </p>
+      ) : null}
+
+      <div
+        className="labFocusComparison"
+        aria-label="Continuation shadow 상태"
+      >
+        <div>
+          <span>generatedAt</span>
+          <strong>{formatTimestamp(board.generatedAt)}</strong>
+        </div>
+        <div>
+          <span>prominent lane</span>
+          <strong>{workBoardLaneLabel(board.prominentLane)}</strong>
+        </div>
+        <div>
+          <span>continuation status</span>
+          <strong>
+            {continuationAvailabilityLabel(board.continuationStatus)}
+          </strong>
+        </div>
+      </div>
+
+      {board.primary ? (
+        <article className="labFocusSelection">
+          <div>
+            <span>Primary · {workBoardLaneLabel(board.primary.lane)}</span>
+            <strong>{board.primary.item.title}</strong>
+          </div>
+          <dl>
+            <div>
+              <dt>lane</dt>
+              <dd>{workBoardLaneLabel(board.primary.lane)}</dd>
+            </div>
+            <div>
+              <dt>position</dt>
+              <dd>Board primary</dd>
+            </div>
+            {board.primary.item.summary !== board.primary.item.title ? (
+              <div>
+                <dt>summary</dt>
+                <dd>{board.primary.item.summary}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </article>
+      ) : (
+        <p className="labEmpty">현재 Board에 표시할 primary가 없습니다.</p>
+      )}
+
+      {board.alternatives.length > 0 ? (
+        <ol className="labActiveRanking" aria-label="Board alternatives">
+          {board.alternatives.map((alternative, index) => (
+            <li key={`${alternative.lane}-${index}`}>
+              <span>대안 {index + 1}</span>
+              <div>
+                <strong>{alternative.item.title}</strong>
+                <small>
+                  {workBoardLaneLabel(alternative.lane)}
+                  {alternative.item.summary !== alternative.item.title
+                    ? ` · ${alternative.item.summary}`
+                    : ""}
+                </small>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="labEligibilityCoverage">
+          표시할 alternative가 없습니다.
+        </p>
+      )}
+    </>
+  );
+}
+
+function continuationShadowState(
+  response: WorkBoardApiResponse | null,
+  loadFailed: boolean
+): { label: string; message: string } {
+  if (loadFailed) {
+    return {
+      label: "사용 불가",
+      message:
+        "Continuation shadow를 불러오지 못했습니다. Attention 결과는 계속 확인할 수 있습니다."
+    };
+  }
+  if (response === null) {
+    return {
+      label: "불러오는 중",
+      message: "Continuation shadow를 불러오고 있습니다."
+    };
+  }
+  if (response.status === "ready") {
+    return response.mode === "full"
+      ? { label: "Full shadow", message: "" }
+      : { label: "Active-only fallback", message: "" };
+  }
+  if (
+    response.status === "unavailable" &&
+    response.code === "WORK_BOARD_SHADOW_DISABLED"
+  ) {
+    return { label: "비활성화", message: response.message };
+  }
+  return { label: "사용 불가", message: response.message };
+}
+
+function workBoardLaneLabel(
+  lane: WorkBoardReadyResponse["board"]["prominentLane"] |
+    WorkBoardDisplayItem["lane"]
+): string {
+  switch (lane) {
+    case "attention":
+      return "Attention · 지금 처리할 일";
+    case "continuation":
+      return "Continuation · 이어서 할 일";
+    case "setup":
+      return "Setup · 연결할 일";
+    case "none":
+      return "표시 항목 없음";
+  }
+}
+
+function continuationAvailabilityLabel(
+  status: WorkBoardReadyResponse["board"]["continuationStatus"]
+): string {
+  switch (status) {
+    case "available":
+      return "후보 있음";
+    case "empty":
+      return "최근 후보 없음";
+    case "unavailable":
+      return "사용 불가";
+  }
 }
 
 function CurrentFocusDiagnosticsPanel({
