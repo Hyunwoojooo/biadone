@@ -104,7 +104,9 @@ export function runContinuationEvaluation(input: {
       caseId: item.caseId,
       code: item.task === "contract_oracle"
         ? "CONTINUATION_EXACT_ORACLE_MISMATCH" as const
-        : "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH" as const
+        : item.task === "resolver_behavior"
+          ? "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH" as const
+          : "CONTINUATION_BOARD_BEHAVIOR_MISMATCH" as const
     }));
   const content = {
     contract: CONTINUATION_EVALUATION_RUN_RECORD_CONTRACT,
@@ -181,7 +183,7 @@ export function runContinuationEvaluation(input: {
     },
     limitations: [
       "Mutable synthetic Dev Candidate only; datasetSha256, configSha256, immutable references, frozenAt, baseline comparison, and human review remain absent.",
-      "Twelve contract-oracle and nine authenticated resolver-behavior rows execute; only the B-001 cross-lane row remains explicitly not_evaluated.",
+      "Twelve contract-oracle, nine authenticated resolver-behavior, and one authenticated Board-behavior row execute; no row remains deferred.",
       "Acceptable@1, Acceptable@3, setup-route accuracy, runtime quality, release eligibility, and production generalization are not measured by this regression checkpoint."
     ]
   };
@@ -300,7 +302,9 @@ function contractScaffoldValidationPass(
     evaluation.counts.exactOracleFailureCount === 0 &&
     evaluation.counts.resolverBehaviorPassCount === 9 &&
     evaluation.counts.resolverBehaviorFailureCount === 0 &&
-    evaluation.counts.notEvaluatedCaseCount === 1 &&
+    evaluation.counts.boardBehaviorCaseCount === 1 &&
+    evaluation.counts.notEvaluatedCaseCount === 0 &&
+    evaluation.counts.passCount === 22 &&
     Object.values(evaluation.metrics.criticalErrors).every((count) => count === 0)
   );
 }

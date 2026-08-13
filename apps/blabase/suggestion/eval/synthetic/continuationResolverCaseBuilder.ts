@@ -68,7 +68,7 @@ type OracleCheck = {
   criticalOnFailure: ContinuationCriticalErrorCode[];
 };
 
-type Chain = {
+export type ContinuationResolverEvaluationChain = {
   identityInput: ContinuationIdentityInput;
   identityResult: ContinuationIdentityResult;
   derivationEnvelope: ReturnType<typeof derivationEnvelope>;
@@ -90,8 +90,8 @@ export type ContinuationResolverEvaluationInputDescriptor = {
   scenario: ContinuationResolverBehaviorScenario;
   reversePermutation: boolean;
   adapter: {
-    asOf: typeof AS_OF;
-    snapshotFreshnessCutoff: typeof FRESHNESS_CUTOFF;
+    asOf: string;
+    snapshotFreshnessCutoff: string;
     githubSourceSchemaVersion: "github-snapshot-v6";
     codexSourceSchemaVersion: "codex-snapshot-v3";
   };
@@ -139,13 +139,86 @@ export function buildContinuationResolverEvaluationFixture(
   };
 }
 
+export type ContinuationBoardChainKind = "ready_dedupe" | "setup" | "empty";
+
+export function buildContinuationBoardChainDescriptor(
+  kind: ContinuationBoardChainKind,
+  runVariant: "1" | "2" = "1"
+): ContinuationResolverEvaluationInputDescriptor {
+  const sourceSnapshots = boardSourceSnapshots(kind);
+  const registry = boardRegistry(kind);
+  const codeCommitSha = runVariant === "1" ? "d".repeat(40) : "e".repeat(40);
+  const trusted = {
+    expectedRegistrySha256: registry.registrySha256,
+    expectedCodeCommitSha: codeCommitSha,
+    expectedDatasetVersion: null,
+    expectedDatasetSha256: null
+  } as const;
+  return {
+    contract: "continuation-resolver-evaluation-input-v0.1",
+    scenario: "resolver_github_recent",
+    reversePermutation: false,
+    adapter: {
+      asOf: "2026-08-02T03:00:00.000Z",
+      snapshotFreshnessCutoff: "2026-08-02T01:00:00.000Z",
+      githubSourceSchemaVersion: "github-snapshot-v6",
+      codexSourceSchemaVersion: "codex-snapshot-v3"
+    },
+    sourceSnapshots,
+    sourceSnapshotSha256: {
+      github: sha256Canonical(sourceSnapshots.github),
+      codex: sha256Canonical(sourceSnapshots.codex)
+    },
+    mappingConfig: {
+      projectIds:
+        kind === "ready_dedupe"
+          ? [`project_${"1".repeat(32)}`, `project_${"2".repeat(32)}`]
+          : [],
+      githubRepositoryIds: kind === "ready_dedupe" ? [10, 11] : [],
+      codexScopeIds: [],
+      explicitUserConfirmation: true
+    },
+    registry,
+    registrySha256: registry.registrySha256,
+    registryContentSha256: sha256Canonical(registry),
+    derivationEnvelope: {
+      contract: CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT,
+      schemaVersion: CONTINUATION_CANDIDATE_DERIVATION_SCHEMA_VERSION,
+      asOf: "2026-08-02T03:00:00.000Z",
+      config: CONTINUATION_CANDIDATE_DERIVATION_CONFIG
+    },
+    resolutionEnvelope: continuationResolutionEnvelopeSchema.parse({
+      contract: CONTINUATION_RESOLUTION_ENVELOPE_CONTRACT,
+      schemaVersion: CONTINUATION_RESOLUTION_SCHEMA_VERSION,
+      asOf: "2026-08-02T03:00:00.000Z",
+      config: CONTINUATION_RESOLUTION_CONFIG,
+      run: {
+        runId: `continuation_run_${runVariant.repeat(32)}`,
+        analysisId: `analysis_${runVariant === "1" ? "3".repeat(32) : "4".repeat(32)}`,
+        startedAt: runVariant === "1"
+          ? "2026-08-02T02:59:00.000Z"
+          : "2026-08-02T02:58:00.000Z",
+        completedAt: runVariant === "1"
+          ? "2026-08-02T02:59:00.010Z"
+          : "2026-08-02T02:58:00.020Z",
+        codeCommitSha,
+        datasetVersion: null,
+        datasetSha256: null
+      }
+    }),
+    trustedExpectations: trusted
+  };
+}
+
 function executeMaterializedInput(
   input: ContinuationResolverEvaluationMaterializedInput
 ): ContinuationContractOracleSummary {
   return summarizeScenario(
     input.primary.scenario,
-    executeDescriptor(input.primary),
-    input.permutation === null ? null : executeDescriptor(input.permutation)
+    executeContinuationResolverEvaluationDescriptor(input.primary),
+    input.permutation === null
+      ? null
+      : executeContinuationResolverEvaluationDescriptor(input.permutation)
   );
 }
 
@@ -181,9 +254,9 @@ function buildInputDescriptor(
   };
 }
 
-function executeDescriptor(
+export function executeContinuationResolverEvaluationDescriptor(
   descriptor: ContinuationResolverEvaluationInputDescriptor
-): Chain {
+): ContinuationResolverEvaluationChain {
   assertDescriptorIntegrity(descriptor);
   const raw = descriptor.sourceSnapshots;
   const adapterBatches = [
@@ -254,8 +327,8 @@ function assertDescriptorIntegrity(
 
 function summarizeScenario(
   scenario: ContinuationResolverBehaviorScenario,
-  chain: Chain,
-  permutation: Chain | null
+  chain: ContinuationResolverEvaluationChain,
+  permutation: ContinuationResolverEvaluationChain | null
 ): ContinuationContractOracleSummary {
   const artifactAccepted =
     continuationResolvedDecisionSchema.safeParse(chain.resolved).success;
@@ -429,7 +502,7 @@ function summarizeScenario(
 
 function summary(
   oracleCode: ContinuationContractOracleCode,
-  chain: Chain,
+  chain: ContinuationResolverEvaluationChain,
   checks: OracleCheck[]
 ): ContinuationContractOracleSummary {
   const allPassed = checks.every((item) => item.passed);
@@ -457,7 +530,7 @@ function check(
   return { invariantCode, passed, criticalOnFailure };
 }
 
-function displayOnlyCheck(chain: Chain): OracleCheck {
+function displayOnlyCheck(chain: ContinuationResolverEvaluationChain): OracleCheck {
   const primary = chain.resolved.decision.primary;
   return check(
     "DISPLAY_ONLY_AUTHORITY",
@@ -466,7 +539,7 @@ function displayOnlyCheck(chain: Chain): OracleCheck {
   );
 }
 
-function terminalUnknownCheck(chain: Chain): OracleCheck {
+function terminalUnknownCheck(chain: ContinuationResolverEvaluationChain): OracleCheck {
   return check(
     "TERMINAL_STATE_UNKNOWN",
     sourceObservation(chain, "codex")?.terminalState === "unknown" &&
@@ -475,7 +548,7 @@ function terminalUnknownCheck(chain: Chain): OracleCheck {
   );
 }
 
-function verifyChain(chain: Chain): boolean {
+function verifyChain(chain: ContinuationResolverEvaluationChain): boolean {
   return verifyContinuationDecisionAgainstInput(
     chain.identityInput,
     chain.identityResult,
@@ -487,18 +560,18 @@ function verifyChain(chain: Chain): boolean {
   );
 }
 
-function selectedCandidates(chain: Chain) {
+function selectedCandidates(chain: ContinuationResolverEvaluationChain) {
   const { primary, alternatives } = chain.resolved.decision;
   return primary === null ? [] : [primary, ...alternatives];
 }
 
-function sourceBatch(chain: Chain, source: "github" | "codex") {
+function sourceBatch(chain: ContinuationResolverEvaluationChain, source: "github" | "codex") {
   const batch = chain.adapterBatches.find((item) => item.source === source);
   if (batch === undefined) throw new TypeError(`Missing ${source} batch.`);
   return batch;
 }
 
-function sourceObservation(chain: Chain, source: "github" | "codex") {
+function sourceObservation(chain: ContinuationResolverEvaluationChain, source: "github" | "codex") {
   return sourceBatch(chain, source).observations[0];
 }
 
@@ -688,6 +761,55 @@ function rawScenario(
       return { github, codex: emptyCodex };
     }
   }
+}
+
+function boardRegistry(kind: ContinuationBoardChainKind): WorkContextRegistry {
+  let registry = createEmptyWorkContextRegistry("2026-08-02T00:00:00.000Z");
+  if (kind !== "ready_dedupe") return registry;
+  const projectIds = [
+    `project_${"1".repeat(32)}`,
+    `project_${"2".repeat(32)}`
+  ];
+  for (const [index, projectId] of projectIds.entries()) {
+    registry = createProjectIdentity(registry, {
+      projectId,
+      createdAt: `2026-08-02T00:00:0${index + 1}.000Z`
+    }).registry;
+    registry = confirmProjectMapping(registry, {
+      scope: {
+        source: "github",
+        resourceType: "repository",
+        opaqueId: String(10 + index)
+      },
+      projectId,
+      confirmedAt: `2026-08-02T00:01:0${index}.000Z`,
+      explicitUserConfirmation: true
+    }).registry;
+  }
+  return registry;
+}
+
+function boardSourceSnapshots(kind: ContinuationBoardChainKind) {
+  const github = githubSnapshot(
+    kind === "ready_dedupe" ? 2 : kind === "setup" ? 1 : 0
+  );
+  github.fetchedAt = "2026-08-02T02:59:30.000Z";
+  github.activityWindowStart = "2026-07-26T03:00:00.000Z";
+  for (const repository of github.repositories) {
+    repository.updatedAt = "2026-08-02T02:30:00.000Z";
+  }
+  for (const [index, activity] of github.activities.entries()) {
+    activity.occurredAt = "2026-08-02T02:30:00.000Z";
+    activity.subjectTitle = index === 0 ? "Synthetic linked task" : "Synthetic linked task";
+  }
+  const codex = codexSnapshot(kind === "setup" ? 1 : 0);
+  codex.fetchedAt = "2026-08-02T02:59:30.000Z";
+  codex.lookbackStart = "2026-07-26T03:00:00.000Z";
+  for (const session of codex.sessions) {
+    session.createdAt = "2026-08-02T02:00:00.000Z";
+    session.updatedAt = "2026-08-02T02:30:00.000Z";
+  }
+  return { github, codex };
 }
 
 function githubSnapshot(count: number) {

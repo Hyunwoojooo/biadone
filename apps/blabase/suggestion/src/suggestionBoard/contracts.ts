@@ -5,14 +5,18 @@ import {
   type ActiveAttentionResult
 } from "../attentionDecision/contracts";
 import {
-  continuationDecisionSchema,
   continuationMvpPublicCapabilitySchema,
-  continuationPublicActionRefSchema,
+  continuationPrivateActionTargetSchema,
   continuationPublicItemSchema,
   type ContinuationDecision
 } from "../continuation/contracts";
 import {
+  continuationResolvedDecisionSchema,
+  type ContinuationResolvedDecision
+} from "../continuation/resolveContinuation";
+import {
   compareRuntimeStrings,
+  runtimeCanonicalJson,
   runtimeSha256,
   runtimeStableId
 } from "../crossSource/canonicalHash";
@@ -28,11 +32,11 @@ import {
 } from "../crossSource/versions";
 
 export const WORK_SUGGESTION_BOARD_INPUT_HASH_DOMAIN =
-  "work-suggestion-board-input-hash-v0.2" as const;
+  "work-suggestion-board-input-hash-v0.3" as const;
 export const WORK_SUGGESTION_BOARD_RESULT_HASH_DOMAIN =
-  "work-suggestion-board-result-hash-v0.2" as const;
+  "work-suggestion-board-result-hash-v0.3" as const;
 export const WORK_SUGGESTION_BOARD_SEMANTIC_RESULT_HASH_DOMAIN =
-  "work-suggestion-board-semantic-result-hash-v0.2" as const;
+  "work-suggestion-board-semantic-result-hash-v0.3" as const;
 export const WORK_SUGGESTION_BOARD_ID_DOMAIN =
   "work-suggestion-board-id-v0.1" as const;
 export const WORK_SUGGESTION_BOARD_ITEM_ID_DOMAIN =
@@ -114,7 +118,8 @@ const boardItemObjectSchema = z
       "single_source",
       "setup"
     ]),
-    capability: continuationMvpPublicCapabilitySchema
+    capability: continuationMvpPublicCapabilitySchema,
+    privateActionTarget: continuationPrivateActionTargetSchema.nullable()
   })
   .strict();
 
@@ -155,6 +160,26 @@ export const workSuggestionBoardItemSchema = failClosedCanonicalBoundary(
         "Board summary must exactly preserve the source display label"
       );
     }
+    if (
+      (item.capability === "display") !==
+      (item.privateActionTarget === null)
+    ) {
+      addIssue(
+        context,
+        ["privateActionTarget"],
+        "Board actions must preserve an exact bounded source target"
+      );
+    }
+    if (
+      item.privateActionTarget !== null &&
+      item.privateActionTarget.capability !== item.capability
+    ) {
+      addIssue(
+        context,
+        ["privateActionTarget"],
+        "Board capability cannot elevate or rewrite its source target"
+      );
+    }
   })
 );
 
@@ -169,7 +194,7 @@ const boardInputContentObjectSchema = z
     ),
     idPolicyVersion: z.literal(WORK_SUGGESTION_BOARD_ID_POLICY_VERSION),
     active: activeAttentionResultSchema,
-    continuation: continuationDecisionSchema
+    continuation: continuationResolvedDecisionSchema
   })
   .strict();
 
@@ -178,7 +203,7 @@ export const workSuggestionBoardInputContentSchema =
     boardInputContentObjectSchema.superRefine((input, context) => {
       if (
         input.active.asOf !== input.asOf ||
-        input.continuation.asOf !== input.asOf
+        input.continuation.decision.asOf !== input.asOf
       ) {
         addIssue(
           context,
@@ -197,7 +222,7 @@ export const workSuggestionBoardInputSchema = failClosedCanonicalBoundary(
   boardInputSealedObjectSchema.superRefine((input, context) => {
     if (
       input.active.asOf !== input.asOf ||
-      input.continuation.asOf !== input.asOf
+      input.continuation.decision.asOf !== input.asOf
     ) {
       addIssue(
         context,
@@ -219,6 +244,7 @@ export const workSuggestionBoardDependenciesSchema = z
   .object({
     inputSha256: sha256Schema,
     activeResultSha256: sha256Schema,
+    continuationResolvedResultSha256: sha256Schema,
     continuationResultSha256: sha256Schema,
     continuationSemanticResultSha256: sha256Schema
   })
@@ -286,8 +312,8 @@ const publicAttentionItemObjectSchema = z
     observedAt: timestampSchema.nullable(),
     expiresAt: timestampSchema.nullable(),
     evidenceBand: z.literal("verified_attention"),
-    capability: continuationMvpPublicCapabilitySchema,
-    action: continuationPublicActionRefSchema.nullable(),
+    capability: z.literal("display"),
+    action: z.null(),
     caveatCodes: z.array(reasonCodeSchema).max(8)
   })
   .strict();
@@ -299,20 +325,6 @@ export const workSuggestionBoardPublicAttentionItemSchema =
         context,
         ["summary"],
         "Public Board summary must exactly preserve its title"
-      );
-    }
-    if (item.capability === "display" && item.action !== null) {
-      addIssue(
-        context,
-        ["action"],
-        "Display-only public items cannot have an action"
-      );
-    }
-    if (item.action !== null && item.action.capability !== item.capability) {
-      addIssue(
-        context,
-        ["action"],
-        "Public item and action capabilities must agree"
       );
     }
     if (!isCanonicalUnique(item.caveatCodes)) {
@@ -591,6 +603,26 @@ export function verifyWorkSuggestionBoardResultIntegrity(
   }
 }
 
+/**
+ * Deterministically projects the complete Board-visible sequence. The caller
+ * must supply a locally valid sealed input; authenticity is established only
+ * by the input-bound composer/verifier boundary.
+ */
+export function deriveWorkSuggestionBoardItems(
+  input: WorkSuggestionBoardInput
+): WorkSuggestionBoardItem[] {
+  return expectedBoardSequence(input).slice(0, 3).map((item) =>
+    workSuggestionBoardItemSchema.parse({
+      ...item,
+      boardItemId: createWorkSuggestionBoardItemId({
+        lane: item.lane,
+        sourceItemRef: item.sourceItemRef,
+        workContextId: item.workContextId
+      })
+    })
+  );
+}
+
 function refineBoardResult(
   result: z.infer<typeof boardResultContentObjectSchema>,
   context: z.RefinementCtx
@@ -614,10 +646,12 @@ function refineBoardResult(
     result.dependencies.inputSha256 !== result.input.inputSha256 ||
     result.dependencies.activeResultSha256 !==
       result.input.active.resultSha256 ||
-    result.dependencies.continuationResultSha256 !==
+    result.dependencies.continuationResolvedResultSha256 !==
       result.input.continuation.resultSha256 ||
+    result.dependencies.continuationResultSha256 !==
+      result.input.continuation.decision.resultSha256 ||
     result.dependencies.continuationSemanticResultSha256 !==
-      result.input.continuation.semanticResultSha256
+      result.input.continuation.decision.semanticResultSha256
   ) {
     addIssue(
       context,
@@ -639,14 +673,18 @@ function refineBoardResult(
     "Board ID mismatch"
   );
 
-  const expectedSequence = expectedBoardSequence(result.input);
+  const expectedSequence = expectedBoardSequence(result.input).slice(0, 3);
   const actualSequence = [
     ...(result.primary === null ? [] : [result.primary]),
     ...result.alternatives
   ];
   const expectedPrimary = expectedSequence[0] ?? null;
   if (expectedPrimary === null) {
-    if (result.prominentLane !== "none" || result.primary !== null) {
+    if (
+      result.prominentLane !== "none" ||
+      result.primary !== null ||
+      actualSequence.length !== 0
+    ) {
       addIssue(
         context,
         ["primary"],
@@ -674,7 +712,7 @@ function refineBoardResult(
     );
   }
   if (
-    actualSequence.length > expectedSequence.length ||
+    actualSequence.length !== expectedSequence.length ||
     actualSequence.some(
       (item, index) =>
         !matchesExpectedBoardItem(item, expectedSequence[index]!)
@@ -698,6 +736,7 @@ type ExpectedBoardItem = {
   expiresAt: string | null;
   evidenceBand: WorkSuggestionBoardItem["evidenceBand"];
   capability: WorkSuggestionBoardItem["capability"];
+  privateActionTarget: WorkSuggestionBoardItem["privateActionTarget"];
 };
 
 function expectedBoardSequence(
@@ -724,7 +763,8 @@ function expectedBoardSequence(
         observedAt: candidate.sourceUpdatedAt,
         expiresAt: candidate.dueAt,
         evidenceBand: "verified_attention",
-        capability: "display"
+        capability: "display",
+        privateActionTarget: null
       });
     }
   } else if (activeStatus === "needs_clarification") {
@@ -742,7 +782,8 @@ function expectedBoardSequence(
         observedAt: null,
         expiresAt: null,
         evidenceBand: "verified_attention",
-        capability: "display"
+        capability: "display",
+        privateActionTarget: null
       });
     }
   }
@@ -752,12 +793,11 @@ function expectedBoardSequence(
       item.workContextId === null ? [] : [item.workContextId]
     )
   );
-  const seenSourceRefs = new Set(sequence.map((item) => item.sourceItemRef));
   for (const candidate of [
-    ...(input.continuation.primary === null
+    ...(input.continuation.decision.primary === null
       ? []
-      : [input.continuation.primary]),
-    ...input.continuation.alternatives
+      : [input.continuation.decision.primary]),
+    ...input.continuation.decision.alternatives
   ]) {
     const lane: WorkSuggestionBoardLane =
       candidate.availability === "setup_required"
@@ -772,9 +812,8 @@ function expectedBoardSequence(
       sourceStableId: candidate.candidateId
     });
     if (
-      seenSourceRefs.has(sourceItemRef) ||
-      (candidate.workContextId !== null &&
-        seenWorkContexts.has(candidate.workContextId))
+      candidate.workContextId !== null &&
+      seenWorkContexts.has(candidate.workContextId)
     ) {
       continue;
     }
@@ -787,9 +826,9 @@ function expectedBoardSequence(
       observedAt: candidate.observedAt,
       expiresAt: candidate.expiresAt,
       evidenceBand: candidate.evidenceBand,
-      capability
+      capability,
+      privateActionTarget: candidate.privateActionTarget
     });
-    seenSourceRefs.add(sourceItemRef);
     if (candidate.workContextId !== null) {
       seenWorkContexts.add(candidate.workContextId);
     }
@@ -836,7 +875,9 @@ function matchesExpectedBoardItem(
     actual.observedAt === expected.observedAt &&
     actual.expiresAt === expected.expiresAt &&
     actual.evidenceBand === expected.evidenceBand &&
-    actual.capability === expected.capability
+    actual.capability === expected.capability &&
+    runtimeSha256(actual.privateActionTarget) ===
+      runtimeSha256(expected.privateActionTarget)
   );
 }
 
@@ -994,8 +1035,7 @@ function failClosedCanonicalBoundary<T extends z.ZodTypeAny>(
 ): z.ZodEffects<T, z.output<T>, unknown> {
   return z.preprocess((value) => {
     try {
-      runtimeSha256(value);
-      return value;
+      return JSON.parse(runtimeCanonicalJson(value)) as unknown;
     } catch {
       return NON_CANONICAL_BOUNDARY_VALUE;
     }
@@ -1026,4 +1066,5 @@ function refineComputedStringIntegrity(
 }
 
 export type WorkSuggestionBoardActiveDependency = ActiveAttentionResult;
-export type WorkSuggestionBoardContinuationDependency = ContinuationDecision;
+export type WorkSuggestionBoardContinuationDependency =
+  ContinuationResolvedDecision;

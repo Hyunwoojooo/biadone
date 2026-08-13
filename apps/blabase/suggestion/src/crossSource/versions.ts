@@ -380,10 +380,10 @@ export const CONTINUATION_LOCAL_GIT_ADAPTER_VERSION =
   "continuation-local-git-adapter-v0.1" as const;
 
 export const WORK_SUGGESTION_BOARD_INPUT_CONTRACT =
-  "work-suggestion-board-input-v0.2" as const;
+  "work-suggestion-board-input-v0.3" as const;
 
 export const WORK_SUGGESTION_BOARD_RESULT_CONTRACT =
-  "work-suggestion-board-result-v0.2" as const;
+  "work-suggestion-board-result-v0.3" as const;
 
 export const WORK_SUGGESTION_BOARD_CONTRACT =
   WORK_SUGGESTION_BOARD_RESULT_CONTRACT;
@@ -392,7 +392,7 @@ export const WORK_SUGGESTION_BOARD_PUBLIC_CONTRACT =
   "work-suggestion-board-public-v0.1" as const;
 
 export const WORK_SUGGESTION_BOARD_SCHEMA_VERSION =
-  "work-suggestion-board-schema-v0.2" as const;
+  "work-suggestion-board-schema-v0.3" as const;
 
 export const WORK_SUGGESTION_BOARD_PUBLIC_SCHEMA_VERSION =
   "work-suggestion-board-schema-v0.1" as const;

@@ -37,15 +37,15 @@ import {
 import { sha256Canonical } from "../crossSourceIntegrity";
 
 export const CONTINUATION_EVALUATION_DATASET_CONTRACT =
-  "continuation-evaluation-dataset-v0.2" as const;
+  "continuation-evaluation-dataset-v0.3" as const;
 export const CONTINUATION_EVALUATION_CASE_SCHEMA_VERSION =
-  "continuation-evaluation-case-v0.2" as const;
+  "continuation-evaluation-case-v0.3" as const;
 export const CONTINUATION_EVALUATION_CONFIG_VERSION =
-  "continuation-evaluation-config-v0.2" as const;
+  "continuation-evaluation-config-v0.3" as const;
 export const CONTINUATION_EVALUATION_RUN_RECORD_CONTRACT =
-  "continuation-evaluation-run-v0.2" as const;
+  "continuation-evaluation-run-v0.3" as const;
 export const CONTINUATION_EVALUATION_POLICY_VERSION =
-  "continuation-resolver-regression-evaluation-v0.2" as const;
+  "continuation-board-regression-evaluation-v0.3" as const;
 
 export const CONTINUATION_CONTRACT_ORACLE_CASE_IDS = [
   "E1-CT-001",
@@ -74,19 +74,20 @@ export const CONTINUATION_RESOLVER_BEHAVIOR_CASE_IDS = [
   "E1-RV-TM-001"
 ] as const;
 
-export const CONTINUATION_DEFERRED_CASE_IDS = [
+export const CONTINUATION_BOARD_BEHAVIOR_CASE_IDS = [
   "E1-RV-DT-001"
 ] as const;
 
 export const CONTINUATION_EXECUTABLE_CASE_IDS = [
   ...CONTINUATION_CONTRACT_ORACLE_CASE_IDS,
-  ...CONTINUATION_RESOLVER_BEHAVIOR_CASE_IDS
+  ...CONTINUATION_RESOLVER_BEHAVIOR_CASE_IDS,
+  ...CONTINUATION_BOARD_BEHAVIOR_CASE_IDS
 ] as const;
 
 export const CONTINUATION_EVALUATION_CASE_IDS = [
   ...CONTINUATION_CONTRACT_ORACLE_CASE_IDS,
   ...CONTINUATION_RESOLVER_BEHAVIOR_CASE_IDS,
-  ...CONTINUATION_DEFERRED_CASE_IDS
+  ...CONTINUATION_BOARD_BEHAVIOR_CASE_IDS
 ] as const;
 
 export const CONTINUATION_CONTRACT_ORACLE_SCENARIOS = [
@@ -116,18 +117,20 @@ export const CONTINUATION_RESOLVER_BEHAVIOR_SCENARIOS = [
   "resolver_tie_determinism"
 ] as const;
 
-export const CONTINUATION_DEFERRED_SCENARIOS = [
+export const CONTINUATION_BOARD_BEHAVIOR_SCENARIOS = [
   "resolver_cross_lane_dedupe"
 ] as const;
 
 export const CONTINUATION_EXECUTABLE_SCENARIOS = [
   ...CONTINUATION_CONTRACT_ORACLE_SCENARIOS,
-  ...CONTINUATION_RESOLVER_BEHAVIOR_SCENARIOS
+  ...CONTINUATION_RESOLVER_BEHAVIOR_SCENARIOS,
+  ...CONTINUATION_BOARD_BEHAVIOR_SCENARIOS
 ] as const;
 
 export const CONTINUATION_EVALUATION_STAGES = [
   "contract_scaffold",
-  "resolver_behavior"
+  "resolver_behavior",
+  "board_behavior"
 ] as const;
 
 export const CONTINUATION_EVALUATION_CASE_BINDINGS = {
@@ -152,7 +155,7 @@ export const CONTINUATION_EVALUATION_CASE_BINDINGS = {
   "E1-RV-PC-001": { task: "resolver_behavior", scenario: "resolver_privacy_boundary", evaluationStage: "resolver_behavior", blockedByTask: null },
   "E1-RV-ID-001": { task: "resolver_behavior", scenario: "resolver_same_name_identities", evaluationStage: "resolver_behavior", blockedByTask: null },
   "E1-RV-TM-001": { task: "resolver_behavior", scenario: "resolver_tie_determinism", evaluationStage: "resolver_behavior", blockedByTask: null },
-  "E1-RV-DT-001": { task: "resolver_behavior", scenario: "resolver_cross_lane_dedupe", evaluationStage: "resolver_behavior", blockedByTask: "B-001" }
+  "E1-RV-DT-001": { task: "board_behavior", scenario: "resolver_cross_lane_dedupe", evaluationStage: "board_behavior", blockedByTask: null }
 } as const;
 
 export const CONTINUATION_CONTRACT_ORACLE_CODES = [
@@ -182,7 +185,7 @@ export const CONTINUATION_RESOLVER_BEHAVIOR_ORACLE_CODES = [
   "DETERMINISTIC_TIEBREAK_PRESERVED"
 ] as const;
 
-export const CONTINUATION_DEFERRED_ORACLE_CODES = [
+export const CONTINUATION_BOARD_BEHAVIOR_ORACLE_CODES = [
   "CROSS_LANE_DEDUPE_PRESERVES_ATTENTION"
 ] as const;
 
@@ -191,6 +194,7 @@ export const CONTINUATION_ORACLE_INVARIANT_CODES = [
   "ACTIVE_RESULT_HASH_UNCHANGED",
   "ARTIFACT_HASH_CHANGED",
   "ATTENTION_PRIMARY",
+  "BOARD_INPUT_BOUND_VERIFIED",
   "BOARD_SEMANTIC_HASH_STABLE",
   "CONTINUATION_INTEGRITY_VERIFIED",
   "CONTINUATION_PRIMARY",
@@ -203,11 +207,13 @@ export const CONTINUATION_ORACLE_INVARIANT_CODES = [
   "EMPTY_BOARD",
   "EMPTY_DECISION_ACTIONLESS",
   "EXECUTION_POLICY_READ_ONLY",
+  "EXACT_WORK_CONTEXT_DEDUPED",
   "FUTURE_CAPABILITY_BLOCKED",
   "HASH_HELPER_MATCHED",
   "SAME_NAME_IDENTITIES_NOT_AUTO_MERGED",
   "MAPPING_MISSING_ROUTES_TO_SETUP",
   "MIXED_VERSION_REJECTED",
+  "NULL_SETUP_NOT_AUTO_DEDUPED",
   "NO_FALSE_STATUS_CLAIM",
   "PARTIAL_COVERAGE_PRESERVED",
   "PERMUTATION_STABLE",
@@ -217,6 +223,7 @@ export const CONTINUATION_ORACLE_INVARIANT_CODES = [
   "R003_INPUT_BOUND_VERIFIED",
   "RECENT_GITHUB_BOUNDED",
   "SAME_NAME_NOT_LINKED",
+  "SAME_LABEL_DIFFERENT_CONTEXT_RETAINED",
   "SEVEN_DAY_WINDOW_BOUNDARY_ENFORCED",
   "SETUP_CAPABILITY_BOUNDED",
   "SETUP_PRIMARY",
@@ -262,24 +269,15 @@ const resolverBehaviorScenarioSchema = z.enum(
   CONTINUATION_RESOLVER_BEHAVIOR_SCENARIOS
 );
 const executableScenarioSchema = z.enum(CONTINUATION_EXECUTABLE_SCENARIOS);
-const deferredScenarioSchema = z.enum(CONTINUATION_DEFERRED_SCENARIOS);
-const deferredOracleCodeSchema = z.enum(CONTINUATION_DEFERRED_ORACLE_CODES);
+const boardBehaviorScenarioSchema = z.enum(CONTINUATION_BOARD_BEHAVIOR_SCENARIOS);
 const observedOracleCodeSchema = z.enum([
   ...CONTINUATION_CONTRACT_ORACLE_CODES,
   ...CONTINUATION_RESOLVER_BEHAVIOR_ORACLE_CODES,
+  ...CONTINUATION_BOARD_BEHAVIOR_ORACLE_CODES,
   "CONTRACT_ORACLE_FAILED"
 ]);
 const invariantCodeSchema = z.enum(CONTINUATION_ORACLE_INVARIANT_CODES);
 const criticalErrorCodeSchema = z.enum(CONTINUATION_CRITICAL_ERROR_CODES);
-const forbiddenInvariantSchema = z.enum(CONTINUATION_FORBIDDEN_INVARIANTS);
-const blockedByTaskSchema = z.enum([
-  "S-001",
-  "R-001",
-  "R-002",
-  "R-003",
-  "B-001",
-  "X-001"
-]);
 const decisionStatusSchema = z
   .enum([
     "offers_available",
@@ -335,21 +333,14 @@ const resolverBehaviorCaseSchema = z
   })
   .strict();
 
-const deferredCaseSchema = z
+const boardBehaviorCaseSchema = z
   .object({
-    caseId: z.enum(CONTINUATION_DEFERRED_CASE_IDS),
-    task: z.literal("resolver_behavior"),
-    evaluationStage: z.literal("resolver_behavior"),
+    caseId: z.enum(CONTINUATION_BOARD_BEHAVIOR_CASE_IDS),
+    task: z.literal("board_behavior"),
+    evaluationStage: z.literal("board_behavior"),
     title: z.string().trim().min(1).max(180),
-    scenario: deferredScenarioSchema,
-    expected: z
-      .object({
-        measurementStatus: z.literal("not_evaluated"),
-        oracleCode: deferredOracleCodeSchema,
-        blockedByTask: blockedByTaskSchema,
-        forbiddenInvariants: z.array(forbiddenInvariantSchema).min(1).max(10)
-      })
-      .strict(),
+    scenario: boardBehaviorScenarioSchema,
+    expected: continuationContractOracleSummarySchema,
     labels: z.array(labelSchema).min(1).max(12)
   })
   .strict();
@@ -371,8 +362,8 @@ export const continuationEvaluationConfigSchema = z
       .object({
         executableContractOracleCaseCount: z.literal(12),
         executableResolverBehaviorCaseCount: z.literal(9),
-        deferredResolverBehaviorCaseCount: z.literal(1),
-        deferredRowsPassCounted: z.literal(false)
+        executableBoardBehaviorCaseCount: z.literal(1),
+        deferredCaseCount: z.literal(0)
       })
       .strict(),
     oracle: z
@@ -424,7 +415,7 @@ export const continuationEvaluationDatasetSchema = z
     contract: z.literal(CONTINUATION_EVALUATION_DATASET_CONTRACT),
     schemaVersion: z.literal(CONTINUATION_EVALUATION_CASE_SCHEMA_VERSION),
     datasetVersion: z.literal("suggestion-continuation-dev-v0.1"),
-    datasetRevision: z.literal(2),
+    datasetRevision: z.literal(3),
     datasetClass: z.literal("dev_candidate"),
     split: z.literal("development"),
     taskBoundary: z.literal("continuation_regression_validation"),
@@ -442,7 +433,7 @@ export const continuationEvaluationDatasetSchema = z
     evaluatorConfig: z
       .object({
         candidateRef: z.literal(
-          "eval/synthetic/continuationEvaluationConfig.v0.2.json"
+          "eval/synthetic/continuationEvaluationConfig.v0.3.json"
         ),
         version: z.literal(CONTINUATION_EVALUATION_CONFIG_VERSION)
       })
@@ -451,7 +442,7 @@ export const continuationEvaluationDatasetSchema = z
       .array(z.union([
         executableCaseSchema,
         resolverBehaviorCaseSchema,
-        deferredCaseSchema
+        boardBehaviorCaseSchema
       ]))
       .length(22)
   })
@@ -468,21 +459,12 @@ export const continuationEvaluationDatasetSchema = z
     refineSafely(context, ["cases"], () => {
       for (const [index, item] of dataset.cases.entries()) {
         refineCanonical(item.labels, context, ["cases", index, "labels"]);
-        if ("measurementStatus" in item.expected) {
-          refineCaseBinding(item, item.expected.blockedByTask, context, ["cases", index]);
-          refineCanonical(
-            item.expected.forbiddenInvariants,
-            context,
-            ["cases", index, "expected", "forbiddenInvariants"]
-          );
-        } else {
-          refineCaseBinding(item, null, context, ["cases", index]);
-          if (
-            item.expected.oracleCode === "CONTRACT_ORACLE_FAILED" ||
-            item.expected.criticalErrorCodes.length !== 0
-          ) {
-            addIssue(context, ["cases", index, "expected"], "Executable oracle labels must expect zero critical errors.");
-          }
+        refineCaseBinding(item, null, context, ["cases", index]);
+        if (
+          item.expected.oracleCode === "CONTRACT_ORACLE_FAILED" ||
+          item.expected.criticalErrorCodes.length !== 0
+        ) {
+          addIssue(context, ["cases", index, "expected"], "Executable oracle labels must expect zero critical errors.");
         }
       }
     });
@@ -491,8 +473,12 @@ export const continuationEvaluationDatasetSchema = z
 const measuredCaseResultObjectSchema = z
   .object({
     caseId: z.enum(CONTINUATION_EXECUTABLE_CASE_IDS),
-    task: z.enum(["contract_oracle", "resolver_behavior"]),
-    evaluationStage: z.enum(["contract_scaffold", "resolver_behavior"]),
+    task: z.enum(["contract_oracle", "resolver_behavior", "board_behavior"]),
+    evaluationStage: z.enum([
+      "contract_scaffold",
+      "resolver_behavior",
+      "board_behavior"
+    ]),
     scenario: executableScenarioSchema,
     labels: z.array(labelSchema).min(1).max(12),
     measurementStatus: z.literal("measured"),
@@ -562,50 +548,7 @@ const measuredCaseResultSchema = measuredCaseResultObjectSchema.superRefine(
   }
 );
 
-const deferredCaseResultObjectSchema = z
-  .object({
-    caseId: z.enum(CONTINUATION_DEFERRED_CASE_IDS),
-    task: z.literal("resolver_behavior"),
-    evaluationStage: z.literal("resolver_behavior"),
-    scenario: deferredScenarioSchema,
-    labels: z.array(labelSchema).min(1).max(12),
-    measurementStatus: z.literal("not_evaluated"),
-    outcome: z.literal("not_evaluated"),
-    passed: z.null(),
-    blockedByTask: blockedByTaskSchema,
-    forbiddenInvariants: z.array(forbiddenInvariantSchema).min(1).max(10),
-    materializedInputSha256: z.null(),
-    expectedSummarySha256: sha256Schema,
-    actualSummarySha256: z.null(),
-    deterministicReplayMatched: z.null(),
-    expectedOracleCode: deferredOracleCodeSchema,
-    actualOracleCode: z.null(),
-    errorCode: z.null()
-  })
-  .strict();
-
-const deferredCaseResultSchema = deferredCaseResultObjectSchema.superRefine(
-  (result, context) => {
-    refineSafely(context, [], () => {
-      refineCanonical(result.labels, context, ["labels"]);
-      refineCanonical(result.forbiddenInvariants, context, ["forbiddenInvariants"]);
-      refineCaseBinding(result, result.blockedByTask, context, []);
-      const expectedSummarySha256 = continuationEvaluationSummarySha256({
-        measurementStatus: result.measurementStatus,
-        oracleCode: result.expectedOracleCode,
-        blockedByTask: result.blockedByTask,
-        forbiddenInvariants: result.forbiddenInvariants
-      });
-      if (result.expectedSummarySha256 !== expectedSummarySha256) {
-        addIssue(context, ["expectedSummarySha256"], "Deferred expected summary hash is contradictory.");
-      }
-    });
-  }
-);
-
-export const continuationEvaluationCaseResultSchema = z.union(
-  [measuredCaseResultSchema, deferredCaseResultSchema]
-);
+export const continuationEvaluationCaseResultSchema = measuredCaseResultSchema;
 
 export const continuationEvaluationMetricsSchema = z
   .object({
@@ -645,7 +588,7 @@ const continuationEvaluationRunRecordObjectSchema = z
       .object({
         contract: z.literal(CONTINUATION_EVALUATION_DATASET_CONTRACT),
         version: z.literal("suggestion-continuation-dev-v0.1"),
-        revision: z.literal(2),
+        revision: z.literal(3),
         datasetClass: z.literal("dev_candidate"),
         split: z.literal("development"),
         lifecycleState: z.literal("mutable"),
@@ -727,16 +670,17 @@ const continuationEvaluationRunRecordObjectSchema = z
     counts: z
       .object({
         totalCaseCount: z.literal(22),
-        executableCaseCount: z.literal(21),
+        executableCaseCount: z.literal(22),
         contractOracleCaseCount: z.literal(12),
         resolverBehaviorCaseCount: z.literal(9),
+        boardBehaviorCaseCount: z.literal(1),
         exactOraclePassCount: z.number().int().min(0).max(12),
         exactOracleFailureCount: z.number().int().min(0).max(12),
         resolverBehaviorPassCount: z.number().int().min(0).max(9),
         resolverBehaviorFailureCount: z.number().int().min(0).max(9),
-        deferredCaseCount: z.literal(1),
-        notEvaluatedCaseCount: z.literal(1),
-        passCount: z.number().int().min(0).max(21)
+        deferredCaseCount: z.literal(0),
+        notEvaluatedCaseCount: z.literal(0),
+        passCount: z.number().int().min(0).max(22)
       })
       .strict(),
     metrics: continuationEvaluationMetricsSchema,
@@ -762,7 +706,8 @@ const continuationEvaluationRunRecordObjectSchema = z
         caseId: z.enum(CONTINUATION_EXECUTABLE_CASE_IDS),
             code: z.enum([
               "CONTINUATION_EXACT_ORACLE_MISMATCH",
-              "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH"
+              "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH",
+              "CONTINUATION_BOARD_BEHAVIOR_MISMATCH"
             ])
           })
           .strict()
@@ -827,14 +772,7 @@ export type ContinuationEvaluationDataset = z.infer<
 >;
 export type ContinuationEvaluationCase =
   ContinuationEvaluationDataset["cases"][number];
-export type ContinuationExecutableEvaluationCase = Exclude<
-  ContinuationEvaluationCase,
-  { caseId: "E1-RV-DT-001" }
->;
-export type ContinuationDeferredEvaluationCase = Extract<
-  ContinuationEvaluationCase,
-  { caseId: "E1-RV-DT-001" }
->;
+export type ContinuationExecutableEvaluationCase = ContinuationEvaluationCase;
 export type ContinuationExecutableScenario =
   (typeof CONTINUATION_EXECUTABLE_SCENARIOS)[number];
 export type ContinuationContractOracleScenario =
@@ -843,7 +781,8 @@ export type ContinuationResolverBehaviorScenario =
   (typeof CONTINUATION_RESOLVER_BEHAVIOR_SCENARIOS)[number];
 export type ContinuationContractOracleCode =
   | (typeof CONTINUATION_CONTRACT_ORACLE_CODES)[number]
-  | (typeof CONTINUATION_RESOLVER_BEHAVIOR_ORACLE_CODES)[number];
+  | (typeof CONTINUATION_RESOLVER_BEHAVIOR_ORACLE_CODES)[number]
+  | (typeof CONTINUATION_BOARD_BEHAVIOR_ORACLE_CODES)[number];
 export type ContinuationOracleInvariantCode =
   (typeof CONTINUATION_ORACLE_INVARIANT_CODES)[number];
 export type ContinuationCriticalErrorCode =
@@ -863,7 +802,7 @@ export type ContinuationEvaluationRunRecord = z.infer<
 
 export function continuationEvaluationSummarySha256(value: unknown): string {
   return sha256Canonical({
-    domain: "continuation-evaluation-oracle-summary-v0.2",
+    domain: "continuation-evaluation-oracle-summary-v0.3",
     value
   });
 }
@@ -872,7 +811,7 @@ export function continuationEvaluationMaterializedInputSha256(
   cases: readonly ContinuationEvaluationCaseResult[]
 ): string {
   return sha256Canonical({
-    domain: "continuation-evaluation-materialized-input-v0.2",
+    domain: "continuation-evaluation-materialized-input-v0.3",
     cases: cases.map((item) => ({
       caseId: item.caseId,
       evaluationStage: item.evaluationStage,
@@ -892,7 +831,7 @@ export function continuationEvaluationDeterministicOutputSha256(input: {
   cases: readonly ContinuationEvaluationCaseResult[];
 }): string {
   return sha256Canonical({
-    domain: "continuation-evaluation-deterministic-output-v0.2",
+    domain: "continuation-evaluation-deterministic-output-v0.3",
     datasetCandidatePayloadSha256: input.datasetCandidatePayloadSha256,
     configCandidatePayloadSha256: input.configCandidatePayloadSha256,
     materializedInputSha256: input.materializedInputSha256,
@@ -956,28 +895,30 @@ function refineEvaluationRunRecord(
   const measured = record.cases.filter((item) => item.measurementStatus === "measured");
   const contractMeasured = measured.filter((item) => item.task === "contract_oracle");
   const resolverMeasured = measured.filter((item) => item.task === "resolver_behavior");
-  const deferred = record.cases.filter((item) => item.measurementStatus === "not_evaluated");
   const contractPasses = contractMeasured.filter((item) => item.passed).length;
   const resolverPasses = resolverMeasured.filter((item) => item.passed).length;
-  const passes = contractPasses + resolverPasses;
+  const boardMeasured = measured.filter((item) => item.task === "board_behavior");
+  const boardPasses = boardMeasured.filter((item) => item.passed).length;
+  const passes = contractPasses + resolverPasses + boardPasses;
   const expectedCounts = {
     totalCaseCount: 22,
-    executableCaseCount: 21,
+    executableCaseCount: 22,
     contractOracleCaseCount: 12,
     resolverBehaviorCaseCount: 9,
+    boardBehaviorCaseCount: 1,
     exactOraclePassCount: contractPasses,
     exactOracleFailureCount: 12 - contractPasses,
     resolverBehaviorPassCount: resolverPasses,
     resolverBehaviorFailureCount: 9 - resolverPasses,
-    deferredCaseCount: 1,
-    notEvaluatedCaseCount: deferred.length,
+    deferredCaseCount: 0,
+    notEvaluatedCaseCount: 0,
     passCount: passes
   };
   if (
     !canonicalEqual(record.counts, expectedCounts) ||
     contractMeasured.length !== 12 ||
     resolverMeasured.length !== 9 ||
-    deferred.length !== 1
+    boardMeasured.length !== 1
   ) {
     addIssue(context, ["counts"], "Evaluation counts contradict canonical measured and deferred rows.");
   }
@@ -1000,7 +941,9 @@ function refineEvaluationRunRecord(
       caseId: item.caseId,
       code: item.task === "contract_oracle"
         ? "CONTINUATION_EXACT_ORACLE_MISMATCH" as const
-        : "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH" as const
+        : item.task === "resolver_behavior"
+          ? "CONTINUATION_RESOLVER_BEHAVIOR_MISMATCH" as const
+          : "CONTINUATION_BOARD_BEHAVIOR_MISMATCH" as const
     }));
   if (!canonicalEqual(record.errors, expectedErrors)) {
     addIssue(context, ["errors"], "Top-level errors contradict failed measured rows.");
@@ -1028,7 +971,7 @@ function refineEvaluationRunRecord(
   const expectedStatus =
     contractPasses === 12 &&
     resolverPasses === 9 &&
-    deferred.length === 1 &&
+    boardPasses === 1 &&
     Object.values(criticalErrors).every((count) => count === 0)
       ? "passed"
       : "failed";
@@ -1053,7 +996,7 @@ function refineEvaluationRunRecord(
 function refineCaseBinding(
   value: {
     caseId: (typeof CONTINUATION_EVALUATION_CASE_IDS)[number];
-    task: "contract_oracle" | "resolver_behavior";
+    task: "contract_oracle" | "resolver_behavior" | "board_behavior";
     scenario: string;
     evaluationStage: (typeof CONTINUATION_EVALUATION_STAGES)[number];
   },

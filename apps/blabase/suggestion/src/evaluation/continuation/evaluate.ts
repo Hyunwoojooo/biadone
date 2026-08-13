@@ -8,7 +8,6 @@ import {
   continuationEvaluationCaseResultSchema,
   continuationEvaluationMetricsSchema,
   type ContinuationContractOracleSummary,
-  type ContinuationDeferredEvaluationCase,
   type ContinuationEvaluationCase,
   type ContinuationEvaluationCaseResult,
   type ContinuationEvaluationDataset,
@@ -26,15 +25,16 @@ export type ContinuationDatasetEvaluation = {
   cases: ContinuationEvaluationCaseResult[];
   counts: {
     totalCaseCount: 22;
-    executableCaseCount: 21;
+    executableCaseCount: 22;
     contractOracleCaseCount: 12;
     resolverBehaviorCaseCount: 9;
+    boardBehaviorCaseCount: 1;
     exactOraclePassCount: number;
     exactOracleFailureCount: number;
     resolverBehaviorPassCount: number;
     resolverBehaviorFailureCount: number;
-    deferredCaseCount: 1;
-    notEvaluatedCaseCount: 1;
+    deferredCaseCount: 0;
+    notEvaluatedCaseCount: 0;
     passCount: number;
   };
   metrics: ContinuationEvaluationMetrics;
@@ -58,24 +58,27 @@ export function evaluateContinuationDataset(
     (item): item is Extract<ContinuationEvaluationCaseResult, { measurementStatus: "measured" }> =>
       item.measurementStatus === "measured"
   );
-  const deferred = cases.filter((item) => item.measurementStatus === "not_evaluated");
   const contractMeasured = measured.filter((item) => item.task === "contract_oracle");
   const resolverMeasured = measured.filter((item) => item.task === "resolver_behavior");
+  const boardMeasured = measured.filter((item) => item.task === "board_behavior");
   const exactOraclePassCount = contractMeasured.filter((item) => item.passed).length;
   const resolverBehaviorPassCount = resolverMeasured.filter((item) => item.passed).length;
+  const boardBehaviorPassCount = boardMeasured.filter((item) => item.passed).length;
   const criticalErrors = continuationEvaluationCriticalErrorCounts(cases);
   const counts = {
     totalCaseCount: 22 as const,
-    executableCaseCount: 21 as const,
+    executableCaseCount: 22 as const,
     contractOracleCaseCount: 12 as const,
     resolverBehaviorCaseCount: 9 as const,
+    boardBehaviorCaseCount: 1 as const,
     exactOraclePassCount,
     exactOracleFailureCount: 12 - exactOraclePassCount,
     resolverBehaviorPassCount,
     resolverBehaviorFailureCount: 9 - resolverBehaviorPassCount,
-    deferredCaseCount: 1 as const,
-    notEvaluatedCaseCount: 1 as const,
-    passCount: exactOraclePassCount + resolverBehaviorPassCount
+    deferredCaseCount: 0 as const,
+    notEvaluatedCaseCount: 0 as const,
+    passCount:
+      exactOraclePassCount + resolverBehaviorPassCount + boardBehaviorPassCount
   };
   const metrics = continuationEvaluationMetricsSchema.parse({
     exactOraclePassRate: exactOraclePassCount / 12,
@@ -100,9 +103,7 @@ export function evaluateContinuationCase(
   evaluationCase: ContinuationEvaluationCase,
   dependencies: ContinuationEvaluationDependencies = {}
 ): ContinuationEvaluationCaseResult {
-  return evaluationCase.caseId === "E1-RV-DT-001"
-    ? evaluateDeferredCase(evaluationCase)
-    : evaluateExecutableCase(evaluationCase, dependencies);
+  return evaluateExecutableCase(evaluationCase, dependencies);
 }
 
 function evaluateExecutableCase(
@@ -216,37 +217,6 @@ function evaluateExecutableCase(
   return parsedIsolatedFailure.success
     ? parsedIsolatedFailure.data
     : isolatedFailureResult;
-}
-
-function evaluateDeferredCase(
-  evaluationCase: ContinuationDeferredEvaluationCase
-): ContinuationEvaluationCaseResult {
-  const expectedSummary = {
-    measurementStatus: evaluationCase.expected.measurementStatus,
-    oracleCode: evaluationCase.expected.oracleCode,
-    blockedByTask: evaluationCase.expected.blockedByTask,
-    forbiddenInvariants: evaluationCase.expected.forbiddenInvariants
-  };
-  return continuationEvaluationCaseResultSchema.parse({
-    caseId: evaluationCase.caseId,
-    task: evaluationCase.task,
-    evaluationStage: evaluationCase.evaluationStage,
-    scenario: evaluationCase.scenario,
-    labels: [...evaluationCase.labels],
-    measurementStatus: "not_evaluated",
-    outcome: "not_evaluated",
-    passed: null,
-    blockedByTask: evaluationCase.expected.blockedByTask,
-    forbiddenInvariants: [...evaluationCase.expected.forbiddenInvariants],
-    materializedInputSha256: null,
-    expectedSummarySha256:
-      continuationEvaluationSummarySha256(expectedSummary),
-    actualSummarySha256: null,
-    deterministicReplayMatched: null,
-    expectedOracleCode: evaluationCase.expected.oracleCode,
-    actualOracleCode: null,
-    errorCode: null
-  });
 }
 
 function failedOracleSummary(): ContinuationContractOracleSummary {

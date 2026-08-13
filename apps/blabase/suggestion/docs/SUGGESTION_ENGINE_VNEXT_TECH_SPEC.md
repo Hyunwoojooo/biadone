@@ -241,23 +241,63 @@ type ContinuationDecisionV1 = {
 ### 6.6 WorkSuggestionBoard
 
 ```ts
-type WorkSuggestionBoardV1 = {
-  schemaVersion: "work-suggestion-board-v1";
-  attention: ActiveAttentionResultV05;
-  continuation: ContinuationDecisionV1;
-  setup: SetupDecisionV1;
+type WorkSuggestionBoardInputV03 = {
+  contract: "work-suggestion-board-input-v0.3";
+  schemaVersion: "work-suggestion-board-schema-v0.3";
+  asOf: string;
+  composerVersion: "work-suggestion-board-composer-v0.1";
+  precedencePolicyVersion: "attention-continuation-setup-precedence-v0.1";
+  idPolicyVersion: "work-suggestion-board-id-policy-v0.1";
+  active: ActiveAttentionResultV05;                 // exact sealed artifact
+  continuation: ContinuationResolvedDecisionV01;   // exact outer R-003 artifact
+  inputSha256: string;
+};
+
+type WorkSuggestionBoardResultV03 = {
+  contract: "work-suggestion-board-result-v0.3";
+  schemaVersion: "work-suggestion-board-schema-v0.3";
+  boardId: string;
+  asOf: string;
+  composerVersion: "work-suggestion-board-composer-v0.1";
+  precedencePolicyVersion: "attention-continuation-setup-precedence-v0.1";
+  idPolicyVersion: "work-suggestion-board-id-policy-v0.1";
+  input: WorkSuggestionBoardInputV03;
+  dependencies: {
+    inputSha256: string;
+    activeResultSha256: string;
+    continuationResolvedResultSha256: string;
+    continuationResultSha256: string;
+    continuationSemanticResultSha256: string;
+  };
   prominentLane: "attention" | "continuation" | "setup" | "none";
-  primary: BoardItemV1 | null;
-  alternatives: BoardItemV1[];           // max 2
+  primary: InternalBoardItemV01 | null;
+  alternatives: InternalBoardItemV01[];   // exact expected sequence, max 2
   executionPolicy: {
     automaticExecutionAllowed: false;
     explicitUserActionRequired: true;
     externalMutationAllowed: false;
   };
-  run: BoardRunMetadataV1;
+  semanticResultSha256: string;
   resultSha256: string;
 };
+
+type WorkSuggestionBoardPublicV01 = {
+  contract: "work-suggestion-board-public-v0.1";
+  schemaVersion: "work-suggestion-board-schema-v0.1";
+  generatedAt: string;
+  prominentLane: "attention" | "continuation" | "setup" | "none";
+  primary: PublicBoardItemV01 | null;
+  alternatives: PublicBoardItemV01[];     // max 2
+  continuationStatus: "available" | "empty" | "unavailable";
+  executionPolicy: WorkSuggestionBoardResultV03["executionPolicy"];
+};
 ```
+
+Internal v0.3 composer boundary는 strict bundle object로 exact Active v0.5와 complete original R-001/R-002/R-003 inputs/artifacts를 받고 trusted resolver options를 별도로 받는다. `verifyContinuationDecisionAgainstInput`으로 outer `ContinuationResolvedDecision v0.1` 전체 chain을 인증하기 전에는 nested `.decision`을 읽지 않는다. Bare base Decision, legacy/mixed tuple, forged 또는 locally rehashed outer artifact, wrong secret/registry/code/dataset/asOf/version은 typed input rejection으로 fail closed하며 Board를 만들지 않는다. Local Board schema/hash success는 integrity만 증명하고 authenticity를 증명하지 않으므로 provenance-sensitive consumer는 full input-bound `verifyWorkSuggestionBoardResultAgainstInput` recomposition과 canonical exact comparison을 사용한다.
+
+Composer는 Active object/reference, canonical bytes와 `resultSha256`, outer R-003 artifact를 재실행·재구축·mutation 없이 exact 보존하고 Board input hash로 그 exact artifacts를 묶는다. Active `suggested` 또는 `needs_clarification` sequence가 먼저 오고 이후 Continuation/Setup order를 보존한다. Cross-lane numeric score는 비교하지 않는다. Exact non-null WorkContext만 dedupe하며 Active가 이기고, 동일 label/다른 WorkContext는 유지하며 null-WorkContext Setup은 자동 dedupe하지 않는다. Result는 이 exact sequence의 처음 3개와 정확히 일치해야 한다.
+
+Internal Board는 established source capability와 exact private action target을 그대로 보존할 수 있지만 권한을 올리거나 실행하지 않는다. Public v0.1 projection은 별도 계약이며 public Attention item은 항상 `capability=display`, `action=null`이다. 어떤 Board path도 automatic execution, persistence 또는 external mutation을 허용하지 않는다.
 
 ### 6.7 Run 및 evidence metadata
 
@@ -721,13 +761,13 @@ Dataset 크기, annotator 수, disagreement 처리, confidence interval 및 실�
 | Continuation score | v1 신규 |
 | Continuation identity policy | v1 신규 |
 | Continuation action policy | v1 신규 |
-| Work Suggestion Board | v1 신규 |
+| Work Suggestion Board | public v0.1 유지; unwired internal input/result/schema/hash v0.3 checkpoint |
 | Work resumption protocol | exact resume 단계에서 v2 제안, v1 reader compatibility 유지 |
 | Monitor | two-lane 지원 버전 신규 |
 | Replay | two-lane provenance 지원 버전 신규 |
 | Launcher projection | v3 제안, older decoder compatibility 유지 |
 
-### 18.1.1 구현된 private R-003 checkpoint tuple
+### 18.1.1 구현된 private R-003/B-001 checkpoint tuple
 
 2026-08-13의 unwired internal checkpoint는 다음 exact tuple을 사용한다. 이 표는 public release 또는 dataset freeze를 뜻하지 않는다.
 
@@ -741,8 +781,11 @@ Dataset 크기, annotator 수, disagreement 처리, confidence interval 및 실�
 | R-003 resolution envelope/schema | v0.1 |
 | R-003 resolved-decision artifact/schema/hash | v0.1 |
 | Nested base Continuation Decision | 기존 v0.2; R-003 authenticity marker가 아니며 단독 소비 금지 |
+| B-001 Board input/result contract, schema, input/result/semantic hash | v0.3 |
+| B-001 Board composer/precedence/ID policy | v0.1; semantics unchanged |
+| Public Work Suggestion Board contract/schema | v0.1 unchanged; public Attention is display-only/actionless |
 
-R-003 producer는 serialized artifacts만 받지 않는다. Original authenticated `ContinuationIdentityInput`, claimed R-001 result, R-002 envelope/result, explicit resolution envelope와 serialized artifact 밖의 installation secret을 요구한다. R-001을 재실행해 claimed result와 canonical-exact 비교하고 R-002 input-bound verifier를 실행한 뒤 전체 chain으로 decision을 만든다. Consumer의 `verifyContinuationDecisionAgainstInput`도 같은 chain을 재실행해 exact output을 비교한다. Installation secret은 저장·hash·출력하지 않는다. Current registry SHA, code commit SHA와 nullable dataset version/SHA pair는 caller artifact와 분리된 trusted expectations로 전달하며 exact 일치가 필요하다. 모든 source batch의 HMAC-bound `evaluatedAsOf`는 R-002/R-003 `asOf`와 같아야 한다. Base Decision v0.2가 nested body로 존재해도 distinct R-003 v0.1 resolved artifact와 input-bound verification 없이는 authentic resolver output으로 취급하지 않는다.
+R-003 producer는 serialized artifacts만 받지 않는다. Original authenticated `ContinuationIdentityInput`, claimed R-001 result, R-002 envelope/result, explicit resolution envelope와 serialized artifact 밖의 installation secret을 요구한다. R-001을 재실행해 claimed result와 canonical-exact 비교하고 R-002 input-bound verifier를 실행한 뒤 전체 chain으로 decision을 만든다. Consumer의 `verifyContinuationDecisionAgainstInput`도 같은 chain을 재실행해 exact output을 비교한다. Installation secret은 저장·hash·출력하지 않는다. Current registry SHA, code commit SHA와 nullable dataset version/SHA pair는 caller artifact와 분리된 trusted expectations로 전달하며 exact 일치가 필요하다. 모든 source batch의 HMAC-bound `evaluatedAsOf`는 R-002/R-003/Board `asOf`와 같아야 한다. Base Decision v0.2가 nested body로 존재해도 distinct R-003 v0.1 resolved artifact와 input-bound verification 없이는 authentic resolver output으로 취급하지 않는다. B-001도 exact original bundle과 trusted options로 이 verifier를 먼저 실행하며, Board dependencies는 input SHA, Active result SHA, outer resolved SHA, nested base artifact SHA와 nested semantic SHA를 별도로 보존한다.
 
 ### 18.2 Bump 규칙
 

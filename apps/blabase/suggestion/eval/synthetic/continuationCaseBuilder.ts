@@ -28,27 +28,10 @@ import {
   CONTINUATION_RESOLVER_VERSION,
   CONTINUATION_RULE_VERSION,
   CONTINUATION_SCORING_POLICY_VERSION,
-  CONTINUATION_SNAPSHOT_FRESHNESS_POLICY_VERSION,
-  WORK_SUGGESTION_BOARD_COMPOSER_VERSION,
-  WORK_SUGGESTION_BOARD_ID_POLICY_VERSION,
-  WORK_SUGGESTION_BOARD_INPUT_CONTRACT,
-  WORK_SUGGESTION_BOARD_PRECEDENCE_POLICY_VERSION,
-  WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
-  WORK_SUGGESTION_BOARD_SCHEMA_VERSION
+  CONTINUATION_SNAPSHOT_FRESHNESS_POLICY_VERSION
 } from "../../src/crossSource/versions";
-import { sha256Canonical } from "../../src/evaluation/crossSourceIntegrity";
 import {
-  WORK_SUGGESTION_BOARD_EXECUTION_POLICY,
-  createWorkSuggestionBoardId,
-  createWorkSuggestionBoardItemId,
-  createWorkSuggestionBoardSourceItemRef,
-  sealWorkSuggestionBoardInput,
   sealWorkSuggestionBoardResult,
-  verifyWorkSuggestionBoardResultIntegrity,
-  workSuggestionBoardInputSchema,
-  workSuggestionBoardResultSemanticSha256,
-  type WorkSuggestionBoardInput,
-  type WorkSuggestionBoardItem,
   type WorkSuggestionBoardResult
 } from "../../src/suggestionBoard";
 import {
@@ -63,7 +46,18 @@ import {
   type ContinuationExecutableScenario,
   type ContinuationOracleInvariantCode
 } from "../../src/evaluation/continuation/contracts";
-import { buildContinuationResolverEvaluationFixture } from "./continuationResolverCaseBuilder";
+import {
+  buildContinuationBoardChainDescriptor,
+  buildContinuationResolverEvaluationFixture,
+  executeContinuationResolverEvaluationDescriptor,
+  type ContinuationBoardChainKind,
+  type ContinuationResolverEvaluationInputDescriptor
+} from "./continuationResolverCaseBuilder";
+import {
+  composeWorkSuggestionBoard,
+  verifyWorkSuggestionBoardResultAgainstInput,
+  type WorkSuggestionBoardCompositionBundle
+} from "../../src/suggestionBoard";
 
 const STARTED_AT = "2026-08-02T02:59:00.000Z";
 const COMPLETED_AT = "2026-08-02T02:59:01.000Z";
@@ -101,17 +95,39 @@ export function buildContinuationEvaluationFixture(
     case "public_privacy_rejection":
       return publicPrivacyFixture();
     case "board_attention_precedence":
-      return boardAttentionFixture();
+      return authenticatedBoardFixture(
+        "board_attention_precedence",
+        "BOARD_ATTENTION_PRECEDENCE_CONTRACT_ENFORCED",
+        suggestedAttention(),
+        "ready_dedupe"
+      );
     case "board_continuation_fallback":
-      return boardContinuationFixture();
+      return authenticatedBoardFixture(
+        "board_continuation_fallback",
+        "BOARD_CONTINUATION_PRECEDENCE_CONTRACT_ENFORCED",
+        noActionAttention(),
+        "ready_dedupe"
+      );
     case "board_setup_fallback":
-      return boardSetupFixture();
+      return authenticatedBoardFixture(
+        "board_setup_fallback",
+        "BOARD_SETUP_PRECEDENCE_CONTRACT_ENFORCED",
+        noActionAttention(),
+        "setup"
+      );
     case "board_empty":
-      return boardEmptyFixture();
+      return authenticatedBoardFixture(
+        "board_empty",
+        "BOARD_EMPTY_PRECEDENCE_CONTRACT_ENFORCED",
+        noActionAttention(),
+        "empty"
+      );
     case "board_mixed_version":
       return boardMixedVersionFixture();
     case "semantic_hash_runtime_metadata":
       return semanticHashFixture();
+    case "resolver_cross_lane_dedupe":
+      return crossLaneDedupeFixture();
   }
   return buildContinuationResolverEvaluationFixture(scenario);
 }
@@ -242,124 +258,239 @@ function publicPrivacyFixture(): ContinuationEvaluationFixture {
   });
 }
 
-function boardAttentionFixture(): ContinuationEvaluationFixture {
-  const active = suggestedAttention();
-  const decision = readyDecision("1");
-  const board = boardResult(active, decision, "attention");
-  return fixture("board_attention_precedence", { active, decision, board }, () => {
-    const accepted = verifyWorkSuggestionBoardResultIntegrity(board);
-    const objectUnchanged = sha256Canonical(board.input.active) === sha256Canonical(active);
-    const hashUnchanged = board.input.active.resultSha256 === active.resultSha256;
-    const wrongLaneRejected = rejectsWrongBoardLane(board, {
-      prominentLane: "continuation",
-      primary: boardPrimary(active, decision, "continuation")
-    });
+type AuthenticatedBoardFixture = {
+  descriptor: ContinuationResolverEvaluationInputDescriptor;
+  active: ActiveAttentionResult;
+};
+
+function authenticatedBoardFixture(
+  scenario: Extract<
+    ContinuationExecutableScenario,
+    | "board_attention_precedence"
+    | "board_continuation_fallback"
+    | "board_setup_fallback"
+    | "board_empty"
+  >,
+  oracleCode: ContinuationContractOracleCode,
+  active: ActiveAttentionResult,
+  chainKind: ContinuationBoardChainKind
+): ContinuationEvaluationFixture {
+  const materializedInput: AuthenticatedBoardFixture = {
+    descriptor: buildContinuationBoardChainDescriptor(chainKind),
+    active
+  };
+  return fixture(scenario, materializedInput, () => {
+    const { bundle, options, resolved } = boardBundle(materializedInput);
+    const composed = composeWorkSuggestionBoard(bundle, options);
+    const accepted =
+      composed.ok &&
+      verifyWorkSuggestionBoardResultAgainstInput(
+        bundle,
+        options,
+        composed.board
+      );
+    const board = composed.ok ? composed.board : null;
+    const expectedLane =
+      active.decision.status === "suggested"
+        ? "attention"
+        : chainKind === "ready_dedupe"
+          ? "continuation"
+          : chainKind === "setup"
+            ? "setup"
+            : "none";
+    const laneInvariant =
+      expectedLane === "attention"
+        ? "ATTENTION_PRIMARY"
+        : expectedLane === "continuation"
+          ? "CONTINUATION_PRIMARY"
+          : expectedLane === "setup"
+            ? "SETUP_PRIMARY"
+            : "EMPTY_BOARD";
     return summarize({
-      expectedCode: "BOARD_ATTENTION_PRECEDENCE_CONTRACT_ENFORCED",
+      expectedCode: oracleCode,
       contractOutcome: accepted ? "accepted" : "rejected",
-      decisionStatus: decision.status,
-      prominentLane: accepted ? board.prominentLane : null,
+      decisionStatus: resolved.decision.status,
+      coverageCode: resolved.decision.coverageCode,
+      prominentLane: board?.prominentLane ?? null,
       checks: [
-        check("ACTIVE_OBJECT_UNCHANGED", objectUnchanged, "ACTIVE_RESULT_DIFF"),
-        check("ACTIVE_RESULT_HASH_UNCHANGED", hashUnchanged, "ACTIVE_RESULT_HASH_DIFF"),
-        check("ATTENTION_PRIMARY", board.prominentLane === "attention", "ACTIVE_RESULT_DIFF"),
-        check("EXECUTION_POLICY_READ_ONLY", readOnlyBoard(board), "AUTOMATIC_EXECUTION_OR_MUTATION"),
-        check("WRONG_LANE_MUTATION_REJECTED", wrongLaneRejected, "CONTRACT_INTEGRITY_FAILURE")
+        check(
+          laneInvariant,
+          accepted && board?.prominentLane === expectedLane,
+          expectedLane === "attention" ? "ACTIVE_RESULT_DIFF" : "CONTRACT_INTEGRITY_FAILURE"
+        ),
+        check(
+          "EXECUTION_POLICY_READ_ONLY",
+          board !== null && readOnlyBoard(board),
+          "AUTOMATIC_EXECUTION_OR_MUTATION"
+        ),
+        check(
+          "WRONG_LANE_MUTATION_REJECTED",
+          board !== null && rejectsWrongBoardLane(board, {
+            prominentLane: expectedLane === "none" ? "attention" : "none",
+            primary: null
+          }),
+          "CONTRACT_INTEGRITY_FAILURE"
+        ),
+        ...(expectedLane === "attention"
+          ? [
+              check(
+                "ACTIVE_OBJECT_UNCHANGED",
+                board?.input.active === active,
+                "ACTIVE_RESULT_DIFF"
+              ),
+              check(
+                "ACTIVE_RESULT_HASH_UNCHANGED",
+                board?.input.active.resultSha256 === active.resultSha256,
+                "ACTIVE_RESULT_HASH_DIFF"
+              )
+            ]
+          : [])
       ]
     });
   });
 }
 
-function boardContinuationFixture(): ContinuationEvaluationFixture {
-  const active = noActionAttention();
-  const decision = readyDecision("1");
-  const board = boardResult(active, decision, "continuation");
-  return fixture("board_continuation_fallback", { active, decision, board }, () => {
-    const accepted = verifyWorkSuggestionBoardResultIntegrity(board);
-    const wrongLaneRejected = rejectsWrongBoardLane(board, {
-      prominentLane: "none",
-      primary: null
-    });
+function crossLaneDedupeFixture(): ContinuationEvaluationFixture {
+  const active = suggestedAttention("Recent GitHub activity");
+  const materializedInput: AuthenticatedBoardFixture = {
+    descriptor: buildContinuationBoardChainDescriptor("ready_dedupe"),
+    active
+  };
+  return fixture("resolver_cross_lane_dedupe", materializedInput, () => {
+    const { bundle, options, resolved } = boardBundle(materializedInput);
+    const composed = composeWorkSuggestionBoard(bundle, options);
+    const board = composed.ok ? composed.board : null;
+    const inputBound =
+      composed.ok &&
+      verifyWorkSuggestionBoardResultAgainstInput(bundle, options, composed.board);
+    const continuationCandidates = [
+      ...(resolved.decision.primary === null ? [] : [resolved.decision.primary]),
+      ...resolved.decision.alternatives
+    ];
+    const visibleItems = board === null
+      ? []
+      : [
+          ...(board.primary === null ? [] : [board.primary]),
+          ...board.alternatives
+        ];
+    const activeWorkContextId = active.decision.topSuggestion?.projectId ?? null;
+    const sameLabelDifferentContext = continuationCandidates.find(
+      (candidate) =>
+        candidate.workContextId !== null &&
+        candidate.workContextId !== activeWorkContextId &&
+        candidate.localDisplayLabel === active.decision.topSuggestion?.title
+    );
+    const exactContextDeduped =
+      activeWorkContextId !== null &&
+      continuationCandidates.some(
+        (candidate) => candidate.workContextId === activeWorkContextId
+      ) &&
+      !visibleItems.some(
+        (item) =>
+          item.lane !== "attention" &&
+          item.workContextId === activeWorkContextId
+      );
+    const sameLabelDifferentContextRetained =
+      sameLabelDifferentContext !== undefined &&
+      visibleItems.some(
+        (item) =>
+          item.lane === "continuation" &&
+          item.workContextId === sameLabelDifferentContext.workContextId
+      );
+    // Authenticated setup candidates have null WorkContext IDs. The Board
+    // never treats null as an identity key, so separately composed null-setup
+    // items remain present rather than being auto-deduped by label.
+    const setupInput: AuthenticatedBoardFixture = {
+      descriptor: buildContinuationBoardChainDescriptor("setup"),
+      active: noActionAttention()
+    };
+    const setupBundle = boardBundle(setupInput);
+    const setupBoard = composeWorkSuggestionBoard(
+      setupBundle.bundle,
+      setupBundle.options
+    );
+    const setupItems = setupBoard.ok
+      ? [
+          ...(setupBoard.board.primary === null
+            ? []
+            : [setupBoard.board.primary]),
+          ...setupBoard.board.alternatives
+        ].filter((item) => item.lane === "setup")
+      : [];
+    const nullSetupRetained =
+      setupItems.length >= 2 &&
+      setupItems.every((item) => item.workContextId === null);
     return summarize({
-      expectedCode: "BOARD_CONTINUATION_PRECEDENCE_CONTRACT_ENFORCED",
-      contractOutcome: accepted ? "accepted" : "rejected",
-      decisionStatus: decision.status,
-      prominentLane: accepted ? board.prominentLane : null,
+      expectedCode: "CROSS_LANE_DEDUPE_PRESERVES_ATTENTION",
+      contractOutcome: inputBound ? "accepted" : "rejected",
+      decisionStatus: resolved.decision.status,
+      coverageCode: resolved.decision.coverageCode,
+      prominentLane: board?.prominentLane ?? null,
       checks: [
-        check("CONTINUATION_PRIMARY", board.prominentLane === "continuation", "CONTRACT_INTEGRITY_FAILURE"),
-        check("EXECUTION_POLICY_READ_ONLY", readOnlyBoard(board), "AUTOMATIC_EXECUTION_OR_MUTATION"),
-        check("WRONG_LANE_MUTATION_REJECTED", wrongLaneRejected, "CONTRACT_INTEGRITY_FAILURE")
+        check("ACTIVE_OBJECT_UNCHANGED", board?.input.active === active, "ACTIVE_RESULT_DIFF"),
+        check(
+          "ACTIVE_RESULT_HASH_UNCHANGED",
+          board?.input.active.resultSha256 === active.resultSha256,
+          "ACTIVE_RESULT_HASH_DIFF"
+        ),
+        check("ATTENTION_PRIMARY", board?.prominentLane === "attention", "ACTIVE_RESULT_DIFF"),
+        check("BOARD_INPUT_BOUND_VERIFIED", inputBound, "CONTRACT_INTEGRITY_FAILURE"),
+        check("EXACT_WORK_CONTEXT_DEDUPED", exactContextDeduped, "WRONG_IDENTITY"),
+        check(
+          "EXECUTION_POLICY_READ_ONLY",
+          board !== null && readOnlyBoard(board),
+          "AUTOMATIC_EXECUTION_OR_MUTATION"
+        ),
+        check("NULL_SETUP_NOT_AUTO_DEDUPED", nullSetupRetained, "WRONG_IDENTITY"),
+        check(
+          "R003_ARTIFACT_SCHEMA_ACCEPTED",
+          bundle.continuationResolvedDecision === resolved,
+          "CONTRACT_INTEGRITY_FAILURE"
+        ),
+        check(
+          "R003_INPUT_BOUND_VERIFIED",
+          inputBound,
+          "CONTRACT_INTEGRITY_FAILURE"
+        ),
+        check(
+          "SAME_LABEL_DIFFERENT_CONTEXT_RETAINED",
+          sameLabelDifferentContextRetained,
+          "WRONG_IDENTITY"
+        )
       ]
     });
   });
 }
 
-function boardSetupFixture(): ContinuationEvaluationFixture {
-  const active = noActionAttention();
-  const decision = setupDecision("1");
-  const board = boardResult(active, decision, "setup");
-  return fixture("board_setup_fallback", { active, decision, board }, () => {
-    const accepted = verifyWorkSuggestionBoardResultIntegrity(board);
-    const wrongLaneRejected = rejectsWrongBoardLane(board, {
-      prominentLane: "none",
-      primary: null
-    });
-    return summarize({
-      expectedCode: "BOARD_SETUP_PRECEDENCE_CONTRACT_ENFORCED",
-      contractOutcome: accepted ? "accepted" : "rejected",
-      decisionStatus: decision.status,
-      prominentLane: accepted ? board.prominentLane : null,
-      checks: [
-        check("EXECUTION_POLICY_READ_ONLY", readOnlyBoard(board), "AUTOMATIC_EXECUTION_OR_MUTATION"),
-        check("SETUP_PRIMARY", board.prominentLane === "setup", "UNSAFE_ACTION_TARGET"),
-        check("WRONG_LANE_MUTATION_REJECTED", wrongLaneRejected, "CONTRACT_INTEGRITY_FAILURE")
-      ]
-    });
-  });
-}
-
-function boardEmptyFixture(): ContinuationEvaluationFixture {
-  const active = noActionAttention();
-  const decision = emptyDecision("1");
-  const board = boardResult(active, decision, "none");
-  return fixture("board_empty", { active, decision, board }, () => {
-    const empty =
-      verifyWorkSuggestionBoardResultIntegrity(board) &&
-      board.prominentLane === "none" &&
-      board.primary === null &&
-      board.alternatives.length === 0;
-    const fabricatedActive = suggestedAttention();
-    const wrongLaneRejected = rejectsWrongBoardLane(board, {
-      prominentLane: "attention",
-      primary: boardPrimary(fabricatedActive, decision, "attention")
-    });
-    return summarize({
-      expectedCode: "BOARD_EMPTY_PRECEDENCE_CONTRACT_ENFORCED",
-      contractOutcome: empty ? "accepted" : "rejected",
-      decisionStatus: decision.status,
-      prominentLane: empty ? board.prominentLane : null,
-      checks: [
-        check("EMPTY_BOARD", empty, "CONTRACT_INTEGRITY_FAILURE"),
-        check("EXECUTION_POLICY_READ_ONLY", readOnlyBoard(board), "AUTOMATIC_EXECUTION_OR_MUTATION"),
-        check("WRONG_LANE_MUTATION_REJECTED", wrongLaneRejected, "CONTRACT_INTEGRITY_FAILURE")
-      ]
-    });
-  });
+function boardBundle(input: AuthenticatedBoardFixture) {
+  const chain = executeContinuationResolverEvaluationDescriptor(input.descriptor);
+  const bundle: WorkSuggestionBoardCompositionBundle = {
+    active: input.active,
+    continuationIdentityInput: chain.identityInput,
+    continuationIdentityResult: chain.identityResult,
+    continuationDerivationEnvelope: chain.derivationEnvelope,
+    continuationDerivationResult: chain.derivationResult,
+    continuationResolutionEnvelope: chain.resolutionEnvelope,
+    continuationResolvedDecision: chain.resolved
+  };
+  return { bundle, options: chain.resolutionOptions, resolved: chain.resolved };
 }
 
 function boardMixedVersionFixture(): ContinuationEvaluationFixture {
-  const active = noActionAttention();
-  const decision = readyDecision("1");
-  const input = boardInput(active, decision);
+  const materialized: AuthenticatedBoardFixture = {
+    active: noActionAttention(),
+    descriptor: buildContinuationBoardChainDescriptor("ready_dedupe")
+  };
+  const { bundle, options } = boardBundle(materialized);
   const mixed = {
-    ...input,
-    continuation: {
-      ...input.continuation,
+    ...bundle,
+    continuationResolvedDecision: {
+      ...bundle.continuationResolvedDecision,
       schemaVersion: "continuation-decision-schema-v999"
     }
   };
   return fixture("board_mixed_version", mixed, () => {
-    const rejected = !workSuggestionBoardInputSchema.safeParse(mixed).success;
+    const rejected = !composeWorkSuggestionBoard(mixed, options).ok;
     return summarize({
       expectedCode: "BOARD_MIXED_VERSION_REJECTED",
       contractOutcome: rejected ? "rejected" : "accepted",
@@ -374,49 +505,32 @@ function semanticHashFixture(): ContinuationEvaluationFixture {
   const active = suggestedAttention();
   const firstDecision = readyDecision("1");
   const secondDecision = readyDecision("2");
-  const firstBoard = boardResult(active, firstDecision, "attention");
-  const secondBoard = boardResult(active, secondDecision, "attention");
   const materializedInput = {
     active,
     firstDecision,
-    secondDecision,
-    firstBoard,
-    secondBoard
+    secondDecision
   };
   return fixture("semantic_hash_runtime_metadata", materializedInput, () => {
     const continuationSemanticStable =
       firstDecision.semanticResultSha256 === secondDecision.semanticResultSha256;
-    const boardSemanticStable =
-      firstBoard.semanticResultSha256 === secondBoard.semanticResultSha256;
     const artifactHashChanged =
-      firstDecision.resultSha256 !== secondDecision.resultSha256 &&
-      firstBoard.resultSha256 !== secondBoard.resultSha256;
-    const activeObjectUnchanged =
-      sha256Canonical(firstBoard.input.active) === sha256Canonical(active) &&
-      sha256Canonical(secondBoard.input.active) === sha256Canonical(active);
-    const activeHashUnchanged =
-      firstBoard.input.active.resultSha256 === active.resultSha256 &&
-      secondBoard.input.active.resultSha256 === active.resultSha256;
+      firstDecision.resultSha256 !== secondDecision.resultSha256;
     const helperMatched =
       continuationDecisionSemanticSha256(firstDecision) === firstDecision.semanticResultSha256 &&
-      continuationDecisionSemanticSha256(secondDecision) === secondDecision.semanticResultSha256 &&
-      workSuggestionBoardResultSemanticSha256(firstBoard) === firstBoard.semanticResultSha256 &&
-      workSuggestionBoardResultSemanticSha256(secondBoard) === secondBoard.semanticResultSha256;
+      continuationDecisionSemanticSha256(secondDecision) === secondDecision.semanticResultSha256;
     const accepted =
       verifyContinuationDecisionIntegrity(firstDecision) &&
-      verifyContinuationDecisionIntegrity(secondDecision) &&
-      verifyWorkSuggestionBoardResultIntegrity(firstBoard) &&
-      verifyWorkSuggestionBoardResultIntegrity(secondBoard);
+      verifyContinuationDecisionIntegrity(secondDecision);
     return summarize({
       expectedCode: "SEMANTIC_HASH_VOLATILE_METADATA_ISOLATED",
       contractOutcome: accepted ? "accepted" : "rejected",
       decisionStatus: firstDecision.status,
-      prominentLane: firstBoard.prominentLane,
+      prominentLane: "attention",
       checks: [
-        check("ACTIVE_OBJECT_UNCHANGED", activeObjectUnchanged, "ACTIVE_RESULT_DIFF"),
-        check("ACTIVE_RESULT_HASH_UNCHANGED", activeHashUnchanged, "ACTIVE_RESULT_HASH_DIFF"),
+        check("ACTIVE_OBJECT_UNCHANGED", active === materializedInput.active, "ACTIVE_RESULT_DIFF"),
+        check("ACTIVE_RESULT_HASH_UNCHANGED", active.resultSha256 === materializedInput.active.resultSha256, "ACTIVE_RESULT_HASH_DIFF"),
         check("ARTIFACT_HASH_CHANGED", artifactHashChanged, "CONTRACT_INTEGRITY_FAILURE"),
-        check("BOARD_SEMANTIC_HASH_STABLE", boardSemanticStable, "DETERMINISTIC_REPLAY_MISMATCH"),
+        check("BOARD_SEMANTIC_HASH_STABLE", continuationSemanticStable, "DETERMINISTIC_REPLAY_MISMATCH"),
         check("CONTINUATION_SEMANTIC_HASH_STABLE", continuationSemanticStable, "DETERMINISTIC_REPLAY_MISMATCH"),
         check("HASH_HELPER_MATCHED", helperMatched, "CONTRACT_INTEGRITY_FAILURE")
       ]
@@ -660,135 +774,19 @@ function continuationDependencies() {
   };
 }
 
-function suggestedAttention(): ActiveAttentionResult {
-  return resolveActiveAttention(activeAttentionFixture({ githubKind: "assigned_issue" }).input);
+function suggestedAttention(title?: string): ActiveAttentionResult {
+  return resolveActiveAttention(
+    activeAttentionFixture({
+      githubKind: "assigned_issue",
+      ...(title === undefined ? {} : { githubTitle: title })
+    }).input
+  );
 }
 
 function noActionAttention(): ActiveAttentionResult {
   return resolveActiveAttention(
     activeAttentionFixture({ githubKind: "none", managedScenario: "none" }).input
   );
-}
-
-function boardInput(
-  active: ActiveAttentionResult,
-  continuation: ContinuationDecision
-): WorkSuggestionBoardInput {
-  return sealWorkSuggestionBoardInput({
-    contract: WORK_SUGGESTION_BOARD_INPUT_CONTRACT,
-    schemaVersion: WORK_SUGGESTION_BOARD_SCHEMA_VERSION,
-    asOf: ACTIVE_FIXTURE_AS_OF,
-    composerVersion: WORK_SUGGESTION_BOARD_COMPOSER_VERSION,
-    precedencePolicyVersion: WORK_SUGGESTION_BOARD_PRECEDENCE_POLICY_VERSION,
-    idPolicyVersion: WORK_SUGGESTION_BOARD_ID_POLICY_VERSION,
-    active,
-    continuation
-  });
-}
-
-function boardResult(
-  active: ActiveAttentionResult,
-  continuation: ContinuationDecision,
-  lane: "attention" | "continuation" | "setup" | "none"
-): WorkSuggestionBoardResult {
-  const input = boardInput(active, continuation);
-  const primary = boardPrimary(active, continuation, lane);
-  return sealWorkSuggestionBoardResult({
-    contract: WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
-    schemaVersion: WORK_SUGGESTION_BOARD_SCHEMA_VERSION,
-    boardId: createWorkSuggestionBoardId({
-      inputSha256: input.inputSha256,
-      composerVersion: WORK_SUGGESTION_BOARD_COMPOSER_VERSION,
-      precedencePolicyVersion: WORK_SUGGESTION_BOARD_PRECEDENCE_POLICY_VERSION,
-      idPolicyVersion: WORK_SUGGESTION_BOARD_ID_POLICY_VERSION
-    }),
-    asOf: ACTIVE_FIXTURE_AS_OF,
-    composerVersion: WORK_SUGGESTION_BOARD_COMPOSER_VERSION,
-    precedencePolicyVersion: WORK_SUGGESTION_BOARD_PRECEDENCE_POLICY_VERSION,
-    idPolicyVersion: WORK_SUGGESTION_BOARD_ID_POLICY_VERSION,
-    input,
-    dependencies: {
-      inputSha256: input.inputSha256,
-      activeResultSha256: active.resultSha256,
-      continuationResultSha256: continuation.resultSha256,
-      continuationSemanticResultSha256: continuation.semanticResultSha256
-    },
-    prominentLane: lane,
-    primary,
-    alternatives: [],
-    executionPolicy: WORK_SUGGESTION_BOARD_EXECUTION_POLICY
-  });
-}
-
-function boardPrimary(
-  active: ActiveAttentionResult,
-  continuation: ContinuationDecision,
-  lane: "attention" | "continuation" | "setup" | "none"
-): WorkSuggestionBoardItem | null {
-  if (lane === "none") return null;
-  if (lane === "attention") {
-    const candidate = active.decision.topSuggestion;
-    if (!candidate) throw new TypeError("Synthetic Attention primary is absent.");
-    return boardItem({
-      lane,
-      sourceStableId: candidate.candidateId,
-      workContextId: candidate.projectId,
-      label: candidate.title,
-      observedAt: candidate.sourceUpdatedAt,
-      expiresAt: candidate.dueAt,
-      evidenceBand: "verified_attention",
-      capability: "display"
-    });
-  }
-  const candidate = continuation.primary;
-  if (!candidate) throw new TypeError("Synthetic Continuation primary is absent.");
-  return boardItem({
-    lane,
-    sourceStableId: candidate.candidateId,
-    workContextId: candidate.workContextId,
-    label: candidate.localDisplayLabel,
-    observedAt: candidate.observedAt,
-    expiresAt: candidate.expiresAt,
-    evidenceBand: candidate.evidenceBand,
-    capability:
-      candidate.capability === "open_setup_surface"
-        ? "open_setup_surface"
-        : candidate.capability === "display"
-          ? "display"
-          : "open_source"
-  });
-}
-
-function boardItem(input: {
-  lane: "attention" | "continuation" | "setup";
-  sourceStableId: string;
-  workContextId: string | null;
-  label: string;
-  observedAt: string | null;
-  expiresAt: string | null;
-  evidenceBand: WorkSuggestionBoardItem["evidenceBand"];
-  capability: WorkSuggestionBoardItem["capability"];
-}): WorkSuggestionBoardItem {
-  const sourceItemRef = createWorkSuggestionBoardSourceItemRef({
-    lane: input.lane,
-    sourceStableId: input.sourceStableId
-  });
-  return {
-    boardItemId: createWorkSuggestionBoardItemId({
-      lane: input.lane,
-      sourceItemRef,
-      workContextId: input.workContextId
-    }),
-    lane: input.lane,
-    sourceItemRef,
-    workContextId: input.workContextId,
-    localDisplayLabel: input.label,
-    summary: input.label,
-    observedAt: input.observedAt,
-    expiresAt: input.expiresAt,
-    evidenceBand: input.evidenceBand,
-    capability: input.capability
-  };
 }
 
 function readOnlyBoard(board: WorkSuggestionBoardResult): boolean {

@@ -1,5 +1,5 @@
-import configArtifact from "../../../eval/synthetic/continuationEvaluationConfig.v0.2.json";
-import datasetArtifact from "../../../eval/synthetic/continuationEvaluationCases.v0.2.json";
+import configArtifact from "../../../eval/synthetic/continuationEvaluationConfig.v0.3.json";
+import datasetArtifact from "../../../eval/synthetic/continuationEvaluationCases.v0.3.json";
 import { sha256Canonical } from "../crossSourceIntegrity";
 import {
   CONTINUATION_EVALUATION_CONFIG_VERSION,
@@ -18,7 +18,7 @@ export function loadContinuationEvaluationDataset(
   if (
     parsedDataset.evaluatorConfig.version !== parsedConfig.version ||
     parsedDataset.evaluatorConfig.candidateRef !==
-      "eval/synthetic/continuationEvaluationConfig.v0.2.json"
+      "eval/synthetic/continuationEvaluationConfig.v0.3.json"
   ) {
     throw new TypeError("Continuation dataset does not pin the E-001 evaluator config candidate.");
   }
