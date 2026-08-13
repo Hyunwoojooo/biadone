@@ -1,18 +1,27 @@
 import { NextResponse } from "next/server";
 
-import { hasSafeReadOrigin, isLocalAttentionRequest } from "../../../src/attention/access";
-import { evaluateLiveWorkSuggestionBoard } from "../../../src/suggestionBoard/liveShadow";
+import { hasValidBasicAuthorization } from "../../../src/accessControl";
 import {
-  workBoardApiResponseSchema,
-  type WorkBoardApiResponse
-} from "../../../src/suggestionBoard/monitoringSchema";
+  hasSafeReadOrigin,
+  isLocalAttentionRequest
+} from "../../../src/attention/access";
+import { isPreserveCaptureError } from "../../../src/attention/preserveCapture";
+import {
+  createSemanticContinuationWorkBoardResponse,
+  semanticContinuationWorkBoardResponseSchema,
+  type SemanticContinuationWorkBoardResponse
+} from "../../../src/semanticContinuation";
+import {
+  evaluateLiveSemanticWorkSuggestionBoard
+} from "../../../src/suggestionBoard/liveShadow";
+import type { WorkBoardApiResponse } from "../../../src/suggestionBoard/monitoringSchema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   if (!isLocalAttentionRequest(request)) {
-    return json(
+    return baseJson(
       {
         status: "unavailable",
         code: "WORK_BOARD_LOCAL_ONLY",
@@ -23,7 +32,7 @@ export async function GET(request: Request) {
     );
   }
   if (!hasSafeReadOrigin(request)) {
-    return json(
+    return baseJson(
       {
         status: "error",
         code: "WORK_BOARD_PREVIEW_FAILED",
@@ -33,7 +42,7 @@ export async function GET(request: Request) {
     );
   }
   if (process.env.BLABASE_WORK_BOARD_SHADOW_READ_ENABLED !== "true") {
-    return json(
+    return baseJson(
       {
         status: "unavailable",
         code: "WORK_BOARD_SHADOW_DISABLED",
@@ -42,24 +51,67 @@ export async function GET(request: Request) {
       404
     );
   }
+  const password = process.env.SUGGESTION_ACCESS_PASSWORD;
+  if (!password) {
+    return baseJson(
+      {
+        status: "error",
+        code: "WORK_BOARD_PREVIEW_FAILED",
+        message: "Work Board 인증을 사용할 수 없습니다."
+      },
+      503
+    );
+  }
+  if (
+    !hasValidBasicAuthorization(
+      request.headers.get("authorization"),
+      password
+    )
+  ) {
+    return baseJson(
+      {
+        status: "error",
+        code: "WORK_BOARD_PREVIEW_FAILED",
+        message: "Work Board 인증이 필요합니다."
+      },
+      401,
+      { "WWW-Authenticate": 'Basic realm="blabase suggestion"' }
+    );
+  }
   try {
-    const response = workBoardApiResponseSchema.parse(
-      await evaluateLiveWorkSuggestionBoard()
+    const response = semanticContinuationWorkBoardResponseSchema.parse(
+      await evaluateLiveSemanticWorkSuggestionBoard()
     );
     return json(response);
-  } catch {
-    return json(
+  } catch (error) {
+    return baseJson(
       {
         status: "error",
         code: "WORK_BOARD_PREVIEW_FAILED",
         message: "Work Board preview를 만들지 못했습니다."
       },
-      500
+      isPreserveCaptureError(error) ? 503 : 500
     );
   }
 }
 
-function json(body: WorkBoardApiResponse, status = 200) {
+function baseJson(
+  base: WorkBoardApiResponse,
+  status = 200,
+  extraHeaders: Record<string, string> = {}
+) {
+  return json(
+    createSemanticContinuationWorkBoardResponse(base, null),
+    status,
+    extraHeaders
+  );
+}
+
+function json(
+  body: SemanticContinuationWorkBoardResponse,
+  status = 200,
+  extraHeaders: Record<string, string> = {}
+) {
   return NextResponse.json(body, {
     status,
     headers: {
@@ -67,7 +119,8 @@ function json(body: WorkBoardApiResponse, status = 200) {
       "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "DENY"
+      "X-Frame-Options": "DENY",
+      ...extraHeaders
     }
   });
 }

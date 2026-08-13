@@ -1,7 +1,6 @@
 import {
   chmod,
   mkdir,
-  readFile,
   rename,
   unlink,
   writeFile
@@ -15,6 +14,10 @@ import {
   cleanupStaleConnectorTempFiles,
   withActiveConnectorTempFile
 } from "../localTempCleanup";
+import {
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../../localReadMode";
 import {
   actionabilityCoverageMatchesTasks,
   githubActionabilityCoverageSchema,
@@ -335,13 +338,17 @@ export function githubLocalDirectory(cwd = process.cwd()): string {
 }
 
 export async function readStoredGitHubTokens(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoredGitHubTokens | null> {
-  await cleanupStaleGitHubTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleGitHubTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(githubLocalDirectory(cwd), "tokens.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return tokensSchema.parse(JSON.parse(text));
   } catch {
@@ -402,13 +409,17 @@ export async function deleteStoredGitHubTokens(
 }
 
 export async function readStoredGitHubSnapshot(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<GitHubSnapshot | null> {
-  await cleanupStaleGitHubTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleGitHubTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(githubLocalDirectory(cwd), "snapshot.json"),
-      "utf8"
+      mode,
+      cwd
     );
     const snapshot = storedSnapshotSchema.parse(JSON.parse(text));
     return snapshot.schemaVersion === "github-snapshot-v1"

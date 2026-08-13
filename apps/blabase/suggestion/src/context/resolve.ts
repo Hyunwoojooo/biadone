@@ -14,7 +14,8 @@ import {
 import {
   readWeeklyOutcomeStore,
   readWorkContextRegistry,
-  type StoreReadFailureReason
+  type StoreReadFailureReason,
+  type StoreReadResult
 } from "./localStore";
 
 const timestampSchema = z.string().datetime();
@@ -158,12 +159,26 @@ export async function resolveStoredAttentionWorkContext(input: {
     readWeeklyOutcomeStore(cwd)
   ]);
 
+  return resolveAttentionWorkContextFromStoreReads({
+    sourceScopes: input.sourceScopes,
+    asOf: input.asOf,
+    registryRead,
+    outcomeRead
+  });
+}
+
+export function resolveAttentionWorkContextFromStoreReads(input: {
+  sourceScopes: SourceScopeRef[];
+  asOf: string;
+  registryRead: StoreReadResult<WorkContextRegistry>;
+  outcomeRead: StoreReadResult<WeeklyOutcomeStore>;
+}): ResolvedAttentionWorkContext {
+  const { registryRead, outcomeRead } = input;
+
   if (registryRead.status !== "available") {
     const globalOutcomeResolution =
       outcomeRead.status === "available"
-        ? resolveWeeklyOutcome(outcomeRead.value, {
-            asOf: input.asOf
-          })
+          ? resolveWeeklyOutcome(outcomeRead.value, { asOf: input.asOf })
         : null;
     const activeGlobalOutcome =
       globalOutcomeResolution?.status === "active"

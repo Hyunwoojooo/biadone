@@ -10,6 +10,9 @@ import {
 } from "node:path";
 import { promisify } from "node:util";
 
+import { createSharedLocalEnvSnapshot } from "../localEnv";
+import type { LocalReadMode } from "../localReadMode";
+
 export type AttentionCodeProvenance = {
   codeCommitSha: string | null;
   codeState:
@@ -21,13 +24,30 @@ export type AttentionCodeProvenance = {
 };
 
 const execFileAsync = promisify(execFile);
+const GIT_EXECUTABLE = "/usr/bin/git";
+const GIT_TIMEOUT_MS = 10_000;
+
+export type AttentionCodeProvenanceResolutionOptions = {
+  mode?: LocalReadMode;
+};
 
 export async function resolveAttentionCodeProvenance(
   cwd: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  options: AttentionCodeProvenanceResolutionOptions = {}
 ): Promise<AttentionCodeProvenance> {
+  let declaredEnv = env;
+  if (options.mode === "preserve") {
+    try {
+      declaredEnv = createSharedLocalEnvSnapshot(env, {
+        mode: "preserve"
+      });
+    } catch {
+      return unavailableCodeProvenance();
+    }
+  }
   const explicitCommit =
-    env.BLABASE_CODE_COMMIT_SHA?.trim().toLowerCase();
+    declaredEnv.BLABASE_CODE_COMMIT_SHA?.trim().toLowerCase();
   if (explicitCommit && /^[a-f0-9]{40}$/.test(explicitCommit)) {
     return {
       codeCommitSha: explicitCommit,
@@ -36,7 +56,7 @@ export async function resolveAttentionCodeProvenance(
     };
   }
   const declaredFingerprint =
-    env.BLABASE_CODE_FINGERPRINT_SHA256?.trim().toLowerCase();
+    declaredEnv.BLABASE_CODE_FINGERPRINT_SHA256?.trim().toLowerCase();
   if (
     declaredFingerprint &&
     /^[a-f0-9]{64}$/.test(declaredFingerprint)
@@ -48,9 +68,9 @@ export async function resolveAttentionCodeProvenance(
     };
   }
   for (const value of [
-    env.CF_PAGES_COMMIT_SHA,
-    env.VERCEL_GIT_COMMIT_SHA,
-    env.GITHUB_SHA
+    declaredEnv.CF_PAGES_COMMIT_SHA,
+    declaredEnv.VERCEL_GIT_COMMIT_SHA,
+    declaredEnv.GITHUB_SHA
   ]) {
     const normalized = value?.trim().toLowerCase();
     if (normalized && /^[a-f0-9]{40}$/.test(normalized)) {
@@ -61,6 +81,9 @@ export async function resolveAttentionCodeProvenance(
       };
     }
   }
+  if (options.mode === "preserve") {
+    return unavailableCodeProvenance();
+  }
   const repository = await resolveGitRepository(cwd);
   if (!repository) {
     return unavailableCodeProvenance();
@@ -70,12 +93,22 @@ export async function resolveAttentionCodeProvenance(
     const options = {
       cwd: repository.root,
       encoding: "utf8" as const,
-      maxBuffer: 32 * 1024 * 1024
+      env: gitEnvironment(),
+      killSignal: "SIGKILL" as const,
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS
     };
+    const gitConfig = [
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "core.untrackedCache=false"
+    ];
     const status = (
       await execFileAsync(
-        "git",
+        GIT_EXECUTABLE,
         [
+          ...gitConfig,
           "status",
           "--porcelain=v1",
           "-z",
@@ -95,15 +128,25 @@ export async function resolveAttentionCodeProvenance(
     }
     const diff = (
       await execFileAsync(
-        "git",
-        ["diff", "--binary", "HEAD", "--", scope],
+        GIT_EXECUTABLE,
+        [
+          ...gitConfig,
+          "diff",
+          "--binary",
+          "--no-ext-diff",
+          "--no-textconv",
+          "HEAD",
+          "--",
+          scope
+        ],
         options
       )
     ).stdout;
     const untracked = (
       await execFileAsync(
-        "git",
+        GIT_EXECUTABLE,
         [
+          ...gitConfig,
           "ls-files",
           "--others",
           "--exclude-standard",
@@ -145,6 +188,18 @@ export async function resolveAttentionCodeProvenance(
   } catch {
     return unavailableCodeProvenance();
   }
+}
+
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return {
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_TERMINAL_PROMPT: "0",
+    LANG: "C",
+    LC_ALL: "C",
+    NODE_ENV: "production"
+  };
 }
 
 export function unavailableCodeProvenance(): AttentionCodeProvenance {

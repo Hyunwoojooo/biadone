@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
 import {
   chmod,
   lstat,
@@ -17,6 +18,7 @@ import { dirname, join } from "node:path";
 import type { ZodType } from "zod";
 
 import { observeCodexManagedNotification } from "../connectors/codex/observationContract";
+import { inspectLocalPrivateDirectoryChain } from "../localReadMode";
 import {
   CODEX_MANAGED_EVENT_HARD_LIMIT,
   CODEX_MANAGED_LATEST_STORE_CONTRACT,
@@ -418,6 +420,27 @@ export async function readManagedCodexObservability(
   };
 }
 
+/**
+ * Reads one coherent managed-Codex snapshot without acquiring a lease or
+ * performing recovery, cleanup, permission repair, or retention writes.
+ * Pending and unstable state fails closed and remains untouched.
+ */
+export async function readManagedCodexObservabilityPreservingState(
+  input: {
+    activeOwnerInstanceId: string | null;
+    activeOwnerships: ManagedCodexOwnershipIdentity[];
+    now: Date;
+  },
+  cwd = process.cwd()
+): Promise<ManagedCodexObservability> {
+  const read = await readManagedCodexContextPreservingState(input, cwd);
+  return {
+    projection: read.projection,
+    semantics: read.semantics,
+    managedRunStartedAtById: read.managedRunStartedAtById
+  };
+}
+
 type ManagedCodexReadContext = {
   projection: ManagedCodexPublicProjection;
   histories: ManagedCodexEventHistory[];
@@ -586,6 +609,244 @@ async function readManagedCodexContext(
       managedRunStartedAtById
     };
   });
+}
+
+async function readManagedCodexContextPreservingState(
+  input: {
+    activeOwnerInstanceId: string | null;
+    activeOwnerships: ManagedCodexOwnershipIdentity[];
+    now: Date;
+  },
+  cwd: string
+): Promise<ManagedCodexReadContext> {
+  const generatedAt = input.now.toISOString();
+  const activeOwnerInstanceId =
+    input.activeOwnerInstanceId === null
+      ? null
+      : parseOwnerInstanceId(input.activeOwnerInstanceId);
+  const activeOwnerships = input.activeOwnerships.map((identity) =>
+    managedCodexOwnershipIdentitySchema.parse(identity)
+  );
+  const root = managedCodexLocalDirectory(cwd);
+  const boundary = await assertManagedCodexPreserveBoundary(cwd);
+  if (boundary === "missing") {
+    const context = buildPreservedManagedCodexReadContext({
+      registry: createEmptyManagedCodexRegistry(generatedAt),
+      latest: createEmptyManagedCodexLatest(generatedAt),
+      historiesByRunId: new Map(),
+      activeOwnerInstanceId,
+      activeOwnerships,
+      generatedAt
+    });
+    const confirmedBoundary = await assertManagedCodexPreserveBoundary(
+      cwd
+    );
+    if (
+      confirmedBoundary !== "missing" ||
+      (await managedPreserveLstatIfPresent(root)) !== null
+    ) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    return context;
+  }
+
+  const directory = managedCodexLocalDirectory(cwd);
+  const registryPath = join(directory, REGISTRY_FILENAME);
+  const latestPath = join(directory, LATEST_FILENAME);
+  const [registryRead, latestRead] = await Promise.all([
+    readStableManagedPrivateJson(
+      registryPath,
+      managedCodexRunRegistrySchema
+    ),
+    readStableManagedPrivateJson(
+      latestPath,
+      managedCodexLatestStoreSchema
+    )
+  ]);
+  if (
+    registryRead.status === "missing" &&
+    latestRead.status === "missing"
+  ) {
+    await assertNoManagedOrphanHistories(cwd);
+    const context = buildPreservedManagedCodexReadContext({
+      registry: createEmptyManagedCodexRegistry(generatedAt),
+      latest: createEmptyManagedCodexLatest(generatedAt),
+      historiesByRunId: new Map(),
+      activeOwnerInstanceId,
+      activeOwnerships,
+      generatedAt
+    });
+    await assertManagedCodexPreserveBoundary(cwd);
+    await assertNoManagedOrphanHistories(cwd);
+    await Promise.all([
+      assertManagedPathStillMissing(registryPath),
+      assertManagedPathStillMissing(latestPath)
+    ]);
+    return context;
+  }
+  if (
+    registryRead.status !== "available" ||
+    latestRead.status !== "available"
+  ) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+
+  let stores = {
+    registry: registryRead.value,
+    latest: latestRead.value
+  };
+  assertRegistryLatestCoherent(stores.registry, stores.latest);
+  const persistedRunIds = stores.latest.runs.map(
+    (projection) => projection.managedRunId
+  );
+  await assertExactManagedHistorySet(cwd, persistedRunIds);
+  const stableFiles = new Map<string, ManagedStableFileFingerprint>([
+    [registryPath, registryRead.fingerprint],
+    [latestPath, latestRead.fingerprint]
+  ]);
+  const historiesByRunId = new Map<string, ManagedCodexEventHistory>();
+
+  for (const projection of [...stores.latest.runs]) {
+    const run = requireRun(stores.registry, projection.managedRunId);
+    const path = historyPath(projection.managedRunId, cwd);
+    const historyRead = await readStableManagedPrivateJson(
+      path,
+      managedCodexEventHistorySchema
+    );
+    if (historyRead.status !== "available") {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    stableFiles.set(path, historyRead.fingerprint);
+    const history = historyRead.value;
+    assertProjectionHistoryCoherent(projection, history);
+
+    const cutoff = retentionCutoff(input.now);
+    const latestEvent = history.events.at(-1);
+    const retentionReference = latestEvent?.retentionAt ?? run.startedAt;
+    const terminalExpired =
+      projection.lifecycle === "terminal" &&
+      projection.endedAt !== null &&
+      Date.parse(projection.endedAt) < cutoff;
+    const nonterminalExpired =
+      projection.lifecycle !== "terminal" &&
+      Date.parse(retentionReference) < cutoff;
+
+    if (terminalExpired || nonterminalExpired) {
+      const registry = sealManagedCodexRegistry({
+        contract: CODEX_MANAGED_RUN_REGISTRY_CONTRACT,
+        revision: stores.registry.revision + 1,
+        updatedAt: generatedAt,
+        runs: stores.registry.runs.filter(
+          (item) => item.managedRunId !== projection.managedRunId
+        )
+      });
+      const latest = sealManagedCodexLatest({
+        contract: CODEX_MANAGED_LATEST_STORE_CONTRACT,
+        revision: stores.latest.revision + 1,
+        updatedAt: generatedAt,
+        runs: stores.latest.runs.filter(
+          (item) => item.managedRunId !== projection.managedRunId
+        )
+      });
+      stores = { registry, latest };
+      continue;
+    }
+
+    const prunedHistory = pruneHistory(history, input.now, generatedAt);
+    historiesByRunId.set(projection.managedRunId, prunedHistory);
+    if (JSON.stringify(prunedHistory) !== JSON.stringify(history)) {
+      stores = {
+        registry: stores.registry,
+        latest: replaceProjection(
+          stores.latest,
+          projection,
+          generatedAt
+        )
+      };
+    }
+  }
+
+  const context = buildPreservedManagedCodexReadContext({
+    registry: stores.registry,
+    latest: stores.latest,
+    historiesByRunId,
+    activeOwnerInstanceId,
+    activeOwnerships,
+    generatedAt
+  });
+  await assertManagedCodexPreserveBoundary(cwd);
+  await assertExactManagedHistorySet(cwd, persistedRunIds);
+  await Promise.all(
+    [...stableFiles].map(([path, fingerprint]) =>
+      assertManagedStablePathFingerprint(path, fingerprint)
+    )
+  );
+  return context;
+}
+
+function buildPreservedManagedCodexReadContext(input: {
+  registry: ManagedCodexRunRegistry;
+  latest: ManagedCodexLatestStore;
+  historiesByRunId: Map<string, ManagedCodexEventHistory>;
+  activeOwnerInstanceId: string | null;
+  activeOwnerships: ManagedCodexOwnershipIdentity[];
+  generatedAt: string;
+}): ManagedCodexReadContext {
+  assertRegistryLatestCoherent(input.registry, input.latest);
+  const projection = managedCodexPublicProjectionSchema.parse({
+    contract: "codex-managed-public-projection-v1",
+    revision: input.latest.revision,
+    generatedAt: input.generatedAt,
+    runs: [...input.latest.runs]
+      .sort(
+        (left, right) =>
+          Date.parse(right.startedAt) - Date.parse(left.startedAt) ||
+          left.managedRunId.localeCompare(right.managedRunId)
+      )
+      .map((privateProjection) =>
+        publicProjectionFromPrivate({
+          projection: privateProjection,
+          activeOwnerInstanceId: input.activeOwnerInstanceId,
+          ownershipCurrent: input.activeOwnerships.some((identity) =>
+            managedOwnershipMatchesProjection(identity, privateProjection)
+          )
+        })
+      )
+  });
+  const histories = projection.runs.map((run) => {
+    const history = input.historiesByRunId.get(run.managedRunId);
+    const privateProjection = input.latest.runs.find(
+      (item) => item.managedRunId === run.managedRunId
+    );
+    if (!history || !privateProjection) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    assertProjectionHistoryCoherent(privateProjection, history);
+    return history;
+  });
+  const semantics = buildManagedCodexSemanticProjection({
+    sourceRevision: projection.revision,
+    generatedAt: projection.generatedAt,
+    runs: projection.runs.map((run, index) => {
+      const history = histories[index];
+      if (!history) {
+        throw new ManagedCodexStoreError("STORE_INVALID");
+      }
+      return { run, history };
+    })
+  });
+  const managedRunStartedAtById = Object.fromEntries(
+    projection.runs.map((run) => [
+      run.managedRunId,
+      requireRun(input.registry, run.managedRunId).startedAt
+    ])
+  );
+  return {
+    projection,
+    histories,
+    semantics,
+    managedRunStartedAtById
+  };
 }
 
 export async function clearManagedCodexState(
@@ -1258,6 +1519,314 @@ async function cleanupRecognizedTempFiles(
       await unlink(join(directory, file)).catch(ignoreMissing);
     }
   }
+}
+
+type ManagedStableFileFingerprint = {
+  device: number;
+  inode: number;
+  mode: number;
+  ownerUid: number;
+  size: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+};
+
+type StableManagedPrivateRead<T> =
+  | { status: "missing" }
+  | {
+      status: "available";
+      value: T;
+      fingerprint: ManagedStableFileFingerprint;
+    };
+
+async function assertManagedCodexPreserveBoundary(
+  cwd: string
+): Promise<"available" | "missing"> {
+  const root = managedCodexLocalDirectory(cwd);
+  let directoryChain: "available" | "missing";
+  try {
+    directoryChain = await inspectLocalPrivateDirectoryChain(cwd, root);
+  } catch {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+  if (directoryChain === "missing") return "missing";
+  const rootMetadata = await managedPreserveLstatIfPresent(root);
+  if (rootMetadata === null) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+  assertManagedPrivateDirectory(rootMetadata);
+
+  let rootFiles: string[];
+  try {
+    rootFiles = await readdir(root);
+  } catch {
+    throw new ManagedCodexStoreError("STORE_READ_FAILED");
+  }
+  if (
+    rootFiles.includes(SETTLEMENT_FILENAME) ||
+    rootFiles.some(isManagedCodexRootTempFilename)
+  ) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+
+  const locksDirectory = join(root, LOCKS_DIRECTORY);
+  const locksMetadata = await managedPreserveLstatIfPresent(locksDirectory);
+  if (locksMetadata !== null) {
+    assertManagedPrivateDirectory(locksMetadata);
+    let lockFiles: string[];
+    try {
+      lockFiles = await readdir(locksDirectory);
+    } catch {
+      throw new ManagedCodexStoreError("STORE_READ_FAILED");
+    }
+    if (lockFiles.includes(`${STATE_LOCK_NAME}.lock`)) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+  }
+
+  const eventsDirectory = join(root, EVENTS_DIRECTORY);
+  const eventsMetadata = await managedPreserveLstatIfPresent(
+    eventsDirectory
+  );
+  if (eventsMetadata !== null) {
+    assertManagedPrivateDirectory(eventsMetadata);
+    let eventFiles: string[];
+    try {
+      eventFiles = await readdir(eventsDirectory);
+    } catch {
+      throw new ManagedCodexStoreError("STORE_READ_FAILED");
+    }
+    if (eventFiles.some(isManagedCodexEventTempFilename)) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+  }
+  return "available";
+}
+
+async function assertNoManagedOrphanHistories(cwd: string): Promise<void> {
+  await assertExactManagedHistorySet(cwd, []);
+}
+
+async function assertExactManagedHistorySet(
+  cwd: string,
+  managedRunIds: readonly string[]
+): Promise<void> {
+  const eventsDirectory = join(
+    managedCodexLocalDirectory(cwd),
+    EVENTS_DIRECTORY
+  );
+  const metadata = await managedPreserveLstatIfPresent(eventsDirectory);
+  if (metadata === null) return;
+  assertManagedPrivateDirectory(metadata);
+  let filenames: string[];
+  try {
+    filenames = await readdir(eventsDirectory);
+  } catch {
+    throw new ManagedCodexStoreError("STORE_READ_FAILED");
+  }
+  const actual = filenames
+    .filter((filename) =>
+      /^managed_run_[a-f0-9]{32}\.json$/.test(filename)
+    )
+    .sort();
+  const expected = managedRunIds
+    .map(
+      (managedRunId) =>
+        `${managedCodexRunIdSchema.parse(managedRunId)}.json`
+    )
+    .sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+async function readStableManagedPrivateJson<T>(
+  path: string,
+  schema: ZodType<T>
+): Promise<StableManagedPrivateRead<T>> {
+  const read = await readStableManagedPrivateText(path);
+  if (read.status === "missing") return read;
+  try {
+    const parsed = schema.safeParse(JSON.parse(read.text));
+    if (!parsed.success) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    return {
+      status: "available",
+      value: parsed.data,
+      fingerprint: read.fingerprint
+    };
+  } catch {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+async function readStableManagedPrivateText(path: string): Promise<
+  | { status: "missing" }
+  | {
+      status: "available";
+      text: string;
+      fingerprint: ManagedStableFileFingerprint;
+    }
+> {
+  const pathMetadata = await managedPreserveLstatIfPresent(path);
+  if (pathMetadata === null) return { status: "missing" };
+  assertManagedPrivateFile(pathMetadata);
+  const expected = managedStableFileFingerprint(pathMetadata);
+
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const before = await handle.stat();
+    assertManagedPrivateFile(before);
+    if (
+      !sameManagedStableFileFingerprint(
+        expected,
+        managedStableFileFingerprint(before)
+      )
+    ) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    const text = await handle.readFile({ encoding: "utf8" });
+    const after = await handle.stat();
+    assertManagedPrivateFile(after);
+    if (
+      !sameManagedStableFileFingerprint(
+        expected,
+        managedStableFileFingerprint(after)
+      )
+    ) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    await handle.close();
+    handle = null;
+    await assertManagedStablePathFingerprint(path, expected);
+    return { status: "available", text, fingerprint: expected };
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    if (error instanceof ManagedCodexStoreError) throw error;
+    if (
+      isNodeError(error, "ELOOP") ||
+      isNodeError(error, "ENOENT") ||
+      isNodeError(error, "ENOTDIR")
+    ) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    throw new ManagedCodexStoreError("STORE_READ_FAILED");
+  }
+}
+
+async function assertManagedStablePathFingerprint(
+  path: string,
+  expected: ManagedStableFileFingerprint
+): Promise<void> {
+  const metadata = await managedPreserveLstatIfPresent(path);
+  if (metadata === null) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+  assertManagedPrivateFile(metadata);
+  if (
+    !sameManagedStableFileFingerprint(
+      expected,
+      managedStableFileFingerprint(metadata)
+    )
+  ) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+async function assertManagedPathStillMissing(path: string): Promise<void> {
+  if ((await managedPreserveLstatIfPresent(path)) !== null) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+async function managedPreserveLstatIfPresent(
+  path: string
+): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return null;
+    if (isNodeError(error, "ENOTDIR")) {
+      throw new ManagedCodexStoreError("STORE_INVALID");
+    }
+    throw new ManagedCodexStoreError("STORE_READ_FAILED");
+  }
+}
+
+function assertManagedPrivateDirectory(metadata: Stats): void {
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    !managedPathOwnedByCurrentUser(metadata) ||
+    (metadata.mode & 0o777) !== 0o700
+  ) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+function assertManagedPrivateFile(metadata: Stats): void {
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    !managedPathOwnedByCurrentUser(metadata) ||
+    (metadata.mode & 0o777) !== 0o600
+  ) {
+    throw new ManagedCodexStoreError("STORE_INVALID");
+  }
+}
+
+function managedPathOwnedByCurrentUser(metadata: Stats): boolean {
+  const currentUid = process.getuid?.();
+  return currentUid === undefined || metadata.uid === currentUid;
+}
+
+function managedStableFileFingerprint(
+  metadata: Stats
+): ManagedStableFileFingerprint {
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    mode: metadata.mode & 0o777,
+    ownerUid: metadata.uid,
+    size: metadata.size,
+    modifiedAtMs: metadata.mtimeMs,
+    changedAtMs: metadata.ctimeMs
+  };
+}
+
+function sameManagedStableFileFingerprint(
+  left: ManagedStableFileFingerprint,
+  right: ManagedStableFileFingerprint
+): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.mode === right.mode &&
+    left.ownerUid === right.ownerUid &&
+    left.size === right.size &&
+    left.modifiedAtMs === right.modifiedAtMs &&
+    left.changedAtMs === right.changedAtMs
+  );
+}
+
+function isManagedCodexRootTempFilename(filename: string): boolean {
+  return [REGISTRY_FILENAME, LATEST_FILENAME, SETTLEMENT_FILENAME].some(
+    (basename) =>
+      new RegExp(
+        `^${basename.replace(".", "\\.")}\\.\\d+\\.[a-f0-9-]{36}\\.tmp$`
+      ).test(filename)
+  );
+}
+
+function isManagedCodexEventTempFilename(filename: string): boolean {
+  return /^managed_run_[a-f0-9]{32}\.json\.\d+\.[a-f0-9-]{36}\.tmp$/.test(
+    filename
+  );
 }
 
 type FilesystemLease = { path: string; token: string };

@@ -624,9 +624,9 @@ Post-MVP 목표에는 exact target을 대상으로 bounded template prompt 초�
 
 | Method | Path | 역할 |
 | --- | --- | --- |
-| `GET` | `/api/continuation` | `ContinuationDecisionV1` 조회 |
-| `GET` | `/api/work-board` | `WorkSuggestionBoardV1` 조회 |
-| `POST` | `/api/continuation/open` | 명시적 offer action 요청 및 재검증 |
+| `GET` | `/api/continuation` | 구현됨: strict display-only `continuation-read-api-v0.1` 조회 |
+| `GET` | `/api/work-board` | 구현됨: local Work Suggestion Board/semantic presentation 조회 |
+| `POST` | `/api/continuation/open` | 계획 전용, 미구현: 명시적 offer action 요청 및 재검증 |
 
 `/api/work-board`는 동일한 versioned evidence envelope에서 이미 계산된 lane 결과를 합성해야 한다. Attention을 다시 해석하거나 Continuation 데이터를 Attention에 주입하지 않는다.
 
@@ -637,10 +637,300 @@ Post-MVP 목표에는 exact target을 대상으로 bounded template prompt 초�
 - 첫 A-001 slice는 full Continuation/action API가 아니라 action-disabled local Work Board shadow monitoring boundary다. 한 request의 단일 bounded live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain에 전달하고, authenticated result의 public Work Suggestion Board v0.1 display-only projection만 additive wrapper contract로 반환한다.
 - `GET /api/work-board`는 exact `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED` flag 뒤에 있고 default-off다. Local-only 및 safe-origin 경계를 적용하며 response는 `Cache-Control: no-store`다.
 - Attention Lab panel은 이 public projection만 표시한다. Shadow Board를 안전하게 만들 수 없으면 bounded Active-only fallback을 유지하고 Continuation의 현재성, 긴급성 또는 action authority를 추론하지 않는다.
-- 이 slice는 action/offer 실행, source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit integration, `GET /api/continuation`, `POST /api/continuation/open`을 포함하지 않는다. 하지만 reused existing Attention/store read path는 lease를 획득하고 bounded recovery, temporary-file cleanup 또는 retention maintenance를 수행할 수 있다. 따라서 transport GET은 filesystem-byte-pure 또는 zero-local-mutation contract가 아니다.
+- 이 historical Work Board slice 자체는 action/offer 실행, source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit integration 또는 Continuation endpoint를 포함하지 않았다. 이후 PR-002에서 coherent preserve capture를 연결했고, 15.1.5에서 같은 capture/R3 결과를 재사용하는 별도 display-only `GET /api/continuation`을 추가했다. `POST /api/continuation/open`은 여전히 구현하지 않았다. Preserve read는 code-controlled lease, recovery, temporary-file cleanup 또는 disk retention maintenance를 수행하지 않으며 OS-managed `atime` access accounting은 invariant 밖이다.
 - New `publicTextSafety.ts`는 public contracts/projection의 fail-closed boundary다. Credential-shaped public text가 감지되면 public Board wrapper를 반환하지 않는다. Private target, native identifier, raw source data와 credential-shaped text는 public wrapper 밖에 남는다.
 - Public Board contract/schema는 v0.1 그대로다. Core engine input, admission, ranking, resolution, output semantics와 hashes, E-001 v0.3 revision 3 dataset/config/evaluator tuple은 변경되지 않는다.
-- Known local maintenance side-effect residual은 Medium이다. Default-off flag 아래 bounded local review에만 수용되며, production G2/G3는 preserve-mode read 또는 atomic snapshot path가 구현·검증될 때까지 blocked다.
+- PR-001 preserve-only store API는 PR-002에서 Work Board의 live capture에 연결됐다. 기존 `/api/attention`과 caller는 default `maintain`을 유지하며, Work Board만 `preserve`를 내부 강제한다. Production G2/G3는 automated preserve wiring만으로 열리지 않으며 manual authenticated browser/privacy review와 human approval까지 blocked다.
+
+### 15.1.1 Semantic Continuation v0.1 local title overlay (implemented 2026-08-13)
+
+- 기존 public projection 이후에만 적용되는 별도 local display-copy layer다.
+  Core S1/R1/R2/R3/B1 input, result, ordering, hash와 public Board의 key 및
+  contract/schema literal은 바꾸지 않는다.
+- `GET /api/work-board`의 additive v0.1 response는 strict-validated 기존
+  `WorkBoardApiResponse`를 `base`에 byte-identical하게 보존하고, nullable
+  `semanticPresentation`에 별도 versioned `{itemRef, displayTitle}` overlay만
+  둔다. UI는 이를 render-time에만 사용하며 base `title===summary` invariant를
+  깨지 않는다.
+- 입력은 명시적으로 확인된
+  `{intent:"QA_RUN", subjectLabel, itemRef, workContextRef,
+  explicitUserConfirmation:true}` 하나뿐이다. 서버는 local, exact
+  same-origin, configured Basic auth와 default-off Board flag를 확인한 뒤
+  freshly evaluated unoverlaid `ready/full` Board에서 mapped Continuation,
+  `capability=display`, `action=null`, unexpired target을 다시 확인한다.
+- Confirmed label을 읽는 GET도 configured Basic auth를 직접 요구하고 auth
+  검증 전에는 live evaluation이나 private semantic store read를 수행하지
+  않는다. Development middleware bypass만으로 label을 읽을 수 없다.
+- Private `.local` v0.1 record는 opaque public refs, registry SHA-256,
+  observation/candidate expiry, confirmation/effective expiry와 supersession을
+  hash-bound한다. Effective TTL은 `min(24h, candidate expiry)`이며 read는
+  missing/corrupt/stale state를 수정하지 않는 pure read다.
+- 표시 결과는 정확히 `${subjectLabel} QA 진행하기`이며 별도
+  `displayTitle`에만 존재한다. Base title/summary, lane/order,
+  evidence/caveats, capability/action, execution policy와 core artifacts는
+  그대로 보존한다. State가 없거나 invalid/stale/mismatched이면
+  `semanticPresentation=null`과 byte-identical generic base를 반환한다.
+- QA 결과 반영, pass/fail/completion claim, execution, rank/score/dedupe,
+  action authority, source refresh와 telemetry는 포함하지 않는다. Public
+  text는 control/path separator/traversal/URL, known internal/public ref,
+  hash, credential 및 pass/fail/completion/result/apply 의미 토큰을 fail
+  closed한다. 의미 토큰 검사는 NFKC 정규화와 구분자 제거 뒤에도 적용되어
+  camelCase/concatenated claim smuggling을 허용하지 않는다.
+- Targeted regression은 8 files/35 tests, typecheck와 lint를 통과했다.
+  Core evaluator input/output semantics와 E-001 v0.3 dataset이 불변이므로
+  baseline은 N/A다. Production exposure와 release 승인은 여전히 pending이다.
+
+### 15.1.2 SC-002 explicit local Semantic Validation receipts (implemented 2026-08-13)
+
+- **Invocation boundary:** 실행 producer의 public entry는 zero-input local
+  CLI뿐이다. `npm run semantic-validation`에 argument가 있으면 실행하지
+  않고 fail closed한다. Work Board GET, intent POST, client와 Attention Lab은
+  SC-002 producer/runner 또는 validation `node:child_process` path를 import하지
+  않으며 receipt upload/poll-triggered validation endpoint도 없다. 단,
+  reused A-001 live capture에는 기존의 read-only Git code-provenance
+  `execFile` probe가 있다. 따라서 이 경계는 HTTP-triggered validation
+  subprocess 0건을 보장하며 inherited route graph 전체의 zero-child-process
+  claim은 하지 않는다.
+- **Root/profile boundary:** Root는 module 위치에서 계산하고 realpath로
+  검증한 fixed `suggestion/` directory다. Label, item/context ref, request 또는
+  environment가 cwd를 결정하지 않는다. Profile v0.1은 package의 exact
+  `typecheck`, `lint`, `test` script 문자열을 drift guard로 확인한 뒤,
+  resolved `process.execPath`와 `node_modules` 아래 fixed TypeScript, ESLint,
+  Vitest entrypoint를 직접 호출한다. Exact step order는
+  `typecheck`, `lint`, `unit_test`; `shell:false`, fixed argv/cwd/env/timeout,
+  ignored stdin/stdout/stderr다. npm/npx/shell/arbitrary command를 subprocess로
+  실행하지 않는다.
+- **Authority and concurrency:** Validation start는 별도 renewable 0600
+  `run.lock`의 exclusive ownership을 먼저 얻는다. Loser는 intent/receipt/
+  Board/code authority를 읽지 않고 validation process도 spawn하지 않는다.
+  SC-001 confirmation과
+  SC-002 start mutation은 existing Work Resumption filesystem lease를 semantic
+  authority lock으로 공유한다. Start는 그 lock 아래 authenticated receipt
+  store 및 exact current unsuperseded SC-001 intent를 다시 읽는다. Terminal
+  append 전에도 run lease ownership, end provenance, freshly evaluated Board와
+  exact intent currentness를 재검증한다. Stale dead-process lock은 이전
+  matching running receipt를 `RUN_ABANDONED/inconclusive`로 닫은 후에만 새
+  running event를 추가한다.
+- **Receipt/store contract:** Receipt/store/schema/profile/receipt-policy/
+  24-hour TTL policy는 각각 private v0.1이다. Running 및 terminal receipt는
+  intent decision ID/hash, public opaque item/context refs, registry SHA-256,
+  observed/candidate expiry, intent confirmation/expiry, typed start/end code
+  provenance, exact ordered step tuple 및 bounded statuses를 묶는다. Effective
+  expiry는 `min(start+24h, intent expiry, candidate expiry)`다. Receipt SHA-256,
+  installation-secret-derived HMAC, previous-receipt SHA와 revision으로 strict
+  chronological append chain을 만들며 store HMAC과 current run/receipt pointer를
+  별도로 검증한다. Invalid tail은 전체 store reject이고 prefix salvage,
+  repair 또는 stale-result resurrection을 하지 않는다.
+- **Provenance policy:** v0.1에서 subprocess 실행 권한은 current local
+  `clean_commit` provenance에만 있다. Dirty worktree, declared commit 또는
+  unavailable provenance는 exact three-slot `not_run` inconclusive receipt를
+  만들며 process를 spawn하지 않는다. Start/end provenance가 달라지거나
+  current intent/Board binding 또는 TTL이 바뀌면 successful step array가
+  있어도 terminal result는 inconclusive다.
+- **Persistence/privacy:** Store는
+  `.local/semantic-continuation/validation/receipts.json`, directory 0700/file
+  0600, atomic replace와 bounded 512 receipts를 사용한다. Installation secret은
+  HMAC authority로 closure 안에서만 사용하며 receipt/API/presentation/CLI
+  summary에 넣지 않는다. Raw stdout/stderr, command/executable/cwd path,
+  repository/session ID, URL, prompt, credential도 보존하거나 반환하지 않는다.
+- **Presentation contract:** Base `WorkBoardApiResponse`는 strict reparse되고
+  byte-identical하게 유지된다. Separate semantic presentation/response/schema
+  envelope만 v0.2로 bump한다. Current run은 older pass보다 항상 우선한다.
+  Verified running/failed/passed receipt는 exact fixed display title
+  `QA 진행 상태 확인하기` / `QA 실패 항목 검토하기` /
+  `QA 통과 결과 확인하기`를 낸다. Inconclusive/invalid/stale/code drift/
+  binding mismatch는 existing SC-001 `${subjectLabel} QA 진행하기`로 fallback한다.
+  Base title/summary, lane/order, evidence/caveats, capability/action, execution
+  policy와 core artifacts는 변경하지 않는다. Structured finding adapter와
+  results-review/result-apply/`반영` branch는 구현하지 않는다.
+- **Integrity limits:** HMAC/chain은 accidental corruption과 secret이 없는
+  tamper를 fail closed하지만, 동일 OS user가 private state와 installation
+  secret authority를 모두 교체하는 위협 또는 이전의 완전 유효한 store
+  rollback을 external monotonic anchor 없이 탐지하지 못한다. Distributed/
+  cross-host execution은 지원하지 않는다. 512-receipt retention/compaction과
+  manual CLI/browser smoke는 follow-up이다.
+- **Validation:** Targeted Vitest 13 files/56 tests, `npm run typecheck`와
+  `npm run lint`가 통과했다. Actual production CLI는 explicit user invocation
+  전용이라 이 구현 turn에서 실행하지 않았다. Core Continuation/Board/E-001
+  input, semantics, hashes와 dataset이 불변이므로 baseline은 N/A다.
+
+### 15.1.3 A-001 PR-001 preserve-only local read boundaries (implemented foundation)
+
+- Shared `LocalReadMode`는 `maintain | preserve`이고 default는 기존 동작과
+  동일한 `maintain`이다. GitHub token/snapshot, Codex config/snapshot/local-Git/
+  observation/conversation, Google Calendar token/snapshot, Notion token/snapshot
+  reader가 optional mode를 받는다.
+- Connector `preserve` read는 stale-temp cleanup과 Codex conversation purge를
+  수행하지 않는다. Owned non-symlink 0700 directory 및 regular 0600 file만
+  `O_NOFOLLOW`로 열고 controlled ancestor chain과 handle/path inode, size,
+  mode, mtime, ctime을 재확인한다. Existing/dangling ancestor symlink도 missing
+  state로 취급하지 않고 fail closed한다.
+  Legacy schema migration은 memory 안에서만 수행하고 corrupt/expired/
+  consent-mismatched conversation state는 unavailable이며 original bytes는
+  유지한다.
+- `readManagedCodexObservabilityPreservingState`는 process queue나 filesystem
+  lease를 획득하지 않고 settlement recovery, temp cleanup, permission repair,
+  history prune write 또는 expired-run deletion을 수행하지 않는다. Settlement,
+  state lock, recognized temp, partial/corrupt store, exact history-set mismatch,
+  symlink/unsafe mode 또는 unstable fingerprint는 current authority로 사용하지
+  않고 fail closed한다. Valid retention 결과는 returned projection에만 적용한다.
+- `readWorkArtifactAttributionStorePreservingState`도 shared Work Resumption
+  lock을 획득하지 않고 temp cleanup, expired-invalid deletion 또는 retained
+  ledger rewrite를 수행하지 않는다. Pending lock/temp, corrupt/unsafe/unstable
+  state는 fail closed하고 valid retention은 in-memory view에만 적용한다.
+- PR-001 자체는 store/read boundary만 제공했으며 PR-002가 아래 15.1.4의
+  coherent preserve capture와 Work Board wiring을 추가했다. 기존 live Attention
+  caller는 계속 default-maintain 호환이고 Work Board만 preserve를 강제한다.
+- `atime`은 OS access accounting이며 successful read/readdir가 macOS에서
+  갱신할 수 있으므로 preserve invariant에서 제외한다. Contract는 content,
+  mode, mtime, inode와 listing을 보존하고 code-controlled mkdir/write/rename/
+  unlink/chmod/utimes/lease/recovery/cleanup/disk-prune가 없음을 보장한다.
+- Targeted Vitest 11 files/128 tests, `npm run typecheck`, `npm run lint`와
+  `git diff --check`가 통과했다. Filesystem evidence는 before/after content,
+  mode, mtime, inode와 listing, missing-state no-mkdir, pending/temp/lock/history
+  보존, independent settlement/temp/lock cases, deterministic shared/managed/
+  attribution inode replacement와 directory-chain identity change,
+  in-memory retention, corrupt/partial/symlink/unsafe-mode fail-closed 및
+  default-maintain compatibility를 포함한다.
+- Core Continuation/R1/R2/R3/B1 contract, hash, evidence, ranking, Board bytes,
+  E-001 dataset/evaluator와 public API는 변경하지 않는다. 따라서 core baseline은
+  N/A이고 production G2/G3 및 release는 blocked다.
+
+### 15.1.4 A-001 PR-002 coherent live preserve capture (implemented 2026-08-13)
+
+- `LiveReadMode = maintain | preserve`는 additive internal input이며 default는
+  `maintain`이다. `/api/attention`은 기존 default를 유지한다. Work Board base는
+  항상 `readMode=preserve`, `refreshSources=false`를 전달하고 preserve와 source
+  refresh의 조합은 env, source 또는 store를 읽기 전에 거부한다.
+- Internal `attention-preserve-capture-v0.1`은 trusted cwd 아래 base scope
+  `.local/connectors`, `.local/context`, `.local/work-resumption`과 semantic scope
+  `.local/semantic-continuation`을 분리한다. 각 scoped tree를 O_NOFOLLOW로 열고
+  sorted manifest에 content/listing SHA-256, type, mode, uid, gid, device, inode,
+  link count, size, mtime, ctime을 기록한다. Shared cwd/`.local` ancestor는
+  symlink/mode/owner/device/inode trust identity와 scope-filtered listing hash만
+  비교해 다른 scope 생성/삭제가 현재 scope를 불안정하게 만들지 않는다.
+- Manifest는 read callback 전후에 exact 비교된다. Inode/content/directory
+  generation이 바뀌면 한 번만 재시도하고 두 번째 변화는 typed unstable이다.
+  Unsafe final/ancestor symlink, ownership/mode, recognized temp/partial,
+  Work Resumption/managed/artifact lock 또는 managed settlement는 recovery하지
+  않고 fail closed한다. Generic programming/evaluator error는 typed capture로
+  숨기지 않으며 known preserve store error만 READ_FAILED로 normalize한다.
+- Work Resumption preserve snapshot은 process queue/filesystem lease를 사용하지
+  않는다. Caller가 이미 preserve-read한 Codex config와 한 개의 cloned Date를
+  받고 bindings/heartbeat를 stable-read한 뒤 callback 후 exact content와
+  fingerprint를 다시 확인한다. Connection generation, owner, binding store와
+  one-asOf가 managed observability, work relations, artifact relations와 claim
+  authority까지 재사용된다. Managed/artifact reads는 PR-001 preserve APIs다.
+- Context registry, weekly outcome와 workflow는 preserve mode로 한 번 읽고 pure
+  resolver에 전달한다. GitHub/Codex/Calendar/Notion source reads, Codex config,
+  local Git snapshot과 nested conversation expiry도 같은 fixed request time과
+  mode를 받는다. Preserve path의 startedAt/completedAt/latency와 evidence asOf는
+  같은 시각이며 preserve reader 내부에서 ambient `Date.now()`를 사용하지 않는다.
+- Preserve env snapshot은 proxy/accessor/symbol/non-enumerable/non-string 또는
+  inherited enumerable state를 fail closed하고 caller/process env를 수정하지
+  않는다. `.env.local`, shared env file과 module cache도 읽거나 변경하지 않는다.
+  Preserve provenance는 declared commit/fingerprint만 허용해 Git/worktree 또는
+  child process를 실행하지 않는다. 선언이 없으면 provenance unavailable이고
+  Continuation은 bounded Active-only fallback으로 내려간다. Maintain Git probe는
+  `/usr/bin/git`, sanitized environment, `GIT_OPTIONAL_LOCKS=0`, system/global config
+  차단, fixed timeout과 `shell:false`를 사용한다.
+- Base capture typed failure는 authenticated GET/intent POST에서 private detail이
+  없는 503으로 투영된다. Semantic intent/receipt는 별도 semantic capture에서
+  읽고, missing/corrupt/unstable 상태는 strict-valid base response를 바꾸지 않은
+  채 `semanticPresentation=null`로 fallback한다. Semantic live read는 base capture의
+  Codex installation-secret authority를 request closure에서 재사용하며 config를
+  다시 읽지 않는다. Secret은 response/summary/manifest에 포함되지 않는다.
+- Preserve invariant는 OS-managed `atime`을 제외한다. Automated evidence는 전체
+  fixture의 content/type/mode/uid/gid/dev/ino/nlink/size/mtime/ctime/hash와 listing이
+  read 전후 동일하고 code-controlled mkdir/write/rename/unlink/chmod/utimes,
+  lease/recovery/cleanup/disk-prune 호출이 없음을 검증한다. Stable maintain/preserve
+  semantics, missing state, critical sentinels, corrupt/replacement, one retry,
+  scope isolation, fixed asOf, route 503 및 semantic-null fallback도 포함한다.
+- 2026-08-13 KST validation은 targeted Vitest 21 files/150 tests,
+  `npm run typecheck`, `npm run lint`, `git diff --check`를 통과했다. Public
+  Work Board/semantic presentation, S1/R1/R2/R3/B1와 E-001 계약·schema·hash·dataset은
+  변경되지 않아 core baseline은 N/A다. Manual authenticated browser/privacy smoke,
+  production G2/G3, public/action rollout과 release approval은 pending이다.
+
+### 15.1.5 A-001 formal display-only Continuation read API (implemented 2026-08-13)
+
+- `GET /api/continuation`은 exact default-off flag
+  `BLABASE_CONTINUATION_READ_ENABLED`, local-only, safe-origin, configured Basic
+  auth와 `Cache-Control: no-store` 뒤에서만 동작한다. Handler는 이 gate를 평가기
+  호출보다 먼저 확인한다. POST/open/action endpoint는 추가하지 않았다.
+- 새 strict DTO의 exact contract는 `continuation-read-api-v0.1`이다. Response는
+  R3 base decision의 `generatedAt`, `status`, exact `coverageCode`와 최대 3개의
+  `{title, summary, caveats, capability:"display", action:null}`만 포함한다.
+  `offers_available`과 `setup_required`만 item을 가지며 setup도 display-only다.
+  Internal candidate/project/WorkContext/source/run/proof/hash/ref와 private target은
+  DTO에 존재하지 않는다.
+- Formal evaluator는 public Work Board를 다시 필터링하지 않는다. Work Board는
+  Attention precedence 뒤 3개로 잘릴 수 있으므로, 같은 request의 단일 preserve
+  capture에서 full S1/R1/R2/R3/B1 검증까지 성공한 exact R3 resolved decision을
+  private seam으로 함께 반환하고 그 decision을 직접 안전 투영한다. 기존
+  `/api/work-board`, Semantic Continuation wrapper와 UI 응답은 이 seam의 기존
+  `response`만 사용하므로 byte/schema/version이 바뀌지 않는다.
+- Authenticated R3 decision의 normal empty/insufficient/unavailable tuple은
+  `no_recent_context/COMPLETE`, `insufficient_evidence/INSUFFICIENT`,
+  `unavailable/UNAVAILABLE`로 그대로 유지한다. Stable pre-R3 prerequisite 실패는
+  기존 authenticated stage result만으로 bounded unavailable 또는 insufficient를
+  선택하고 상세 reason은 공개하지 않는다. Typed preserve capture failure는
+  private detail 없는 503, unexpected evaluator/schema failure는 sanitized 500이다.
+- Public text는 control, path/URL, credential, SHA와 known internal identifier/ref
+  형태를 fail closed한다. Server boundary는 descriptor-only JSON data와 strict
+  schema를 요구하고, browser client도 Node crypto import 없이 exact-key/status/
+  coverage/display-only parser로 다시 검증한다. Response에는 store read, source
+  refresh, persistence, action, telemetry 또는 second capture가 없다.
+- 이 API는 pure projection과 새 transport contract만 추가한다. S1/R1/R2/R3/B1,
+  public Work Board/SC wrapper, evaluator/dataset/hash/rank/evidence semantics는
+  변경하지 않아 core baseline은 N/A다. Automated validation의 exact command와
+  scoped patch fingerprint는 ECR에 기록하며 manual authenticated browser/privacy
+  smoke, G2/G3, UI/action/public rollout 및 release approval은 pending이다.
+
+### 15.1.6 U-001 Work Cockpit display-only Board (implemented 2026-08-13)
+
+- Work Cockpit의 canonical proposal feed는 authenticated
+  `/api/work-board` semantic wrapper 하나다. `/api/attention`은 기존 Active
+  diagnostic에만 사용하고 `/api/continuation` 결과와 concatenate, join, index/title
+  matching하지 않는다. Initial/poll은 두 독립 read를 병렬로 시작하고 manual source
+  refresh는 Attention refresh가 끝난 뒤 Work Board를 정확히 한 번 읽는다.
+- Browser boundary는 HTTP 2xx와 JSON content type을 먼저 확인한 뒤 strict wrapper,
+  base Board, server lane/order/dedupe, `display/action=null`, execution policy,
+  evidence/caveat allowlist와 semantic overlay binding을 검증한다. Plain text/HTML
+  auth error, non-JSON, 401/403/404/500/503, network/schema/private/actionful input은
+  bounded failure이고 이전 Board와 overlay를 즉시 제거한다. Server와 browser는
+  Node import가 없는 동일 pure public-text locator/credential policy를 사용하므로
+  `CI/CD 결과 확인`은 허용하지만 `/Users/...`, `C:\...`, URL, credential 및 private
+  ref는 fail closed한다.
+- Panel은 primary와 alternatives의 계약 순서를 바꾸지 않고 fixed
+  `attention → continuation → setup` column으로만 분배한다. 각 lane heading은
+  `지금 처리할 일`, `이어서 할 일`, `연결할 일`이고 visible item이 없으면 status
+  원인을 추론하지 않고 exact `표시할 제안 없음`만 쓴다. Exact itemRef-bound overlay
+  title은 Continuation base title보다 우선하지만 base object를 수정하지 않는다.
+- Evidence band와 caveat code는 좁은 한국어 allowlist copy로만 표시한다. Item이
+  current wall clock에서 만료됐으면 polling 성공 여부와 무관하게 숨기고 nearest
+  expiry timer로 view를 갱신한다. Timer는 최대 60초 chunk마다 clock state를
+  갱신하고 아직 만료 전이면 다시 예약해 긴 TTL도 platform timeout 범위를 넘지
+  않는다. Public opaque itemRef는 React 내부 lookup에만
+  쓰며 DOM/accessibility/data/URL/console에는 출력하지 않는다. Private namespaces,
+  action refs/targets와 raw codes도 출력하지 않는다.
+- Panel markup은 semantic h2/h3/h4와 ol/li를 사용하고 정상 feed에는 button, link,
+  form, CTA, click/keyboard navigation 또는 large aria-live region이 없다. Desktop은
+  3-column, 600px 이하에서는 1-column이며 title/evidence는 줄바꿈한다. Initial,
+  polling 및 expiry update는 focus/scroll을 변경하지 않는다. 기존 Attention Lab
+  SC-001 form과 그 pre-existing stale-form race는 이 slice에서 이동·수정하지 않았다.
+- Monotonic request token은 late response가 current Board를 덮지 못하게 한다.
+  Board 실패는 Attention diagnostic success와 독립적으로 feed/overlay를 clear한다.
+  Mounted browser regression은 A start → B start → B success → A success에서도 B만
+  유지하며, 기존 Board 뒤 current 401/non-JSON/network rejection은 base/overlay를
+  모두 제거함을 고정한다.
+  Existing Active 영역은 `기존 Active Attention 판정` label과 별도 timestamp를 유지해
+  canonical proposal feed와 구분한다.
+- Public Work Board v0.1, semantic wrapper/presentation v0.2,
+  `continuation-read-api-v0.1`, S1/R1/R2/R3/B1와 evaluator/dataset/hash는 unchanged다.
+  UI-only presentation이므로 core baseline은 N/A다. Exact automated evidence와 patch
+  fingerprint는 ECR에 기록하며 manual responsive/accessibility/privacy/copy review와
+  G2/G3/release approval은 pending이다.
 
 ## 16. Feedback와 Gold 승격
 
@@ -892,6 +1182,6 @@ Rollback 중에도 `/api/attention`과 Active Attention 경로는 변경하지 �
 
 - Action-disabled local Work Board shadow slice는 구현됐고 2026-08-13 KST current-head validation에서 `npm run typecheck`, targeted Vitest 5 files/52 tests (`liveWorkBoardShadow`, `workBoardRoute`, `suggestionBoardContracts`, `continuationContracts`, `continuationResolver`)와 `npm run lint`가 모두 pass했다. 이 run은 `publicTextSafety.ts`와 명시된 local-side-effect boundary를 포함한다.
 - Baseline은 N/A다. 이 slice는 core engine ranking/input/output semantics를 바꾸지 않았고 E-001 v0.3 revision 3 dataset도 변경하지 않았다.
-- 새 Board/result persistence, telemetry, source refresh 또는 production-conversation promotion은 없다. 기존 Attention/store의 bounded lease/recovery/temp cleanup/retention maintenance는 가능하므로 filesystem-byte-pure read 또는 zero local mutation을 주장하지 않는다.
-- Medium residual은 local review에만 수용된다. G2 privacy와 G3 production shadow/dual-lane gate는 preserve-mode 또는 atomic snapshot path 전까지 blocked다. Full action API, public rollout, WorkCockpit/Continuation endpoint integration, dataset freeze, release 또는 release readiness는 완료·승인됐다고 주장하지 않는다.
-- 다음 안전한 task는 preserve-mode 또는 atomic snapshot path를 구현·검증한 뒤, default-off/on local API와 Attention Lab manual smoke, safe-origin/no-store/credential-shaped public-text rejection 및 Active-only fallback review를 수행하는 것이다. 해당 증거와 human gate 전에는 production exposure나 action/Board-result-persistence 범위를 확장하지 않는다.
+- 새 Board/result persistence, telemetry, source refresh 또는 production-conversation promotion은 없다. PR-002 coherent preserve capture가 Work Board base evaluation에 연결되어 code-controlled lease/recovery/temp cleanup/retention write는 없으며 OS-managed atime만 invariant에서 제외된다. `/api/attention`은 default maintain 호환이다.
+- Automated PR-002 gate는 targeted 21 files/150 tests, typecheck, lint와 diff-check를 통과했다. Base instability/recovery-needed state는 sanitized 503, optional semantic instability는 base unchanged/overlay null이고 one-asOf 및 before/after filesystem manifest가 검증됐다. 실제 non-empty Codex/context/workflow/binding/heartbeat/managed/artifact fixture도 `ready/full` Board와 전체 cwd 불변을 증명한다. Core semantics/dataset 불변으로 baseline은 N/A다.
+- G2 privacy와 G3 production shadow/dual-lane gate는 manual default-off/on authenticated local API·Attention Lab/Work Cockpit smoke, safe-origin/no-store/credential-shaped public-text rejection, Active-only fallback 및 human review 전까지 blocked다. Formal display-only Continuation GET과 U-001 Work Cockpit Board는 구현됐지만 full action/open API, public rollout, dataset freeze, release 또는 release readiness는 완료·승인됐다고 주장하지 않는다.

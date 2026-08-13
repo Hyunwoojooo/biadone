@@ -2,7 +2,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Status | **Implementation in progress — A-001 action-disabled local Work Board shadow slice implemented and current-head validated for local review; preserve-mode/atomic snapshot work remains pending; production G2/G3 and release are blocked** |
+| Status | **Implementation in progress — A-001 PR-002 coherent preserve capture implemented and validated locally; manual browser/privacy review, production G2/G3, and release remain blocked** |
 | Date | 2026-08-13 |
 | Owner | User (product decision and release approver); Codex (AI implementation executor and record author) |
 | Authority | `SUGGESTION_ENGINE_VNEXT_TECH_SPEC.md` |
@@ -29,7 +29,7 @@
 - GitHub repository, Codex session, local workspace를 사용자 중심으로 묶는 first-class WorkContext가 없다.
 - mapping 부재와 partial coverage가 현재 제품에서 전체 추천 실패처럼 보인다.
 - 기존 historical exact-resumption 계획은 broad source-local Continuation MVP와 분리되지 않았다.
-- E-001 v0.3 revision 3 scaffold와 authenticated resolver/Board integration, S-001, R-001, R-002, R-003, B-001의 pure synthetic regression checkpoint가 구현·검증됐다. 12 contract oracle, 9 resolver behavior row와 1 Board behavior row가 모두 통과해 22/22 measured/pass이고 deferred는 0이다. A-001은 그 exact core를 바꾸지 않고 단일 live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain으로 통과시키는 action-disabled local shadow slice를 연결한다. Public Board v0.1 display-only projection, additive wrapper, default-off `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED`, local/safe-origin/no-store `GET /api/work-board`, Attention Lab panel과 bounded Active-only fallback을 포함한다. Source refresh, Board/result persistence, external mutation, telemetry, WorkCockpit, `/api/continuation`과 `/api/continuation/open`은 연결되지 않았다. 단, 기존 Attention/store read는 lease 획득과 bounded recovery/temp cleanup/retention maintenance를 수행할 수 있어 byte-pure read가 아니며, Medium residual은 local review에만 수용된다. Production G2/G3는 preserve-mode 또는 atomic snapshot path 전까지 blocked다.
+- E-001 v0.3 revision 3 scaffold와 authenticated resolver/Board integration, S-001, R-001, R-002, R-003, B-001의 pure synthetic regression checkpoint가 구현·검증됐다. 12 contract oracle, 9 resolver behavior row와 1 Board behavior row가 모두 통과해 22/22 measured/pass이고 deferred는 0이다. A-001은 그 exact core를 바꾸지 않고 단일 live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain으로 통과시키는 action-disabled local shadow slice를 연결한다. PR-002는 PR-001 preserve readers를 Work Board에 연결하고 mutating Work Resumption lease를 preserve-only authority snapshot으로 대체했다. Work Board GET/intent의 base evaluation은 one-asOf `attention-preserve-capture-v0.1` 안에서 connector, context, workflow, binding, managed observability와 attribution을 함께 검증한다. `/api/attention`은 default `maintain`으로 기존 동작을 유지한다. Production G2/G3, manual browser/privacy review 및 release는 여전히 blocked다.
 
 이 상태는 아래 task별 기록과 2026-08-13 KST automated validation 결과를 함께 반영하며, production activation이나 release를 의미하지 않는다.
 
@@ -191,12 +191,76 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 
 ### Phase 6. API와 웹 표시
 
-- `A-001`의 첫 slice로 default-off/local/safe-origin/no-store `GET /api/work-board`, public Board v0.1 display-only wrapper, Attention Lab panel과 Active-only bounded fallback을 추가했다. 단일 live capture는 실제 `S1 → R1 → R2 → R3 → B1` chain을 사용하며 source refresh, Board/result persistence, external mutation, telemetry 또는 action을 만들지 않는다. 기존 Attention/store read의 lease, bounded recovery/temp cleanup/retention maintenance는 발생할 수 있으므로 byte-pure GET으로 분류하지 않는다.
+- `A-001`의 첫 slice로 default-off/local/safe-origin/no-store `GET /api/work-board`, public Board v0.1 display-only wrapper, Attention Lab panel과 Active-only bounded fallback을 추가했다. 단일 live capture는 실제 `S1 → R1 → R2 → R3 → B1` chain을 사용하며 source refresh, Board/result persistence, external mutation, telemetry 또는 action을 만들지 않는다.
+- `A-001 PR-001`은 GitHub/Codex/Google Calendar/Notion connector read의 explicit `preserve` mode와 managed Codex observability/work-artifact attribution preserve-only reader를 추가했다. PR-002는 additive `LiveReadMode`를 live Attention에 전파하되 default를 `maintain`으로 유지하고, Work Board base evaluation만 내부적으로 `preserve`를 강제한다. `preserve + refreshSources=true`는 env/source/store inspection 전에 거부된다.
+- `attention-preserve-capture-v0.1`은 fixed base roots의 sorted O_NOFOLLOW manifest를 capture 전후에 비교하며 content hash와 type/mode/uid/gid/dev/ino/nlink/size/mtime/ctime을 묶는다. Shared ancestor는 trust identity와 scope-filtered listing hash만 사용해 base와 semantic scope를 격리한다. Typed instability만 최대 1회 재시도하고, 두 번째 변화, unsafe/symlink/corrupt state, temp/lock/settlement evidence는 fail closed한다. Base failure는 authenticated route에서 sanitized 503이고, optional semantic intent/receipt scope failure는 byte-identical base와 `semanticPresentation=null`이다.
+- Preserve Work Resumption snapshot은 filesystem/process lease를 획득하지 않고 already-read Codex config, exact binding/heartbeat authority와 one-asOf를 재사용한다. Current evidence는 PR-001 managed/artifact preserve APIs를 사용하며 context/outcome/workflow도 동일 capture의 preserve reads를 재사용한다. Semantic live path는 captured installation secret을 재사용하고 Codex config를 다시 읽지 않는다.
+- Preserve env는 caller/process env와 module cache를 수정하지 않고 `.env.local`/shared env를 읽지 않는 descriptor-safe request snapshot이다. Preserve code provenance는 declared commit/fingerprint만 사용하고 Git/worktree/child process를 탐색하지 않는다. 선언 provenance가 없으면 Continuation prerequisite가 unavailable이 되어 bounded Active-only fallback이 가능하다. Maintain provenance는 `/usr/bin/git`, sanitized env, `GIT_OPTIONAL_LOCKS=0`, fixed timeout으로 harden됐다.
+- PR-001 validation은 targeted Vitest 11 files/128 tests, `npm run typecheck`, `npm run lint`, `git diff --check`가 pass했다. Test evidence는 preserve before/after content, mode, mtime, inode와 listing, no-directory creation, independent settlement-only/managed-temp-only/managed-lock/attribution-lock rejection, deterministic shared/managed/attribution inode replacement, controlled directory-chain identity change, stale history 보존, in-memory retention, corrupt/partial/final-or-ancestor-symlink/unsafe-mode fail-closed, legacy migration 및 default-maintain cleanup compatibility를 포함한다. OS-managed `atime`은 read/readdir 자체가 갱신할 수 있어 invariant에서 명시적으로 제외하며 code-controlled write/mkdir/rename/unlink/chmod/utimes/lease/recovery는 0이다. Cross-review에서 재현된 ancestor-symlink redirect와 missing-state confirmation TOCTOU는 controlled-chain pre/post validation으로 수정됐고 bounded re-review에서 remaining finding 0건이었다. Core engine과 E-001 dataset이 불변이므로 baseline은 N/A다.
 - Public contracts/projection은 새 `publicTextSafety.ts` 경계를 사용해 credential-shaped public text를 fail closed한다.
-- `/api/continuation`, `/api/continuation/open`, action/persistence contract와 public rollout은 아직 구현·승인되지 않았다.
-- `U-001`에서 `지금 처리할 일`, `이어서 할 일`, `연결할 일`을 구분한다.
+- `A-001`의 다음 coherent slice로 formal display-only `GET /api/continuation`을 추가했다. 새 strict contract `continuation-read-api-v0.1`은 같은 request의 단일 preserve capture에서 이미 인증된 R3 decision을 재사용해 exact `status`, `coverageCode`, `generatedAt`과 최대 3개의 title/summary/caveats만 반환한다. 모든 item은 `capability=display`, `action=null`이고 식별자/ref/hash/proof/private target은 반환하지 않는다. Exact flag `BLABASE_CONTINUATION_READ_ENABLED`는 default-off이며 local/safe-origin/configured Basic auth/no-store 경계 안에서만 GET을 허용한다. `/api/continuation/open`, action/persistence, UI 연결과 public rollout은 아직 구현·승인되지 않았다.
+- `U-001` display-only slice는 authenticated `/api/work-board` wrapper 하나만 canonical proposal feed로 사용한다. `지금 처리할 일`, `이어서 할 일`, `연결할 일`을 fixed order로 구분하고 Board primary/alternatives order와 exact itemRef-bound semantic title overlay를 유지한다. 모든 item은 render 경계에서 `display/action=null`과 bounded evidence/caveat copy를 재검증하며 action/private hostile feed는 전체 fail closed한다. Browser text 검증은 server public Board의 pure locator/credential policy를 공유해 `CI/CD` 같은 일반 slash copy는 허용하되 absolute path, URL, credential/private ref는 거부한다. 30일 이상 남은 expiry도 60초 이하 timer chunk를 반복 예약해 실제 만료 시 제거한다. 이 패널은 CTA/link/button/form을 만들지 않고, 기존 Active Attention은 별도 timestamp를 가진 진단 영역으로 유지한다.
 - `Attention.no_action`을 전체 추천 실패로 표현하지 않는다.
 - source-local 후보는 bounded copy와 evidence band를 표시한다.
+
+**Semantic Continuation v0.1 status (2026-08-13):** A-001의 additive local
+display-only follow-up으로 구현됐다. `POST /api/work-board/intent`는 local,
+same-origin, configured Basic auth, default-off flag 뒤에서 explicit `QA_RUN`
+confirmation만 받고 freshly evaluated unoverlaid `ready/full` Board의 mapped
+display-only Continuation target을 재검증한다. Private `.local` v0.1 store는
+refs/registry/observedAt/candidate expiry/confirmedAt/effective expiry와
+supersession을 0700/0600 atomic storage에 보존하고 read는 pure하다.
+GET도 configured Basic auth를 직접 검증한 뒤에만 private state를 읽는다.
+Additive response는 기존 schema-valid WorkBoardApiResponse를 byte-identical
+`base`로 보존하고, 별도 versioned `semanticPresentation`의 `displayTitle`만
+UI가 render-time에 사용한다. Missing/corrupt/stale/mismatch는
+`semanticPresentation=null`과 unchanged generic base를 반환한다. Targeted
+label safety는 NFKC/구분자 정규화 뒤의 camelCase/concatenated
+pass/fail/completion/result/apply claim도 fail closed한다.
+Vitest 8 files/35 tests, typecheck와 lint가 pass했다. Core
+engine/E-001 tuple이 불변이므로 baseline은 N/A이며 production/release는
+승인되지 않았다.
+
+**SC-002 first-slice status (2026-08-13):** 명시적이고 argument-free인
+`npm run semantic-validation`만 local QA validation을 시작할 수 있다.
+Browser GET/POST/client/UI는 SC-002 producer/profile 또는 validation
+child-process 경로를 import하거나 실행하지 않는다. 기존 A-001 live
+capture의 read-only Git code-provenance probe는 유지되므로 이 보장은 전체
+route graph의 zero-child-process가 아니라 HTTP-triggered **validation**
+execution 0건을 뜻한다. Runner는 fixed realpath `suggestion/` root와 current
+unsuperseded SC-001 intent를 다시 확인하고, SC-001 confirmation과 공유하는
+filesystem authority lock 및 별도 renewable run lease를 획득한 뒤에만
+시작한다. Lease loser는 intent/receipt/base/code state를 읽거나 validation
+subprocess를 만들지 않는다.
+
+Profile은 현재 package script가 exact expected value인지 검증한 뒤
+`process.execPath`와 realpath-confined TypeScript/ESLint/Vitest entrypoint를
+`shell:false`, fixed argv/cwd/env/timeout, discarded stdio로 직접 실행한다.
+순서는 `typecheck → lint → unit_test`이며 fail-fast 뒤 남은 slot은
+`not_run`이다. Arbitrary script/command/argv/cwd, client receipt upload,
+HTTP-triggered execution은 없다. v0.1에서는 오직 local `clean_commit`
+provenance만 실행 가능하고 dirty/declared/unavailable은 no-spawn
+inconclusive다.
+
+Private v0.1 receipts는 current intent/candidate/registry/time binding과
+start/end code provenance를 포함하고, installation-secret-derived HMAC 및
+SHA-256 append revision chain으로 인증한다. Store는
+`.local/semantic-continuation/validation/receipts.json`에 0700/0600,
+atomic하게 저장되며 최대 512개다. TTL은 24시간, intent expiry와 candidate
+expiry 중 가장 이른 시점이다. Invalid tail은 whole-store rejection이며
+salvage하지 않는다. New running event는 즉시 authoritative하여 이전 pass를
+숨기고, stale dead lease는 `RUN_ABANDONED/inconclusive`로 닫는다.
+
+Presentation-only overlay는 base Board bytes/schema/order/lane/evidence/
+capability/action/execution policy를 바꾸지 않는다. Separate presentation
+envelope만 v0.2로 올라가며 verified current status별 exact title은
+`QA 진행 상태 확인하기`, `QA 실패 항목 검토하기`,
+`QA 통과 결과 확인하기`다. Inconclusive/invalid/stale/drift/mismatch는 SC-001
+`${subjectLabel} QA 진행하기`로 되돌아간다. Structured finding, result apply,
+results-review live branch와 telemetry는 없다. Targeted Vitest 13 files/56
+tests, typecheck와 lint가 통과했고 core/E-001 semantics가 불변이어서
+baseline은 N/A다. 실제 CLI와 browser smoke는 explicit user invocation 및
+manual follow-up으로 남는다.
 
 **Exit gate:** web flag가 켜진 승인된 환경에서 primary 1개와 alternatives 최대 2개가 안전하게 표시된다.
 
@@ -267,8 +331,8 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 | `R-002` | Candidate derivation | Engine implementer | `E-001`, `S-001`, `R-001` | `src/continuation/deriveCandidates.ts`, `src/continuation/index.ts` | envelope/result/schema v0.3, rule/config v0.2; exact candidates and input-bound verifier | **Implemented and automatically validated locally.** Exact 7-day/freshness provenance, same-WorkContext-only linking, display-only mapped candidates, non-executable setup descriptors, canonical IDs/hashes | 2026-08-13 KST: typecheck pass; targeted Vitest 7 files/89 tests pass; lint pass; evaluator/baseline deferred | G2 and shadow activation approvals pending; no release claim |
 | `R-003` | Score와 Continuation resolver | Engine implementer | `R-002` | `src/continuation/scoreContinuity.ts`, `src/continuation/resolveContinuation.ts` | v0.1 provisional score/result/resolver/resolution envelope/distinct decision artifact, full input-bound verifier | **Core and E-001 v0.3 synthetic checkpoint complete.** Deterministic score/selection, authenticated coverage, trusted expectations and full-chain verification; 9/9 resolver rows pass | 2026-08-13 KST latest integrated checkpoint: typecheck pass; targeted Vitest 9 files/119 tests pass; lint pass; two authoritative v0.3 baseline runs pass | G2/G3/G8 and shadow activation approval pending; no recommendation-quality/release claim |
 | `B-001` | Work Suggestion Board composer | Engine architect | `R-003` | `src/suggestionBoard/composeBoard.ts`, `src/suggestionBoard/contracts.ts` | internal input/result/schema/hash v0.3, outer-R3-authenticated precedence/dedupe, exact primary/alternatives projection | **Implemented and validated on 2026-08-13.** Active exact object/hash preserved; Attention first; exact non-null WorkContext dedupe; null Setup retained; typed fail-closed authenticity boundary | 2026-08-13 KST: typecheck pass; targeted Vitest 9 files/119 tests pass; lint pass; E-001 Board row 1/1 pass | G2/G3 and dual-lane flag approval required; unwired/read-only, release unapproved |
-| `A-001` | Continuation/Board API | API owner | `B-001` | local Work Board wrapper/route, `publicTextSafety.ts`, public contracts/projection and Attention Lab; future Continuation/action routes | **Action-disabled local shadow slice implemented:** single live capture → actual `S1→R1→R2→R3→B1`, public Board v0.1 display-only wrapper, credential-shaped text fail-closed, default-off `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED`, local/safe-origin/no-store `GET /api/work-board`, Attention Lab, bounded Active-only fallback. No source refresh, Board/result persistence, external mutation or telemetry; existing Attention/store reads may perform bounded lease/recovery/cleanup/retention maintenance | Current head, 2026-08-13 KST: typecheck pass; targeted Vitest 5 files/52 tests pass (`liveWorkBoardShadow`, `workBoardRoute`, `suggestionBoardContracts`, `continuationContracts`, `continuationResolver`); lint pass. Baseline N/A because core engine ranking/input/output semantics and v0.3 dataset are unchanged | **Local review only with Medium residual; production G2/G3 blocked until preserve-mode or atomic snapshot path; full Continuation/action/public rollout incomplete** |
-| `U-001` | 웹 UI | Web owner | `A-001` | `app/WorkCockpit.tsx`, client projection/components | lane별 UI, bounded copy, CTA, caveat | no-action 문구 모순 제거, primary 1 + alt ≤2 | Component/manual accessibility/UX checks | Copy and privacy approval required |
+| `A-001` | Continuation/Board API | API owner | `B-001` | local Work Board wrapper/route, PR-001 preserve readers, PR-002 coherent preserve capture, formal display-only Continuation GET; future action route | **Display-read milestone implemented locally:** Work Board remains forced preserve/no refresh; formal `GET /api/continuation` reuses the exact authenticated R3 decision from one request-local capture and exposes only strict `continuation-read-api-v0.1` display data. No code-controlled cleanup/lease/recovery/permission repair/retention write occurs in the read path. Public Work Board/SC response and core contracts are unchanged | 2026-08-13 KST: PR-002 21 files/150 tests plus the Continuation-read targeted regression recorded in ECR; typecheck, lint and diff-check pass. Baseline N/A because core engine semantics, Board bytes and E-001 data are unchanged | Manual authenticated browser/privacy smoke and G2/G3 remain required. Action/open/UI/public rollout, dataset freeze and release remain blocked |
+| `U-001` | 웹 UI | Web owner | `A-001` | `app/WorkSuggestionBoardPanel.tsx`, `app/WorkCockpit.tsx`, browser-safe Work Board client parser | **Display-only slice implemented locally:** fixed Attention/Continuation/Setup lanes, server order/overlay preservation, bounded evidence/caveat copy, expiry filtering, strict whole-feed fail-close, canonical Work Board-only fetch with monotonic request gate. No CTA/link/button/form/action | Focused component/client/integration tests plus typecheck/lint/diff-check recorded in ECR; engine/UI baseline N/A because only existing public projection is rendered | Manual 320px/200% zoom, keyboard/VoiceOver/Safari, copy/privacy and G2/G3 approval remain required |
 | `X-001` | Action gateway | Security + Runtime owner | `A-001`, `R-001`, `U-001` | `src/continuation/actions/*`, resumption protocol/store | offer store, TTL, revalidation, typed failure | 자동 실행/재시도/mutation 없음, invalid offer 409 | Race/expiry/security integration tests | **Required before any action activation** |
 | `L-001` | Launcher v3 projection | macOS owner | `X-001`, web rollout evidence | launcher TS/Swift projection and presentation files | optional Continuation board, older reader compatibility | unknown version fail closed, Active fallback 유지 | Decoder/Swift tests, manual launcher check | Launcher rollout approval required |
 | `M-001` | Monitor, replay, feedback | Observability + Evaluation owner | `C-001`, then each runtime phase | monitoring/replay schema, feedback store | provenance, lane metrics, explicit feedback | implicit signal Gold 금지, resettable preference | Schema/replay/privacy tests | Retention/feedback approval required |
@@ -529,8 +593,9 @@ Deferred 항목은 이 문서의 MVP acceptance에 포함하지 않는다. 각 �
 - 2026-08-13 KST 최종 validation에서 `npm run typecheck`, targeted Vitest 9 files/119 tests와 `npm run lint`가 모두 pass했다. 두 final E-001 v0.3 runs도 22 total/measured/pass, 12/12 contract, 9/9 resolver, 1/1 Board, 0 failed/deferred와 critical error 0으로 pass했다. 이 checkpoint는 contract/provenance/scoring/resolver/Board regression evidence이며 quality baseline이나 release evidence가 아니다.
 - Dataset `suggestion-continuation-dev-v0.1` revision 3은 mutable/unfrozen Dev Candidate이며 freeze 또는 human-approved Gold가 아니다. Human review는 `not_started`, Acceptable@1/3과 setup quality는 null, `releaseGateApplicable=false`, release decision은 deferred이고 release는 승인되지 않았다.
 - Historical v0.1/v0.2 dataset, config와 run artifacts는 다시 쓰지 않았다. Final v0.3 runs는 comparison/improvement run이 아니며 private full artifacts는 Git 밖 `.local/`에 mode 0600으로 유지한다. Artifact hashes가 run별 receipt 때문에 달라지는 것은 예상된 동작이다.
-- A-001 slice의 exact flag는 `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED`이며 default-off다. `GET /api/work-board`는 local/safe-origin/no-store 경계 안에 있고 unsafe/unavailable shadow 결과는 bounded Active-only fallback을 유지한다. New `publicTextSafety.ts`가 public contracts/projection에서 credential-shaped public text를 fail closed한다. Action, Board/result persistence, source refresh, external mutation, telemetry, WorkCockpit, `/api/continuation`과 `/api/continuation/open`은 추가되지 않았다.
-- Existing Attention/store read path는 lease 획득과 bounded recovery, temp cleanup 또는 retention maintenance를 수행할 수 있다. 따라서 이 GET을 filesystem-byte-pure 또는 zero-local-mutation으로 주장하지 않는다. No-new-persistence/privacy claim은 Board/result/telemetry/source-refresh 경계에 한정한다.
-- 2026-08-13 KST current-head A-001 validation에서 `npm run typecheck`, targeted Vitest 5 files/52 tests (`liveWorkBoardShadow`, `workBoardRoute`, `suggestionBoardContracts`, `continuationContracts`, `continuationResolver`)와 `npm run lint`가 모두 pass했다. 이 run은 public-text safety와 documented local-side-effect boundary를 포함한다. Core engine ranking/input/output semantics와 E-001 v0.3 dataset은 바뀌지 않아 baseline은 N/A다.
-- Medium residual은 bounded local review에만 수용된다. G2/G3 production gates는 preserve-mode read 또는 atomic snapshot path가 마련될 때까지 blocked이며 public API/presentation/action/release approval도 pending이다. 다음 안전한 작업은 해당 path를 구현·검증한 뒤 default-off/on local API·Attention Lab smoke와 safe-origin/no-store/credential-text rejection/Active-only fallback review를 수행하는 것이다.
+- Work Board의 exact flag는 `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED`, formal Continuation read의 exact flag는 `BLABASE_CONTINUATION_READ_ENABLED`이며 둘 다 default-off다. 두 GET은 local/safe-origin/configured Basic auth/no-store 경계 안에 있다. Work Board의 unsafe/unavailable shadow 결과는 bounded Active-only fallback을 유지하고, Continuation GET은 같은 단일 preserve capture의 authenticated R3 decision만 strict `continuation-read-api-v0.1`로 투영한다. New `publicTextSafety.ts`와 route-specific strict text/schema boundary가 credential, path/URL, internal ref/hash 형태를 fail closed한다. Action, Board/result persistence, source refresh, external mutation, telemetry, WorkCockpit과 `/api/continuation/open`은 추가되지 않았다.
+- A-001 PR-001은 shared `LocalReadMode`와 connector preserve mode, `readManagedCodexObservabilityPreservingState`, `readWorkArtifactAttributionStorePreservingState`를 additive하게 구현했다. Preserve 경로는 stale-temp cleanup, mkdir/chmod, lease, settlement recovery, rename/write/unlink 및 disk retention maintenance를 수행하지 않는다. Pending/temp/lock/corrupt/partial/unsafe/unstable state는 current로 승격하지 않고 fail closed하며 legacy migration과 retention projection은 in-memory only다. 기존 caller의 default는 `maintain`으로 호환된다.
+- PR-002는 Work Board GET/intent base evaluation을 coherent preserve capture에 연결했다. `/api/attention`과 기존 caller는 default `maintain`을 유지하며, Work Board 내부 경로만 `preserve`와 `refreshSources=false`를 강제한다. Base state가 unstable/unsafe/recovery-needed이면 sanitized 503, optional semantic state만 불안정하면 200 base와 overlay null이다.
+- 2026-08-13 KST PR-002 validation에서 `npm run typecheck`, targeted Vitest 21 files/150 tests, `npm run lint`와 `git diff --check`가 pass했다. Filesystem evidence는 atime을 제외한 content/type/mode/uid/gid/dev/ino/nlink/size/mtime/ctime/hash, scope isolation, one retry, lock/temp/settlement/corrupt/replacement, missing-state no-create, fixed clock, maintain compatibility, route 503/overlay fallback과 실제 non-empty full-Board whole-cwd fixture를 포함한다. Core engine ranking/input/output semantics와 E-001 v0.3 dataset은 바뀌지 않아 baseline은 N/A다.
+- PR-002 automated gate는 통과했지만 manual authenticated browser/Attention Lab smoke, default-off/on privacy review, production G2/G3와 human release approval은 남아 있다. Public action, Board-result persistence, dataset freeze 또는 release readiness는 승인되지 않았다.
 - 새 production dependency는 추가하지 않았다.

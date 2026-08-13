@@ -30,6 +30,7 @@ import {
 } from "../connectors/notion/localStore";
 import type { NotionSnapshot } from "../connectors/notion/types";
 import type { Phase2SourceInput } from "../crossSource/attentionSchema";
+import { WorkArtifactAttributionError } from "../artifacts/attributionStore";
 import type {
   FreshnessPolicy,
   RuntimeWorkSignalBatch
@@ -51,6 +52,7 @@ import {
   readWeeklyOutcomeStore,
   resolveConfirmedRepositoryScopeLinks,
   resolveAttentionWorkContext,
+  resolveAttentionWorkContextFromStoreReads,
   resolveStoredAttentionWorkContext,
   type SourceScopeRef,
   type WorkContextRegistry
@@ -70,10 +72,15 @@ import {
   buildDeveloperRuntimeProjection,
   type DeveloperRuntimeProjection
 } from "../developerSignals/runtimeProjection";
-import { loadSharedLocalEnv } from "../localEnv";
+import {
+  createSharedLocalEnvSnapshot,
+  loadSharedLocalEnv
+} from "../localEnv";
+import type { LocalReadMode } from "../localReadMode";
 import { syncRuntimeSources } from "../sync/runtime";
 import {
   resolveCurrentWorkEvidenceAtAuthoritySnapshot,
+  resolveCurrentWorkEvidenceAtPreservedAuthoritySnapshot,
   resolveEmptyManagedWorkEvidence,
   type CurrentWorkEvidence
 } from "../workEvidence/currentWorkEvidence";
@@ -83,6 +90,9 @@ import {
   resolveProjectWorkflowProjection,
   type ProjectWorkflowProjection
 } from "../workflows";
+import { ProjectWorkflowStoreError } from "../workflows/store";
+import { ManagedCodexStoreError } from "../managedCodex/store";
+import { WorkResumptionStoreError } from "../resumption/store";
 import type { RecentMeaningfulEventProjection } from "../recentEvents";
 import {
   createDependencyMismatchFocusAwareAttentionShadow,
@@ -132,6 +142,10 @@ import {
   resolveAttentionCodeProvenance,
   type AttentionCodeProvenance
 } from "./codeProvenance";
+import {
+  capturePreservingLocalState,
+  PreserveCaptureError
+} from "./preserveCapture";
 
 export const LIVE_ATTENTION_FRESHNESS_POLICY: FreshnessPolicy = {
   version: ATTENTION_LIVE_FRESHNESS_POLICY_VERSION,
@@ -198,6 +212,19 @@ export type LiveAttentionCapturedInputs = {
   codeProvenance: AttentionCodeProvenance;
 };
 
+export type LiveReadMode = LocalReadMode;
+
+type LiveAttentionInput = {
+  cwd?: string;
+  now?: Date;
+  startedAt?: Date;
+  env?: NodeJS.ProcessEnv;
+  refreshSources?: boolean;
+  readMode?: LiveReadMode;
+  executionIds?: AttentionExecutionIds;
+  codeProvenance?: AttentionCodeProvenance;
+};
+
 export function asEphemeralAttentionPreview(
   runInput: AttentionMonitorRun
 ): AttentionMonitorRun {
@@ -212,15 +239,9 @@ export function asEphemeralAttentionPreview(
   });
 }
 
-export async function evaluateCurrentAttention(input?: {
-  cwd?: string;
-  now?: Date;
-  startedAt?: Date;
-  env?: NodeJS.ProcessEnv;
-  refreshSources?: boolean;
-  executionIds?: AttentionExecutionIds;
-  codeProvenance?: AttentionCodeProvenance;
-}): Promise<EvaluatedAttention> {
+export async function evaluateCurrentAttention(
+  input?: LiveAttentionInput
+): Promise<EvaluatedAttention> {
   return (await evaluateCurrentAttentionWithLiveInputs(input)).evaluated;
 }
 
@@ -228,28 +249,85 @@ export async function evaluateCurrentAttention(input?: {
  * Captures each private live dependency once so sibling shadow engines can use
  * the exact same raw snapshots, registry and as-of without rereading stores.
  */
-export async function evaluateCurrentAttentionWithLiveInputs(input?: {
-  cwd?: string;
-  now?: Date;
-  startedAt?: Date;
-  env?: NodeJS.ProcessEnv;
-  refreshSources?: boolean;
-  executionIds?: AttentionExecutionIds;
-  codeProvenance?: AttentionCodeProvenance;
-}): Promise<LiveAttentionCapturedInputs> {
+export async function evaluateCurrentAttentionWithLiveInputs(
+  input?: LiveAttentionInput
+): Promise<LiveAttentionCapturedInputs> {
+  const readMode = input?.readMode ?? "maintain";
+  if (readMode === "preserve" && input?.refreshSources) {
+    throw new TypeError(
+      "Preserve-mode live Attention cannot refresh sources."
+    );
+  }
+  if (readMode === "preserve") {
+    const cwd = input?.cwd ?? process.cwd();
+    const capturedNow = new Date(
+      input?.now?.getTime() ?? Date.now()
+    );
+    let requestEnv: NodeJS.ProcessEnv;
+    try {
+      requestEnv = createSharedLocalEnvSnapshot(
+        input?.env ?? process.env,
+        { cwd, mode: "preserve" }
+      );
+    } catch {
+      throw new PreserveCaptureError("PRESERVE_CAPTURE_INVALID");
+    }
+    return capturePreservingLocalState({
+      cwd,
+      read: async () => {
+        try {
+          return await captureCurrentAttentionInputs(
+            {
+              ...input,
+              cwd,
+              now: capturedNow,
+              startedAt: capturedNow,
+              env: requestEnv
+            },
+            readMode
+          );
+        } catch (error) {
+          if (isPreserveReadBoundaryError(error)) {
+            throw new PreserveCaptureError(
+              "PRESERVE_CAPTURE_READ_FAILED"
+            );
+          }
+          throw error;
+        }
+      }
+    });
+  }
+  return captureCurrentAttentionInputs(input, readMode);
+}
+
+function isPreserveReadBoundaryError(error: unknown): boolean {
+  return (
+    error instanceof WorkResumptionStoreError ||
+    error instanceof ProjectWorkflowStoreError ||
+    error instanceof ManagedCodexStoreError ||
+    error instanceof WorkArtifactAttributionError
+  );
+}
+
+async function captureCurrentAttentionInputs(
+  input: LiveAttentionInput | undefined,
+  readMode: LiveReadMode
+): Promise<LiveAttentionCapturedInputs> {
   const cwd = input?.cwd ?? process.cwd();
   const startedAtMs =
     input?.startedAt?.getTime() ?? input?.now?.getTime() ?? Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const env = input?.env ?? process.env;
-  loadSharedLocalEnv(env);
+  if (readMode === "maintain") {
+    loadSharedLocalEnv(env);
+  }
   if (input?.refreshSources) {
     await syncRuntimeSources({
       cwd,
       env
     });
   }
-  const codexConfig = await readStoredCodexConfig(cwd);
+  const codexConfig = await readStoredCodexConfig(cwd, readMode);
   const [
     github,
     codex,
@@ -259,13 +337,18 @@ export async function evaluateCurrentAttentionWithLiveInputs(input?: {
     localGitSnapshot
   ] =
     await Promise.all([
-    readGitHubSource(cwd, new Date(startedAtMs), env),
-    readCodexSource(cwd, codexConfig),
-    readCalendarSource(cwd),
-    readNotionSource(cwd),
+    readGitHubSource(cwd, new Date(startedAtMs), env, readMode),
+    readCodexSource(
+      cwd,
+      codexConfig,
+      readMode,
+      new Date(startedAtMs)
+    ),
+    readCalendarSource(cwd, readMode),
+    readNotionSource(cwd, readMode),
     input?.codeProvenance ??
-      resolveAttentionCodeProvenance(cwd, env),
-    readStoredCodexLocalGitSnapshot(cwd)
+      resolveAttentionCodeProvenance(cwd, env, { mode: readMode }),
+    readStoredCodexLocalGitSnapshot(cwd, readMode)
   ]);
   const sourceScopes = attentionSourceScopes({
     github,
@@ -274,24 +357,45 @@ export async function evaluateCurrentAttentionWithLiveInputs(input?: {
     notion
   });
   const [registryRead, outcomeRead, workflowStore] = await Promise.all([
-    readWorkContextRegistry(cwd),
-    readWeeklyOutcomeStore(cwd),
-    readProjectWorkflowStore(cwd)
+    readWorkContextRegistry(cwd, readMode),
+    readWeeklyOutcomeStore(cwd, readMode),
+    readProjectWorkflowStore(cwd, readMode)
   ]);
   const registry =
     registryRead.status === "available" ? registryRead.value : null;
   const currentWorkEvidence =
-    await resolveCurrentWorkEvidenceAtAuthoritySnapshot({
-      cwd,
-      ...(input?.now ? { now: input.now } : {}),
-      contextRegistry: registry,
-      resolveGithubBatch: (asOf) => {
-        const normalized = normalizeGitHubSource(github, asOf, registry);
-        return normalized.sourceInput.status === "available"
-          ? normalized.sourceInput.batch
-          : null;
-      }
-    });
+    readMode === "preserve"
+      ? await resolveCurrentWorkEvidenceAtPreservedAuthoritySnapshot({
+          cwd,
+          now: input?.now ?? new Date(startedAtMs),
+          codexConfig,
+          contextRegistry: registry,
+          resolveGithubBatch: (asOf: string) => {
+            const normalized = normalizeGitHubSource(
+              github,
+              asOf,
+              registry
+            );
+            return normalized.sourceInput.status === "available"
+              ? normalized.sourceInput.batch
+              : null;
+          }
+        })
+      : await resolveCurrentWorkEvidenceAtAuthoritySnapshot({
+          cwd,
+          ...(input?.now ? { now: input.now } : {}),
+          contextRegistry: registry,
+          resolveGithubBatch: (asOf) => {
+            const normalized = normalizeGitHubSource(
+              github,
+              asOf,
+              registry
+            );
+            return normalized.sourceInput.status === "available"
+              ? normalized.sourceInput.batch
+              : null;
+          }
+        });
   const asOf = currentWorkEvidence.asOf;
   const context =
     registryRead.status === "available" &&
@@ -305,11 +409,18 @@ export async function evaluateCurrentAttentionWithLiveInputs(input?: {
           sourceScopes,
           asOf
         })
-      : await resolveStoredAttentionWorkContext({
-          sourceScopes,
-          asOf,
-          cwd
-        });
+      : readMode === "preserve"
+        ? resolveAttentionWorkContextFromStoreReads({
+            sourceScopes,
+            asOf,
+            registryRead,
+            outcomeRead
+          })
+        : await resolveStoredAttentionWorkContext({
+            sourceScopes,
+            asOf,
+            cwd
+          });
   const workflowProjection = resolveProjectWorkflowProjection({
     store: workflowStore,
     asOf
@@ -345,9 +456,10 @@ export async function evaluateCurrentAttentionWithLiveInputs(input?: {
       resolveRecentWorkPresentationMode(env),
     asOf,
     startedAt,
-    completionClock: input?.now
-      ? () => startedAtMs
-      : () => Date.now(),
+    completionClock:
+      readMode === "preserve" || input?.now
+        ? () => startedAtMs
+        : () => Date.now(),
     executionIds: input?.executionIds,
     ...capturedCodeProvenance
   });
@@ -1094,12 +1206,13 @@ function supportingNotionMonitor(
 async function readGitHubSource(
   cwd: string,
   now: Date,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  readMode: LiveReadMode
 ): Promise<LiveSourceSnapshot<GitHubSnapshot>> {
   const configResult = loadGitHubConfig(env);
   const [tokens, snapshot] = await Promise.all([
-    readStoredGitHubTokens(cwd),
-    readStoredGitHubSnapshot(cwd)
+    readStoredGitHubTokens(cwd, readMode),
+    readStoredGitHubSnapshot(cwd, readMode)
   ]);
   if (
     !configResult.ok ||
@@ -1125,9 +1238,11 @@ async function readGitHubSource(
 
 async function readCodexSource(
   cwd: string,
-  config: StoredCodexConfig | null
+  config: StoredCodexConfig | null,
+  readMode: LiveReadMode,
+  asOf: Date
 ): Promise<LiveSourceSnapshot<CodexSnapshot>> {
-  const snapshot = await readStoredCodexSnapshot(cwd);
+  const snapshot = await readStoredCodexSnapshot(cwd, readMode, asOf);
   if (
     !config ||
     config.selectedScopeIds.length === 0 ||
@@ -1147,11 +1262,12 @@ async function readCodexSource(
 }
 
 async function readCalendarSource(
-  cwd: string
+  cwd: string,
+  readMode: LiveReadMode
 ): Promise<LiveSourceSnapshot<GoogleCalendarSnapshot>> {
   const [tokens, snapshot] = await Promise.all([
-    readStoredCalendarTokens(cwd),
-    readStoredCalendarSnapshot(cwd)
+    readStoredCalendarTokens(cwd, readMode),
+    readStoredCalendarSnapshot(cwd, readMode)
   ]);
   if (!tokens) {
     return {
@@ -1166,11 +1282,12 @@ async function readCalendarSource(
 }
 
 async function readNotionSource(
-  cwd: string
+  cwd: string,
+  readMode: LiveReadMode
 ): Promise<LiveSourceSnapshot<NotionSnapshot>> {
   const [tokens, snapshot] = await Promise.all([
-    readStoredNotionTokens(cwd),
-    readStoredNotionSnapshot(cwd)
+    readStoredNotionTokens(cwd, readMode),
+    readStoredNotionSnapshot(cwd, readMode)
   ]);
   if (!tokens) {
     return {

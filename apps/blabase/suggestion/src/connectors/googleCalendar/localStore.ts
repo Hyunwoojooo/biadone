@@ -1,7 +1,6 @@
 import {
   chmod,
   mkdir,
-  readFile,
   rename,
   unlink,
   writeFile
@@ -15,6 +14,10 @@ import {
   cleanupStaleConnectorTempFiles,
   withActiveConnectorTempFile
 } from "../localTempCleanup";
+import {
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../../localReadMode";
 import type {
   GoogleCalendarSnapshot,
   StoredGoogleCalendarTokens
@@ -77,13 +80,17 @@ export function googleCalendarLocalDirectory(cwd = process.cwd()): string {
 }
 
 export async function readStoredTokens(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoredGoogleCalendarTokens | null> {
-  await cleanupStaleGoogleCalendarTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleGoogleCalendarTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(googleCalendarLocalDirectory(cwd), "tokens.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return tokensSchema.parse(JSON.parse(text));
   } catch {
@@ -149,13 +156,17 @@ export async function deleteStoredTokens(cwd = process.cwd()): Promise<void> {
 }
 
 export async function readStoredSnapshot(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<GoogleCalendarSnapshot | null> {
-  await cleanupStaleGoogleCalendarTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleGoogleCalendarTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(googleCalendarLocalDirectory(cwd), "snapshot.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return snapshotSchema.parse(JSON.parse(text));
   } catch {

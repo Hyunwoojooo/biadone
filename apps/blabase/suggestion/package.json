@@ -32,6 +32,7 @@
     "current-focus:baseline": "vite-node tools/run-current-focus-baseline.ts",
     "recent-work:baseline": "vite-node tools/run-recent-work-baseline.ts",
     "continuation:baseline": "vite-node tools/run-continuation-baseline.ts",
+    "semantic-validation": "vite-node tools/run-semantic-validation.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern '.next/**' --ignore-pattern '.next-dev/**' --ignore-pattern '.next-build/**'",
     "test": "vitest run",

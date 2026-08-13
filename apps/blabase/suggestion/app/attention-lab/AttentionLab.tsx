@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import {
+  type FormEvent,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -22,10 +24,16 @@ import type {
   WorkBoardApiResponse,
   WorkBoardReadyResponse
 } from "../../src/suggestionBoard/monitoringSchema";
+import type {
+  SemanticContinuationTitlePresentation,
+  SemanticContinuationWorkBoardResponse
+} from "../../src/semanticContinuation/contracts";
 import {
+  confirmWorkBoardIntent,
   fetchAttention,
   fetchAttentionHistory,
-  fetchWorkBoard
+  fetchWorkBoard,
+  semanticContinuationTitlePreview
 } from "../attentionClient";
 import { syncInvalidationBus } from "../sync/invalidationBus";
 import {
@@ -42,7 +50,7 @@ export function AttentionLab() {
   const [history, setHistory] =
     useState<AttentionHistoryResponse | null>(null);
   const [workBoard, setWorkBoard] =
-    useState<WorkBoardApiResponse | null>(null);
+    useState<SemanticContinuationWorkBoardResponse | null>(null);
   const [workBoardLoadFailed, setWorkBoardLoadFailed] =
     useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
@@ -53,6 +61,8 @@ export function AttentionLab() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const sequenceRef = useRef(0);
   const interactiveSequenceRef = useRef<number | null>(null);
+  const continuationSuggestionRef = useRef<HTMLElement>(null);
+  const didRevealContinuationRef = useRef(false);
   useSourceSyncRuntime();
 
   const loadPreview = useCallback(async (silent = false) => {
@@ -173,6 +183,41 @@ export function AttentionLab() {
     runImmediately: false
   });
 
+  useEffect(() => {
+    if (
+      didRevealContinuationRef.current ||
+      !hasReadyContinuationPrimary(workBoard?.base ?? null)
+    ) {
+      return;
+    }
+    didRevealContinuationRef.current = true;
+
+    const panel = continuationSuggestionRef.current;
+    const activeElement = document.activeElement;
+    const anotherAnchorWasRequested =
+      window.location.hash !== "" &&
+      window.location.hash !== "#continuation-suggestion";
+    if (
+      panel === null ||
+      anotherAnchorWasRequested ||
+      (activeElement !== null && activeElement !== document.body)
+    ) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      panel.focus({ preventScroll: true });
+      panel.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+          .matches
+          ? "auto"
+          : "smooth",
+        block: "start"
+      });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [workBoard]);
+
   const selectedEntry = useMemo(() => {
     if (history?.status !== "ready") return null;
     return (
@@ -243,8 +288,16 @@ export function AttentionLab() {
       ) : null}
 
       <ContinuationShadowPanel
-        response={workBoard}
+        response={workBoard?.base ?? null}
+        semanticPresentation={workBoard?.semanticPresentation ?? null}
         loadFailed={workBoardLoadFailed}
+        activeDecisionStatus={
+          current?.status === "ready"
+            ? current.result.decision.status
+            : null
+        }
+        panelRef={continuationSuggestionRef}
+        onIntentConfirmed={() => loadPreview(true)}
       />
       <CurrentFocusDiagnosticsPanel response={current} />
       <EligibilityShadowPanel
@@ -283,18 +336,30 @@ type WorkBoardDisplayItem = NonNullable<
   WorkBoardReadyResponse["board"]["primary"]
 >;
 
-function ContinuationShadowPanel({
+export function ContinuationShadowPanel({
   response,
-  loadFailed
+  loadFailed,
+  activeDecisionStatus,
+  panelRef,
+  onIntentConfirmed,
+  semanticPresentation = null
 }: {
   response: WorkBoardApiResponse | null;
   loadFailed: boolean;
+  activeDecisionStatus: AttentionHistoryEntry["decisionStatus"] | null;
+  panelRef?: RefObject<HTMLElement | null>;
+  onIntentConfirmed?: () => Promise<void> | void;
+  semanticPresentation?: SemanticContinuationTitlePresentation | null;
 }) {
   const state = continuationShadowState(response, loadFailed);
+  const suggestionLabel = continuationSuggestionLabel(response, state.label);
 
   return (
     <section
-      className="labEligibilityPanel"
+      className="labEligibilityPanel labContinuationDecisionPanel"
+      id="continuation-suggestion"
+      ref={panelRef}
+      tabIndex={-1}
       aria-labelledby="continuation-shadow-title"
       aria-live="polite"
     >
@@ -303,15 +368,40 @@ function ContinuationShadowPanel({
           <p className="eyebrow">Read-only preview</p>
           <h2 id="continuation-shadow-title">Continuation shadow</h2>
         </div>
-        <span>{state.label}</span>
+        <span>{suggestionLabel}</span>
       </div>
       <p className="labEligibilityBoundary">
-        Attention, Continuation, Setup의 표시 순서만 미리 확인합니다. 이
-        패널에서는 항목을 열거나 실행하거나 저장하지 않습니다.
+        Continuation Board와 기존 Active Attention은 서로 다른 평가
+        경로입니다. 명시적으로 확인한 QA 제목만 로컬에 최대 24시간
+        저장할 수 있으며, 항목 실행·결과 반영·외부 변경은 하지 않습니다.
       </p>
 
+      <div
+        className="labFocusComparison"
+        aria-label="Continuation과 Active Attention 상태 비교"
+      >
+        <div>
+          <span>우선 표시 · Read-only</span>
+          <strong>{suggestionLabel}</strong>
+        </div>
+        <div>
+          <span>기존 판정 · 유지</span>
+          <strong>
+            {activeAttentionStatusLabel(activeDecisionStatus)}
+          </strong>
+        </div>
+        <div>
+          <span>Board mode</span>
+          <strong>{state.label}</strong>
+        </div>
+      </div>
+
       {response?.status === "ready" ? (
-        <WorkBoardPreview response={response} />
+        <WorkBoardPreview
+          response={response}
+          semanticPresentation={semanticPresentation}
+          onIntentConfirmed={onIntentConfirmed}
+        />
       ) : (
         <p className="labEmpty" role={loadFailed ? "alert" : "status"}>
           {state.message}
@@ -322,11 +412,19 @@ function ContinuationShadowPanel({
 }
 
 function WorkBoardPreview({
-  response
+  response,
+  semanticPresentation,
+  onIntentConfirmed
 }: {
   response: WorkBoardReadyResponse;
+  semanticPresentation: SemanticContinuationTitlePresentation | null;
+  onIntentConfirmed?: () => Promise<void> | void;
 }) {
   const { board } = response;
+  const primaryDisplayTitle =
+    board.primary === null
+      ? null
+      : semanticDisplayTitle(board.primary, semanticPresentation);
   return (
     <>
       {response.mode === "active_only_fallback" ? (
@@ -360,7 +458,7 @@ function WorkBoardPreview({
         <article className="labFocusSelection">
           <div>
             <span>Primary · {workBoardLaneLabel(board.primary.lane)}</span>
-            <strong>{board.primary.item.title}</strong>
+            <strong>{primaryDisplayTitle}</strong>
           </div>
           <dl>
             <div>
@@ -371,7 +469,7 @@ function WorkBoardPreview({
               <dt>position</dt>
               <dd>Board primary</dd>
             </div>
-            {board.primary.item.summary !== board.primary.item.title ? (
+            {board.primary.item.summary !== primaryDisplayTitle ? (
               <div>
                 <dt>summary</dt>
                 <dd>{board.primary.item.summary}</dd>
@@ -383,16 +481,29 @@ function WorkBoardPreview({
         <p className="labEmpty">현재 Board에 표시할 primary가 없습니다.</p>
       )}
 
+      {semanticIntentEligiblePrimary(response) ? (
+        <SemanticContinuationIntentForm
+          item={response.board.primary}
+          onConfirmed={onIntentConfirmed}
+        />
+      ) : null}
+
       {board.alternatives.length > 0 ? (
         <ol className="labActiveRanking" aria-label="Board alternatives">
           {board.alternatives.map((alternative, index) => (
             <li key={`${alternative.lane}-${index}`}>
               <span>대안 {index + 1}</span>
               <div>
-                <strong>{alternative.item.title}</strong>
+                <strong>
+                  {semanticDisplayTitle(
+                    alternative,
+                    semanticPresentation
+                  )}
+                </strong>
                 <small>
                   {workBoardLaneLabel(alternative.lane)}
-                  {alternative.item.summary !== alternative.item.title
+                  {alternative.item.summary !==
+                  semanticDisplayTitle(alternative, semanticPresentation)
                     ? ` · ${alternative.item.summary}`
                     : ""}
                 </small>
@@ -406,6 +517,119 @@ function WorkBoardPreview({
         </p>
       )}
     </>
+  );
+}
+
+function SemanticContinuationIntentForm({
+  item,
+  onConfirmed
+}: {
+  item: WorkBoardDisplayItem;
+  onConfirmed?: () => Promise<void> | void;
+}) {
+  const [subjectLabel, setSubjectLabel] = useState("");
+  const [state, setState] = useState<
+    "idle" | "saving" | "confirmed" | "error"
+  >("idle");
+  const previewTitle = semanticContinuationTitlePreview(subjectLabel);
+  const workContextRef = item.item.workContextRef;
+  if (
+    item.lane !== "continuation" ||
+    workContextRef === null
+  ) {
+    return null;
+  }
+  const confirmedWorkContextRef: string = workContextRef;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setState("saving");
+    try {
+      const response = await confirmWorkBoardIntent({
+        intent: "QA_RUN",
+        subjectLabel,
+        itemRef: item.item.itemRef,
+        workContextRef: confirmedWorkContextRef,
+        explicitUserConfirmation: true
+      });
+      if (response.status !== "confirmed") {
+        setState("error");
+        return;
+      }
+      setState("confirmed");
+      await onConfirmed?.();
+    } catch {
+      setState("error");
+    }
+  }
+
+  return (
+    <form className="labSemanticIntent" onSubmit={submit}>
+      <label htmlFor="semantic-continuation-subject">
+        QA 대상 이름
+      </label>
+      <div>
+        <input
+          id="semantic-continuation-subject"
+          name="subjectLabel"
+          value={subjectLabel}
+          onChange={(event) => setSubjectLabel(event.target.value)}
+          minLength={1}
+          maxLength={80}
+          autoComplete="off"
+          placeholder="예: blabase"
+          disabled={state === "saving"}
+          required
+        />
+        <button
+          type="submit"
+          disabled={state === "saving" || previewTitle === null}
+        >
+          {state === "saving" ? "확인 저장 중" : "QA 진행 제목으로 확인"}
+        </button>
+      </div>
+      <output htmlFor="semantic-continuation-subject" aria-live="polite">
+        {previewTitle === null
+          ? "제목 미리보기 · 안전한 QA 대상 이름을 입력하세요."
+          : `제목 미리보기 · ${previewTitle}`}
+      </output>
+      <p role={state === "error" ? "alert" : "status"}>
+        {state === "confirmed"
+          ? "명시적으로 확인했습니다. 실행이나 QA 결과 기록은 만들지 않습니다."
+          : state === "error"
+            ? "현재 후보가 바뀌었거나 확인을 저장하지 못했습니다."
+            : "확인하면 이 로컬 Board 제목에만 반영됩니다."}
+      </p>
+    </form>
+  );
+}
+
+function semanticDisplayTitle(
+  item: WorkBoardDisplayItem,
+  presentation: SemanticContinuationTitlePresentation | null
+): string {
+  return (
+    presentation?.overlays.find(
+      (overlay) => overlay.itemRef === item.item.itemRef
+    )?.displayTitle ?? item.item.title
+  );
+}
+
+function semanticIntentEligiblePrimary(
+  response: WorkBoardReadyResponse
+): response is WorkBoardReadyResponse & {
+  board: WorkBoardReadyResponse["board"] & {
+    primary: WorkBoardDisplayItem;
+  };
+} {
+  const primary = response.board.primary;
+  return (
+    response.mode === "full" &&
+    response.board.continuationStatus === "available" &&
+    primary?.lane === "continuation" &&
+    primary.item.workContextRef !== null &&
+    primary.item.capability === "display" &&
+    primary.item.action === null
   );
 }
 
@@ -438,6 +662,42 @@ function continuationShadowState(
     return { label: "비활성화", message: response.message };
   }
   return { label: "사용 불가", message: response.message };
+}
+
+function continuationSuggestionLabel(
+  response: WorkBoardApiResponse | null,
+  fallbackLabel: string
+): string {
+  if (response?.status !== "ready") {
+    return `Continuation 제안 ${fallbackLabel}`;
+  }
+  switch (response.board.continuationStatus) {
+    case "available":
+      return "Continuation 제안 사용 가능";
+    case "empty":
+      return "Continuation 제안 없음";
+    case "unavailable":
+      return "Continuation 제안 사용 불가";
+  }
+}
+
+function hasReadyContinuationPrimary(
+  response: WorkBoardApiResponse | null
+): boolean {
+  return (
+    response?.status === "ready" &&
+    response.board.continuationStatus === "available" &&
+    response.board.prominentLane === "continuation" &&
+    response.board.primary?.lane === "continuation"
+  );
+}
+
+function activeAttentionStatusLabel(
+  status: AttentionHistoryEntry["decisionStatus"] | null
+): string {
+  return status === null
+    ? "Active Attention 확인 중"
+    : `Active Attention ${decisionLabel(status)}`;
 }
 
 function workBoardLaneLabel(
@@ -815,7 +1075,7 @@ function ActiveDecisionPanel({
           <p className="eyebrow">Phase 4B · Active</p>
           <h2 id="active-decision-title">실제 추천 결정</h2>
         </div>
-        <span>{decisionLabel(result.decision.status)}</span>
+        <span>{activeAttentionStatusLabel(result.decision.status)}</span>
       </div>
       <p className="labEligibilityBoundary">
         GitHub 작업과 Blabase가 직접 관찰한 managed Codex 실패·설정된 완료

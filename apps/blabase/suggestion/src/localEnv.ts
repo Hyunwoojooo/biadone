@@ -1,4 +1,7 @@
 import { readFileSync } from "node:fs";
+import { types as utilTypes } from "node:util";
+
+import type { LocalReadMode } from "./localReadMode";
 
 const ALLOWED_SHARED_ENV_KEYS = new Set([
   "BLABASE_CODEX_BINARY_PATH",
@@ -27,6 +30,46 @@ const ALLOWED_SHARED_ENV_KEYS = new Set([
 
 let loadedPath: string | null = null;
 
+export type SharedLocalEnvSnapshotOptions = {
+  cwd?: string;
+  mode?: LocalReadMode;
+};
+
+/**
+ * Creates a request-local environment view without reading accessor properties
+ * or mutating the supplied object. Preserve mode is deliberately declared-only:
+ * it never consults `.env.local`, a shared env file, or the legacy module cache.
+ */
+export function createSharedLocalEnvSnapshot(
+  env: NodeJS.ProcessEnv = process.env,
+  options: SharedLocalEnvSnapshotOptions = {}
+): NodeJS.ProcessEnv {
+  const mode = options.mode ?? "maintain";
+  const snapshot = copyOwnEnvironmentData(env, mode);
+  if (mode === "preserve") return snapshot;
+
+  const cwd = options.cwd ?? process.cwd();
+  const filePath =
+    snapshot.BLABASE_SHARED_ENV_PATH?.trim() ??
+    readLocalPointerFile(cwd);
+  if (!filePath) return snapshot;
+
+  let contents: string;
+  try {
+    contents = readFileSync(filePath, "utf8");
+  } catch {
+    return snapshot;
+  }
+
+  const values = parseSharedEnvText(contents);
+  for (const [key, value] of Object.entries(values)) {
+    if (ALLOWED_SHARED_ENV_KEYS.has(key) && !snapshot[key]) {
+      snapshot[key] = value;
+    }
+  }
+  return snapshot;
+}
+
 export function loadSharedLocalEnv(
   env: NodeJS.ProcessEnv = process.env
 ): void {
@@ -52,15 +95,98 @@ export function loadSharedLocalEnv(
   loadedPath = filePath;
 }
 
-function readLocalPointerFile(): string | undefined {
+function readLocalPointerFile(cwd = process.cwd()): string | undefined {
   try {
     const localValues = parseSharedEnvText(
-      readFileSync(`${process.cwd()}/.env.local`, "utf8")
+      readFileSync(`${cwd}/.env.local`, "utf8")
     );
     return localValues.BLABASE_SHARED_ENV_PATH?.trim() || undefined;
   } catch {
     return undefined;
   }
+}
+
+function copyOwnEnvironmentData(
+  env: NodeJS.ProcessEnv,
+  mode: LocalReadMode
+): NodeJS.ProcessEnv {
+  if (utilTypes.isProxy(env)) {
+    throw new TypeError("Environment snapshot rejected an unsafe object.");
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  let prototype: object | null;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(env);
+    prototype = Object.getPrototypeOf(env);
+  } catch {
+    throw new TypeError("Environment snapshot rejected an unsafe object.");
+  }
+
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  if (
+    mode === "preserve" &&
+    (descriptorKeys.some((key) => typeof key !== "string") ||
+      descriptorKeys.some((key) => {
+        const descriptor = descriptors[key];
+        return (
+          descriptor === undefined ||
+          !descriptor.enumerable ||
+          !("value" in descriptor) ||
+          (typeof descriptor.value !== "string" &&
+            descriptor.value !== undefined)
+        );
+      }) ||
+      hasEnumerableInheritedEnvironmentData(prototype))
+  ) {
+    throw new TypeError("Environment snapshot rejected an unsafe object.");
+  }
+
+  const snapshot = Object.create(null) as NodeJS.ProcessEnv;
+  for (const key of descriptorKeys) {
+    if (typeof key !== "string") continue;
+    const descriptor = descriptors[key];
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !("value" in descriptor) ||
+      (typeof descriptor.value !== "string" &&
+        descriptor.value !== undefined)
+    ) {
+      continue;
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true
+    });
+  }
+  return snapshot;
+}
+
+function hasEnumerableInheritedEnvironmentData(
+  prototype: object | null
+): boolean {
+  let current = prototype;
+  while (current !== null && current !== Object.prototype) {
+    if (utilTypes.isProxy(current)) return true;
+    let descriptors: PropertyDescriptorMap;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(current);
+      current = Object.getPrototypeOf(current);
+    } catch {
+      return true;
+    }
+    if (
+      Reflect.ownKeys(descriptors).some(
+        (key) => descriptors[key]?.enumerable === true
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function parseSharedEnvText(text: string): Record<string, string> {

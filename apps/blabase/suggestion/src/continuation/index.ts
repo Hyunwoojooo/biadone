@@ -4,3 +4,4 @@ export * from "./resolveIdentity";
 export * from "./deriveCandidates";
 export * from "./scoreContinuity";
 export * from "./resolveContinuation";
+export * from "./readApi";

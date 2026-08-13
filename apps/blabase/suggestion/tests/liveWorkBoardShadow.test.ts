@@ -1,4 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const liveAttentionMock = vi.hoisted(() => ({
   capture: vi.fn()
@@ -22,8 +31,12 @@ import {
   type ActiveAttentionResult
 } from "../src/attentionDecision";
 import { continuationPublicItemSchema } from "../src/continuation/contracts";
+import { continuationReadDecisionSchema } from "../src/continuation/readApi";
 import {
   composeCapturedBoard,
+  composeCapturedBoardResolution,
+  evaluateLiveContinuationRead,
+  evaluateLiveSemanticWorkSuggestionBoard,
   evaluateLiveWorkSuggestionBoard
 } from "../src/suggestionBoard/liveShadow";
 import {
@@ -68,6 +81,15 @@ const ORDINARY_PUBLIC_TEXTS = [
   "Secret Garden release notes",
   "비밀번호와 토큰 보안 정책을 검토합니다"
 ] as const;
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true })
+    )
+  );
+});
 
 describe("Work Board public projection", () => {
   it("runtime-parses every public projection and keeps private lineage opaque", () => {
@@ -258,6 +280,61 @@ describe("Work Board public projection", () => {
 });
 
 describe("live Work Board shadow", () => {
+  it("keeps the strict base response unchanged inside the semantic presentation wrapper", async () => {
+    const captured = capturedInput();
+    const expectedBase = composeCapturedBoard(captured);
+    liveAttentionMock.capture.mockReset();
+    liveAttentionMock.capture.mockResolvedValue(captured);
+
+    const response = await evaluateLiveSemanticWorkSuggestionBoard({
+      cwd: "/synthetic/missing-semantic-store",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" }
+    });
+
+    expect(liveAttentionMock.capture).toHaveBeenCalledTimes(1);
+    expect(liveAttentionMock.capture).toHaveBeenCalledWith({
+      cwd: "/synthetic/missing-semantic-store",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" },
+      refreshSources: false,
+      readMode: "preserve"
+    });
+    expect(response.semanticPresentation).toBeNull();
+    expect(JSON.stringify(response.base)).toBe(JSON.stringify(expectedBase));
+    expect(workBoardApiResponseSchema.parse(response.base)).toEqual(
+      expectedBase
+    );
+  });
+
+  it("keeps a ready base and drops only an unstable semantic overlay", async () => {
+    const cwd = await mkdtemp(
+      join(tmpdir(), "blabase-semantic-preserve-")
+    );
+    temporaryDirectories.push(cwd);
+    const semanticDirectory = join(
+      cwd,
+      ".local",
+      "semantic-continuation"
+    );
+    await mkdir(semanticDirectory, { recursive: true, mode: 0o700 });
+    await chmod(join(cwd, ".local"), 0o700);
+    await chmod(semanticDirectory, 0o755);
+    const captured = capturedInput();
+    const expectedBase = composeCapturedBoard(captured);
+    liveAttentionMock.capture.mockReset();
+    liveAttentionMock.capture.mockResolvedValue(captured);
+
+    const response = await evaluateLiveSemanticWorkSuggestionBoard({
+      cwd,
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" }
+    });
+
+    expect(response.semanticPresentation).toBeNull();
+    expect(JSON.stringify(response.base)).toBe(JSON.stringify(expectedBase));
+  });
+
   it("executes one capture through the real R1/R2/R3/B1 path", async () => {
     const captured = capturedInput();
     liveAttentionMock.capture.mockReset();
@@ -270,6 +347,13 @@ describe("live Work Board shadow", () => {
     });
 
     expect(liveAttentionMock.capture).toHaveBeenCalledTimes(1);
+    expect(liveAttentionMock.capture).toHaveBeenCalledWith({
+      cwd: "/synthetic/workspace",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" },
+      refreshSources: false,
+      readMode: "preserve"
+    });
     expect(response).toMatchObject({
       status: "ready",
       mode: "full",
@@ -285,13 +369,45 @@ describe("live Work Board shadow", () => {
     );
   });
 
+  it("reuses the same single capture for the exact R3 display-only read", async () => {
+    const captured = capturedInput();
+    liveAttentionMock.capture.mockReset();
+    liveAttentionMock.capture.mockResolvedValue(captured);
+
+    const response = await evaluateLiveContinuationRead({
+      cwd: "/synthetic/workspace",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" }
+    });
+
+    expect(liveAttentionMock.capture).toHaveBeenCalledTimes(1);
+    expect(liveAttentionMock.capture).toHaveBeenCalledWith({
+      cwd: "/synthetic/workspace",
+      now: new Date(ACTIVE_FIXTURE_AS_OF),
+      env: { NODE_ENV: "test" },
+      refreshSources: false,
+      readMode: "preserve"
+    });
+    expect(continuationReadDecisionSchema.parse(response)).toEqual(response);
+    expect(response.status).toBe("offers_available");
+    expect(
+      response.items.every(
+        (item) => item.capability === "display" && item.action === null
+      )
+    ).toBe(true);
+    expect(composeCapturedBoardResolution(captured).continuation).toMatchObject({
+      kind: "resolved"
+    });
+  });
+
   it("preserves verified Active output when Continuation prerequisites fail", () => {
     const captured = capturedInput();
-    const response = composeCapturedBoard({
+    const resolution = composeCapturedBoardResolution({
       ...captured,
       registryStatus: "missing",
       registry: null
     });
+    const response = resolution.response;
 
     expect(response).toMatchObject({
       status: "ready",
@@ -312,6 +428,7 @@ describe("live Work Board shadow", () => {
     expect(response.board.alternatives.every(
       (item) => item.lane === "attention"
     )).toBe(true);
+    expect(resolution.continuation).toEqual({ kind: "unavailable" });
   });
 
   it("returns bounded unavailable output when no safe projection key exists", () => {

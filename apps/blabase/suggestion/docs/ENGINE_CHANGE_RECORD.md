@@ -4099,3 +4099,735 @@ version constants. No persisted-state or schema migration is required.
 - **Privacy and retention impact:** No new Board/result persistence, external telemetry or source-refresh retention path is added, and no production conversation is promoted into evaluation data. Existing Attention/store reads may still perform the bounded local lease, recovery, temporary cleanup and retention-maintenance effects described above. The public v0.1 projection plus `publicTextSafety.ts` fail-closed screening remains the privacy boundary; private targets, raw source data and credential-shaped public text are not returned.
 - **Gates, rollback and release:** G2 privacy and G3 production shadow/dual-lane gates are blocked until an approved preserve-mode read or atomic snapshot path removes the known local-store mutation ambiguity. The Medium residual is accepted only for local review. Human public API/presentation/action/release approvals remain pending. Operational rollback is to leave or set `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED` disabled; the Active-only path remains available and no Board/result migration or user-data repair is required.
 - **Next safe task:** Add or select an explicit preserve-mode or atomic snapshot path, validate that path, and then perform the narrow flag-off/flag-on local API and Attention Lab smoke review covering safe-origin, no-store, credential-shaped public-text rejection and Active-only fallback. G2/G3 and public API review must remain blocked before production exposure. Action, Board/result persistence, source refresh, external mutation, telemetry, WorkCockpit integration and Continuation endpoints remain out of scope.
+
+### Semantic Continuation v0.1 authenticated local title overlay — 2026-08-13
+
+- **Status and goal:** Implemented and automatically validated locally. This
+  narrow slice lets a user explicitly confirm `QA_RUN` for one currently
+  visible, mapped, display-only Continuation item and deterministically show
+  `${subjectLabel} QA 진행하기`. It is a local display-copy overlay, not a QA
+  result, action offer, execution gateway, ranking signal, feedback signal or
+  telemetry event.
+- **Owner and code provenance:** Codex with human direction; uncommitted shared
+  working tree. No commit, push, merge, rebase or other Git mutation was run.
+- **Behavior before and after:** Before, the post-public Work Board always kept
+  its generic Continuation title. After a strict same-origin/local/authenticated
+  confirmation, a fresh `ready/full` base Board is evaluated again and its
+  exact public item/context refs, registry SHA-256, observed time and candidate
+  expiry are bound into a private decision. A later authenticated GET keeps the
+  complete base `WorkBoardApiResponse` byte-identical and schema-valid, and may
+  return a separate itemRef-bound `displayTitle` presentation. The client uses
+  that value only while rendering; base title/summary, item/order/lane,
+  evidence/caveats, capability/action, execution policy and all authenticated
+  S1/R1/R2/R3/B1 artifacts remain unchanged. Missing, corrupt, expired or
+  mismatched state returns `semanticPresentation=null` beside the unchanged
+  generic base response.
+- **Contracts and versions after:** New additive contracts are
+  `semantic-continuation-intent-v0.1`,
+  `semantic-continuation-intent-store-v0.1`,
+  `semantic-continuation-schema-v0.1`,
+  `semantic-continuation-title-overlay-v0.1` and
+  `semantic-continuation-presentation-v0.1`,
+  `semantic-continuation-work-board-response-v0.1`,
+  `semantic-continuation-intent-ttl-24h-v0.1`. Existing Continuation
+  observation/input/candidate/decision contracts, R1/R2/R3 policies and
+  artifacts, B1 contracts/composer, E-001 evaluator tuple and public Work Board
+  contract/schema literals remain unchanged.
+- **Confirmation and currentness boundary:** `POST /api/work-board/intent`
+  accepts only `{intent:"QA_RUN", subjectLabel, itemRef, workContextRef,
+  explicitUserConfirmation:true}`. It checks local request, exact same origin,
+  the default-off Work Board flag and configured Basic authorization before
+  parsing the body or reading private state. The server freshly evaluates the
+  unoverlaid base Board and accepts only a non-expired mapped Continuation item
+  with `capability=display` and `action=null`. The response exposes only the
+  bounded status, intent, deterministic title and expiry.
+- **Authenticated read boundary:** `GET /api/work-board` retains its local,
+  safe-origin, no-store and default-off gates and additionally fails closed
+  unless `SUGGESTION_ACCESS_PASSWORD` is configured and the request carries
+  valid Basic authorization. It checks authorization before evaluating the
+  live Board or reading the private semantic store, so a development middleware
+  bypass cannot expose a confirmed subject label.
+- **Private persistence and retention:** The append-only local record is stored
+  at `.local/semantic-continuation/intent-store.json` with directory mode 0700,
+  file mode 0600, serialized mutations and temporary-file atomic rename. It
+  binds public opaque refs, registry SHA-256, target observation/candidate
+  expiry, confirmation/effective expiry and supersession; its effective expiry
+  is `min(confirmedAt + 24h, candidateExpiresAt)`. Reads are pure and never
+  repair, prune or rewrite missing/corrupt/stale state. The bounded history is
+  currently limited to 1,000 decisions; an explicit retention-maintenance
+  design is follow-up work before long-lived use.
+- **Public and privacy boundary:** Subject labels reject controls, path
+  separators and relative traversal, URLs, all known internal/public ref
+  prefixes, Git-sized hashes, credential-shaped text and Korean/English tokens
+  that could smuggle pass/fail/completion/result/apply/execution claims. The
+  semantic-token check also runs after NFKC normalization and separator removal,
+  so camelCase and concatenated claim forms fail closed. Raw source artifacts,
+  repository/session/native IDs, HMAC/proof material, local paths,
+  URLs, prompts and credentials are neither stored in the semantic intent
+  record nor returned outside the authenticated local presentation boundary.
+  The base public Board JSON keys, values and contract/schema literals do not
+  change. The additive response envelope keeps `base` under the existing strict
+  schema and carries a separately versioned nullable `semanticPresentation`
+  whose overlays contain only `itemRef` and deterministic `displayTitle`.
+- **Authority exclusions:** The overlay does not create QA pass/fail/completion
+  facts, apply results, execute work, change capability/action, rank or dedupe
+  candidates, emit telemetry, refresh sources or persist any core Board or
+  engine artifact. `automaticExecutionAllowed=false`,
+  `explicitUserActionRequired=true` and `externalMutationAllowed=false` remain
+  unchanged.
+- **Validation evidence:** From `suggestion/`, targeted Vitest passed 8 files
+  and 35/35 tests covering contracts, privacy controls, decision/store
+  integrity, TTL/supersession/atomic permissions, pure corrupt reads,
+  byte-identical base/fallback, separate display-title presentation, client parsing, route
+  local/origin/auth/currentness behavior, live shadow and UI presentation.
+  `npm run typecheck` and `npm run lint` passed. Build and manual browser smoke
+  were not run.
+- **Evidence and runtime accounting:** Evidence is the exact freshly projected
+  item/context/registry/time binding plus the explicit confirmation literal;
+  no confidence score is created. The path invokes no model, so token usage and
+  model latency are not applicable. No latency/telemetry record is added;
+  transport failures use bounded `WORK_BOARD_INTENT_*` codes and private parse
+  details are not returned.
+- **Dataset and baseline decision:** No Golden, Regression or mutable E-001
+  dataset input, version, hash, label or artifact changed; no production
+  conversation was used. A core baseline/comparison run is N/A because the
+  authenticated Continuation/Board inputs, candidate admission, ranking,
+  resolution, artifacts and hashes are unchanged. The targeted overlay
+  regression is the evidence for this presentation-only semantic change; no
+  quality-improvement or release-readiness claim is made.
+- **Compatibility, release and rollback:** The flag remains default-off and the
+  feature is limited to the existing local Attention Lab boundary. Production
+  exposure and release approval remain pending. Rollback is to keep
+  `BLABASE_WORK_BOARD_SHADOW_READ_ENABLED` disabled, remove the additive intent
+  route/UI/semantic module and leave the private `.local` file unused or remove
+  it through an explicitly approved local cleanup. No core artifact migration,
+  Active Attention rollback or remote repair is required.
+- **Residual risks and follow-up:** Atomic rename plus a process-global queue is
+  designed for one local Next.js process, not multi-process CAS. The store's
+  1,000-record ceiling needs explicit retention maintenance before long-lived
+  use. Manual same-origin Basic-auth browser smoke and a reviewed
+  retention-maintenance policy remain follow-up work.
+
+### SC-002 explicit local Semantic Validation receipts — 2026-08-13
+
+- **Status and scope:** The first SC-002 slice is implemented and automatically
+  validated locally. Only an explicit, argument-free
+  `npm run semantic-validation` invocation may start validation. Browser GET,
+  intent POST, polling, client and UI paths import no SC-002 producer/profile or
+  validation-subprocess execution path. The reused A-001 live capture still has
+  its pre-existing read-only Git code-provenance probe; this slice therefore
+  claims no **validation** subprocess from HTTP, not zero OS child processes
+  across the complete inherited capture graph. This slice records local QA
+  validation state; it does not run
+  work, apply a result, create a structured finding, alter rank/evidence/action,
+  or authorize a Continuation capability.
+- **Behavior before and after:** Before, an active SC-001 confirmation could
+  only render `${subjectLabel} QA 진행하기`. After a verified current validation
+  receipt, the separate presentation overlay may instead render exactly
+  `QA 진행 상태 확인하기`, `QA 실패 항목 검토하기`, or
+  `QA 통과 결과 확인하기`. Inconclusive, missing, invalid, stale, code-drifted
+  or binding-mismatched state falls back to the SC-001 title. A newly started
+  run is authoritative immediately and shadows every older result, including an
+  older valid pass. The existing `base` WorkBoard API response remains
+  byte-identical and is reparsed at the boundary; title state exists only in the
+  separate itemRef-bound presentation envelope.
+- **Contracts and version tuple:** New private contracts are
+  `semantic-continuation-validation-receipt-v0.1`,
+  `semantic-continuation-validation-store-v0.1`,
+  `semantic-continuation-validation-schema-v0.1`, fixed profile v0.1, receipt
+  policy v0.1, 24-hour TTL policy v0.1 and validation-title template policy
+  v0.1. To admit the three new fixed titles without changing the base Board,
+  only the additive presentation envelope advances from v0.1 to
+  `semantic-continuation-presentation-v0.2`,
+  `semantic-continuation-work-board-response-v0.2` and
+  `semantic-continuation-presentation-schema-v0.2`. The persisted SC-001 intent,
+  overlay and TTL contracts stay v0.1. Core Continuation/R1/R2/R3/B1 and E-001
+  contracts, policies, hashes and dataset remain unchanged.
+- **Fixed execution profile:** The profile validates the current package scripts
+  and then launches the resolved Node executable directly with realpath-confined
+  fixed entrypoints for TypeScript, ESLint and Vitest in the exact order
+  `typecheck`, `lint`, `unit_test`. Arguments, cwd, environment and timeouts are
+  fixed; `shell:false` and ignored stdin/stdout/stderr are mandatory. Arbitrary
+  command, package script, argv, cwd, label-derived path and client receipt
+  upload are rejected or absent. The working root is the realpath-validated
+  `suggestion/` directory only. Dirty, declared or unavailable code provenance
+  yields an inconclusive receipt with no validation subprocess.
+- **Authority, lifecycle and currentness:** Run start first acquires a renewable
+  private filesystem run lease; a loser reads no intent/receipt/base/code
+  authority and spawns no validation subprocess.
+  SC-001 confirmation and SC-002 start reuse the same filesystem coordination
+  lock, and run start re-reads the exact current unsuperseded intent while
+  holding it. The start receipt binds intent decision ID/hash, item/context refs,
+  registry SHA-256, observation and candidate expiry, intent confirmation and
+  expiry, plus typed clean-code provenance. Before terminal persistence the
+  producer rechecks run-lease ownership, end provenance, fresh Board/intent
+  currentness and the validation window. A stale dead-process lease is recovered
+  as an `inconclusive/RUN_ABANDONED` terminal event before a new run starts.
+- **Receipt integrity and storage:** Running and terminal events form a strict,
+  chronological, append-only SHA-256/HMAC revision chain with one explicit
+  current-run/current-receipt pointer. The HMAC key is derived in memory from the
+  existing installation secret, which is never placed in a receipt, API response
+  or CLI summary. Any malformed or unauthenticated tail rejects the complete
+  store; no prefix salvage or repair occurs. State is atomically stored under
+  `.local/semantic-continuation/validation/receipts.json`; directories and files
+  are enforced as 0700 and 0600. Receipts are bounded to 512 and expire at the
+  earliest of 24 hours, intent expiry and candidate expiry.
+- **Privacy and output boundary:** Stored/API/presentation data contains no raw
+  stdout/stderr, command strings, executable or workspace paths, repository or
+  session native IDs, URL, prompt, credential or installation secret. CLI output
+  is limited to bounded status/code, run ID, receipt SHA-256 and three step
+  statuses. Test process output is discarded by the production runner and no
+  telemetry or remote persistence was added.
+- **Validation evidence:** From `suggestion/`, targeted Vitest passed 13 files
+  and 56/56 tests covering receipt/store HMAC and tamper rejection, exact status
+  arrays and lifecycle, TTL/current-run shadowing, private modes and pure reads,
+  serialized appends, live/stale run leases, fixed profile and injection
+  rejection, fail-fast execution, provenance drift, presentation fallback/base
+  invariants, HTTP validation-execution isolation, SC-001 client/route/store and UI
+  compatibility. `npm run typecheck` and `npm run lint` passed. The production
+  validation CLI itself was not invoked: it is reserved for explicit user
+  invocation and the current shared worktree is intentionally uncommitted.
+- **Dataset, baseline and release:** No Golden/Regression/E-001 input, label,
+  version, hash, evaluation artifact or production conversation changed. Core
+  engine semantics and Board bytes are unchanged, so a core baseline is N/A.
+  This local validation receipt is not a release gate, Gold label, quality score
+  or production approval. Default-off/local/authenticated SC-001 boundaries and
+  all existing human release gates remain in force.
+- **Threats, rollback and follow-up:** A same-user attacker who can replace both
+  the private state and the installation-secret authority can forge or roll back
+  state. HMAC and append chaining detect ordinary corruption/tampering, but a
+  replay of an older fully valid store cannot be detected without a separate
+  monotonic anchor. Cross-host/distributed execution is unsupported. The
+  512-receipt ceiling needs an approved retention/compaction policy; manual CLI
+  and browser smoke remain pending. Rollback removes the additive validation
+  module, CLI/script and presentation v0.2 handling while leaving the v0.1
+  intent store and byte-identical base Board path intact; private receipts may be
+  left unused or removed only through an explicitly approved cleanup.
+
+### A-001 PR-001 preserve-only local read boundaries — 2026-08-13
+
+- **Status and scope:** PR-001 is implemented and validated; A-001 remains
+  partial. This slice adds explicit preserve-only read boundaries but does not
+  wire them into live Attention, the Work Board route, Semantic Continuation,
+  or any formal public API. Existing callers continue to use backward-compatible
+  `maintain` mode.
+- **Owner:** User is product/release approver. Codex implemented the scoped
+  source/tests and authored this record. Independent QA subagents performed
+  advisory static/reproduction review; this is not human release approval.
+- **Versions before and after:** Before PR-001 there was no serialized or public
+  preserve-read contract and local reads exposed only implicit maintenance
+  behavior. After PR-001, `LocalReadMode = "maintain" | "preserve"` is an
+  additive internal TypeScript boundary with no new persisted schema literal.
+  The following persisted versions are exactly unchanged before → after:
+  GitHub `github-snapshot-v6`; Codex `codex-connector-config-v3`,
+  `codex-snapshot-v3`, `codex-local-git-snapshot-v1`,
+  `codex-observation-history-v2`, and
+  `codex-conversation-and-execution-store-v1`; Google Calendar
+  `google-calendar-snapshot-v1`; Notion `notion-snapshot-v1`; managed Codex
+  `codex-managed-run-registry-v1`, `codex-managed-event-v1`,
+  `codex-managed-event-history-v1`,
+  `codex-managed-latest-projection-store-v1`,
+  `codex-managed-public-projection-v1`, `codex-managed-settlement-v1`, and
+  `codex-managed-retention-v1`; work-artifact attribution
+  `work-artifact-attribution-store-v0.1`,
+  `work-artifact-attribution-schema-v0.1`, and
+  `work-artifact-attribution-retention-30d-v0.1`. S1/R1/R2/R3/B1,
+  public Work Board, E-001 dataset/config/evaluator, SC-001, and SC-002 versions
+  are also unchanged.
+- **Behavior before and after:** Connector reads previously performed bounded
+  stale-temp cleanup and Codex privacy/retention cleanup. Managed Codex
+  observability and work-artifact attribution reads could also acquire locks,
+  recover settlements, prune retention state, and rewrite or delete local
+  files. Connector readers now accept shared `LocalReadMode` with default
+  `maintain`; `preserve` reads only stable, owned 0700/0600 local state and
+  performs legacy migration or retention projection in memory. Additive
+  `readManagedCodexObservabilityPreservingState` and
+  `readWorkArtifactAttributionStorePreservingState` APIs acquire no lease and
+  perform no cleanup, recovery, permission repair, retention write, rename, or
+  deletion. Pending settlement, lock/temp evidence, corrupt or incoherent
+  stores, unsafe modes, symlinks, and unstable file identity fail closed while
+  leaving the observed state in place.
+- **Compatibility and authority:** All existing read signatures remain valid
+  and default to their prior maintenance behavior. The new APIs do not claim
+  pending data is current and do not elevate any Board, Continuation, action,
+  execution, or result authority. No core S1/R1/R2/R3/B1 contract, schema,
+  version, hash, ranking, evidence, candidate, or evaluation artifact changes.
+- **Privacy and retention:** Preserve reads expose no new public data and add no
+  persistence. Codex corrupt, expired, or unconsented conversation state is
+  unavailable without unlinking its private history; managed and attribution
+  retention is projected in memory only. Stable reads reject final-component
+  or controlled-ancestor symlinks, unsafe ownership/mode, replacement, and
+  mid-read change. Raw local content remains private and is not copied into Git
+  or an API response. OS-managed `atime` is explicitly outside the invariant:
+  successful `read`/`readdir` may update access accounting on macOS. Preserve
+  guarantees no code-controlled mkdir/write/rename/unlink/chmod/utimes, lease,
+  recovery, cleanup, or disk-retention mutation; it does not claim zero access
+  accounting.
+- **Validation evidence:** Targeted Vitest passed 11 files and 128/128 tests,
+  covering filesystem content/mode/mtime/inode/listing preservation, missing
+  state without mkdir, pending/temp/lock/history preservation, in-memory
+  retention, corrupt/partial/final-or-ancestor-symlink/unsafe-mode fail-closed,
+  deterministic shared/managed/attribution inode replacement, controlled
+  directory-chain identity change, in-memory legacy migration, and
+  default-maintain cleanup compatibility. Settlement-only, managed temp-only,
+  managed state-lock, and attribution state-lock regressions are independent
+  cases rather than one combined fixture.
+  `npm run typecheck`, `npm run lint`, `git diff --check`, and bounded static
+  cross-review passed. Cross-review reproduced an ancestor-symlink redirect and
+  a missing-state confirmation TOCTOU; both were fixed with controlled-chain
+  pre/post validation and re-reviewed with no remaining scoped finding. No
+  model/provider run or production data is involved.
+- **Exact validation commands and files:** Commands ran from `suggestion/`:
+
+  ```text
+  npm test -- --run tests/localPreserveConnectorReads.test.ts tests/localPreserveManagedStores.test.ts tests/connectorTempCleanup.test.ts tests/codexConversationPrivacy.test.ts tests/codexConnector.test.ts tests/codexLocalGitCollector.test.ts tests/githubConnector.test.ts tests/googleCalendarConnector.test.ts tests/notionConnector.test.ts tests/managedCodexStore.test.ts tests/workArtifactAttributions.test.ts
+  npm run typecheck
+  npm run lint
+  git diff --check -- src/localReadMode.ts src/connectors/github/localStore.ts src/connectors/codex/localStore.ts src/connectors/googleCalendar/localStore.ts src/connectors/notion/localStore.ts src/managedCodex/store.ts src/artifacts/attributionStore.ts tests/localPreserveConnectorReads.test.ts tests/localPreserveManagedStores.test.ts docs/ENGINE_CHANGE_RECORD.md docs/SUGGESTION_ENGINE_VNEXT_IMPLEMENTATION_PLAN.md docs/SUGGESTION_ENGINE_VNEXT_TECH_SPEC.md
+  ```
+
+  The exact 11 Vitest files are the paths following `--run` above; no broader
+  suite or production CLI is implied by this evidence.
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `d620ae9724958efa5a80999c9d127fea34450811`. Work remains uncommitted. Policy
+  `a001-pr001-scoped-worktree-sha256-v1` sorts records of
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for the nine PR-001 implementation/test paths and hashes those records with
+  SHA-256. Documentation and every unrelated dirty file are deliberately
+  excluded, avoiding a self-referential ECR hash and shared-worktree capture.
+  The resulting fingerprint is
+  `8ce5941e65cf584706400910df1b3008f956a8afec7afecf417435dc937f8744`.
+  The exact command executed from `apps/blabase/` was:
+
+  ```zsh
+  scope=(suggestion/src/localReadMode.ts suggestion/src/connectors/github/localStore.ts suggestion/src/connectors/codex/localStore.ts suggestion/src/connectors/googleCalendar/localStore.ts suggestion/src/connectors/notion/localStore.ts suggestion/src/managedCodex/store.ts suggestion/src/artifacts/attributionStore.ts suggestion/tests/localPreserveConnectorReads.test.ts suggestion/tests/localPreserveManagedStores.test.ts)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+- **Dataset and baseline decision:** Golden/Regression/E-001 datasets and
+  frozen evaluation artifacts are unchanged. A core baseline is N/A because
+  PR-001 changes only additive, currently unwired local I/O boundaries: it does
+  not change an engine input/output, candidate admission, ranking, evidence,
+  hash, public Board byte, dataset row, evaluator, or live capture caller.
+  Therefore no comparable semantic metric could change. PR-002 integration
+  validation remains required before the Work Board path can claim
+  preserve-only behavior.
+- **Remaining risk and rollback:** Current live Work Board evaluation still
+  traverses the Work Resumption authority lease and maintenance-mode readers;
+  it is therefore not byte-pure after PR-001 alone. PR-002 must add a coherent
+  preserve authority snapshot, propagate preserve mode through live Attention,
+  and re-run route/UI privacy and fallback checks. Rollback removes the additive
+  preserve APIs/mode while existing default maintenance behavior remains the
+  compatibility baseline. Production G2/G3 and release approval remain blocked.
+
+### A-001 PR-002 coherent live preserve capture — 2026-08-13
+
+- **Status and scope:** PR-002 is implemented and automatically validated
+  locally. Work Board GET and the semantic intent POST now evaluate their base
+  Board through one coherent preserve capture. Existing `/api/attention` and
+  all omitted-mode callers remain default `maintain`. This change does not add
+  an action/execution API, source refresh, Board/result persistence, telemetry,
+  production-conversation promotion, public rollout or release approval.
+- **Owner:** User remains product/release approver. Codex implemented the
+  bounded source/tests and authored this record. Parallel AI workers owned the
+  authority/capture, live/route, provenance/env and fixed-Codex-clock slices;
+  an advisory independent AI QA review was requested. Automated or AI review
+  is not human privacy, security or release approval.
+- **Versions before and after:** Before PR-002 there was no serialized coherent
+  capture contract and live Work Board still used the mutating Work Resumption
+  authority lease. After PR-002, internal
+  `attention-preserve-capture-v0.1` is added with scopes `base | semantic`.
+  `LiveReadMode = maintain | preserve` remains an additive internal TypeScript
+  boundary with default `maintain`; it is not a persisted/public schema. Public
+  Work Board v0.1, semantic presentation/response/schema v0.2, SC-001/SC-002,
+  GitHub v6, Codex v3, Calendar/Notion v1, Work Resumption, managed Codex,
+  work-artifact attribution, S1/R1/R2/R3/B1 and E-001 versions/hashes are exactly
+  unchanged before → after.
+- **Behavior before and after:** Before, Work Board forced no source refresh but
+  inherited maintenance-mode connector reads, process/filesystem leases,
+  recovery/temp cleanup and retention writes from live Attention. After, Work
+  Board internally forces `{readMode:"preserve", refreshSources:false}` and
+  rejects `preserve + refreshSources=true` before inspecting env, sources or
+  stores. One request-local Date/environment snapshot feeds connectors, context,
+  workflow, Work Resumption authority, managed observability, attribution,
+  current evidence and engine timestamps. The existing `/api/attention` default
+  and explicit source-sync behavior are unchanged.
+- **Coherent filesystem boundary:** `attention-preserve-capture-v0.1` scans only
+  fixed roots below the caller-supplied trusted cwd. Base scope covers
+  `.local/connectors`, `.local/context`, `.local/work-resumption`; semantic scope
+  covers `.local/semantic-continuation`. Sorted O_NOFOLLOW manifest entries bind
+  content/listing SHA-256 and type/mode/uid/gid/device/inode/link-count/size/
+  mtime/ctime. Shared cwd/`.local` ancestors retain trust identity plus a
+  scope-filtered listing hash while normalizing unrelated volatile listing
+  metadata, so semantic creation cannot invalidate a base capture and vice
+  versa. Final/ancestor symlink, unsafe owner/mode, recognized temp/partial,
+  Work Resumption/managed/artifact lock and managed settlement fail closed.
+- **Retry and failure policy:** Exact pre/post manifest mismatch or an unstable
+  descriptor read retries at most once; a second change fails typed. Generic
+  callback/programming errors are not retried or relabeled. The live boundary
+  normalizes only known Work Resumption, managed Codex, artifact-attribution and
+  workflow preserve-store failures to a typed capture read failure. Authenticated
+  GET/intent responses map typed base capture failures to sanitized 503; generic
+  evaluator/programming failures remain sanitized 500. Semantic intent/receipt
+  uses its own manifest scope, and any optional semantic missing/corrupt/unsafe/
+  unstable read returns the strict-valid, byte-identical base with
+  `semanticPresentation=null`.
+- **Authority and one-asOf:** The preserve Work Resumption API acquires no
+  process queue or filesystem lease. It consumes the already-read Codex config,
+  stable-reads bindings/heartbeat, derives owner/connection authority, supplies
+  the exact binding store to current evidence and verifies exact content plus
+  fingerprint again after the callback. Current evidence uses the PR-001 managed
+  observability and artifact-attribution preserve readers and never re-reads the
+  binding through a maintenance helper. Context registry, weekly outcome and
+  workflow are read once in preserve mode and passed to a pure resolver. The
+  same cloned Date controls GitHub normalization, Codex nested-conversation
+  expiry, authority freshness, retention projection, evidence `asOf`, run start/
+  completion and zero-latency monitor timestamps; preserve readers do not sample
+  ambient time.
+- **Environment and code provenance:** Preserve mode creates a fresh
+  null-prototype environment from safe own data properties; proxy, accessor,
+  symbol, non-enumerable, non-string and inherited enumerable state fails
+  closed without invoking a getter/trap. It does not read `.env.local` or shared
+  env files and does not mutate caller env, `process.env` or the legacy module
+  cache. Preserve provenance accepts declared commit/fingerprint authority only
+  and invokes no Git/worktree child process. Missing declared provenance safely
+  makes Continuation prerequisites unavailable and permits the existing bounded
+  Active-only fallback. Maintain Git probing is separately hardened to exact
+  `/usr/bin/git`, fixed arguments/timeout, `shell:false`, sanitized environment,
+  `GIT_OPTIONAL_LOCKS=0`, ambient config disabled and fsmonitor/untracked-cache
+  disabled.
+- **Privacy and mutation review:** Installation secret is captured once and
+  remains request-closure authority; semantic live evaluation reuses it and
+  never re-reads Codex config. Its raw value is absent from the response, public
+  Board and semantic presentation; the private config manifest entry exposes
+  only a SHA-256 digest of the complete file bytes, not the value or file bytes.
+  No new raw stdout/stderr, command,
+  local path, native source/session ID, prompt, URL or credential is persisted
+  or returned. Preserve reads perform no code-controlled mkdir/write/rename/
+  unlink/chmod/utimes, lease, recovery, cleanup or disk-retention mutation.
+  Successful `read`/`readdir` may update OS-managed `atime` on macOS; access-time
+  accounting is explicitly outside this invariant.
+- **Validation evidence:** From `suggestion/`, targeted Vitest passed 21 files
+  and 150/150 tests. Coverage includes full-tree before/after content, type,
+  mode, uid, gid, device, inode, link count, size, mtime, ctime, listing and hash
+  equality (excluding atime); stable base/semantic scope isolation; one retry;
+  replacement, corrupt, symlink, unsafe mode, temp, settlement and every critical
+  lock sentinel; missing-state no-create; no-lease authority reuse; exact
+  one-asOf; maintain/preserve semantic equivalence; fixed Codex expiry clock;
+  hostile env and zero preserve Git execution; base 503, generic 500 and semantic
+  null fallback; SC-001/SC-002 compatibility and HTTP validation-execution
+  isolation. A real non-empty fixture jointly exercises Codex config/snapshot,
+  context/outcome/workflow, binding/heartbeat, managed-run authority, a resolved
+  work relation and artifact attribution through a `ready/full` Board with a
+  Continuation item while the complete cwd tree remains unchanged. Empty-cwd
+  cross-scope `.local` creation/removal is also locked by a bidirectional
+  no-retry regression. `npm run typecheck`, `npm run lint` and
+  `git diff --check` passed.
+- **Exact validation command and files:** The targeted command ran from
+  `suggestion/`:
+
+  ```text
+  npm test -- --run tests/preserveCapture.test.ts tests/preserveAuthoritySnapshot.test.ts tests/livePreserveCapture.test.ts tests/preserveCodeProvenance.test.ts tests/preserveCodexClock.test.ts tests/localPreserveConnectorReads.test.ts tests/localPreserveManagedStores.test.ts tests/liveAttention.test.ts tests/attentionRoutes.test.ts tests/workResumptionStore.test.ts tests/projectWorkflowStore.test.ts tests/contextRoutes.test.ts tests/liveWorkBoardShadow.test.ts tests/workBoardRoute.test.ts tests/workBoardIntentRoute.test.ts tests/semanticContinuationStore.test.ts tests/semanticValidationStore.test.ts tests/semanticValidationOverlay.test.ts tests/semanticValidationHttpIsolation.test.ts tests/semanticContinuationClient.test.ts tests/livePreserveIntegratedFixture.test.ts
+  npm run typecheck
+  npm run lint
+  git diff --check
+  ```
+
+  No production semantic-validation CLI, provider/model call, production data,
+  Golden run, build or manual browser smoke is implied by this evidence.
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `d620ae9724958efa5a80999c9d127fea34450811`; the integrated worktree remains
+  uncommitted. Policy `a001-pr002-integrated-worktree-sha256-v1` sorts records of
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for 23 PR-002 implementation/test paths and hashes the records with SHA-256.
+  Documentation and unrelated shared dirty files are excluded. Because several
+  routes/stores already contained compatible SC/PR-001 uncommitted work, this is
+  an integrated exact-path worktree checkpoint rather than a claim that every
+  byte on those paths originated in PR-002. The fingerprint is
+  `7e427c21dc4a36d7e6e2e982aa6591a04db0d7a9c93e4ae7393cb3453f2d1733`.
+  This fingerprint was computed before the final QA-only absent-`.local`
+  scope-isolation hardening and integrated-fixture test; the final checkpoint is
+  recomputed below rather than silently replacing this recorded intermediate.
+  The exact command ran from `apps/blabase/`:
+
+  ```zsh
+  scope=(suggestion/src/attention/preserveCapture.ts suggestion/src/attention/liveAttention.ts suggestion/src/attention/codeProvenance.ts suggestion/src/localEnv.ts suggestion/src/connectors/codex/localStore.ts suggestion/src/context/localStore.ts suggestion/src/context/resolve.ts suggestion/src/workflows/store.ts suggestion/src/resumption/store.ts suggestion/src/workEvidence/currentWorkEvidence.ts suggestion/src/suggestionBoard/liveShadow.ts suggestion/src/semanticContinuation/localStore.ts suggestion/src/semanticContinuation/validation/store.ts suggestion/app/api/work-board/route.ts suggestion/app/api/work-board/intent/route.ts suggestion/tests/preserveCapture.test.ts suggestion/tests/preserveAuthoritySnapshot.test.ts suggestion/tests/livePreserveCapture.test.ts suggestion/tests/preserveCodeProvenance.test.ts suggestion/tests/preserveCodexClock.test.ts suggestion/tests/liveWorkBoardShadow.test.ts suggestion/tests/workBoardRoute.test.ts suggestion/tests/workBoardIntentRoute.test.ts)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+- **Final QA checkpoint fingerprint:** After the absent-`.local` scope fix and
+  integrated fixture, the same policy over 24 paths produces
+  `3e50214f3ae3b5f4919f5692b9bf3887355c27d6bdd8bcc24396a0e7d007cff5`.
+  This is the final uncommitted scoped patch checkpoint used for the 21-file/
+  150-test validation above. The exact command ran from `apps/blabase/`:
+
+  ```zsh
+  scope=(suggestion/src/attention/preserveCapture.ts suggestion/src/attention/liveAttention.ts suggestion/src/attention/codeProvenance.ts suggestion/src/localEnv.ts suggestion/src/connectors/codex/localStore.ts suggestion/src/context/localStore.ts suggestion/src/context/resolve.ts suggestion/src/workflows/store.ts suggestion/src/resumption/store.ts suggestion/src/workEvidence/currentWorkEvidence.ts suggestion/src/suggestionBoard/liveShadow.ts suggestion/src/semanticContinuation/localStore.ts suggestion/src/semanticContinuation/validation/store.ts suggestion/app/api/work-board/route.ts suggestion/app/api/work-board/intent/route.ts suggestion/tests/preserveCapture.test.ts suggestion/tests/preserveAuthoritySnapshot.test.ts suggestion/tests/livePreserveCapture.test.ts suggestion/tests/preserveCodeProvenance.test.ts suggestion/tests/preserveCodexClock.test.ts suggestion/tests/liveWorkBoardShadow.test.ts suggestion/tests/workBoardRoute.test.ts suggestion/tests/workBoardIntentRoute.test.ts suggestion/tests/livePreserveIntegratedFixture.test.ts)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+- **Dataset and baseline decision:** No Golden/Regression/E-001 input, label,
+  version, hash, run artifact or production conversation changed. PR-002 changes
+  local I/O capture authority and failure transport, not S1/R1/R2/R3/B1 input,
+  candidate admission, evidence, rank, resolved semantic result, Board projection
+  bytes or evaluator interpretation. A comparable core semantic baseline is
+  therefore N/A; targeted filesystem/route regression is the relevant evidence.
+- **Compatibility, risks and rollback:** Maintain mode and `/api/attention`
+  remain the compatibility baseline. The optimistic manifest cannot detect a
+  malicious same-user ABA that restores identical content and recorded metadata,
+  and preserve declared-only provenance may reduce Work Board to Active-only
+  when deployment provenance is absent. Manual authenticated default-off/on
+  browser/Attention Lab smoke, privacy review and production G2/G3 remain open.
+  Rollback removes Work Board `readMode=preserve` wiring and the internal capture/
+  authority APIs while keeping PR-001 preserve readers unused and maintain mode
+  unchanged. Public/action rollout, dataset freeze and release require separate
+  human approval.
+
+### A-001 formal display-only Continuation read API — 2026-08-13
+
+- **Status and scope:** Implemented and automatically validated locally as a
+  read-only A-001 milestone. This record covers a new formal
+  `GET /api/continuation`, its private single-capture/R3 seam, strict public DTO,
+  browser-safe parser and focused regression evidence. It does not add a POST,
+  open/action capability, UI integration, source refresh, persistence,
+  telemetry, public rollout or release approval.
+- **Owner and authority:** User remains product, privacy and release approver.
+  Codex implemented and recorded this scoped milestone; read-only explorer
+  agents mapped the route/security and private seam constraints, and an
+  independent AI QA review is recorded below after validation. AI review is
+  advisory and is not human G2/G3 or release approval.
+- **Versions before and after:** Before this slice no formal Continuation read
+  API contract or route existed. After it, the only new public version is exact
+  `continuation-read-api-v0.1`. Existing public Work Board v0.1, semantic
+  presentation/response/schema v0.2, SC-001/SC-002, internal
+  `attention-preserve-capture-v0.1`, S1/R1/R2/R3/B1 contracts, schemas, hash
+  domains, policies and E-001 dataset/evaluator versions are unchanged.
+- **Single-capture private seam:** `composeCapturedBoardResolution` returns the
+  existing strict Work Board response together with a private continuation
+  state. The exact R3 resolved decision is available only when the same
+  request-local preserve capture completes authenticated identity, derivation,
+  resolution, B1 composition and public Board projection successfully. Existing
+  Work Board/SC callers continue to consume only `.response`; their public
+  bytes, schemas and versions do not change. The formal evaluator invokes
+  `evaluateCurrentAttentionWithLiveInputs` once with
+  `{readMode:"preserve", refreshSources:false}` and performs no second store
+  read or capture.
+- **Public projection contract:** A success response contains only
+  `{contract, generatedAt, status, coverageCode, items}`. It preserves the exact
+  authenticated base-decision status, coverage code and `asOf` timestamp and
+  exposes at most three selected R3 items as
+  `{title, summary, caveats, capability:"display", action:null}`. Setup items
+  remain display-only. Caveats are restricted to the exact bounded public-safe
+  derivation caveat allowlist. Candidate/project/WorkContext/source/run/proof/
+  hash/ref fields and private action targets are absent by schema.
+- **Stable fallback and failure transport:** Proven R3
+  `no_recent_context/COMPLETE`, `insufficient_evidence/INSUFFICIENT` and
+  `unavailable/UNAVAILABLE` pass through unchanged. Stable pre-R3 failures use
+  only existing authenticated stage results to select bounded unavailable or
+  insufficient responses and expose no internal reason detail. Typed preserve
+  capture failures become sanitized 503; unexpected evaluator/projector/schema
+  failures become sanitized 500. The route does not serialize an exception,
+  local path, token or private target.
+- **HTTP authority and privacy:** Gate order is local-only, safe-origin, exact
+  default-off `BLABASE_CONTINUATION_READ_ENABLED`, configured Basic auth and
+  valid Basic authorization, all before evaluation. Responses use no-store,
+  restrictive CSP, no-referrer, nosniff and frame-deny headers. Public text
+  rejects controls, path/URL, credential, SHA and known internal identifier/ref
+  forms. The browser client uses type-only server imports plus an independent
+  exact-key/status/coverage/caveat/display-only parser, avoiding a Node crypto
+  dependency. No secret, native locator, raw source data or private receipt is
+  returned or persisted.
+- **Validation evidence:** From `suggestion/`, targeted Vitest passed 16 files
+  and 110/110 tests. Coverage includes exact offers/setup/normal-empty/
+  insufficient/unavailable projection, max-three order, strict display/null
+  capability, caveat allowlist, descriptor/accessor/extra-field/text privacy,
+  gate-before-evaluation, sanitized 503/500, client fail-closed parsing,
+  one-capture reuse, a real non-empty whole-cwd preserve fixture with unchanged
+  bytes/metadata, and Work Board/SC/core contract compatibility. `npm run
+  typecheck`, `npm run lint` and `git diff --check` also passed. The exact
+  targeted command was:
+
+  ```text
+  npm test -- --run tests/continuationReadContracts.test.ts tests/continuationReadRoute.test.ts tests/continuationReadClient.test.ts tests/continuationContracts.test.ts tests/continuationResolver.test.ts tests/suggestionBoardComposer.test.ts tests/suggestionBoardContracts.test.ts tests/liveWorkBoardShadow.test.ts tests/livePreserveIntegratedFixture.test.ts tests/preserveCapture.test.ts tests/preserveAuthoritySnapshot.test.ts tests/livePreserveCapture.test.ts tests/workBoardRoute.test.ts tests/workBoardIntentRoute.test.ts tests/semanticContinuationClient.test.ts tests/semanticValidationHttpIsolation.test.ts
+  npm run typecheck
+  npm run lint
+  git diff --check
+  ```
+
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `d620ae9724958efa5a80999c9d127fea34450811`; the integrated worktree remains
+  uncommitted. Policy `a001-continuation-read-worktree-sha256-v1` sorts records
+  of `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for 11 implementation/test paths and hashes the records with SHA-256. Docs
+  and unrelated shared dirty files are excluded. Because three test/live seam
+  paths also contain compatible earlier uncommitted A-001/SC work, this is an
+  exact integrated path checkpoint rather than attribution of every byte to
+  this slice. Fingerprint:
+  `987667e62933979e568be7076957e7697c50553b247f94e81b9075d450ef4f7a`.
+  The exact command ran from `apps/blabase/`:
+
+  ```zsh
+  scope=(suggestion/src/continuation/readApi.ts suggestion/src/continuation/index.ts suggestion/src/suggestionBoard/liveShadow.ts suggestion/app/api/continuation/route.ts suggestion/app/continuationClient.ts suggestion/tests/continuationReadContracts.test.ts suggestion/tests/continuationReadRoute.test.ts suggestion/tests/continuationReadClient.test.ts suggestion/tests/liveWorkBoardShadow.test.ts suggestion/tests/livePreserveIntegratedFixture.test.ts suggestion/tests/semanticValidationHttpIsolation.test.ts)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+
+- **Dataset and baseline decision:** No Golden/Regression/E-001 row, label,
+  artifact, version, hash, evaluator or production conversation changed. This
+  slice projects an already authenticated R3 decision without changing source
+  normalization, identity, candidate admission, evidence, ranking, resolution,
+  B1 ordering or existing public Board bytes. A comparable core semantic
+  baseline is therefore N/A; strict projection/route/preserve regressions are
+  the relevant evidence.
+- **Compatibility, risks and rollback:** Exact `coverageCode` is preserved; no
+  alias or reinterpretation was added. The new endpoint is default-off and its
+  client is not wired to product UI. Preserve mode retains the documented
+  same-user exact-ABA limitation and may return unavailable when declared code
+  provenance is absent. Manual authenticated browser/privacy smoke, production
+  G2/G3, UI/action/public rollout and release approval remain open. Rollback
+  removes the new route/client/read schema and private continuation side-channel
+  while retaining the unchanged Work Board `.response` path and PR-002 capture.
+
+### U-001 Work Cockpit display-only Work Board — 2026-08-13
+
+- **Status and scope:** Implemented and automatically validated locally as a
+  UI-only U-001 milestone. Work Cockpit now presents the existing authenticated
+  `/api/work-board` semantic wrapper as its only canonical proposal feed. This
+  slice adds no server route, engine/API/schema version, action, CTA, external
+  mutation, persistence, telemetry or Continuation/Attention result merge.
+- **Owner and authority:** User remains product, copy, privacy and release
+  approver. Codex implemented and recorded the bounded client/component/test
+  changes. Read-only UI mapping and threat review were advisory AI inputs; an
+  independent final AI QA review is recorded after validation. None substitutes
+  for human G2/G3, accessibility, privacy or release approval.
+- **Versions before and after:** Public Work Suggestion Board v0.1, semantic
+  Work Board response/presentation/schema v0.2, `continuation-read-api-v0.1`,
+  internal `attention-preserve-capture-v0.1`, SC-001/SC-002 and exact
+  S1/R1/R2/R3/B1/E-001 contracts, policies, hashes and datasets are unchanged
+  before → after. U-001 adds no persisted or public contract literal.
+- **Canonical feed and request lifecycle:** `fetchDisplayOnlyWorkBoard` requests
+  only `/api/work-board` with `cache:no-store`. It verifies 2xx status and JSON
+  content type before parsing, then validates exact wrapper/base shape, Board
+  ordering/dedupe, display-only execution policy, every item as
+  `capability=display` and `action=null`, bounded evidence/caveat allowlists and
+  exact semantic overlay binding. It never fetches or joins `/api/continuation`.
+  `/api/attention` remains a separate diagnostic read. Initial/poll reads may
+  start independently in parallel; manual source refresh completes Attention
+  refresh before reading Work Board exactly once.
+- **Race and failure policy:** A monotonic request token prevents an older
+  response from overwriting a later Board. Current-request Board settlement is
+  applied independently of a slower Attention read, so network/auth/non-JSON/
+  401/403/404/500/503/schema/private/actionful failure immediately clears the
+  previous Board and semantic overlay and shows only the bounded message
+  `작업 제안을 불러오지 못했습니다.`. Internal exception or response detail is not
+  copied to DOM or console. The component suppresses its own synchronous manual
+  invalidation callback to avoid a duplicate Board read while later real source
+  revision invalidations remain eligible to refresh.
+- **Shared public-text policy:** The server public Board schema and browser
+  display parser now import the same Node-free locator/credential predicate.
+  Moving the existing server regexes into the pure helper does not change the
+  accepted server contract set. It removes the browser-only blanket slash
+  rejection, so ordinary copy such as `CI/CD 결과 확인` remains valid while
+  absolute POSIX/Windows paths, URLs, credentials, hashes and private refs fail
+  closed at the browser boundary.
+- **Presentation semantics:** `WorkSuggestionBoardPanel` preserves exact
+  `[primary, ...alternatives]` contract order, performs no client rank or title/
+  WorkContext dedupe, and distributes entries only into fixed
+  `attention → continuation → setup` lanes. Headings are exact
+  `지금 처리할 일`, `이어서 할 일`, `연결할 일`. A lane without a visible item says
+  exact `표시할 제안 없음` regardless of summarized Continuation status, fallback
+  mode or whether a Continuation item was displaced by Board top-three
+  precedence. Exact itemRef-bound Continuation overlay title takes precedence
+  without mutating base Board bytes.
+- **Evidence, expiry and privacy:** Evidence bands and caveats map through
+  bounded Korean allowlists; raw codes are not rendered. An item is hidden when
+  current wall clock is greater than or equal to `expiresAt`; a nearest-expiry
+  timer updates the view even when polling fails. The timer uses a maximum
+  60-second chunk, updates clock state at each callback and rearms while the
+  item remains unexpired, including TTLs longer than the platform timeout
+  range. Initial server/hydration output
+  waits for a client clock rather than briefly rendering possibly expired data.
+  Public opaque itemRef is used only for internal overlay lookup. It is not
+  emitted in DOM, accessibility text, data attributes, URL or console; nor are
+  WorkContext/action refs, private namespaces, SHA, path/URL, credential or
+  target fields. The render boundary revalidates the whole feed and fails it
+  closed if any item is actionful or unsafe.
+- **Accessibility and responsive boundary:** The proposal panel precedes
+  Current Focus and the existing area is explicitly labeled
+  `기존 Active Attention 판정` with its own timestamp. Panel structure uses
+  semantic h2/h3/h4 plus ol/li and adjacent lane/evidence text. It contains no
+  button, link, form, CTA, role-button, click/key navigation or large live
+  region. Only a short loading status and bounded error alert are announced.
+  It invokes no focus/scroll API. CSS uses three columns on desktop and one
+  column at 600px or below, with wrapping titles/evidence. Existing Attention
+  Lab SC-001 form and its pre-existing stale-form race remain explicitly out of
+  this U-001 slice.
+- **Validation evidence:** From `suggestion/`, targeted Vitest passed 14 files
+  and 81/81 tests, and the focused mounted Playwright regressions passed 4/4.
+  Coverage includes fixed lane/server order, no client dedupe,
+  exact overlay/base immutability, Active-no-action-compatible Continuation,
+  status/fallback/empty copy, wall-clock expiry, action/private/unknown-caveat
+  whole-feed rejection, HTTP status/content-type before JSON, plain-text/HTML/
+  invalid JSON/auth/error transport, immediate stale clear, manual request
+  sequence, out-of-order token, exact shared server/browser text safety
+  (`CI/CD` allowed; POSIX/Windows path, URL, credential/private ref rejected),
+  30-day expiry with bounded chunk progression and removal, actual mounted
+  WorkCockpit state remaining on the newest Board when an older response
+  settles last, mounted current 401/non-JSON/network rejection clearing both
+  base and overlay, Work Board-only
+  composition, no focus/scroll, semantic markup/no interactive or private DOM,
+  and existing Work Board/SC/preserve/core compatibility. `npm run typecheck`,
+  full `npm run lint` and
+  `git diff --check` passed. The React best-practices review confirmed parallel
+  independent initial reads, dependent manual-refresh ordering, stable hook
+  dependencies and deterministic pre-hydration expiry handling. Exact command:
+
+  ```text
+  npm test -- --run tests/workSuggestionBoardPanel.test.tsx tests/workBoardDisplayClient.test.ts tests/workCockpitBoardIntegration.test.ts tests/attentionLabPresentation.test.tsx tests/semanticContinuationClient.test.ts tests/semanticContinuationOverlay.test.ts tests/workBoardRoute.test.ts tests/workBoardIntentRoute.test.ts tests/liveWorkBoardShadow.test.ts tests/livePreserveIntegratedFixture.test.ts tests/suggestionBoardContracts.test.ts tests/suggestionBoardComposer.test.ts tests/recentWorkPresentation.test.ts tests/semanticValidationHttpIsolation.test.ts
+  npm run test:e2e -- e2e/work-board-request-order.spec.ts
+  npm run typecheck
+  npm run lint
+  git diff --check
+  ```
+
+  Independent read-only delta QA reviewed the final source, tests and record
+  and found no remaining U-001 Medium-or-higher issue. It specifically confirmed
+  closure of the slash-policy mismatch, far-future expiry scheduling and mounted
+  race/failure-clear coverage gaps. That reviewer did not rerun commands or
+  recompute the fingerprint; the executable evidence above is the implementing
+  agent's current-tree result and human release gates remain separate.
+
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `d620ae9724958efa5a80999c9d127fea34450811`; the shared worktree remains
+  uncommitted. Policy `u001-display-board-worktree-sha256-v1` sorts
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  records for ten implementation/test paths and hashes them with SHA-256.
+  Documentation and unrelated shared dirty files are excluded. Because
+  `attentionClient.ts` and `globals.css` also contain compatible prior SC/A-001
+  uncommitted work, this is an exact integrated path checkpoint, not attribution
+  of every byte to U-001. Fingerprint:
+  `514ef0d355a00c6ad58ccc0143c7f90419c1e6cd73bf38560b509eca66496140`.
+  Exact command from `apps/blabase/`:
+
+  ```zsh
+  scope=(suggestion/app/WorkSuggestionBoardPanel.tsx suggestion/app/WorkCockpit.tsx suggestion/app/attentionClient.ts suggestion/app/globals.css suggestion/src/suggestionBoard/contracts.ts suggestion/src/suggestionBoard/publicTextSafety.ts suggestion/tests/workSuggestionBoardPanel.test.tsx suggestion/tests/workBoardDisplayClient.test.ts suggestion/tests/workCockpitBoardIntegration.test.ts suggestion/e2e/work-board-request-order.spec.ts)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+
+- **Dataset and baseline decision:** No engine input/output, evidence,
+  admission, rank, resolver, Board composition/projection, hash, evaluator,
+  Golden/Regression/E-001 row or production conversation changed. U-001 only
+  validates and renders an existing public display projection, so a comparable
+  core baseline is N/A. Component/client/integration regression is the relevant
+  automated evidence.
+- **Risks, manual gates and rollback:** Manual authenticated default-off/on
+  browser smoke, 320px and 200% zoom, keyboard/VoiceOver/Safari, copy/privacy
+  review, G2/G3 and release approval remain pending. Work Board summarized
+  status deliberately cannot distinguish genuine empty, insufficient evidence,
+  unavailable prerequisites or a Continuation candidate displaced from the
+  top-three Board; all use non-inferential empty-lane copy. Existing preserve
+  same-user exact-ABA and Attention Lab form race limitations remain. Rollback
+  removes the new panel/client boundary and WorkCockpit Board state/fetch while
+  restoring the unchanged existing Active diagnostic; no data migration or
+  server rollback is needed.

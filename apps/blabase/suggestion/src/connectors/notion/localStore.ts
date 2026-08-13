@@ -1,7 +1,6 @@
 import {
   chmod,
   mkdir,
-  readFile,
   rename,
   unlink,
   writeFile
@@ -15,6 +14,10 @@ import {
   cleanupStaleConnectorTempFiles,
   withActiveConnectorTempFile
 } from "../localTempCleanup";
+import {
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../../localReadMode";
 import type { NotionSnapshot, StoredNotionTokens } from "./types";
 
 const NOTION_STORE_BASENAMES = [
@@ -58,13 +61,17 @@ export function notionLocalDirectory(cwd = process.cwd()): string {
 }
 
 export async function readStoredNotionTokens(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoredNotionTokens | null> {
-  await cleanupStaleNotionTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleNotionTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(notionLocalDirectory(cwd), "tokens.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return tokensSchema.parse(JSON.parse(text));
   } catch {
@@ -124,13 +131,17 @@ export async function deleteStoredNotionTokens(
 }
 
 export async function readStoredNotionSnapshot(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<NotionSnapshot | null> {
-  await cleanupStaleNotionTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleNotionTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(notionLocalDirectory(cwd), "snapshot.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return snapshotSchema.parse(JSON.parse(text));
   } catch {

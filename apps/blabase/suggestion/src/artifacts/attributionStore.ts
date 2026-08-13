@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
 import {
   chmod,
+  lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -12,6 +15,7 @@ import {
 import { dirname, join } from "node:path";
 
 import { compareRuntimeStrings } from "../crossSource/canonicalHash";
+import { inspectLocalPrivateDirectoryChain } from "../localReadMode";
 import {
   MAX_WORK_ARTIFACT_ATTRIBUTION_DECISIONS,
   WORK_ARTIFACT_ATTRIBUTIONS_FILENAME,
@@ -259,6 +263,41 @@ export async function readWorkArtifactAttributionStore(
   return pruned.store;
 }
 
+/**
+ * Reads the attribution ledger without acquiring a lease or performing local
+ * maintenance. Pending, unsafe, or unstable state fails closed and is left
+ * byte-for-byte in place. Retention is applied only to the returned value.
+ */
+export async function readWorkArtifactAttributionStorePreservingState(
+  cwd = process.cwd(),
+  now = new Date()
+): Promise<WorkArtifactAttributionStore> {
+  const target = workArtifactAttributionPath(cwd);
+  await assertAttributionPreserveBoundary(cwd);
+  const read = await readStablePrivateText(target);
+
+  if (read.status === "missing") {
+    await assertAttributionPreserveBoundary(cwd);
+    await assertPathStillMissing(target);
+    return createEmptyWorkArtifactAttributionStore(
+      EMPTY_ARTIFACT_ATTRIBUTION_STORE_TIMESTAMP
+    );
+  }
+
+  let parsed: WorkArtifactAttributionStore;
+  try {
+    parsed = workArtifactAttributionStoreSchema.parse(
+      JSON.parse(read.text)
+    );
+  } catch {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+
+  await assertAttributionPreserveBoundary(cwd);
+  await assertStablePathFingerprint(target, read.fingerprint);
+  return pruneWorkArtifactAttributionStore(parsed, now).store;
+}
+
 export async function writeWorkArtifactAttributionStore(
   storeInput: WorkArtifactAttributionStore,
   cwd = process.cwd()
@@ -355,6 +394,197 @@ async function cleanupExpiredInvalidAttributionStore(
       throw new WorkArtifactAttributionError("STORE_WRITE_FAILED");
     }
   }
+}
+
+type StableFileFingerprint = {
+  device: number;
+  inode: number;
+  mode: number;
+  ownerUid: number;
+  size: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+};
+
+type StablePrivateTextRead =
+  | { status: "missing" }
+  | {
+      status: "available";
+      text: string;
+      fingerprint: StableFileFingerprint;
+    };
+
+async function assertAttributionPreserveBoundary(
+  cwd: string
+): Promise<void> {
+  const directory = dirname(workArtifactAttributionPath(cwd));
+  let directoryChain: "available" | "missing";
+  try {
+    directoryChain = await inspectLocalPrivateDirectoryChain(cwd, directory);
+  } catch {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+  if (directoryChain === "missing") return;
+  const directoryMetadata = await lstatIfPresent(directory);
+  if (directoryMetadata === null) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+  assertPrivateDirectory(directoryMetadata);
+
+  let filenames: string[];
+  try {
+    filenames = await readdir(directory);
+  } catch {
+    throw new WorkArtifactAttributionError("STORE_READ_FAILED");
+  }
+  if (filenames.some(isWorkArtifactAttributionTempFilename)) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+
+  const locksDirectory = join(directory, "locks");
+  const locksMetadata = await lstatIfPresent(locksDirectory);
+  if (locksMetadata === null) return;
+  assertPrivateDirectory(locksMetadata);
+  let lockFilenames: string[];
+  try {
+    lockFilenames = await readdir(locksDirectory);
+  } catch {
+    throw new WorkArtifactAttributionError("STORE_READ_FAILED");
+  }
+  if (lockFilenames.includes("state.lock")) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+}
+
+async function readStablePrivateText(
+  path: string
+): Promise<StablePrivateTextRead> {
+  const pathMetadata = await lstatIfPresent(path);
+  if (pathMetadata === null) return { status: "missing" };
+  assertPrivateFile(pathMetadata);
+  const expected = stableFileFingerprint(pathMetadata);
+
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const before = await handle.stat();
+    assertPrivateFile(before);
+    if (!sameStableFileFingerprint(expected, stableFileFingerprint(before))) {
+      throw new WorkArtifactAttributionError("STORE_INVALID");
+    }
+    const text = await handle.readFile({ encoding: "utf8" });
+    const after = await handle.stat();
+    assertPrivateFile(after);
+    if (!sameStableFileFingerprint(expected, stableFileFingerprint(after))) {
+      throw new WorkArtifactAttributionError("STORE_INVALID");
+    }
+    await handle.close();
+    handle = null;
+    await assertStablePathFingerprint(path, expected);
+    return { status: "available", text, fingerprint: expected };
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    if (error instanceof WorkArtifactAttributionError) throw error;
+    if (
+      isNodeError(error, "ELOOP") ||
+      isNodeError(error, "ENOENT") ||
+      isNodeError(error, "ENOTDIR")
+    ) {
+      throw new WorkArtifactAttributionError("STORE_INVALID");
+    }
+    throw new WorkArtifactAttributionError("STORE_READ_FAILED");
+  }
+}
+
+async function assertStablePathFingerprint(
+  path: string,
+  expected: StableFileFingerprint
+): Promise<void> {
+  const metadata = await lstatIfPresent(path);
+  if (metadata === null) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+  assertPrivateFile(metadata);
+  if (
+    !sameStableFileFingerprint(expected, stableFileFingerprint(metadata))
+  ) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+}
+
+async function assertPathStillMissing(path: string): Promise<void> {
+  if ((await lstatIfPresent(path)) !== null) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+}
+
+async function lstatIfPresent(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return null;
+    if (isNodeError(error, "ENOTDIR")) {
+      throw new WorkArtifactAttributionError("STORE_INVALID");
+    }
+    throw new WorkArtifactAttributionError("STORE_READ_FAILED");
+  }
+}
+
+function assertPrivateDirectory(metadata: Stats): void {
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    !ownedByCurrentUser(metadata) ||
+    (metadata.mode & 0o777) !== 0o700
+  ) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+}
+
+function assertPrivateFile(metadata: Stats): void {
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    !ownedByCurrentUser(metadata) ||
+    (metadata.mode & 0o777) !== 0o600
+  ) {
+    throw new WorkArtifactAttributionError("STORE_INVALID");
+  }
+}
+
+function ownedByCurrentUser(metadata: Stats): boolean {
+  const currentUid = process.getuid?.();
+  return currentUid === undefined || metadata.uid === currentUid;
+}
+
+function stableFileFingerprint(metadata: Stats): StableFileFingerprint {
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    mode: metadata.mode & 0o777,
+    ownerUid: metadata.uid,
+    size: metadata.size,
+    modifiedAtMs: metadata.mtimeMs,
+    changedAtMs: metadata.ctimeMs
+  };
+}
+
+function sameStableFileFingerprint(
+  left: StableFileFingerprint,
+  right: StableFileFingerprint
+): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.mode === right.mode &&
+    left.ownerUid === right.ownerUid &&
+    left.size === right.size &&
+    left.modifiedAtMs === right.modifiedAtMs &&
+    left.changedAtMs === right.changedAtMs
+  );
 }
 
 function currentDecisionForArtifact(

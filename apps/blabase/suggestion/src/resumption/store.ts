@@ -24,6 +24,11 @@ import {
   readStoredCodexConfig,
   readStoredCodexSnapshot
 } from "../connectors/codex/localStore";
+import type { StoredCodexConfig } from "../connectors/codex/types";
+import {
+  inspectLocalPrivateDirectoryChain,
+  readLocalPrivateText
+} from "../localReadMode";
 import {
   bindWorkSessionDecision,
   claimWorkResumptionCommand,
@@ -95,6 +100,30 @@ export type ManagedCodexAuthoritySnapshot = {
     scopeId: string;
     connectionGeneration: string;
   }>;
+};
+
+export type PreservedManagedCodexAuthoritySnapshot = {
+  asOf: string;
+  now: Date;
+  authority: ManagedCodexAuthoritySnapshot;
+  bindingStore: WorkSessionBindingStore;
+  codexConfig: StoredCodexConfig | null;
+};
+
+type PreservedPrivateJsonRead<T> = PrivateReadResult<T> & {
+  fingerprint: PreservedFileFingerprint | null;
+};
+
+type PreservedFileFingerprint = {
+  device: number;
+  inode: number;
+  mode: number;
+  ownerUid: number;
+  ownerGid: number;
+  linkCount: number;
+  size: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
 };
 
 export class WorkResumptionStoreError extends Error {
@@ -760,6 +789,92 @@ export async function withManagedCodexAuthorityLease<T>(
   });
 }
 
+/**
+ * Captures Work Resumption authority without entering either mutation queue or
+ * creating a filesystem lease. The caller supplies the preserve-read Codex
+ * config so connection authority and projection-key authority cannot diverge.
+ * Outer preserve capture validates the complete local manifest before/after.
+ */
+export async function withManagedCodexAuthoritySnapshotPreservingState<T>(
+  cwd: string,
+  nowInput: Date,
+  codexConfig: StoredCodexConfig | null,
+  read: (
+    snapshot: PreservedManagedCodexAuthoritySnapshot
+  ) => Promise<T>
+): Promise<T> {
+  const now = new Date(nowInput.getTime());
+  const asOf = now.toISOString();
+  await assertWorkResumptionPreserveBoundary(cwd);
+  const [bindingRead, heartbeatRead] = await Promise.all([
+    readWorkResumptionPrivateJsonPreservingState(
+      join(workResumptionLocalDirectory(cwd), BINDINGS_FILENAME),
+      workSessionBindingStoreSchema,
+      cwd
+    ),
+    readWorkResumptionPrivateJsonPreservingState(
+      join(workResumptionLocalDirectory(cwd), HEARTBEAT_FILENAME),
+      workResumptionHeartbeatSchema,
+      cwd
+    )
+  ]);
+  const bindingStore =
+    bindingRead.status === "available"
+      ? bindingRead.value
+      : createEmptyWorkSessionBindingStore(asOf);
+  const heartbeat =
+    heartbeatRead.status === "available" ? heartbeatRead.value : null;
+  const connectionGeneration =
+    codexConfig === null
+      ? null
+      : workResumptionCodexConnectionGeneration({
+          installationSecret: codexConfig.installationSecret,
+          discoveredAt: codexConfig.discoveredAt
+        });
+  const authority: ManagedCodexAuthoritySnapshot = {
+    activeOwnerInstanceId:
+      heartbeat && isFreshWorkResumptionHeartbeat(heartbeat, now)
+        ? heartbeat.instanceId
+        : null,
+    activeOwnerships:
+      connectionGeneration === null
+        ? []
+        : currentStoredWorkSessionBindings(bindingStore).map((binding) => ({
+            bindingId: binding.bindingId,
+            executionId: binding.executionId,
+            scopeId: binding.scopeId,
+            connectionGeneration
+          }))
+  };
+  const result = await read({
+    asOf,
+    now,
+    authority,
+    bindingStore,
+    codexConfig
+  });
+  await assertWorkResumptionPreserveBoundary(cwd);
+  const [confirmedBindingRead, confirmedHeartbeatRead] = await Promise.all([
+    readWorkResumptionPrivateJsonPreservingState(
+      join(workResumptionLocalDirectory(cwd), BINDINGS_FILENAME),
+      workSessionBindingStoreSchema,
+      cwd
+    ),
+    readWorkResumptionPrivateJsonPreservingState(
+      join(workResumptionLocalDirectory(cwd), HEARTBEAT_FILENAME),
+      workResumptionHeartbeatSchema,
+      cwd
+    )
+  ]);
+  if (
+    !samePrivateReadResult(bindingRead, confirmedBindingRead) ||
+    !samePrivateReadResult(heartbeatRead, confirmedHeartbeatRead)
+  ) {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  return result;
+}
+
 export function withWorkResumptionStateLease<T>(
   cwd: string,
   mutation: () => Promise<T>
@@ -943,6 +1058,165 @@ async function readPrivateJson<T>(
   } catch {
     return { status: "invalid" };
   }
+}
+
+async function readWorkResumptionPrivateJsonPreservingState<T>(
+  path: string,
+  schema: ZodType<T>,
+  cwd: string
+): Promise<PreservedPrivateJsonRead<T>> {
+  let chainStatus: Awaited<
+    ReturnType<typeof inspectLocalPrivateDirectoryChain>
+  >;
+  try {
+    chainStatus = await inspectLocalPrivateDirectoryChain(
+      cwd,
+      dirname(path)
+    );
+  } catch {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  if (chainStatus === "missing") {
+    return { status: "missing", fingerprint: null };
+  }
+
+  let metadataBefore;
+  try {
+    metadataBefore = await lstat(path);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      return { status: "missing", fingerprint: null };
+    }
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  if (!metadataBefore.isFile() || metadataBefore.isSymbolicLink()) {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  const fingerprint = preservedFileFingerprint(metadataBefore);
+
+  let text: string;
+  try {
+    text = await readLocalPrivateText(path, "preserve", cwd);
+    const metadataAfter = await lstat(path);
+    if (
+      !metadataAfter.isFile() ||
+      metadataAfter.isSymbolicLink() ||
+      !samePreservedFileFingerprint(
+        fingerprint,
+        preservedFileFingerprint(metadataAfter)
+      )
+    ) {
+      throw new WorkResumptionStoreError("STORE_INVALID");
+    }
+    const parsed = schema.safeParse(JSON.parse(text));
+    if (!parsed.success) {
+      throw new WorkResumptionStoreError("STORE_INVALID");
+    }
+    return {
+      status: "available",
+      value: parsed.data,
+      fingerprint
+    };
+  } catch (error) {
+    if (error instanceof WorkResumptionStoreError) throw error;
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+}
+
+async function assertWorkResumptionPreserveBoundary(
+  cwd: string
+): Promise<void> {
+  const directory = workResumptionLocalDirectory(cwd);
+  try {
+    if (
+      (await inspectLocalPrivateDirectoryChain(cwd, directory)) ===
+      "missing"
+    ) {
+      return;
+    }
+  } catch {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  let filenames: string[];
+  try {
+    filenames = await readdir(directory);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return;
+    throw new WorkResumptionStoreError("STORE_READ_FAILED");
+  }
+  if (
+    filenames.some(
+      (filename) =>
+        /\.tmp$/u.test(filename) ||
+        isWorkArtifactAttributionTempFilename(filename)
+    )
+  ) {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  const locksDirectory = join(directory, LOCKS_DIRECTORY);
+  try {
+    if (
+      (await inspectLocalPrivateDirectoryChain(
+        cwd,
+        locksDirectory
+      )) === "missing"
+    ) {
+      return;
+    }
+  } catch {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+  let lockFilenames: string[];
+  try {
+    lockFilenames = await readdir(locksDirectory);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return;
+    throw new WorkResumptionStoreError("STORE_READ_FAILED");
+  }
+  if (
+    lockFilenames.includes(`${STATE_LOCK_NAME}.lock`) ||
+    lockFilenames.includes(`${HEARTBEAT_LOCK_NAME}.lock`)
+  ) {
+    throw new WorkResumptionStoreError("STORE_INVALID");
+  }
+}
+
+function samePrivateReadResult<T>(
+  left: PreservedPrivateJsonRead<T>,
+  right: PreservedPrivateJsonRead<T>
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function preservedFileFingerprint(metadata: {
+  dev: number;
+  ino: number;
+  mode: number;
+  uid: number;
+  gid: number;
+  nlink: number;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}): PreservedFileFingerprint {
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    mode: metadata.mode & 0o777,
+    ownerUid: metadata.uid,
+    ownerGid: metadata.gid,
+    linkCount: metadata.nlink,
+    size: metadata.size,
+    modifiedAtMs: metadata.mtimeMs,
+    changedAtMs: metadata.ctimeMs
+  };
+}
+
+function samePreservedFileFingerprint(
+  left: PreservedFileFingerprint,
+  right: PreservedFileFingerprint
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function writePrivateJson(

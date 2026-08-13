@@ -11,6 +11,11 @@ import {
 import { dirname, join } from "node:path";
 
 import {
+  inspectLocalPrivateDirectoryChain,
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../localReadMode";
+import {
   PROJECT_WORKFLOW_FILENAME,
   PROJECT_WORKFLOW_GRACE_PERIOD_MS,
   PROJECT_WORKFLOW_POLICY_VERSION,
@@ -258,9 +263,28 @@ export function recordProjectWorkflowClosure(
 }
 
 export async function readProjectWorkflowStore(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<ProjectWorkflowStore> {
   const target = projectWorkflowStorePath(cwd);
+  if (mode === "preserve") {
+    try {
+      if (
+        (await inspectLocalPrivateDirectoryChain(cwd, dirname(target))) ===
+        "missing"
+      ) {
+        return createEmptyProjectWorkflowStore();
+      }
+      const raw = await readLocalPrivateText(target, mode, cwd);
+      return projectWorkflowStoreSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) {
+        return createEmptyProjectWorkflowStore();
+      }
+      if (error instanceof ProjectWorkflowStoreError) throw error;
+      throw new ProjectWorkflowStoreError("STORE_INVALID");
+    }
+  }
   let metadata;
   try {
     metadata = await lstat(target);

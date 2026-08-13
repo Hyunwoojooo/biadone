@@ -4,6 +4,8 @@ import {
   evaluateCurrentAttentionWithLiveInputs,
   type LiveAttentionCapturedInputs
 } from "../attention/liveAttention";
+import type { AttentionCodeProvenance } from "../attention/codeProvenance";
+import { capturePreservingLocalState } from "../attention/preserveCapture";
 import { compareRuntimeStrings } from "../crossSource/canonicalHash";
 import {
   CONTINUATION_CANDIDATE_DERIVATION_ENVELOPE_CONTRACT,
@@ -26,8 +28,14 @@ import {
 import {
   CONTINUATION_RESOLUTION_CONFIG,
   continuationResolutionEnvelopeSchema,
-  resolveContinuation
+  resolveContinuation,
+  type ContinuationResolvedDecision
 } from "../continuation/resolveContinuation";
+import {
+  createContinuationReadFallback,
+  projectContinuationReadDecision,
+  type ContinuationReadDecision
+} from "../continuation/readApi";
 import { composeWorkSuggestionBoard } from "./composeBoard";
 import {
   workBoardApiResponseSchema,
@@ -38,6 +46,13 @@ import {
   projectActiveOnlyWorkSuggestionBoardPublic,
   projectWorkSuggestionBoardPublic
 } from "./publicProjection";
+import {
+  createSemanticContinuationWorkBoardResponse,
+  type SemanticContinuationWorkBoardResponse
+} from "../semanticContinuation/contracts";
+import { readSemanticContinuationIntentStore } from "../semanticContinuation/localStore";
+import { buildSemanticContinuationTitlePresentation } from "../semanticContinuation/titleOverlay";
+import { readSemanticValidationStore } from "../semanticContinuation/validation/store";
 
 const INSTALLATION_SECRET_PATTERN = /^[a-f0-9]{64}$/u;
 
@@ -46,25 +61,166 @@ export async function evaluateLiveWorkSuggestionBoard(input?: {
   now?: Date;
   env?: NodeJS.ProcessEnv;
 }): Promise<WorkBoardApiResponse> {
+  const base = await evaluateLiveWorkSuggestionBoardBase(input);
+  return base.response;
+}
+
+export async function evaluateLiveContinuationRead(input?: {
+  cwd?: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}): Promise<ContinuationReadDecision> {
+  const { captured, resolution } =
+    await captureLiveWorkSuggestionBoardResolution(input);
+  if (resolution.continuation.kind === "resolved") {
+    return projectContinuationReadDecision(
+      resolution.continuation.decision
+    );
+  }
+  if (resolution.continuation.kind === "unavailable") {
+    return createContinuationReadFallback(
+      captured.asOf,
+      "unavailable"
+    );
+  }
+  if (resolution.continuation.kind === "insufficient") {
+    return createContinuationReadFallback(
+      captured.asOf,
+      "insufficient_evidence"
+    );
+  }
+  throw new TypeError("CONTINUATION_READ_PROJECTION_FAILED");
+}
+
+export async function evaluateLiveSemanticWorkSuggestionBoard(input?: {
+  cwd?: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SemanticContinuationWorkBoardResponse> {
+  const base = await evaluateLiveWorkSuggestionBoardBase(input);
+  if (
+    base.response.status !== "ready" ||
+    base.response.mode !== "full" ||
+    base.registrySha256 === null
+  ) {
+    return createSemanticContinuationWorkBoardResponse(base.response, null);
+  }
+  const readyResponse = base.response;
+  const registrySha256 = base.registrySha256;
+  const cwd = input?.cwd ?? process.cwd();
+  const installationSecret = base.installationSecret ?? null;
+  const semanticPresentation = await capturePreservingLocalState({
+    cwd,
+    scope: "semantic",
+    read: async () => {
+      const stored = await readSemanticContinuationIntentStore(
+        cwd,
+        "preserve"
+      );
+      const validationStored =
+        installationSecret === null
+          ? null
+          : await readSemanticValidationStore(
+              cwd,
+              installationSecret,
+              "preserve"
+            );
+      return stored.status === "available"
+        ? buildSemanticContinuationTitlePresentation({
+            board: readyResponse.board,
+            registrySha256,
+            store: stored.value,
+            validationStore:
+              validationStored?.status === "available"
+                ? validationStored.value
+                : null,
+            currentCodeProvenance: base.codeProvenance
+          })
+        : null;
+    }
+  }).catch(() => null);
+  return createSemanticContinuationWorkBoardResponse(
+    base.response,
+    semanticPresentation
+  );
+}
+
+export type LiveWorkSuggestionBoardBase = {
+  response: WorkBoardApiResponse;
+  registrySha256: string | null;
+  codeProvenance: AttentionCodeProvenance;
+  /** Private request-scoped authority; never serialized in the API wrapper. */
+  installationSecret?: string | null;
+};
+
+export async function evaluateLiveWorkSuggestionBoardBase(input?: {
+  cwd?: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}): Promise<LiveWorkSuggestionBoardBase> {
+  const { captured, resolution } =
+    await captureLiveWorkSuggestionBoardResolution(input);
+  return {
+    response: resolution.response,
+    codeProvenance: captured.codeProvenance,
+    installationSecret:
+      captured.codexConfig?.installationSecret ?? null,
+    registrySha256:
+      captured.registryStatus === "available" &&
+      captured.registry !== null
+        ? captured.registry.registrySha256
+        : null
+  };
+}
+
+async function captureLiveWorkSuggestionBoardResolution(input?: {
+  cwd?: string;
+  now?: Date;
+  env?: NodeJS.ProcessEnv;
+}) {
   const captured = await evaluateCurrentAttentionWithLiveInputs({
     ...(input?.cwd ? { cwd: input.cwd } : {}),
     ...(input?.now ? { now: input.now } : {}),
     ...(input?.env ? { env: input.env } : {}),
-    refreshSources: false
+    refreshSources: false,
+    readMode: "preserve"
   });
-  return workBoardApiResponseSchema.parse(composeCapturedBoard(captured));
+  return {
+    captured,
+    resolution: composeCapturedBoardResolution(captured)
+  };
 }
 
 export function composeCapturedBoard(
   captured: LiveAttentionCapturedInputs
 ): WorkBoardApiResponse {
+  return composeCapturedBoardResolution(captured).response;
+}
+
+type CapturedContinuationResolution =
+  | { kind: "resolved"; decision: ContinuationResolvedDecision }
+  | { kind: "unavailable" }
+  | { kind: "insufficient" }
+  | { kind: "error" };
+
+export type CapturedBoardResolution = {
+  response: WorkBoardApiResponse;
+  continuation: CapturedContinuationResolution;
+};
+
+export function composeCapturedBoardResolution(
+  captured: LiveAttentionCapturedInputs
+): CapturedBoardResolution {
   const installationSecret =
     captured.codexConfig?.installationSecret ?? null;
   if (
     installationSecret === null ||
     !INSTALLATION_SECRET_PATTERN.test(installationSecret)
   ) {
-    return unavailableProjectionKey();
+    return {
+      response: unavailableProjectionKey(),
+      continuation: { kind: "unavailable" }
+    };
   }
   const projectionKey = deriveProjectionKey(installationSecret);
 
@@ -90,6 +246,25 @@ export function composeCapturedBoard(
     }
   };
 
+  const unavailable = (
+    reasonCode: WorkBoardFallbackReasonCode
+  ): CapturedBoardResolution => ({
+    response: activeOnly(reasonCode),
+    continuation: { kind: "unavailable" }
+  });
+  const insufficient = (
+    reasonCode: WorkBoardFallbackReasonCode
+  ): CapturedBoardResolution => ({
+    response: activeOnly(reasonCode),
+    continuation: { kind: "insufficient" }
+  });
+  const failed = (
+    reasonCode: WorkBoardFallbackReasonCode
+  ): CapturedBoardResolution => ({
+    response: activeOnly(reasonCode),
+    continuation: { kind: "error" }
+  });
+
   try {
     if (
       captured.registryStatus !== "available" ||
@@ -99,12 +274,12 @@ export function composeCapturedBoard(
         captured.codeProvenance.codeState
       )
     ) {
-      return activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE");
+      return unavailable("CONTINUATION_PREREQUISITES_UNAVAILABLE");
     }
 
     const asOfMs = Date.parse(captured.asOf);
     if (!Number.isFinite(asOfMs)) {
-      return activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE");
+      return unavailable("CONTINUATION_PREREQUISITES_UNAVAILABLE");
     }
     const adapterBatches = [
       adaptCodexContinuationObservations(
@@ -147,7 +322,7 @@ export function composeCapturedBoard(
       identityOptions
     );
     if (!identity.ok) {
-      return activeOnly("CONTINUATION_IDENTITY_REJECTED");
+      return insufficient("CONTINUATION_IDENTITY_REJECTED");
     }
 
     const derivationEnvelope = {
@@ -162,7 +337,7 @@ export function composeCapturedBoard(
       derivationEnvelope
     );
     if (!derivation.ok) {
-      return activeOnly("CONTINUATION_DERIVATION_REJECTED");
+      return insufficient("CONTINUATION_DERIVATION_REJECTED");
     }
 
     const runEntropy = randomBytes(16).toString("hex");
@@ -198,7 +373,7 @@ export function composeCapturedBoard(
       trustedOptions
     );
     if (!resolved.ok) {
-      return activeOnly("CONTINUATION_RESOLUTION_REJECTED");
+      return insufficient("CONTINUATION_RESOLUTION_REJECTED");
     }
 
     const composed = composeWorkSuggestionBoard(
@@ -214,23 +389,32 @@ export function composeCapturedBoard(
       trustedOptions
     );
     if (!composed.ok) {
-      return activeOnly("BOARD_COMPOSITION_REJECTED");
+      return failed("BOARD_COMPOSITION_REJECTED");
     }
     try {
-      return workBoardApiResponseSchema.parse({
-        status: "ready",
-        mode: "full",
-        reasonCode: null,
-        board: projectWorkSuggestionBoardPublic(
-          composed.board,
-          projectionKey
-        )
-      });
+      return {
+        response: workBoardApiResponseSchema.parse({
+          status: "ready",
+          mode: "full",
+          reasonCode: null,
+          board: projectWorkSuggestionBoardPublic(
+            composed.board,
+            projectionKey
+          )
+        }),
+        continuation: {
+          kind: "resolved",
+          decision: resolved.result
+        }
+      };
     } catch {
-      return activeOnly("BOARD_PUBLIC_PROJECTION_REJECTED");
+      return failed("BOARD_PUBLIC_PROJECTION_REJECTED");
     }
   } catch {
-    return activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE");
+    return {
+      response: activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE"),
+      continuation: { kind: "error" }
+    };
   }
 }
 

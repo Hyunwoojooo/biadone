@@ -30,7 +30,10 @@ import {
   WORK_SUGGESTION_BOARD_RESULT_CONTRACT,
   WORK_SUGGESTION_BOARD_SCHEMA_VERSION
 } from "../crossSource/versions";
-import { containsCredentialShapedPublicText } from "../publicTextSafety";
+import {
+  containsForbiddenWorkSuggestionBoardPublicText,
+  isWorkSuggestionBoardPublicOutputTextSafe
+} from "./publicTextSafety";
 
 export const WORK_SUGGESTION_BOARD_INPUT_HASH_DOMAIN =
   "work-suggestion-board-input-hash-v0.3" as const;
@@ -63,17 +66,6 @@ const reasonCodeSchema = z.string().regex(/^[A-Z0-9_]{1,80}$/u);
 const NON_CANONICAL_BOUNDARY_VALUE = Object.freeze({
   nonCanonicalWorkSuggestionBoardBoundaryValue: true
 });
-
-const publicSafeTextForbiddenPatterns = [
-  /[\u0000-\u001f\u007f-\u009f]/u,
-  /https?:\/\/\S+/iu,
-  /file:\/\/\S+/iu,
-  /[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/u,
-  /(?:^|[^\p{L}\p{N}_])(?:\/{1,2}(?!\s)\S+|\\\\\S+|[A-Za-z]:[\\/]\S+)/u,
-  /\b[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+/u,
-  /(?:^|[^A-Fa-f0-9])(?:[A-Fa-f0-9]{64}|[A-Fa-f0-9]{40})(?=$|[^A-Fa-f0-9])/u,
-  /(?:session_|run_|analysis_|evidence_|source_ref_|managed_run_|continuation_observation_|continuation_candidate_)[A-Za-z0-9_-]*/u
-] as const;
 
 export const workSuggestionBoardLaneSchema = z.enum([
   "attention",
@@ -933,17 +925,14 @@ function publicSafeTextSchema(maxLength: number) {
     .min(1)
     .max(maxLength)
     .refine(
-      (value) =>
-        publicSafeTextForbiddenPatterns.every(
-          (pattern) => !pattern.test(value)
-        ),
+      (value) => !containsForbiddenWorkSuggestionBoardPublicText(value),
       "Public Board text contains a forbidden native identifier or locator"
     );
 }
 
 function publicOutputTextSchema(maxLength: number) {
   return publicSafeTextSchema(maxLength).refine(
-    (value) => !containsCredentialShapedPublicText(value),
+    isWorkSuggestionBoardPublicOutputTextSafe,
     "Public Board text contains a credential-shaped value"
   );
 }

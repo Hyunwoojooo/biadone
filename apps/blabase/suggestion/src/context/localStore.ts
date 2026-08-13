@@ -12,6 +12,12 @@ import { dirname, join, resolve } from "node:path";
 import type { ZodType } from "zod";
 
 import {
+  inspectLocalPrivateDirectoryChain,
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../localReadMode";
+
+import {
   captureWeeklyOutcome,
   confirmProjectMapping,
   correctWeeklyOutcome,
@@ -81,20 +87,26 @@ export function workContextLocalDirectory(
 }
 
 export async function readWorkContextRegistry(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoreReadResult<WorkContextRegistry>> {
   return readPrivateStore(
     join(workContextLocalDirectory(cwd), REGISTRY_FILENAME),
-    workContextRegistrySchema
+    workContextRegistrySchema,
+    cwd,
+    mode
   );
 }
 
 export async function readWeeklyOutcomeStore(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoreReadResult<WeeklyOutcomeStore>> {
   return readPrivateStore(
     join(workContextLocalDirectory(cwd), OUTCOMES_FILENAME),
-    weeklyOutcomeStoreSchema
+    weeklyOutcomeStoreSchema,
+    cwd,
+    mode
   );
 }
 
@@ -357,11 +369,22 @@ async function mutateOutcomeStore<
 
 async function readPrivateStore<T>(
   path: string,
-  schema: ZodType<T>
+  schema: ZodType<T>,
+  trustedRoot: string,
+  mode: LocalReadMode
 ): Promise<StoreReadResult<T>> {
   let text: string;
   try {
-    text = await readFile(path, "utf8");
+    if (
+      mode === "preserve" &&
+      (await inspectLocalPrivateDirectoryChain(
+        trustedRoot,
+        dirname(path)
+      )) === "missing"
+    ) {
+      return { status: "missing" };
+    }
+    text = await readLocalPrivateText(path, mode, trustedRoot);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return { status: "missing" };
     return { status: "invalid", reason: "READ_FAILED" };

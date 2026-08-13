@@ -2,6 +2,7 @@ import {
   createEmptyWorkArtifactAttributionStore,
   managedCodexArtifactRelationProjectionSchema,
   readWorkArtifactAttributionStore,
+  readWorkArtifactAttributionStorePreservingState,
   resolveManagedCodexArtifactRelations,
   type ManagedCodexArtifactRelationProjection
 } from "../artifacts";
@@ -25,6 +26,7 @@ import {
   managedCodexPublicProjectionSchema,
   managedCodexSemanticProjectionSchema,
   readManagedCodexObservability,
+  readManagedCodexObservabilityPreservingState,
   type ManagedCodexPublicProjection,
   type ManagedCodexSemanticProjection
 } from "../managedCodex";
@@ -37,8 +39,11 @@ import {
   createEmptyWorkSessionBindingStore,
   readWorkSessionBindingStore,
   withManagedCodexAuthorityLease,
+  withManagedCodexAuthoritySnapshotPreservingState,
+  type PreservedManagedCodexAuthoritySnapshot,
   type ManagedCodexAuthoritySnapshot
 } from "../resumption";
+import type { StoredCodexConfig } from "../connectors/codex/types";
 
 export type CurrentWorkEvidence = {
   asOf: string;
@@ -217,12 +222,62 @@ export async function resolveCurrentWorkEvidenceAtAuthoritySnapshot(input: {
   );
 }
 
+/**
+ * Preserve-only twin of the leased live boundary. One caller-supplied clock,
+ * Codex config, binding store, and authority snapshot feed the whole graph;
+ * no dependency is re-read through a maintenance-mode helper.
+ */
+export async function resolveCurrentWorkEvidenceAtPreservedAuthoritySnapshot(
+  input: {
+    cwd?: string;
+    now: Date;
+    codexConfig: StoredCodexConfig | null;
+    contextRegistry: WorkContextRegistry | null;
+    resolveGithubBatch: (
+      asOf: string
+    ) => RuntimeWorkSignalBatch | null;
+  }
+): Promise<CurrentWorkEvidence> {
+  const cwd = input.cwd ?? process.cwd();
+  return withManagedCodexAuthoritySnapshotPreservingState(
+    cwd,
+    input.now,
+    input.codexConfig,
+    (snapshot) =>
+      resolveCurrentWorkEvidenceFromPreservedSnapshot({
+        cwd,
+        snapshot,
+        githubBatch: input.resolveGithubBatch(snapshot.asOf),
+        contextRegistry: input.contextRegistry
+      })
+  );
+}
+
+export async function resolveCurrentWorkEvidenceFromPreservedSnapshot(input: {
+  cwd?: string;
+  snapshot: PreservedManagedCodexAuthoritySnapshot;
+  githubBatch: RuntimeWorkSignalBatch | null;
+  contextRegistry: WorkContextRegistry | null;
+}): Promise<CurrentWorkEvidence> {
+  return resolveEvidenceGraph({
+    cwd: input.cwd ?? process.cwd(),
+    now: input.snapshot.now,
+    authority: input.snapshot.authority,
+    bindingStore: input.snapshot.bindingStore,
+    githubBatch: input.githubBatch,
+    contextRegistry: input.contextRegistry,
+    readMode: "preserve"
+  });
+}
+
 async function resolveEvidenceGraph(input: {
   cwd: string;
   now: Date;
   authority: ManagedCodexAuthoritySnapshot;
+  bindingStore?: Awaited<ReturnType<typeof readWorkSessionBindingStore>>;
   githubBatch: RuntimeWorkSignalBatch | null;
   contextRegistry: WorkContextRegistry | null;
+  readMode?: "maintain" | "preserve";
 }): Promise<CurrentWorkEvidence> {
   const asOf = input.now.toISOString();
   if (
@@ -233,9 +288,12 @@ async function resolveEvidenceGraph(input: {
       "Current work evidence requires one exact GitHub as-of time."
     );
   }
+  const preserve = input.readMode === "preserve";
   const [managedObservability, bindingStore, artifactAttributionStore] =
     await Promise.all([
-      readManagedCodexObservability(
+      (preserve
+        ? readManagedCodexObservabilityPreservingState
+        : readManagedCodexObservability)(
         {
           activeOwnerInstanceId: input.authority.activeOwnerInstanceId,
           activeOwnerships: input.authority.activeOwnerships,
@@ -243,8 +301,15 @@ async function resolveEvidenceGraph(input: {
         },
         input.cwd
       ),
-      readWorkSessionBindingStore(input.cwd, asOf),
-      readWorkArtifactAttributionStore(input.cwd, input.now)
+      input.bindingStore === undefined
+        ? readWorkSessionBindingStore(input.cwd, asOf)
+        : Promise.resolve(input.bindingStore),
+      preserve
+        ? readWorkArtifactAttributionStorePreservingState(
+            input.cwd,
+            input.now
+          )
+        : readWorkArtifactAttributionStore(input.cwd, input.now)
     ]);
   const managedProjection = managedCodexPublicProjectionSchema.parse(
     managedObservability.projection

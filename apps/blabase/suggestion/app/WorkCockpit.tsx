@@ -18,8 +18,10 @@ import type {
 import type { ActiveAttentionCandidate } from "../src/attentionDecision";
 import type { Phase2CodexOverviewItem } from "../src/crossSource/attentionSchema";
 import type { RecentWorkPublicSummary } from "../src/recentWork";
+import type { SemanticContinuationWorkBoardResponse } from "../src/semanticContinuation/contracts";
 import {
   fetchAttention,
+  fetchDisplayOnlyWorkBoard,
   submitAttentionFeedback
 } from "./attentionClient";
 import { ManagedCodexProgress } from "./ManagedCodexProgress";
@@ -43,6 +45,7 @@ import {
   type WorkResumptionTaskIdentity,
   type WorkResumptionTaskRef
 } from "./workResumptionClient";
+import { WorkSuggestionBoardPanel } from "./WorkSuggestionBoardPanel";
 
 const feedbackOptions: Array<{
   value: AttentionFeedbackType;
@@ -55,8 +58,76 @@ const feedbackOptions: Array<{
   { value: "insufficient_context", label: "근거 부족" }
 ];
 
-export function WorkCockpit() {
+export function createMonotonicRequestGate() {
+  let current = 0;
+  return {
+    begin(): number {
+      current += 1;
+      return current;
+    },
+    isCurrent(sequence: number): boolean {
+      return sequence === current;
+    }
+  };
+}
+
+export async function loadWorkCockpitRequest(input: {
+  refreshSources: boolean;
+  loadAttention: typeof fetchAttention;
+  loadWorkBoard: typeof fetchDisplayOnlyWorkBoard;
+  onBoardSettled?: (
+    result: PromiseSettledResult<SemanticContinuationWorkBoardResponse>
+  ) => void;
+}) {
+  const attentionPromise = input.loadAttention(input.refreshSources);
+  const boardPromise = input.refreshSources
+    ? attentionPromise.then(() => input.loadWorkBoard())
+    : input.loadWorkBoard();
+  const boardSettled = settle(boardPromise).then((result) => {
+    input.onBoardSettled?.(result);
+    return result;
+  });
+  const [attention, board] = await Promise.all([
+    settle(attentionPromise),
+    boardSettled
+  ]);
+  return { attention, board };
+}
+
+function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason: unknown) => ({ status: "rejected", reason })
+  );
+}
+
+export function displayBoardStateFromResult(
+  result: PromiseSettledResult<SemanticContinuationWorkBoardResponse>
+): {
+  response: SemanticContinuationWorkBoardResponse | null;
+  error: string | null;
+} {
+  return result.status === "fulfilled"
+    ? { response: result.value, error: null }
+    : {
+        response: null,
+        error: "작업 제안을 불러오지 못했습니다."
+      };
+}
+
+export function WorkCockpit({
+  loadAttention = fetchAttention,
+  loadWorkBoard = fetchDisplayOnlyWorkBoard
+}: {
+  loadAttention?: typeof fetchAttention;
+  loadWorkBoard?: typeof fetchDisplayOnlyWorkBoard;
+} = {}) {
   const [payload, setPayload] = useState<AttentionApiResponse | null>(
+    null
+  );
+  const [workBoard, setWorkBoard] =
+    useState<SemanticContinuationWorkBoardResponse | null>(null);
+  const [workBoardError, setWorkBoardError] = useState<string | null>(
     null
   );
   const [isLoading, setIsLoading] = useState(true);
@@ -68,8 +139,9 @@ export function WorkCockpit() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(
     null
   );
-  const requestSequence = useRef(0);
+  const requestGate = useRef(createMonotonicRequestGate());
   const interactiveSequenceRef = useRef<number | null>(null);
+  const suppressOwnManualInvalidationRef = useRef(false);
   useSourceSyncRuntime();
 
   const load = useCallback(
@@ -80,20 +152,45 @@ export function WorkCockpit() {
       if (silent && interactiveSequenceRef.current !== null) {
         return false;
       }
-      const sequence = ++requestSequence.current;
+      const sequence = requestGate.current.begin();
       if (!silent) {
         interactiveSequenceRef.current = sequence;
         refreshSources ? setIsRefreshing(true) : setIsLoading(true);
         setFeedbackMessage(null);
       }
       try {
-        const next = await fetchAttention(refreshSources);
-        if (sequence !== requestSequence.current) return false;
+        const { attention: attentionResult } =
+          await loadWorkCockpitRequest({
+            refreshSources,
+            loadAttention,
+            loadWorkBoard,
+            onBoardSettled: (result) => {
+              if (!requestGate.current.isCurrent(sequence)) return;
+              const nextWorkBoard = displayBoardStateFromResult(result);
+              setWorkBoard(nextWorkBoard.response);
+              setWorkBoardError(nextWorkBoard.error);
+            }
+          });
+        if (!requestGate.current.isCurrent(sequence)) return false;
+        if (attentionResult.status === "rejected") {
+          if (!silent) {
+            setPayload({
+              status: "error",
+              code: "NETWORK_ERROR",
+              message:
+                "Work Cockpit에 연결하지 못했습니다. 로컬 서버 상태를 확인해주세요."
+            });
+          }
+          return false;
+        }
+        const next = attentionResult.value;
         setPayload(next);
         if (!silent) setSelectedFeedback(null);
         return next.status !== "error";
       } catch {
-        if (sequence !== requestSequence.current) return false;
+        if (!requestGate.current.isCurrent(sequence)) return false;
+        setWorkBoard(null);
+        setWorkBoardError("작업 제안을 불러오지 못했습니다.");
         if (!silent) {
           setPayload({
             status: "error",
@@ -114,12 +211,13 @@ export function WorkCockpit() {
         }
       }
     },
-    []
+    [loadAttention, loadWorkBoard]
   );
 
   const refreshSources = useCallback(async () => {
     const updated = await load(true);
     if (!updated) return;
+    suppressOwnManualInvalidationRef.current = true;
     syncInvalidationBus.invalidate({
       reason: "manual_refresh",
       targets: ["github", "codex", "attention", "timeline"]
@@ -131,7 +229,14 @@ export function WorkCockpit() {
     void load();
   }, [load]);
 
-  useSyncInvalidation(["attention"], () => {
+  useSyncInvalidation(["attention"], (event) => {
+    if (
+      suppressOwnManualInvalidationRef.current &&
+      event.reason === "manual_refresh"
+    ) {
+      suppressOwnManualInvalidationRef.current = false;
+      return;
+    }
     void load(false, true);
   });
 
@@ -182,13 +287,13 @@ export function WorkCockpit() {
           <div className="attentionKickerRow">
             <p className="attentionTitleSignal">
               <span aria-hidden="true" />
-              지금 이어갈 한 가지
+              Work Cockpit
             </p>
             <span>Beta · 확인 전에는 실행하지 않음</span>
           </div>
-          <h2 id="attention-title">멈춘 곳에서 바로 이어가세요.</h2>
+          <h2 id="attention-title">작업 제안과 기존 판정을 확인하세요.</h2>
           <p>
-            연결되고 갱신된 프로젝트 범위에서 확인한 다음 작업입니다.
+            Work Board 제안과 기존 Active Attention 진단을 분리해 표시합니다.
           </p>
         </div>
         <button
@@ -208,6 +313,18 @@ export function WorkCockpit() {
           저장된 연결 소스 상태를 평가하고 있습니다.
         </div>
       ) : null}
+
+      <WorkSuggestionBoardPanel
+        response={workBoard}
+        loadError={workBoardError}
+        loading={isLoading}
+      />
+
+      <header className="activeAttentionDiagnosticHeader">
+        <p className="eyebrow">Diagnostic</p>
+        <h2>기존 Active Attention 판정</h2>
+        <p>기존 평가 결과와 연결 상태를 별도 진단 정보로 유지합니다.</p>
+      </header>
 
       {payload?.status === "unavailable" ? (
         <div className="attentionState attentionState-neutral">
@@ -258,7 +375,7 @@ function CockpitResult({
   return (
     <>
       <p className="attentionAsOf">
-        마지막 평가{" "}
+        기존 Active Attention 판정{" "}
         <time dateTime={result.asOf}>{formatTimestamp(result.asOf)}</time>
         {" · "}
         {run.latencyMs.toLocaleString("ko-KR")}ms

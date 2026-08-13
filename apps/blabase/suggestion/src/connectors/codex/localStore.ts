@@ -16,6 +16,10 @@ import {
   withActiveConnectorTempFile
 } from "../localTempCleanup";
 import {
+  readLocalPrivateText,
+  type LocalReadMode
+} from "../../localReadMode";
+import {
   CODEX_CONVERSATION_CONSENT_CONTRACT,
   CODEX_CONVERSATION_RETENTION_DAYS,
   codexConversationStoreSchema,
@@ -302,20 +306,26 @@ function codexStoreKey(cwd: string): string {
 }
 
 export async function readStoredCodexConfig(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<StoredCodexConfig | null> {
-  await cleanupStaleCodexTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleCodexTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(codexLocalDirectory(cwd), "config.json"),
-      "utf8"
+      mode,
+      cwd
     );
     const value = migrateMissingConversationConsentContract(
       JSON.parse(text)
     );
     const current = configSchema.safeParse(value);
     if (current.success) {
-      await enforceConversationRetention(current.data, cwd);
+      if (mode === "maintain") {
+        await enforceConversationRetention(current.data, cwd);
+      }
       return current.data;
     }
     const legacyV2 = legacyV2ConfigSchema.safeParse(value);
@@ -327,7 +337,9 @@ export async function readStoredCodexConfig(
         conversationConsentAt: null,
         conversationRetentionDays: null
       });
-      await enforceConversationRetention(migrated, cwd);
+      if (mode === "maintain") {
+        await enforceConversationRetention(migrated, cwd);
+      }
       return migrated;
     }
     const legacy = legacyV1ConfigSchema.parse(value);
@@ -340,10 +352,12 @@ export async function readStoredCodexConfig(
       conversationConsentAt: null,
       conversationRetentionDays: null
     });
-    await enforceConversationRetention(migrated, cwd);
+    if (mode === "maintain") {
+      await enforceConversationRetention(migrated, cwd);
+    }
     return migrated;
   } catch (error) {
-    if (!isMissingFileError(error)) {
+    if (mode === "maintain" && !isMissingFileError(error)) {
       await deleteIfPresent(
         join(
           codexLocalDirectory(cwd),
@@ -435,13 +449,18 @@ export async function transitionStoredCodexConfig(
 }
 
 export async function readStoredCodexSnapshot(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain",
+  asOf?: Date
 ): Promise<CodexSnapshot | null> {
-  await cleanupStaleCodexTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleCodexTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(codexLocalDirectory(cwd), "snapshot.json"),
-      "utf8"
+      mode,
+      cwd
     );
     const value: unknown = JSON.parse(text);
     const current = snapshotSchema.safeParse(value);
@@ -451,7 +470,7 @@ export async function readStoredCodexSnapshot(
         "conversation_and_execution"
       ) {
         const conversationStore =
-          await readStoredCodexConversationStore(cwd);
+          await readStoredCodexConversationStore(cwd, mode, asOf);
         if (
           !conversationStore ||
           conversationStoreSha256(conversationStore) !==
@@ -493,7 +512,7 @@ export async function readStoredCodexSnapshot(
       }))
     };
   } catch (error) {
-    if (!isMissingFileError(error)) {
+    if (mode === "maintain" && !isMissingFileError(error)) {
       await deleteIfPresent(
         join(
           codexLocalDirectory(cwd),
@@ -569,13 +588,17 @@ export async function writeStoredCodexSnapshot(
 }
 
 export async function readStoredCodexLocalGitSnapshot(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<CodexLocalGitSnapshot | null> {
-  await cleanupStaleCodexTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleCodexTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(codexLocalDirectory(cwd), "local-git.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return parseCodexLocalGitSnapshot(JSON.parse(text));
   } catch {
@@ -667,13 +690,17 @@ export async function deleteStoredCodexConnection(
 }
 
 export async function readStoredCodexObservationHistory(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain"
 ): Promise<CodexObservationHistory | null> {
-  await cleanupStaleCodexTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleCodexTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(codexLocalDirectory(cwd), "observation-history.json"),
-      "utf8"
+      mode,
+      cwd
     );
     return parseCodexObservationHistory(JSON.parse(text));
   } catch {
@@ -682,29 +709,40 @@ export async function readStoredCodexObservationHistory(
 }
 
 export async function readStoredCodexConversationStore(
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  mode: LocalReadMode = "maintain",
+  asOf?: Date
 ): Promise<CodexConversationStore | null> {
-  await cleanupStaleCodexTempFiles(cwd, true);
+  if (mode === "maintain") {
+    await cleanupStaleCodexTempFiles(cwd, true);
+  }
   try {
-    const text = await readFile(
+    const text = await readLocalPrivateText(
       join(codexLocalDirectory(cwd), "conversation-history.json"),
-      "utf8"
+      mode,
+      cwd
     );
     const store = codexConversationStoreSchema.parse(
       JSON.parse(text)
     );
-    if (Date.parse(store.expiresAt) <= Date.now()) {
-      await deleteIfPresent(
-        join(
-          codexLocalDirectory(cwd),
-          "conversation-history.json"
-        )
-      );
+    const expirationAsOf = conversationExpirationAsOf(mode, asOf);
+    if (
+      expirationAsOf === null ||
+      Date.parse(store.expiresAt) <= expirationAsOf
+    ) {
+      if (mode === "maintain") {
+        await deleteIfPresent(
+          join(
+            codexLocalDirectory(cwd),
+            "conversation-history.json"
+          )
+        );
+      }
       return null;
     }
     return store;
   } catch (error) {
-    if (!isMissingFileError(error)) {
+    if (mode === "maintain" && !isMissingFileError(error)) {
       await deleteIfPresent(
         join(
           codexLocalDirectory(cwd),
@@ -714,6 +752,19 @@ export async function readStoredCodexConversationStore(
     }
     return null;
   }
+}
+
+function conversationExpirationAsOf(
+  mode: LocalReadMode,
+  asOf: Date | undefined
+): number | null {
+  if (mode === "maintain") {
+    return Date.now();
+  }
+  const explicitAsOf = asOf?.getTime();
+  return explicitAsOf !== undefined && Number.isFinite(explicitAsOf)
+    ? explicitAsOf
+    : null;
 }
 
 export function createCodexInstallationSecret(): string {

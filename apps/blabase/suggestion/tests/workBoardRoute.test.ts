@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/suggestionBoard/liveShadow", () => ({
-  evaluateLiveWorkSuggestionBoard: vi.fn()
+  evaluateLiveSemanticWorkSuggestionBoard: vi.fn()
 }));
 
 import { GET } from "../app/api/work-board/route";
-import { evaluateLiveWorkSuggestionBoard } from "../src/suggestionBoard/liveShadow";
+import { PreserveCaptureError } from "../src/attention/preserveCapture";
+import { evaluateLiveSemanticWorkSuggestionBoard } from "../src/suggestionBoard/liveShadow";
 
 const readyResponse = {
   status: "ready",
@@ -26,6 +27,12 @@ const readyResponse = {
     }
   }
 } as const;
+const semanticReadyResponse = {
+  contract: "semantic-continuation-work-board-response-v0.2",
+  schemaVersion: "semantic-continuation-presentation-schema-v0.2",
+  base: readyResponse,
+  semanticPresentation: null
+} as const;
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -43,10 +50,13 @@ describe("GET /api/work-board", () => {
     expect(response.status).toBe(404);
     expectSecurityHeaders(response);
     await expect(response.json()).resolves.toMatchObject({
-      status: "unavailable",
-      code: "WORK_BOARD_SHADOW_DISABLED"
+      semanticPresentation: null,
+      base: {
+        status: "unavailable",
+        code: "WORK_BOARD_SHADOW_DISABLED"
+      }
     });
-    expect(evaluateLiveWorkSuggestionBoard).not.toHaveBeenCalled();
+    expect(evaluateLiveSemanticWorkSuggestionBoard).not.toHaveBeenCalled();
   });
 
   it("rejects non-local requests before evaluating the shadow", async () => {
@@ -58,13 +68,16 @@ describe("GET /api/work-board", () => {
     );
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({
-      status: "unavailable",
-      code: "WORK_BOARD_LOCAL_ONLY",
-      message:
-        "Work Board preview는 로컬 개발 환경에서만 확인할 수 있습니다."
+    await expect(response.json()).resolves.toMatchObject({
+      semanticPresentation: null,
+      base: {
+        status: "unavailable",
+        code: "WORK_BOARD_LOCAL_ONLY",
+        message:
+          "Work Board preview는 로컬 개발 환경에서만 확인할 수 있습니다."
+      }
     });
-    expect(evaluateLiveWorkSuggestionBoard).not.toHaveBeenCalled();
+    expect(evaluateLiveSemanticWorkSuggestionBoard).not.toHaveBeenCalled();
   });
 
   it("rejects unsafe origins", async () => {
@@ -78,51 +91,107 @@ describe("GET /api/work-board", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(evaluateLiveWorkSuggestionBoard).not.toHaveBeenCalled();
+    expect(evaluateLiveSemanticWorkSuggestionBoard).not.toHaveBeenCalled();
+  });
+
+  it("requires configured Basic auth before reading semantic state", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
+
+    const unavailable = await GET(localRequest());
+    expect(unavailable.status).toBe(503);
+
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    const unauthorized = await GET(localRequest());
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorized.headers.get("www-authenticate")).toBe(
+      'Basic realm="blabase suggestion"'
+    );
+    expect(evaluateLiveSemanticWorkSuggestionBoard).not.toHaveBeenCalled();
   });
 
   it("returns the parsed public wrapper when the local shadow is enabled", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
-    vi.mocked(evaluateLiveWorkSuggestionBoard).mockResolvedValue(
-      readyResponse as never
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    vi.mocked(evaluateLiveSemanticWorkSuggestionBoard).mockResolvedValue(
+      semanticReadyResponse as never
     );
 
-    const response = await GET(
-      new Request("http://localhost:3102/api/work-board", {
-        headers: { origin: "http://localhost:3102" }
-      })
-    );
+    const response = await GET(localRequest(true));
 
     expect(response.status).toBe(200);
     expectSecurityHeaders(response);
-    await expect(response.json()).resolves.toEqual(readyResponse);
-    expect(evaluateLiveWorkSuggestionBoard).toHaveBeenCalledOnce();
+    const body = await response.json();
+    expect(body).toEqual(semanticReadyResponse);
+    expect(JSON.stringify(body.base)).toBe(JSON.stringify(readyResponse));
+    expect(evaluateLiveSemanticWorkSuggestionBoard).toHaveBeenCalledOnce();
   });
 
   it("sanitizes evaluator failures and keeps security headers", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
-    vi.mocked(evaluateLiveWorkSuggestionBoard).mockRejectedValue(
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    vi.mocked(evaluateLiveSemanticWorkSuggestionBoard).mockRejectedValue(
       new Error("private path /Users/example and token=secret")
     );
 
-    const response = await GET(
-      new Request("http://localhost:3102/api/work-board")
-    );
+    const response = await GET(localRequest(true));
     const payload = await response.json();
 
     expect(response.status).toBe(500);
     expectSecurityHeaders(response);
-    expect(payload).toEqual({
-      status: "error",
-      code: "WORK_BOARD_PREVIEW_FAILED",
-      message: "Work Board preview를 만들지 못했습니다."
+    expect(payload).toMatchObject({
+      semanticPresentation: null,
+      base: {
+        status: "error",
+        code: "WORK_BOARD_PREVIEW_FAILED",
+        message: "Work Board preview를 만들지 못했습니다."
+      }
     });
     expect(JSON.stringify(payload)).not.toContain("/Users/example");
     expect(JSON.stringify(payload)).not.toContain("token=secret");
   });
+
+  it("returns a sanitized 503 only for a failed preserve capture", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
+    vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
+    const failure = new PreserveCaptureError(
+      "PRESERVE_CAPTURE_UNSTABLE"
+    );
+    vi.mocked(evaluateLiveSemanticWorkSuggestionBoard).mockRejectedValue(
+      failure
+    );
+
+    const response = await GET(localRequest(true));
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expectSecurityHeaders(response);
+    expect(payload).toMatchObject({
+      semanticPresentation: null,
+      base: {
+        status: "error",
+        code: "WORK_BOARD_PREVIEW_FAILED"
+      }
+    });
+    expect(JSON.stringify(payload)).not.toContain("private unstable path");
+  });
 });
+
+function localRequest(authenticated = false): Request {
+  return new Request("http://localhost:3102/api/work-board", {
+    headers: {
+      origin: "http://localhost:3102",
+      ...(authenticated
+        ? {
+            authorization: `Basic ${btoa("blabase:test-password")}`
+          }
+        : {})
+    }
+  });
+}
 
 function expectSecurityHeaders(response: Response) {
   expect(response.headers.get("Cache-Control")).toBe("no-store");
