@@ -19,9 +19,9 @@ import type { ActiveAttentionCandidate } from "../src/attentionDecision";
 import type { Phase2CodexOverviewItem } from "../src/crossSource/attentionSchema";
 import type { RecentWorkPublicSummary } from "../src/recentWork";
 import type { SemanticContinuationWorkBoardResponse } from "../src/semanticContinuation/contracts";
+import type { WorkBoardMonitoringStateResponse } from "../src/suggestionBoard/monitoring/contracts";
 import {
   fetchAttention,
-  fetchDisplayOnlyWorkBoard,
   submitAttentionFeedback
 } from "./attentionClient";
 import { ManagedCodexProgress } from "./ManagedCodexProgress";
@@ -46,6 +46,14 @@ import {
   type WorkResumptionTaskRef
 } from "./workResumptionClient";
 import { WorkSuggestionBoardPanel } from "./WorkSuggestionBoardPanel";
+import { WorkBoardMonitoringControls } from "./WorkBoardMonitoringControls";
+import {
+  fetchDisplayOnlyWorkBoardWithMonitoring,
+  fetchWorkBoardMonitoringState,
+  submitWorkBoardMonitoringMutation,
+  type BrowserWorkBoardMonitoringReceipt,
+  type WorkBoardDisplayLoad
+} from "./workBoardMonitoringClient";
 
 const feedbackOptions: Array<{
   value: AttentionFeedbackType;
@@ -74,9 +82,13 @@ export function createMonotonicRequestGate() {
 export async function loadWorkCockpitRequest(input: {
   refreshSources: boolean;
   loadAttention: typeof fetchAttention;
-  loadWorkBoard: typeof fetchDisplayOnlyWorkBoard;
+  loadWorkBoard: () => Promise<
+    SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+  >;
   onBoardSettled?: (
-    result: PromiseSettledResult<SemanticContinuationWorkBoardResponse>
+    result: PromiseSettledResult<
+      SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+    >
   ) => void;
 }) {
   const attentionPromise = input.loadAttention(input.refreshSources);
@@ -102,27 +114,55 @@ function settle<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
 }
 
 export function displayBoardStateFromResult(
-  result: PromiseSettledResult<SemanticContinuationWorkBoardResponse>
+  result: PromiseSettledResult<
+    SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+  >
 ): {
   response: SemanticContinuationWorkBoardResponse | null;
   error: string | null;
 } {
   return result.status === "fulfilled"
-    ? { response: result.value, error: null }
+    ? {
+        response: isWorkBoardDisplayLoad(result.value)
+          ? result.value.response
+          : result.value,
+        error: null
+      }
     : {
         response: null,
         error: "작업 제안을 불러오지 못했습니다."
       };
 }
 
+export function monitoringReceiptFromResult(
+  result: PromiseSettledResult<
+    SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+  >
+): BrowserWorkBoardMonitoringReceipt | null {
+  return result.status === "fulfilled" &&
+    isWorkBoardDisplayLoad(result.value)
+    ? result.value.monitoringReceipt
+    : null;
+}
+
+function isWorkBoardDisplayLoad(
+  value: SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+): value is WorkBoardDisplayLoad {
+  return "response" in value && "monitoringReceipt" in value;
+}
+
 export function WorkCockpit({
   loadAttention = fetchAttention,
-  loadWorkBoard = fetchDisplayOnlyWorkBoard,
-  setupActionEnabled = false
+  loadWorkBoard = fetchDisplayOnlyWorkBoardWithMonitoring,
+  setupActionEnabled = false,
+  monitoringEnabled = false
 }: {
   loadAttention?: typeof fetchAttention;
-  loadWorkBoard?: typeof fetchDisplayOnlyWorkBoard;
+  loadWorkBoard?: () => Promise<
+    SemanticContinuationWorkBoardResponse | WorkBoardDisplayLoad
+  >;
   setupActionEnabled?: boolean;
+  monitoringEnabled?: boolean;
 } = {}) {
   const [payload, setPayload] = useState<AttentionApiResponse | null>(
     null
@@ -132,6 +172,12 @@ export function WorkCockpit({
   const [workBoardError, setWorkBoardError] = useState<string | null>(
     null
   );
+  const [monitoringReceipt, setMonitoringReceipt] =
+    useState<BrowserWorkBoardMonitoringReceipt | null>(null);
+  const [monitoringState, setMonitoringState] =
+    useState<WorkBoardMonitoringStateResponse | null>(null);
+  const [monitoringError, setMonitoringError] = useState<string | null>(null);
+  const [monitoringPending, setMonitoringPending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isFeedbackSubmitting, setIsFeedbackSubmitting] =
@@ -142,6 +188,7 @@ export function WorkCockpit({
     null
   );
   const requestGate = useRef(createMonotonicRequestGate());
+  const monitoringRequestGate = useRef(createMonotonicRequestGate());
   const interactiveSequenceRef = useRef<number | null>(null);
   const suppressOwnManualInvalidationRef = useRef(false);
   useSourceSyncRuntime();
@@ -171,6 +218,11 @@ export function WorkCockpit({
               const nextWorkBoard = displayBoardStateFromResult(result);
               setWorkBoard(nextWorkBoard.response);
               setWorkBoardError(nextWorkBoard.error);
+              setMonitoringReceipt(
+                monitoringEnabled
+                  ? monitoringReceiptFromResult(result)
+                  : null
+              );
             }
           });
         if (!requestGate.current.isCurrent(sequence)) return false;
@@ -192,6 +244,7 @@ export function WorkCockpit({
       } catch {
         if (!requestGate.current.isCurrent(sequence)) return false;
         setWorkBoard(null);
+        setMonitoringReceipt(null);
         setWorkBoardError("작업 제안을 불러오지 못했습니다.");
         if (!silent) {
           setPayload({
@@ -213,8 +266,64 @@ export function WorkCockpit({
         }
       }
     },
-    [loadAttention, loadWorkBoard]
+    [loadAttention, loadWorkBoard, monitoringEnabled]
   );
+
+  const refreshMonitoringState = useCallback(async () => {
+    const sequence = monitoringRequestGate.current.begin();
+    if (!monitoringEnabled) {
+      setMonitoringState(null);
+      setMonitoringError(null);
+      return;
+    }
+    try {
+      const next = await fetchWorkBoardMonitoringState();
+      if (!monitoringRequestGate.current.isCurrent(sequence)) return;
+      setMonitoringState(next);
+      setMonitoringError(null);
+    } catch {
+      if (!monitoringRequestGate.current.isCurrent(sequence)) return;
+      setMonitoringState(null);
+      setMonitoringError("로컬 피드백 상태를 확인하지 못했습니다.");
+    }
+  }, [monitoringEnabled]);
+
+  const changeMonitoringConsent = useCallback(
+    async (consent: boolean) => {
+      if (!monitoringEnabled || monitoringPending) return;
+      setMonitoringPending(true);
+      try {
+        await submitWorkBoardMonitoringMutation({
+          operation: "consent",
+          consent,
+          explicitUserAction: true
+        });
+        await refreshMonitoringState();
+      } catch {
+        setMonitoringError("피드백 동의 상태를 변경하지 못했습니다.");
+      } finally {
+        setMonitoringPending(false);
+      }
+    },
+    [monitoringEnabled, monitoringPending, refreshMonitoringState]
+  );
+
+  const purgeMonitoring = useCallback(async () => {
+    if (!monitoringEnabled || monitoringPending) return;
+    setMonitoringPending(true);
+    try {
+      await submitWorkBoardMonitoringMutation({
+        operation: "purge",
+        explicitUserAction: true
+      });
+      setMonitoringReceipt(null);
+      await refreshMonitoringState();
+    } catch {
+      setMonitoringError("모니터링 데이터를 삭제하지 못했습니다.");
+    } finally {
+      setMonitoringPending(false);
+    }
+  }, [monitoringEnabled, monitoringPending, refreshMonitoringState]);
 
   const refreshSources = useCallback(async () => {
     const updated = await load(true);
@@ -230,6 +339,10 @@ export function WorkCockpit({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void refreshMonitoringState();
+  }, [refreshMonitoringState]);
 
   useSyncInvalidation(["attention"], (event) => {
     if (
@@ -321,6 +434,18 @@ export function WorkCockpit({
         loadError={workBoardError}
         loading={isLoading}
         setupActionEnabled={setupActionEnabled}
+        monitoringReceipt={monitoringReceipt}
+        monitoringConsent={monitoringState?.consent ?? false}
+        onMonitoringChanged={refreshMonitoringState}
+      />
+
+      <WorkBoardMonitoringControls
+        enabled={monitoringEnabled}
+        state={monitoringState}
+        error={monitoringError}
+        pending={monitoringPending}
+        onConsent={(consent) => void changeMonitoringConsent(consent)}
+        onPurge={() => void purgeMonitoring()}
       />
 
       <header className="activeAttentionDiagnosticHeader">

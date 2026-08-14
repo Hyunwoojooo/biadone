@@ -118,7 +118,7 @@ struct LauncherSettingsApplyPlan: Equatable, Sendable {
     ) -> LauncherSettingsApplyPlan {
         let rootChanged = previousChoice != nextChoice
         return LauncherSettingsApplyPlan(
-            stopCurrentAgent: isAgentActive && rootChanged,
+            stopCurrentAgent: rootChanged,
             loadAttention: !isAgentActive || rootChanged
         )
     }

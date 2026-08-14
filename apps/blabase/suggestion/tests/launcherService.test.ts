@@ -10,6 +10,7 @@ import { createUnavailableCurrentFocusProjection } from "../src/currentFocus";
 import {
   LauncherService,
   LauncherServiceError,
+  launcherAttentionProjectionSchema,
   launcherIpcRequestSchema,
   type LauncherAttentionEvaluation,
   type LauncherServiceDependencies
@@ -19,6 +20,7 @@ import type {
   WorkResumptionStatus
 } from "../src/resumption";
 import { activeAttentionFixture } from "./fixtures/activeAttentionFixture";
+import { workBoardResponse } from "./fixtures/launcherWorkBoardFixture";
 
 const DATA_ROOT = "/private/tmp/blabase-launcher-service-test";
 const BINDING_ID = `binding_${"b".repeat(32)}`;
@@ -27,6 +29,116 @@ const COMMAND_ID = `command_${"c".repeat(32)}`;
 const FIXED_NOW = new Date("2026-08-02T03:00:00.000Z");
 
 describe("LauncherService", () => {
+  it("keeps Work Board default-off and rejects before sync or evaluation", async () => {
+    const syncSources = vi.fn(async () => syncResult());
+    const evaluateWorkBoard = vi.fn(async () => workBoardResponse());
+    const service = serviceWith({ syncSources, evaluateWorkBoard });
+
+    await expect(
+      service.handle(request("work-board.get", { refresh: true }))
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(syncSources).not.toHaveBeenCalled();
+    expect(evaluateWorkBoard).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "false", "TRUE", "1"])(
+    "keeps Work Board disabled for non-exact flag value %j",
+    async (flag) => {
+      const syncSources = vi.fn(async () => syncResult());
+      const evaluateWorkBoard = vi.fn(async () => workBoardResponse());
+      const service = serviceWith(
+        { syncSources, evaluateWorkBoard },
+        {
+          NODE_ENV: "test",
+          BLABASE_LAUNCHER_WORK_BOARD_ENABLED: flag
+        }
+      );
+
+      await expect(
+        service.handle(request("work-board.get", { refresh: true }))
+      ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+      expect(syncSources).not.toHaveBeenCalled();
+      expect(evaluateWorkBoard).not.toHaveBeenCalled();
+    }
+  );
+
+  it("syncs only an explicitly refreshed managed Work Board and evaluates once", async () => {
+    const events: string[] = [];
+    const syncSources = vi.fn(async () => {
+      events.push("sync");
+      return syncResult();
+    });
+    const evaluateWorkBoard = vi.fn(async () => {
+      events.push("work-board");
+      return workBoardResponse();
+    });
+    const evaluateAttention = vi.fn(async () => evaluation());
+    const readResumptionStatus = vi.fn(async () => offlineStatus());
+    const recordRun = vi.fn(async (run) => run);
+    const recordFailure = vi.fn(async (failure) => failure);
+    const service = serviceWith(
+      {
+        syncSources,
+        evaluateWorkBoard,
+        evaluateAttention,
+        readResumptionStatus,
+        recordRun,
+        recordFailure
+      },
+      {
+        NODE_ENV: "test",
+        BLABASE_LAUNCHER_WORK_BOARD_ENABLED: "true"
+      }
+    );
+
+    await expect(
+      service.handle(request("work-board.get", { refresh: true }))
+    ).resolves.toMatchObject({
+      contract: "blabase-launcher-work-board-v1",
+      mode: "full",
+      items: expect.arrayContaining([
+        expect.objectContaining({ lane: "attention" })
+      ])
+    });
+    expect(syncSources).toHaveBeenCalledOnce();
+    expect(evaluateWorkBoard).toHaveBeenCalledOnce();
+    expect(evaluateWorkBoard).toHaveBeenCalledWith({
+      cwd: DATA_ROOT,
+      env: expect.objectContaining({
+        BLABASE_LAUNCHER_WORK_BOARD_ENABLED: "true"
+      }),
+      now: FIXED_NOW
+    });
+    expect(events).toEqual(["sync", "work-board"]);
+    expect(evaluateAttention).not.toHaveBeenCalled();
+    expect(readResumptionStatus).not.toHaveBeenCalled();
+    expect(recordRun).not.toHaveBeenCalled();
+    expect(recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("never syncs a read-only Work Board and sanitizes evaluation failures", async () => {
+    const syncSources = vi.fn(async () => syncResult());
+    const evaluateWorkBoard = vi.fn(async () => {
+      throw new Error("/private/path and credential");
+    });
+    const service = serviceWith(
+      { syncSources, evaluateWorkBoard },
+      {
+        NODE_ENV: "test",
+        BLABASE_LAUNCHER_WORK_BOARD_ENABLED: "true",
+        BLABASE_LAUNCHER_SOURCE_MODE: "read_only"
+      }
+    );
+
+    const failure = await service
+      .handle(request("work-board.get", { refresh: true }))
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "WORK_BOARD_RUN_FAILED" });
+    expect(String(failure)).not.toMatch(/private|credential/);
+    expect(syncSources).not.toHaveBeenCalled();
+    expect(evaluateWorkBoard).toHaveBeenCalledOnce();
+  });
+
   it("refreshes with the explicit data root and records the run", async () => {
     const evaluated = evaluation();
     const syncSources = vi.fn(async () => syncResult());
@@ -43,6 +155,13 @@ describe("LauncherService", () => {
     );
 
     expect(result.contract).toBe("blabase-launcher-attention-v2");
+    const serializedV2 = JSON.stringify(result);
+    expect(
+      launcherAttentionProjectionSchema.parse(
+        JSON.parse(serializedV2)
+      )
+    ).toEqual(result);
+    expect(serializedV2).not.toContain("launcher-work-board");
     expect(result).toMatchObject({
       currentFocusSummary: {
         status: "unavailable",
@@ -273,6 +392,7 @@ describe("LauncherService", () => {
     }));
     const service = serviceWith({
       evaluateAttention: vi.fn(async () => evaluated),
+      evaluateWorkBoard: vi.fn(async () => workBoardResponse()),
       readResumptionStatus: vi.fn(async () =>
         onlineStatus(suggestion?.githubSubjectId ?? "")
       ),
@@ -638,6 +758,7 @@ function command(): PublicWorkResumptionCommandStatus {
 function request(
   method:
     | "attention.get"
+    | "work-board.get"
     | "attention.execute"
     | "command.get"
     | "status.get",

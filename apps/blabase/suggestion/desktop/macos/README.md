@@ -34,6 +34,47 @@ dynamic library dependency를 검사한다. Homebrew library 등 외부 절대 �
 동적으로 의존하는 Node binary는 설치 앱에서 고정 runtime이 될 수 없으므로
 거부한다. 공식 standalone Node 배포 binary를 사용하는 것을 권장한다.
 
+## L-001 Work Board compatibility
+
+새 host는 unchanged `blabase-launcher-ipc-v1`에서 먼저 strict
+`work-board.get {refresh:boolean}`을 요청한다. Node 기능은 exact
+`BLABASE_LAUNCHER_WORK_BOARD_ENABLED=true`일 때만 켜지며, 새 projection은
+`blabase-launcher-work-board-v1`이다. 기존 `attention.get`과
+`blabase-launcher-attention-v2`는 변경하지 않는다. 따라서 old agent/flag-off의
+`INVALID_REQUEST`는 기존 Attention 요청으로 한 번 fallback하고, old Swift host는
+새 method를 전혀 호출하지 않는다.
+
+Full Board는 primary+alternatives server order 최대 3개를 display-only row로
+보여준다. Row에는 public-safe title, lane, evidence/caveat allowlist, expiry와
+`display/null`만 있고 public itemRef조차 native model/DOM/URL/log로 전달하지 않는다.
+Active Attention의 Board `expiresAt`은 dueAt이므로 launcher에는 항상 `null`로
+투영하고, Continuation/Setup visibility expiry만 timer로 숨긴다.
+Setup/Continuation button, X-001 offer/open, URL/path/command/resumption은 연결하지 않는다.
+Active-only fallback은 새 Board row를 렌더하지 않고 기존 Attention 화면과 기존
+Active action으로 돌아간다. Full zero-item Board는 정상이며 세 lane 모두
+`표시할 제안 없음`을 표시한다.
+
+Managed explicit refresh는 Node에서 sync 한 번 뒤 preserve Board를 평가한다.
+Read-only는 refresh 요청에도 sync하지 않는다. Swift는 completed Board fallback 뒤
+legacy Attention을 `refresh:false`로 호출해 double sync를 막고, unsupported method만
+원래 refresh를 유지한다. Transport timeout/disconnect/protocol corruption은 같은
+connection에서 즉시 fallback하지 않는다. Board item expiry는 60초 이하 chunk로
+필터링하며 reload/config/shutdown과 request generation에 묶인다. Hung Board timeout은
+현재 process generation을 retire하고 다음 load에서 새 agent를 시작하며, 취소된 Board도
+pending을 선점한 해당 generation만 retire한다. Timeout/protocol/config-stop/app shutdown은
+stdin과 handler를 분리한 뒤 SIGTERM bounded grace, 필요 시 SIGKILL로 child PID 종료를
+비동기로 확인하며, 확인 실패 시 replacement process를 시작하지 않는다. Completed
+Start는 lifecycle epoch와 retirement token을 재검증하고 app shutdown은 permanent gate를
+설정하므로, config change/shutdown과 경합한 이전 root 요청도 새 process를 만들지 못한다.
+Config stop gate는 settings store의 root activation까지 유지되고 명시적 complete 후에만
+새 root process를 허용하며, activation 전 실패는 abort로 process 없이 해제한다. Root가
+달라지는 retry는 stale `isAgentActive` 값과 무관하게 stop handshake를 다시 수행한다.
+Board run/schema failure fallback은 `Work Board를 불러오지 못해 기존 Attention을
+표시합니다`를 함께 보여주되 기존 Active action은 유지한다. Swift는 IPC success/error
+envelope의 exact mutually-exclusive key set, canonical request ID, bounded uppercase error
+code와 control-free bounded message도 검증한다. IPC v1의 bounded path/URL/private-shaped
+error message는 code를 유지하되 app-owned generic 문구로만 표시한다.
+
 Node 배포본의 `LICENSE`도 `LICENSE.node`로 함께 복사한다. script가 binary
 주변에서 license를 찾지 못하면 packaging을 중단한다. 별도 배치에서는
 `BLABASE_NODE_LICENSE=/absolute/path/to/LICENSE`를 명시해야 한다. Node.js는

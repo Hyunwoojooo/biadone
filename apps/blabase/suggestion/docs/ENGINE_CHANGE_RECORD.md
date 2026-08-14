@@ -4972,3 +4972,262 @@ version constants. No persisted-state or schema migration is required.
   release approval remain pending. Rollback disables/removes the action flag,
   routes/client/CTA and private store while leaving the unchanged display-only
   Work Board and formal Continuation GET intact.
+
+### L-001 default-off display-only Launcher Work Board — 2026-08-14
+
+- **Status, authority and scope:** Implemented and locally validated as a
+  default-off launcher checkpoint under the user's explicit L-001 scope. The
+  Node Local Agent adds one strict read method and the new Swift host consumes
+  it before bounded legacy fallback. Codex is implementation/record owner; the
+  user remains product/privacy/release owner. This record is not launcher
+  rollout approval and does not enable the flag in an environment.
+- **Versions before and after:** `blabase-launcher-ipc-v1`, existing
+  `attention.get`, `blabase-launcher-attention-v2`, execution/status v1,
+  runtime-manifest v1, public Work Board v0.1, semantic wrapper/presentation
+  v0.2, S1/R1/R2/R3/B1, X-001 and all evaluation/dataset/hash versions are
+  unchanged. Before L-001 there was no formal launcher Board method or DTO.
+  After L-001 the only new contracts are strict `work-board.get
+  {refresh:boolean}` within IPC v1 and
+  `blabase-launcher-work-board-v1`. An old Swift host never calls the new
+  method; a new host receives `INVALID_REQUEST` from an old/flag-off agent and
+  performs one legacy Attention read.
+- **Node capture and sync boundary:** Exact
+  `BLABASE_LAUNCHER_WORK_BOARD_ENABLED === "true"` is required before sync or
+  evaluation. A managed explicit refresh performs the existing source sync
+  exactly once and then evaluates the canonical
+  `evaluateLiveSemanticWorkSuggestionBoard` once on the same data root.
+  Read-only mode never syncs, including `refresh:true`. The Board evaluator's
+  existing path forces preserve/no-refresh internally. A successful Full Board
+  does not call Attention evaluation, run/failure recording, Work Resumption,
+  command or action seams.
+- **Projection and privacy:** The server parses the strict semantic Work Board
+  wrapper and flattens public primary then alternatives without reordering,
+  maximum three. Exact semantic overlay title is correlated by public itemRef
+  only inside Node. Output contains only contract, generatedAt, mode,
+  prominentLane, continuationStatus and lane/title/evidence/allowlisted
+  caveat/expiry/`display`/`null`. It contains no itemRef, work context, source,
+  candidate/run/result/proof/hash, private target, URL/path/credential or
+  action. Shared public locator/credential safety plus a launcher-specific
+  private-ref namespace guard applies to every title; ordinary `CI/CD` copy is
+  accepted. Hostile or mixed content rejects the whole projection.
+- **Status and time semantics:** Launcher Attention items always project
+  `expiresAt:null`, because the source field is Active dueAt, not visibility
+  TTL; overdue and future-due Active work therefore remain visible. Only
+  Continuation/Setup require non-null expiry strictly after generatedAt and
+  native current-time filtering. Status preserves the canonical asymmetric
+  Board rule: a visible Continuation/Setup row requires `available`, an empty
+  Board cannot be `available`, and an Attention-saturated top three may retain
+  `available`. Active-only fallback is Attention-only with unavailable status.
+- **Swift fallback and transport currentness:** Full Board, including zero
+  items, is terminal. Active-only fallback calls legacy Attention once with
+  `refresh:false`. Unsupported/`INVALID_REQUEST` calls it once with the original
+  refresh because no Board sync occurred. A completed typed Board run failure
+  or strict result-schema rejection calls Attention once with `refresh:false`
+  and shows the bounded notice `Work Board를 불러오지 못해 기존 Attention을
+  표시합니다`; legacy Active actions remain intact. Timeout, disconnect,
+  malformed envelope and protocol corruption never trigger immediate
+  same-session fallback. A Board timeout detaches and terminates that process
+  generation; a Board cancellation does the same only when it wins removal of
+  its pending request, so rapid reload cannot queue behind abandoned work.
+  Late bytes are ignored and a later load starts a fresh process. Timeout,
+  protocol retirement, configuration stop and app shutdown detach handlers and
+  stdin, then use a MainActor-yielding quarantine task for bounded SIGTERM grace,
+  SIGKILL and verified child exit. A failed verification retains the quarantined
+  process/task and blocks replacement launch with a bounded runtime error.
+  Every start captures a lifecycle epoch and retirement token, then rechecks
+  cancellation, the current epoch/token and a permanent shutdown gate after
+  awaiting exit; concurrent config-root stop or app shutdown therefore cannot
+  revive an old-root request. Configuration uses an explicit begin-stop /
+  activate-root / complete handshake: the gate remains held after stop returns,
+  opens only after the settings store activates the new root, and aborts without
+  a process on intermediate failure. Root-change retries always begin-stop based
+  on root inequality, never the advisory `isAgentActive` flag, so an old-root
+  process restarted after abort cannot bypass retirement. Permanent shutdown
+  supersedes the handshake.
+  Swift accepts only exact success keys `{contract,requestId,ok,result}`, exact
+  failure keys `{contract,requestId,ok,error}`, exact error keys
+  `{code,message}`, mutually exclusive result/error and a canonical lowercase
+  UUID requestId. Error codes are 1~120 ASCII uppercase/digit/underscore and
+  messages are 1~500 control-free UTF-16 units. For IPC-v1 compatibility,
+  bounded locator, credential and private-ref-shaped messages preserve their
+  error code but are replaced with app-owned generic display text, never raw UI.
+- **Native presentation and actions:** Full Board rows are fixed
+  Attention/Continuation/Setup lanes with the same bounded Korean lane,
+  evidence, caveat and exact `표시할 제안 없음` copy as web. They have no Button,
+  Link, Enter shortcut, click/action ref/target, X-001 offer/open or source/
+  session navigation. Active-only fallback deliberately returns to the legacy
+  Attention presentation and preserves its existing Active actions. Before
+  publication Swift removes only expired Continuation/Setup rows, preserving
+  order, and rechecks the nearest expiry in at most 60-second chunks. Load,
+  config and shutdown generation guards cancel stale timers and prevent an
+  older request from publishing or clearing `isRefreshing` over a newer one.
+- **Automated validation evidence:** From `suggestion/`, targeted Vitest passed
+  7 files and 82/82 tests. The run covers strict projection/order/overlay and
+  immutability, dueAt normalization, Attention-saturated status, empty/
+  active-only modes, public-text/private/action rejection, exact flag and sync
+  order, no legacy mutation seams on Full Board, unchanged Attention v2
+  parse/serialization, IPC method/params and canonical live Board compatibility.
+  `npm run typecheck` and full `npm run lint` passed. The launcher Agent bundle,
+  Swift source build, executable model smoke and signed ad-hoc app build passed.
+  Model smoke includes strict IPC/error mutation checks, typed degraded
+  fallback, TERM-trapping hung Board timeout/config-stop/shutdown PID exit, and
+  cancelled-Board generation retirement followed by a successful request from
+  a fresh process. It also proves MainActor heartbeat progress during retirement
+  and injected exit-verification failure blocking every replacement launch.
+  Held-retirement races also prove a cancelled waiting request cannot launch
+  after config stop, a request made after stop but before activation launches no
+  process, the first post-complete launch uses only the activated new root, and
+  activation failure/abort can restart only the unchanged old root before a retry
+  performs a second stop and launches only the committed new root. A permanent
+  shutdown admits no later process.
+  Exact commands:
+
+  ```text
+  npm test -- --run tests/launcherWorkBoardProjection.test.ts tests/launcherService.test.ts tests/launcherJsonl.test.ts tests/launcherProjection.test.ts tests/launcherCli.test.ts tests/liveWorkBoardShadow.test.ts tests/semanticContinuationOverlay.test.ts
+  npm run typecheck
+  npm run lint
+  npm run launcher:agent:bundle
+  npm run launcher:swift:smoke
+  (cd desktop/macos && swift build)
+  npm run launcher:app:build
+  git diff --check
+  ```
+
+  `swift test` was also attempted but this host's selected Command Line Tools
+  Swift SDK has no `XCTest` module, so SwiftPM test discovery stopped before
+  executing tests. The new XCTest source remains in-tree and the same critical
+  model/transport paths are executable in `launcher:swift:smoke`; a full Xcode
+  toolchain XCTest run remains a release gate rather than being claimed pass.
+- **Base revision and scoped patch fingerprint:** Base revision is
+  `3a727ef37f7a0209132c400acf0b3334af2c4f37`; the shared worktree remains
+  uncommitted. Policy `l001-launcher-work-board-worktree-sha256-v1` sorts
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for the exact 25 implementation/test paths below, then hashes the records with
+  SHA-256. Documentation and unrelated shared dirty paths are excluded.
+  Fingerprint: `41e0be64194b7c9b2ec9951e91d1861a51221cedf37dde4c3e4f52d96f67ead6`.
+
+  ```zsh
+  scope=(suggestion/src/launcher/contracts.ts suggestion/src/launcher/index.ts suggestion/src/launcher/service.ts suggestion/src/launcher/workBoardProjection.ts suggestion/src/launcher/workBoardTextSafety.ts suggestion/tests/fixtures/launcherWorkBoardFixture.ts suggestion/tests/launcherWorkBoardProjection.test.ts suggestion/tests/launcherService.test.ts suggestion/tests/launcherJsonl.test.ts suggestion/desktop/macos/Sources/BlabaseLauncher/AppDelegate.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherAgentClient.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherIPC.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherScreenState.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherSettingsStore.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherSettingsView.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherView.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherViewModel.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherWorkBoardPresentation.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherWorkBoardProjection.swift suggestion/desktop/macos/Sources/BlabaseLauncher/LauncherWorkBoardView.swift suggestion/desktop/macos/Tests/Smoke/LauncherModelSmoke.swift suggestion/desktop/macos/scripts/run-model-smoke.sh suggestion/desktop/macos/Tests/BlabaseLauncherTests/LauncherRootContextTests.swift suggestion/desktop/macos/Tests/BlabaseLauncherTests/LauncherSettingsStoreTests.swift suggestion/desktop/macos/Tests/BlabaseLauncherTests/LauncherWorkBoardTests.swift)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+- **Baseline decision, residuals and rollback:** This is a strict display-only
+  projection and native presentation of existing authenticated output. It does
+  not change engine input, admission, evidence, ranking, resolver, Board
+  composition/public schema, evaluator, Golden/Regression/E-001 data or
+  production conversations; a comparable core baseline is N/A. Underlying
+  preserve capture retains its documented same-user exact-ABA/clock limits.
+  Manual old-host/new-agent and new-host/old-agent packaged smoke,
+  VoiceOver/keyboard/layout/privacy copy, screen-capture policy, full Xcode
+  XCTest, G2/G3 and release approval remain pending. Rollback sets/removes the
+  launcher flag or removes the additive method/projection/native Board files;
+  existing Attention v2 and Active actions require no migration or rollback.
+
+## Engine Change Record — M-001a local Work Board monitoring
+
+- **Date:** 2026-08-14 KST
+- **Owner:** Observability + Evaluation implementer (Codex); human product/release
+  approval remains pending.
+- **Goal:** Add a default-off, local web-only dogfood loop for explicit
+  Continuation/Setup usefulness feedback without changing Work Board JSON,
+  engine ranking, Gold data, release gates, Launcher or existing Attention feedback.
+- **Affected pipeline stages:** Additive final Work Board receipt projection,
+  authenticated monitoring API, private event/store/quality replay, Work Cockpit
+  controls and aggregate-only CLI. R1/R2/R3/B1, public Board/semantic contracts,
+  `/api/attention`, X-001 authority and Launcher projection are unchanged.
+- **Behavior before:** Work Board GET returned only the existing semantic wrapper;
+  no M-001 receipt, consent, render acknowledgement, Continuation/Setup feedback,
+  monitoring aggregate/history or replay CLI existed.
+- **Behavior after:** With exact
+  `BLABASE_WORK_BOARD_MONITORING_ENABLED === "true"`, authenticated local Work
+  Board GET reuses its single preserve evaluation and may add a signed redacted
+  receipt header while returning the exact same JSON bytes. After separate explicit
+  consent, the browser records `render_confirmed` only after the latest response is
+  committed and may submit explicit `useful|not_useful` or reset for current
+  Continuation/Setup ordinals. Purge removes current-key monitoring data. Monitoring
+  failures never block Board display or X-001 Setup action.
+- **Versions before:** No M-001a receipt/API/event/store/quality/replay contract.
+- **Versions after:** `work-board-monitoring-receipt-v0.1`,
+  `work-board-monitoring-api-v0.1`, `work-board-monitoring-event-v0.1`,
+  `work-board-monitoring-store-v0.1`, `work-board-monitoring-quality-v0.1`,
+  `work-board-monitoring-replay-v0.1`, shared schema/receipt/consent/retention/
+  idempotency policy v0.1, and sanitized `work-board-monitoring-cli-v0.1`.
+  Public Work Board v0.1, semantic presentation v0.2, Continuation read v0.1,
+  X-001, Launcher IPC/Attention/Board and core engine versions are unchanged.
+- **Code commit:** Base revision `3a727ef37f7a0209132c400acf0b3334af2c4f37`;
+  implementation remains an uncommitted scoped worktree patch. Scoped fingerprint
+  is recorded below.
+- **Evaluation dataset version and SHA-256:** N/A. No frozen or production
+  conversation dataset was read or changed.
+- **Candidate run ID:** N/A; no production engine replay or semantic evaluation run.
+- **Comparison run ID:** N/A; core engine input/output/filter/order/ranking are
+  unchanged, so a comparable Golden baseline would not measure this infrastructure/UI
+  slice.
+- **Commands executed:** From `suggestion/`:
+
+  ```text
+  npm test -- --run tests/workBoardMonitoringContracts.test.ts tests/workBoardMonitoringReceipt.test.ts tests/workBoardMonitoringStore.test.ts tests/workBoardMonitoringQuality.test.ts tests/workBoardMonitoringRoute.test.ts tests/workBoardMonitoringClient.test.ts tests/workBoardMonitoringUi.test.tsx tests/workBoardMonitoringCli.test.ts tests/workBoardRoute.test.ts tests/livePreserveIntegratedFixture.test.ts tests/workCockpitBoardIntegration.test.ts tests/workSuggestionBoardPanel.test.tsx tests/liveWorkBoardShadow.test.ts tests/semanticContinuationOverlay.test.ts tests/semanticContinuationClient.test.ts tests/continuationSetupActionIntegration.test.ts tests/continuationSetupActionClient.test.ts tests/continuationSetupActionUiFlag.test.tsx tests/continuationSetupActionRoutes.test.ts tests/continuationActionStore.test.ts tests/launcherService.test.ts tests/launcherWorkBoardProjection.test.ts tests/launcherJsonl.test.ts tests/suggestionBoardContracts.test.ts
+  BLABASE_WORK_BOARD_MONITORING_ENABLED=true npx playwright test e2e/work-board-monitoring.spec.ts --reporter=line
+  npm run typecheck
+  npm run lint
+  git diff --check
+  ```
+- **Metrics changed:** Targeted compatibility regression passed 24 files and
+  187/187 tests. Explicit opt-in Playwright passed 1/1. Typecheck, full lint and
+  diff-check passed. Quality formulas are exact: eligible distinct rendered
+  presentation targets; latest non-reset rated targets; coverage and respondent
+  useful share use null at zero denominator; canonical strata are lane/position/
+  mode/evidence/surface. Every output retains `reviewState=candidate`,
+  `appliedToRanking=false`, `goldEligible=false`, `releaseGateEligible=false`.
+- **Reproduced invariants:** Receipt HMAC/tamper/key rotation/TTL/header cap and
+  privacy; strict API gate order; pure missing-store read; 0700/0600 nofollow store,
+  event/store HMAC chain, concurrent duplicate idempotency, correction/reset,
+  Attention feedback rejection, lazy retention, purge, symlink/corrupt fail-close;
+  deterministic aggregate replay/mismatch; exact Work Board response bytes and
+  non-empty whole-fixture content/metadata preservation; stale Board clearing;
+  commit-before-render POST; stable logical-presentation acknowledgement across
+  poll receipts; stale monitoring-state response suppression; and no receipt/handle
+  in DOM, URL, console or localStorage. Existing X-001 and Launcher compatibility
+  tests remain green.
+- **Regressions or accepted exceptions:** No known automated regression. This is
+  M-001a only: click/dwell/no-click, Attention duplication, Launcher/offline,
+  production engine replay, preference/ranking, Gold promotion and release influence
+  are deliberately absent.
+- **Privacy or retention impact:** Receipt is signed and redacted, not encrypted;
+  therefore it contains only bounded enums/version literals and HMAC/SHA digests,
+  never title/summary/raw refs/IDs/paths/URLs/prompts/tokens/secrets/action offers.
+  Browser keeps receipt in request-local memory only. Store path is
+  `.local/work-board-monitoring/<authKeyId>/events.json`, current-secret namespace,
+  30-day event retention with lazy mutation-time compaction and no background
+  cleanup. Consent itself is an event under the same retention policy; after its
+  retained prefix expires, recording requires explicit consent again. Pure GET/read
+  never creates, cleans, repairs or writes state.
+- **Residual risks:** Same-UID authenticated store rollback/exact ABA and secret
+  access are outside HMAC recency protection; wall clock is trusted; crash-left
+  lock/temp state fails closed and may require manual local recovery; inactive
+  old-key namespaces are not enumerated or background-cleaned; OS-managed atime is
+  excluded from no-code-controlled-mutation claims. Header metadata remains visible
+  to an authenticated local transport/log layer, which is why raw text/refs are
+  excluded. Manual privacy/copy/browser/accessibility and G2/G3 review remain pending.
+- **Release decision:** Local automated checkpoint only; default-off. No rollout,
+  dataset promotion, ranking use, Gold/release eligibility or release approval.
+- **Rollback method:** Unset/set the exact monitoring flag to any value other than
+  `true`; this removes receipt issuance, API controls and browser POSTs while leaving
+  Work Board JSON and all existing engines/actions/Launcher paths unchanged. The
+  additive modules/routes/UI/script can then be removed without data migration;
+  local current-key data may be purged explicitly first.
+- **Follow-up work:** Human privacy/copy review; manual supported-browser and
+  accessibility smoke; explicit cleanup/recovery policy before broader retention;
+  broader M-001 provenance/error/latency work only under a separate approved slice.
+- **Scoped patch fingerprint:** Policy
+  `m001a-work-board-monitoring-worktree-sha256-v1` sorts
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for the exact 34 implementation/test paths below and SHA-256 hashes the records.
+  Documentation and unrelated shared dirty paths are excluded. Fingerprint:
+  `0a5653bd6f2e3f39e8405d0daf8e6b69c4a33c5428c5c5a9d91aa4a3559c0f37`.
+
+  ```zsh
+  scope=(suggestion/app/WorkBoardMonitoringControls.tsx suggestion/app/WorkCockpit.tsx suggestion/app/WorkSuggestionBoardPanel.tsx suggestion/app/api/work-board/monitoring/route.ts suggestion/app/api/work-board/route.ts suggestion/app/globals.css suggestion/app/page.tsx suggestion/app/workBoardMonitoringClient.ts suggestion/package.json suggestion/src/suggestionBoard/liveShadow.ts suggestion/src/suggestionBoard/monitoring/contracts.ts suggestion/src/suggestionBoard/monitoring/index.ts suggestion/src/suggestionBoard/monitoring/quality.ts suggestion/src/suggestionBoard/monitoring/receipt.ts suggestion/src/suggestionBoard/monitoring/replay.ts suggestion/src/suggestionBoard/monitoring/store.ts suggestion/src/suggestionBoard/monitoring/versions.ts suggestion/tools/run-work-board-monitoring.ts suggestion/tools/start-isolated-e2e-server.mjs suggestion/e2e/work-board-monitoring.spec.ts suggestion/tests/fixtures/workBoardMonitoringFixture.ts suggestion/tests/livePreserveIntegratedFixture.test.ts suggestion/tests/workBoardMonitoringClient.test.ts suggestion/tests/workBoardMonitoringContracts.test.ts suggestion/tests/workBoardMonitoringQuality.test.ts suggestion/tests/workBoardMonitoringReceipt.test.ts suggestion/tests/workBoardMonitoringRoute.test.ts suggestion/tests/workBoardMonitoringStore.test.ts suggestion/tests/workBoardMonitoringUi.test.tsx suggestion/tests/workBoardMonitoringCli.test.ts suggestion/tests/workBoardRoute.test.ts suggestion/tests/workCockpitBoardIntegration.test.ts suggestion/tests/workSuggestionBoardPanel.test.tsx suggestion/tests/continuationSetupActionUiFlag.test.tsx)
+  prefix=$(git rev-parse --show-prefix)
+  { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```

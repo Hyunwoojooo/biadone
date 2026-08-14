@@ -22,6 +22,9 @@ export default function TodayPage() {
         setupActionEnabled={
           process.env.BLABASE_CONTINUATION_SETUP_ACTION_ENABLED === "true"
         }
+        monitoringEnabled={
+          process.env.BLABASE_WORK_BOARD_MONITORING_ENABLED === "true"
+        }
       />
     </main>
   );

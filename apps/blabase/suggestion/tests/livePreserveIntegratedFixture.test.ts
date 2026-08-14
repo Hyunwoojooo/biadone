@@ -47,8 +47,10 @@ import {
 } from "../src/resumption";
 import {
   evaluateLiveContinuationRead,
+  evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority,
   evaluateLiveWorkSuggestionBoardBase
 } from "../src/suggestionBoard/liveShadow";
+import { createWorkBoardMonitoringReceipt } from "../src/suggestionBoard/monitoring";
 import {
   configureProjectWorkflow,
   createEmptyProjectWorkflowStore,
@@ -205,6 +207,52 @@ describe("live Work Board preserve integration", () => {
     expect(JSON.stringify(result)).not.toMatch(
       /(?:privateActionTarget|candidateId|workContext|sourceRef|Sha256|runId|analysisId)/u
     );
+  });
+
+  it("builds the final semantic monitoring receipt authority without changing the fixture", async () => {
+    const cwd = await integratedFixture();
+    const before = await wholeTree(cwd);
+    const env = Object.assign(Object.create(null), {
+      NODE_ENV: "test",
+      BLABASE_CODE_COMMIT_SHA: CODE_COMMIT_SHA
+    }) as NodeJS.ProcessEnv;
+
+    const evaluated =
+      await evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority({
+        cwd,
+        now: new Date(AS_OF),
+        env
+      });
+    const receipt =
+      evaluated.monitoringAuthority === null
+        ? null
+        : createWorkBoardMonitoringReceipt({
+            authority: evaluated.monitoringAuthority,
+            issuedAt: new Date(AS_OF)
+          });
+
+    expect(evaluated.response.base).toMatchObject({
+      status: "ready",
+      mode: "full"
+    });
+    expect(receipt).not.toBeNull();
+    expect(await wholeTree(cwd)).toEqual(before);
+    const serialized = JSON.stringify({
+      response: evaluated.response,
+      receipt: receipt?.payload
+    });
+    for (const privateValue of [
+      INSTALLATION_SECRET,
+      PRIVATE_PATH_SENTINEL,
+      SCOPE_ID,
+      SESSION_ID,
+      EXECUTION_ID,
+      OWNER_ID,
+      STREAM_ID,
+      CODE_COMMIT_SHA
+    ]) {
+      expect(serialized).not.toContain(privateValue);
+    }
   });
 });
 

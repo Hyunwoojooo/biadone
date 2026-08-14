@@ -69,6 +69,7 @@ import {
 import { readSemanticContinuationIntentStore } from "../semanticContinuation/localStore";
 import { buildSemanticContinuationTitlePresentation } from "../semanticContinuation/titleOverlay";
 import { readSemanticValidationStore } from "../semanticContinuation/validation/store";
+import type { WorkBoardMonitoringReceiptAuthority } from "./monitoring/receipt";
 
 const INSTALLATION_SECRET_PATTERN = /^[a-f0-9]{64}$/u;
 
@@ -113,13 +114,54 @@ export async function evaluateLiveSemanticWorkSuggestionBoard(input?: {
   now?: Date;
   env?: NodeJS.ProcessEnv;
 }): Promise<SemanticContinuationWorkBoardResponse> {
-  const base = await evaluateLiveWorkSuggestionBoardBase(input);
+  return (await evaluateLiveSemanticWorkSuggestionBoardInternal(input, false))
+    .response;
+}
+
+export type LiveSemanticWorkSuggestionBoardWithMonitoringAuthority = {
+  response: SemanticContinuationWorkBoardResponse;
+  /** Private request-scoped receipt authority; never serialize directly. */
+  monitoringAuthority: WorkBoardMonitoringReceiptAuthority | null;
+};
+
+export async function evaluateLiveSemanticWorkSuggestionBoardWithMonitoringAuthority(
+  input?: {
+    cwd?: string;
+    now?: Date;
+    env?: NodeJS.ProcessEnv;
+  }
+): Promise<LiveSemanticWorkSuggestionBoardWithMonitoringAuthority> {
+  return evaluateLiveSemanticWorkSuggestionBoardInternal(input, true);
+}
+
+async function evaluateLiveSemanticWorkSuggestionBoardInternal(
+  input:
+    | {
+        cwd?: string;
+        now?: Date;
+        env?: NodeJS.ProcessEnv;
+      }
+    | undefined,
+  includeMonitoringAuthority: boolean
+): Promise<LiveSemanticWorkSuggestionBoardWithMonitoringAuthority> {
+  const { captured, resolution } =
+    await captureLiveWorkSuggestionBoardResolution(input);
+  const base = liveWorkSuggestionBoardBase(captured, resolution);
   if (
     base.response.status !== "ready" ||
     base.response.mode !== "full" ||
     base.registrySha256 === null
   ) {
-    return createSemanticContinuationWorkBoardResponse(base.response, null);
+    const response = createSemanticContinuationWorkBoardResponse(
+      base.response,
+      null
+    );
+    return {
+      response,
+      monitoringAuthority: includeMonitoringAuthority
+        ? monitoringAuthority(captured, resolution, response)
+        : null
+    };
   }
   const readyResponse = base.response;
   const registrySha256 = base.registrySha256;
@@ -155,10 +197,16 @@ export async function evaluateLiveSemanticWorkSuggestionBoard(input?: {
         : null;
     }
   }).catch(() => null);
-  return createSemanticContinuationWorkBoardResponse(
+  const response = createSemanticContinuationWorkBoardResponse(
     base.response,
     semanticPresentation
   );
+  return {
+    response,
+    monitoringAuthority: includeMonitoringAuthority
+      ? monitoringAuthority(captured, resolution, response)
+      : null
+  };
 }
 
 export type LiveWorkSuggestionBoardBase = {
@@ -176,6 +224,13 @@ export async function evaluateLiveWorkSuggestionBoardBase(input?: {
 }): Promise<LiveWorkSuggestionBoardBase> {
   const { captured, resolution } =
     await captureLiveWorkSuggestionBoardResolution(input);
+  return liveWorkSuggestionBoardBase(captured, resolution);
+}
+
+function liveWorkSuggestionBoardBase(
+  captured: LiveAttentionCapturedInputs,
+  resolution: CapturedBoardResolution
+): LiveWorkSuggestionBoardBase {
   return {
     response: resolution.response,
     codeProvenance: captured.codeProvenance,
@@ -186,6 +241,52 @@ export async function evaluateLiveWorkSuggestionBoardBase(input?: {
       captured.registry !== null
         ? captured.registry.registrySha256
         : null
+  };
+}
+
+function monitoringAuthority(
+  captured: LiveAttentionCapturedInputs,
+  resolution: CapturedBoardResolution,
+  response: SemanticContinuationWorkBoardResponse
+): WorkBoardMonitoringReceiptAuthority | null {
+  const installationSecret =
+    captured.codexConfig?.installationSecret ?? null;
+  const sources = captured.evaluated.run?.sources;
+  if (!Array.isArray(sources)) return null;
+  const github = sources.find(
+    (source) => source.source === "github"
+  );
+  const codex = sources.find(
+    (source) => source.source === "codex"
+  );
+  if (
+    installationSecret === null ||
+    !INSTALLATION_SECRET_PATTERN.test(installationSecret) ||
+    github === undefined ||
+    codex === undefined
+  ) {
+    return null;
+  }
+  return {
+    installationSecret,
+    response,
+    sources: [github, codex],
+    privateProvenance: {
+      registrySha256:
+        captured.registryStatus === "available" &&
+        captured.registry !== null
+          ? captured.registry.registrySha256
+          : null,
+      codeCommitSha: captured.codeProvenance.codeCommitSha,
+      codeState: captured.codeProvenance.codeState,
+      codeFingerprintSha256:
+        captured.codeProvenance.codeFingerprintSha256,
+      boardResultSha256: resolution.boardResultSha256,
+      continuationResultSha256:
+        resolution.continuation.kind === "resolved"
+          ? resolution.continuation.decision.resultSha256
+          : null
+    }
   };
 }
 
@@ -224,6 +325,8 @@ export type CapturedBoardResolution = {
   continuation: CapturedContinuationResolution;
   /** Server-private action correlation; never part of a public response. */
   setupActionAuthorities: CapturedSetupActionAuthority[];
+  /** Private digest input only; never part of the public Board response. */
+  boardResultSha256: string | null;
 };
 
 export type CapturedSetupActionBinding = ContinuationSetupActionBinding;
@@ -281,7 +384,8 @@ export function composeCapturedBoardResolution(
     return {
       response: unavailableProjectionKey(),
       continuation: { kind: "unavailable" },
-      setupActionAuthorities: []
+      setupActionAuthorities: [],
+      boardResultSha256: null
     };
   }
   const projectionKey = deriveProjectionKey(installationSecret);
@@ -313,21 +417,24 @@ export function composeCapturedBoardResolution(
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
     continuation: { kind: "unavailable" },
-    setupActionAuthorities: []
+    setupActionAuthorities: [],
+    boardResultSha256: null
   });
   const insufficient = (
     reasonCode: WorkBoardFallbackReasonCode
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
     continuation: { kind: "insufficient" },
-    setupActionAuthorities: []
+    setupActionAuthorities: [],
+    boardResultSha256: null
   });
   const failed = (
     reasonCode: WorkBoardFallbackReasonCode
   ): CapturedBoardResolution => ({
     response: activeOnly(reasonCode),
     continuation: { kind: "error" },
-    setupActionAuthorities: []
+    setupActionAuthorities: [],
+    boardResultSha256: null
   });
 
   try {
@@ -489,7 +596,8 @@ export function composeCapturedBoardResolution(
           kind: "resolved",
           decision: resolved.result
         },
-        setupActionAuthorities
+        setupActionAuthorities,
+        boardResultSha256: composed.board.resultSha256
       };
     } catch {
       return failed("BOARD_PUBLIC_PROJECTION_REJECTED");
@@ -498,7 +606,8 @@ export function composeCapturedBoardResolution(
     return {
       response: activeOnly("CONTINUATION_PREREQUISITES_UNAVAILABLE"),
       continuation: { kind: "error" },
-      setupActionAuthorities: []
+      setupActionAuthorities: [],
+      boardResultSha256: null
     };
   }
 }

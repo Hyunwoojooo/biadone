@@ -1,11 +1,13 @@
 # Blabase Local Launcher Contract
 
-상태: Phase 4C.3 source connection onboarding local beta v0.4
+상태: Phase 4C.3 + L-001 default-off display-only Work Board local checkpoint
 
 ## 1. 목적
 
-Blabase macOS 앱은 메뉴바에 상주하고 전역 단축키로 현재 Active Attention 결과
-한 개를 즉시 보여준다. 런처는 추천 후보, 순위, 상태 또는 실행 대상을 새로
+Blabase macOS 앱은 메뉴바에 상주하고 전역 단축키로 현재 제안을 보여준다.
+L-001이 exact default-off flag로 활성화되면 별도 Work Board projection을 먼저
+요청하고, 그렇지 않거나 fallback이면 기존 Active Attention 결과 한 개를 그대로
+보여준다. 런처는 추천 후보, 순위, 상태 또는 실행 대상을 새로
 추론하지 않는다. Phase 4B resolver의 현재 top suggestion을 작은 표시 계약으로
 투영하고, 사용자가 명시적으로 실행한 안전한 동작만 Local Agent에 요청한다.
 
@@ -18,8 +20,9 @@ source 가용 상태를 확인하는 최소 설정 화면만 둔다.
   → Swift/AppKit 메뉴바 앱
   → JSON Lines over child-process stdin/stdout
   → bundled Node Local Agent
-  → current Phase 4B Active Attention result
-  → 기존 Work Resumption focus_or_resume
+  → default-off Work Board preserve projection
+  → 불가/fallback 시 current Phase 4B Active Attention result
+  → 기존 Active Work Resumption focus_or_resume만 유지
 ```
 
 ## 2. 구성 요소와 소유권
@@ -46,7 +49,8 @@ source 가용 상태를 확인하는 최소 설정 화면만 둔다.
 
 ### Node Local Agent
 
-- 기존 `evaluateCurrentAttention`과 source sync runtime을 재사용한다.
+- 기존 `evaluateCurrentAttention`, canonical
+  `evaluateLiveSemanticWorkSuggestionBoard`와 source sync runtime을 재사용한다.
 - 기존 Work Resumption store, exact binding/execution 검증과 Companion daemon을
   재사용한다.
 - 런처 projection과 실행 요청의 현재성 검증을 소유한다.
@@ -80,6 +84,7 @@ type LauncherRequest = {
   requestId: string;
   method:
     | "attention.get"
+    | "work-board.get"
     | "attention.execute"
     | "command.get"
     | "status.get";
@@ -196,6 +201,17 @@ type LauncherAttentionProjection = {
 };
 ```
 
+Swift는 success envelope의 exact key set을
+`{contract,requestId,ok,result}`, failure는
+`{contract,requestId,ok,error}`로 검증한다. `result`/`error` 공존, extra key,
+non-canonical `request-<lowercase UUID>` ID와 error의 `code/message` 외 key는 protocol
+corruption이다. Error code는 1~120 ASCII 대문자/숫자/underscore, message는 1~500
+UTF-16 unit이고 control text는 금지한다. IPC v1 compatibility상 locator, credential 또는
+private-ref 모양의 bounded message 자체는 protocol corruption으로 재분류하지 않지만,
+Swift가 app-owned generic 문구로 치환해 화면에 raw text를 노출하지 않는다. Code는
+보존되므로 `INVALID_REQUEST` fallback 정책도 유지된다. 구조/code/control 위반은 현재
+agent generation을 retire하고 같은 JSONL session에서 fallback 요청을 보내지 않는다.
+
 `status.get`은 strict empty params만 받고 다음 bounded control-plane 상태를 반환한다.
 절대 경로, URL, token, credential과 source 원문은 포함하지 않는다.
 
@@ -250,6 +266,80 @@ guard 또는 실행에 영향을 주지 않는다.
 
 projection에는 `baseResult`, replay input, raw prompt/answer, command/output/diff,
 credential, native thread ID와 project cwd를 포함하지 않는다.
+
+### 4.1 L-001 Work Board projection
+
+`work-board.get`은 별도 strict params `{refresh:boolean}`만 받으며 IPC envelope v1과
+기존 `attention.get`/Attention v2 bytes 및 동작을 바꾸지 않는다. Exact flag
+`BLABASE_LAUNCHER_WORK_BOARD_ENABLED === "true"`일 때만 활성화되고 나머지는
+`INVALID_REQUEST`로 닫힌다. `read_only`는 `refresh:true`여도 sync하지 않으며,
+`managed`의 명시적 refresh만 기존 source sync를 한 번 수행한 뒤 canonical
+`evaluateLiveSemanticWorkSuggestionBoard`를 같은 data root에서 직접 한 번 호출한다.
+Board 평가 자체는 preserve/no-refresh 경계를 유지한다.
+
+```ts
+type LauncherWorkBoardProjection = {
+  contract: "blabase-launcher-work-board-v1";
+  generatedAt: string;
+  mode: "full" | "active_only_fallback";
+  prominentLane: "attention" | "continuation" | "setup" | "none";
+  continuationStatus: "available" | "empty" | "unavailable";
+  items: Array<{
+    lane: "attention" | "continuation" | "setup";
+    title: string;
+    evidenceBand:
+      | "verified_attention" | "exact" | "corroborated"
+      | "single_source" | "setup";
+    caveatCodes: string[]; // exact public allowlist, canonical unique
+    expiresAt: string | null;
+    capability: "display";
+    action: null;
+  }>; // base primary 뒤 alternatives 순서, 최대 3
+};
+```
+
+Semantic overlay는 exact public `itemRef`로 server-side에서만 상관하고 projection에는
+적용된 title만 남긴다. `itemRef`, work-context/source/candidate/run/proof/hash,
+private target, URL/path/credential과 action은 전달하지 않는다. Continuation/Setup은
+non-null expiry를 요구하고 모든 non-null expiry는 generatedAt 뒤여야 한다.
+Attention의 원본 `expiresAt`은 visibility TTL이 아니라 dueAt이므로 overdue/future와
+무관하게 launcher projection에서 항상 `null`이다.
+`active_only_fallback`은 Attention item만, `continuationStatus:unavailable`만 허용한다.
+
+새 Swift client는 `work-board.get`을 최대 한 번 호출한다. Full은 항목이 0개여도
+terminal Board다. Unsupported/`INVALID_REQUEST`는 sync가 아직 없으므로 원래 refresh로
+기존 `attention.get`을 정확히 한 번 호출한다. 완료된 Board의
+`active_only_fallback`, `WORK_BOARD_RUN_FAILED` 또는 strict result schema 거부는
+double sync를 막기 위해 `attention.get {refresh:false}`로 한 번 fallback한다.
+Timeout/disconnect/malformed envelope/protocol corruption은 같은 sequential connection을
+재사용하지 않고 hung process generation을 retire한 뒤 기존 error/reconnect 경계로
+보낸다. 늦은 byte는 retired generation에서 무시되고 다음 manual/poll load가 새
+process를 시작한다. Board request cancellation도 pending request를 실제로 선점한
+generation만 retire하므로 빠른 reload가 취소된 평가 뒤에 queue되지 않는다. Timeout,
+protocol retirement, config/data-root 변경과 app shutdown은 stdin/handler를 먼저
+분리하고 MainActor를 막지 않는 quarantine task에서 SIGTERM bounded grace 뒤에도 살아
+있는 child를 SIGKILL해 PID 종료를 확인한다. 종료를 확인하지 못하면 해당 process/task를
+보존하고 replacement launch를 거부한다. 모든 start는 lifecycle epoch와 retirement token을
+캡처한 뒤 await 이후 cancellation/epoch/current token/permanent shutdown gate를 다시
+검증하므로, concurrent config change나 app shutdown이 이전 data root process를 되살리지
+못한다. Configuration change는 `beginConfigurationStop` 이후 gate를 유지하고, settings
+store가 새 root를 실제 활성화한 뒤 `completeConfigurationChange`가 새 epoch를 열어야만
+다음 launch를 허용한다. 중간 취소/실패는 `abortConfigurationChange`로 old-root 상태에
+process 없이 복귀하며 permanent shutdown gate는 이 handshake보다 우선한다. Root choice가
+다르면 `isAgentActive` flag와 무관하게 retry도 항상 begin-stop을 수행하므로 abort 뒤
+재시작된 old-root process를 건너뛰지 않는다.
+재귀 fallback은 없다. `WORK_BOARD_RUN_FAILED` 또는 strict result
+schema failure로 Attention fallback을 표시할 때는
+`Work Board를 불러오지 못해 기존 Attention을 표시합니다` 안내를 함께 표시하며,
+그 Attention의 기존 Active action은 유지한다.
+
+Full Board rows는 고정 Attention/Continuation/Setup lane 순서와 web과 같은 한국어
+evidence/caveat allowlist만 표시하며 button, link, Enter shortcut 또는 action이 없다.
+현재 시각에 만료된 item은 publish 전에 원래 순서를 유지한 채 제외하고, 가장 가까운
+expiry까지 60초 이하 chunk로 재확인한다. Reload/config change/shutdown은 이전 timer와
+request generation을 취소한다. `active_only_fallback` 뒤 표시되는 기존 Attention은
+기존 Active action 계약을 그대로 유지한다; L-001은 Continuation/X-001 action을
+launcher에 연결하지 않는다.
 
 ## 5. 실행 계약
 
@@ -407,6 +497,11 @@ baseline은 재실행하지 않는다.
 Phase 4C.3 root handshake와 source deep link/OAuth return도 control-plane과 navigation
 변경이다. source snapshot schema, 수집 의미, engine input/output 해석과 후보 순서를
 바꾸지 않으므로 Golden Dataset과 semantic baseline은 재실행하지 않는다.
+
+L-001도 existing public Work Board의 strict display-only projection과 native
+presentation/fallback만 추가한다. Attention v2, Work Board/public/semantic contracts,
+S1/R1/R2/R3/B1 및 dataset은 바뀌지 않으므로 core baseline은 N/A다. Default-off
+flag 제거/비활성화 또는 old agent의 `INVALID_REQUEST`가 legacy Attention rollback이다.
 
 - 네 decision status와 top suggestion이 손실 없이 projection되는지
 - launcher가 top suggestion filtering/ordering을 바꾸지 않는지

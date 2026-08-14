@@ -85,6 +85,9 @@ function isolatedEnvironment() {
   ]) {
     if (process.env[key]) environment[key] = process.env[key];
   }
+  if (process.env.BLABASE_WORK_BOARD_MONITORING_ENABLED === "true") {
+    environment.BLABASE_WORK_BOARD_MONITORING_ENABLED = "true";
+  }
   return environment;
 }
 
