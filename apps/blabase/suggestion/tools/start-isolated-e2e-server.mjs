@@ -88,6 +88,11 @@ function isolatedEnvironment() {
   if (process.env.BLABASE_WORK_BOARD_MONITORING_ENABLED === "true") {
     environment.BLABASE_WORK_BOARD_MONITORING_ENABLED = "true";
   }
+  if (
+    process.env.BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED === "true"
+  ) {
+    environment.BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED = "true";
+  }
   return environment;
 }
 

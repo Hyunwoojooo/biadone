@@ -5144,8 +5144,10 @@ version constants. No persisted-state or schema migration is required.
   receipt header while returning the exact same JSON bytes. After separate explicit
   consent, the browser records `render_confirmed` only after the latest response is
   committed and may submit explicit `useful|not_useful` or reset for current
-  Continuation/Setup ordinals. Purge removes current-key monitoring data. Monitoring
-  failures never block Board display or X-001 Setup action.
+  Continuation/Setup ordinals. Q-001 hardening makes explicit purge independent of
+  current Codex configuration/secret and removes every safe canonical current or
+  inactive key namespace under the monitoring root lock. Monitoring failures never
+  block Board display or X-001 Setup action.
 - **Versions before:** No M-001a receipt/API/event/store/quality/replay contract.
 - **Versions after:** `work-board-monitoring-receipt-v0.1`,
   `work-board-monitoring-api-v0.1`, `work-board-monitoring-event-v0.1`,
@@ -5196,17 +5198,20 @@ version constants. No persisted-state or schema migration is required.
 - **Privacy or retention impact:** Receipt is signed and redacted, not encrypted;
   therefore it contains only bounded enums/version literals and HMAC/SHA digests,
   never title/summary/raw refs/IDs/paths/URLs/prompts/tokens/secrets/action offers.
-  Browser keeps receipt in request-local memory only. Store path is
-  `.local/work-board-monitoring/<authKeyId>/events.json`, current-secret namespace,
-  30-day event retention with lazy mutation-time compaction and no background
-  cleanup. Consent itself is an event under the same retention policy; after its
-  retained prefix expires, recording requires explicit consent again. Pure GET/read
-  never creates, cleans, repairs or writes state.
+  Browser keeps receipt in request-local memory only. Normal operations use
+  `.local/work-board-monitoring/<authKeyId>/events.json` in the current-secret
+  namespace, with 30-day event retention, lazy mutation-time compaction and no
+  background cleanup. Consent itself is an event under the same retention policy;
+  after its retained prefix expires, recording requires explicit consent again. Pure
+  GET/read never creates, cleans, repairs or writes state. Explicit all-data purge is
+  the separate complete-deletion path across key rotation and is also required before
+  Codex disconnect can delete configuration.
 - **Residual risks:** Same-UID authenticated store rollback/exact ABA and secret
   access are outside HMAC recency protection; wall clock is trusted; crash-left
   lock/temp state fails closed and may require manual local recovery; inactive
-  old-key namespaces are not enumerated or background-cleaned; OS-managed atime is
-  excluded from no-code-controlled-mutation claims. Header metadata remains visible
+  old-key namespaces are not background-cleaned but are included in explicit
+  all-data purge; OS-managed atime is excluded from no-code-controlled-mutation
+  claims. Header metadata remains visible
   to an authenticated local transport/log layer, which is why raw text/refs are
   excluded. Manual privacy/copy/browser/accessibility and G2/G3 review remain pending.
 - **Release decision:** Local automated checkpoint only; default-off. No rollout,
@@ -5215,7 +5220,7 @@ version constants. No persisted-state or schema migration is required.
   `true`; this removes receipt issuance, API controls and browser POSTs while leaving
   Work Board JSON and all existing engines/actions/Launcher paths unchanged. The
   additive modules/routes/UI/script can then be removed without data migration;
-  local current-key data may be purged explicitly first.
+  all safe canonical monitoring namespaces may be purged explicitly first.
 - **Follow-up work:** Human privacy/copy review; manual supported-browser and
   accessibility smoke; explicit cleanup/recovery policy before broader retention;
   broader M-001 provenance/error/latency work only under a separate approved slice.
@@ -5230,4 +5235,239 @@ version constants. No persisted-state or schema migration is required.
   scope=(suggestion/app/WorkBoardMonitoringControls.tsx suggestion/app/WorkCockpit.tsx suggestion/app/WorkSuggestionBoardPanel.tsx suggestion/app/api/work-board/monitoring/route.ts suggestion/app/api/work-board/route.ts suggestion/app/globals.css suggestion/app/page.tsx suggestion/app/workBoardMonitoringClient.ts suggestion/package.json suggestion/src/suggestionBoard/liveShadow.ts suggestion/src/suggestionBoard/monitoring/contracts.ts suggestion/src/suggestionBoard/monitoring/index.ts suggestion/src/suggestionBoard/monitoring/quality.ts suggestion/src/suggestionBoard/monitoring/receipt.ts suggestion/src/suggestionBoard/monitoring/replay.ts suggestion/src/suggestionBoard/monitoring/store.ts suggestion/src/suggestionBoard/monitoring/versions.ts suggestion/tools/run-work-board-monitoring.ts suggestion/tools/start-isolated-e2e-server.mjs suggestion/e2e/work-board-monitoring.spec.ts suggestion/tests/fixtures/workBoardMonitoringFixture.ts suggestion/tests/livePreserveIntegratedFixture.test.ts suggestion/tests/workBoardMonitoringClient.test.ts suggestion/tests/workBoardMonitoringContracts.test.ts suggestion/tests/workBoardMonitoringQuality.test.ts suggestion/tests/workBoardMonitoringReceipt.test.ts suggestion/tests/workBoardMonitoringRoute.test.ts suggestion/tests/workBoardMonitoringStore.test.ts suggestion/tests/workBoardMonitoringUi.test.tsx suggestion/tests/workBoardMonitoringCli.test.ts suggestion/tests/workBoardRoute.test.ts suggestion/tests/workCockpitBoardIntegration.test.ts suggestion/tests/workSuggestionBoardPanel.test.tsx suggestion/tests/continuationSetupActionUiFlag.test.tsx)
   prefix=$(git rev-parse --show-prefix)
   { for file in $scope; do if base=$(git rev-parse "HEAD:${prefix}${file}" 2>/dev/null); then :; else base=ABSENT; fi; mode=$(stat -f '%Lp' "$file"); work=$(shasum -a 256 "$file" | awk '{print $1}'); printf '%s\t%s\t%s\t%s\n' "$file" "$base" "$mode" "$work"; done; } | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+  ```
+
+## Engine Change Record — Q-001 integrated automated checkpoint and blocker hardening
+
+- **Date:** 2026-08-14 KST
+- **Owner:** Codex is automated implementation/checkpoint evidence owner. The
+  independent `qa_reviewer` is advisory only. The user remains product, privacy,
+  risk and release approver; human dataset reviewers/adjudicator remain pending.
+- **Goal:** Execute the exact integrated local QA matrix at base
+  `e2fc9f56066b5d731fddcf9cc1837424a740b450`, preserve every failure as evidence,
+  correct only concrete product/test blockers, and produce a reproducible automated
+  checkpoint without claiming human review, dataset freeze, rollout or release.
+- **Affected pipeline stages:** Additive/tightened boundaries only: M-001a monitoring
+  authenticated replay and complete deletion; Codex disconnect deletion transaction;
+  Semantic Continuation intent HTTP input, private authority/store and shared lease;
+  Attention Lab write capability and form currentness; exact E2E assertions; current
+  Launcher smoke fake-process wait; current LikeC4 implementation model. S1/R1/R2/R3/B1 admission, evidence, scoring, resolver,
+  Board ordering/public schema, E-001 rows and Launcher Work Board projection meaning
+  are unchanged.
+- **Behavior before:** Monitoring replay used the normal read path, so an otherwise
+  authenticated event chain with a stale authenticated stored aggregate could not be
+  recomputed and reported as mismatch. Purge required current configuration/secret and
+  deleted only the current namespace; a successful disconnect could therefore leave
+  rotated-key namespaces. Semantic intent used a fixed-root v0.1 SHA-only store, shared
+  lease bootstrap could recursively traverse unsafe ancestors, intent writes had no
+  separate least-privilege flag/body-length enforcement, pure-read orphan-temp handling
+  had no exact authorized recovery path, and the browser form could publish a stale
+  request completion after target/label change. Some E2E fixtures asserted historical
+  copy or counted ordinary background Attention GET polling as source refresh.
+- **Behavior after:** Monitoring normal read remains aggregate-strict, while replay
+  verifies schema/`authKeyId`, event SHA/HMAC chain and store HMAC before recomputing the
+  aggregate; mismatch is a deterministic nonzero replay result. Explicit purge obtains
+  the root lock, validates every canonical namespace without following symlinks or
+  accepting unexpected entries, and deletes all current/inactive namespaces even when
+  Codex config/secret is absent. Codex disconnect purges first and fails closed before
+  configuration deletion on purge error. Semantic intent is current-secret-namespaced,
+  HMAC-authenticated v0.2 storage; strict body gates and a separate exact write flag run
+  before evaluation; fixed lease directories are validated component-by-component;
+  pure GET/read does not recover or delete orphan temp state, while only the next
+  authorized POST under the shared lease may visit the fixed legacy root and every
+  canonical current/inactive `authKeyId` namespace to recover the exact safe regular/
+  same-owner/0600 temp pattern. A rotated-key orphan therefore cannot suppress the
+  current overlay, while hostile namespace/temp metadata remains fail-closed and is not
+  deleted. The form is exact-target-keyed and request/edit generation-bound.
+  SC-002 receipt reads likewise remain pure; the next authorized semantic/validation
+  mutation under the same lease removes only an exact O_NOFOLLOW, inode-matched,
+  same-owner 0600 `receipts.json.<pid>.<16hex>.tmp`, so a crash-left receipt temp cannot
+  indefinitely suppress semantic presentation and hostile temp metadata is preserved
+  fail-closed.
+  E2E assertions now track current product copy and the mutating source-refresh boundary.
+  Launcher smoke waits boundedly for its one-shot post-configuration fake to exit before
+  shutdown, eliminating a harness scheduling race without changing runtime authority.
+- **Versions before:** Semantic public presentation/core decision contracts remain their
+  existing v0.1/v0.2 values. Private Semantic Continuation intent store/schema were
+  v0.1 fixed-root/SHA-only. M-001a receipt/API/event/store/quality/replay were v0.1.
+- **Versions after:** Private intent store/schema are
+  `semantic-continuation-intent-store-v0.2` and
+  `semantic-continuation-intent-store-schema-v0.2`, with current-secret `authKeyId`,
+  canonical SHA and installation-secret HMAC. The exact write capability flag is
+  `BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED === "true"`. Public Work Board v0.1,
+  semantic presentation/core decision, Continuation read v0.1, X-001, M-001a v0.1,
+  Launcher IPC/Attention/Board and S1/R1/R2/R3/B1/E-001 versions are unchanged. The
+  monitoring correction changes safe replay/purge behavior without making monitoring
+  eligible for ranking, Gold or release.
+- **Code commit:** Base revision
+  `e2fc9f56066b5d731fddcf9cc1837424a740b450`; implementation remains an uncommitted
+  scoped worktree patch. Final exact scope and fingerprint are recorded below.
+- **Evaluation dataset version and SHA-256:** Dataset version remains mutable/unfrozen
+  `suggestion-continuation-dev-v0.1` revision 3. No frozen `datasetSha256` is assigned;
+  its candidate payload SHA-256 at initial checkpoint is
+  `98a3c8135b23c6ac2aeddd3c2ada511d3d9a46638fb016d95d86945c8f6d8f31` and exact
+  materialized input SHA-256 is
+  `de9dd348173cdf5087905a1c7b33e2ee20cd948159280572e8f090b95cdb9da2`.
+  These hashes identify a synthetic contract checkpoint and are not Gold/freeze claims.
+- **Candidate run ID:** Initial diagnostic run
+  `continuation_eval_run_2201e106858331df1982e648f42d01dd`; final confirmation run
+  `continuation_eval_run_1a7f8824ffcc442dee45d1a73c8b2988`.
+- **Comparison run ID:** N/A for quality improvement. Initial and final runs are
+  contract/provenance confirmation on the exact recorded input tuple, not a claimed
+  Acceptable@1/3 comparison, and the dataset remains mutable/unreviewed.
+- **Commands executed:** Exact matrix from `suggestion/`, except the final architecture
+  command from repository app root:
+
+  ```text
+  npm test
+  npm run typecheck
+  npm run lint
+  npm run build
+  npm run continuation:baseline
+  npm run test:e2e
+  BLABASE_WORK_BOARD_MONITORING_ENABLED=true npx playwright test e2e/work-board-monitoring.spec.ts --reporter=line
+  BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED=true npx playwright test e2e/semantic-continuation-intent-race.spec.ts --reporter=line
+  npm run launcher:agent:bundle
+  npm run launcher:swift:smoke
+  (cd desktop/macos && swift build)
+  npm run launcher:app:build
+  npm run launcher:package
+  npm run launcher:package:verify
+  (cd desktop/macos && swift test)
+  (cd /Users/joo/BiaDone/apps/blabase && npm run arch:check)
+  git diff --check
+  ```
+
+  `swift test` was attempted exactly once. It stopped before test execution because the
+  selected Command Line Tools SDK has no `XCTest` module and was not rerun.
+- **Initial matrix evidence:** Unit passed 158 files/1,312 tests in 18.16s;
+  typecheck 9.06s; lint 7.65s; Next.js 15.5.21 build 15.66s; Continuation baseline
+  22/22 measured/pass and 0 failed/deferred in 1.11s; monitoring Playwright 1/1 in
+  5.74s; Launcher agent bundle 0.50s, Swift smoke 25.42s, Swift build 1.02s, app build
+  2.73s, package 16.53s and package verification 4.79s all passed. Full E2E failed
+  with 18 passed, 8 failed, 1 skipped and 1 not run in 99.56s. `swift test` failed at
+  the toolchain gate in 0.88s. Initial root `arch:check` failed in 3.60s after 12
+  dependency warnings/0 errors when the suggestion dependency step reached TS18003/no
+  inputs. Initial bundle, executable and DMG SHA-256 were respectively
+  `6cae421c560d8e6a9f775ce50b488d92a7b6e22e1d436329461bff6060b83afe`,
+  `daa2c3674b043d964359b01ac80ba2f178b1b356a1a24e5ccad7a6b2393860cd`, and
+  `d7aab8cc2aabf7b213424d51860c33ed24b5989ba5318107dc6fa217c6b18332`.
+- **Final matrix evidence:** `npm test` passed 158 files/1,327 tests in 22.21s;
+  typecheck passed in 3.38s; lint passed in 19.16s; Next.js 15.5.21 build passed
+  in 18.37s; baseline passed 22/22 measured with 0 failed/deferred in 1.16s; full E2E passed
+  27 with 2 skipped in 40.06s; monitoring browser passed 1/1 in 5.29s; semantic
+  race browser passed 1/1 in 7.57s. Launcher bundle passed in 0.52s with SHA-256
+  `10625b73ce16dec2220f8f3069a12f0c7fae43fb687b997e922b29d48b2760ca`;
+  Swift smoke passed in 24.85s after the deterministic fake-exit wait correction;
+  Swift build passed in 0.40s; app build passed in 2.72s with executable SHA-256
+  `7b587946078ee3f2774ebecbda6187799b85c37f48a4dadce599685a3546fc71`;
+  package passed in 16.37s and verification in 2.38s with DMG SHA-256
+  `21f44ceb78c4e47e99bc0d9990dfba0c141f646dc86905ad84e224609ccc5b7e`.
+  Root `arch:check` passed in 7.39s with dependency warnings only/0 errors and all
+  dependency/source/trace/model gates complete. Full `git diff --check` passed in
+  0.03s.
+- **Final reproducibility tuple:** Candidate payload
+  `98a3c8135b23c6ac2aeddd3c2ada511d3d9a46638fb016d95d86945c8f6d8f31`;
+  materialized input
+  `de9dd348173cdf5087905a1c7b33e2ee20cd948159280572e8f090b95cdb9da2`;
+  candidate configuration
+  `60ac735cc0d8566772ef7fbf5329f5e626d89c02a8e408d3dafbda28f658221b`;
+  deterministic output
+  `bd6dfccc525cef2ee1837b08dfb2fa3a88b8776c7283732bb36e4502fd0db4e7`;
+  canonical artifact
+  `fddf51329caab4e456a62609664628422d3ad805d9449726ecec3c3467af4f24`;
+  stored artifact
+  `1e9f2555625db60e726d7b973f3ed60fa2fffc1d42dfd888954fea6b4cd8a2a4`.
+  Full run artifact remains private under `.local/` with verified mode 0600 and is
+  not committed.
+- **Metrics changed:** No recommendation-quality metric changed or was measured.
+  Contract checkpoint remains 12/12 contract, 9/9 resolver and 1/1 Board.
+  Acceptable@1/3, setup quality and human review remain null/not-started;
+  `releaseGateApplicable=false`. Monitoring output remains candidate-only and cannot
+  affect rank, Gold, evaluation score or release.
+- **Capability review:** Formal web read and Launcher Full Board rows are strictly
+  `display/action=null`. Setup navigation alone may use explicit click plus candidate
+  TTL, source/observation, relevant mapping and typed code provenance to return fixed
+  `/projects`; because this Setup candidate has null WorkContext, exact WorkContext or
+  session heartbeat is not required. `open_source` is blocked/unimplemented. Exact
+  resume is blocked/unimplemented and any future slice requires exact WorkContext/
+  session binding, fresh heartbeat, short TTL and action-time revalidation. Launcher
+  Active-only fallback preserves only its pre-existing legacy Active actions.
+- **Privacy or retention impact:** No production conversation or frozen dataset was
+  read/promoted. Semantic v0.2 records stay in current-secret `.local` private storage;
+  old fixed-root v0.1 authority is ignored rather than migrated. Monitoring retains the
+  approved 30-day mutation-time lazy policy without background cleanup, while explicit
+  purge covers every safe canonical namespace across key rotation and config absence.
+  Raw titles/identifiers/secrets/private artifacts are not added to public response,
+  replay, CLI or Git.
+- **Independent QA:** `PASS` — current-head read-only re-review found no confirmed
+  Medium+ defect. It specifically verified mutation-only SC-001 cross-namespace and
+  SC-002 validation-temp recovery, pure-read non-mutation, no-follow/owner/mode/inode
+  guards, hostile-temp non-deletion, separate write authority, all-namespace monitoring
+  purge and the documented release blocks. The reviewer did not rerun tests or Git;
+  this is advisory AI review, not human approval.
+- **Regressions or accepted exceptions:** `swift test` remains an environment/toolchain
+  failure before XCTest execution. Same-UID valid-store rollback/exact ABA and trusted
+  wall-clock limits remain. There is no background retention worker. Crash-left locks/
+  temp files generally fail closed for manual recovery; only the exact safe intent-store
+  and validation-receipt mutation recovery cases are automated. Notarization was not
+  run.
+- **Release decision:** Automated checkpoint `automated_checkpoint_passed` because
+  the final exact root `npm run arch:check` passed. Release remains exactly
+  `blocked_pending_human_review`. No flag is enabled, no rollout or deployment is
+  authorized, and no dataset is frozen/promoted.
+- **Rollback method:** Disable exact flags in reverse authority order, beginning with
+  `BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED` and monitoring, then Launcher Board,
+  Setup action, presentation and resolver. Remove the additive v0.2 intent namespace/
+  write/body/race changes and monitoring replay/purge changes if necessary; the legacy
+  v0.1 intent file was never migrated or overwritten. Explicit all-data monitoring
+  purge remains available even after config/key removal.
+- **Follow-up work:** Real unmocked authenticated browser chain; human privacy/copy,
+  320px/200% zoom, keyboard/VoiceOver/Safari review; full Xcode XCTest; old-host/
+  new-agent and new-host/old-agent packaged compatibility; signed/notarized release;
+  HTML nonce CSP review; broader crash recovery/cleanup policy; human dataset
+  reviewers/adjudicator, lawful basis/anonymization, immutable freeze, locked holdout,
+  75/90 decision, production G2/G3 and explicit release record.
+- **Scoped patch fingerprint:** Policy
+  `q001-automated-checkpoint-worktree-sha256-v1` sorts
+  `relative-path<TAB>base-blob-or-ABSENT<TAB>worktree-mode<TAB>worktree-SHA256`
+  for the exact final Q-001 implementation/test paths and hashes the sorted records
+  with SHA-256. Documentation, `.local/`, generated build/package output and unrelated
+  shared dirty paths are excluded. Scope count `33`; fingerprint
+  `dcbb0dc8515fc228da58d27b86b03c63001238631a88368253b95befbeac3627`.
+
+  ```text
+  architecture/model.c4
+  suggestion/.env.example
+  suggestion/app/WorkBoardMonitoringControls.tsx
+  suggestion/app/api/connectors/codex/disconnect/route.ts
+  suggestion/app/api/work-board/intent/route.ts
+  suggestion/app/api/work-board/monitoring/route.ts
+  suggestion/app/attention-lab/AttentionLab.tsx
+  suggestion/app/attention-lab/page.tsx
+  suggestion/desktop/macos/Tests/Smoke/LauncherModelSmoke.swift
+  suggestion/e2e/data-pipeline.spec.ts
+  suggestion/e2e/managed-codex-progress.spec.ts
+  suggestion/e2e/semantic-continuation-intent-race.spec.ts
+  suggestion/src/http/boundedJson.ts
+  suggestion/src/semanticContinuation/contracts.ts
+  suggestion/src/semanticContinuation/localStore.ts
+  suggestion/src/semanticContinuation/validation/producer.ts
+  suggestion/src/semanticContinuation/validation/store.ts
+  suggestion/src/suggestionBoard/liveShadow.ts
+  suggestion/src/suggestionBoard/monitoring/store.ts
+  suggestion/tests/attentionLabPresentation.test.tsx
+  suggestion/tests/codexRoutes.test.ts
+  suggestion/tests/semanticContinuationOverlay.test.ts
+  suggestion/tests/semanticContinuationStore.test.ts
+  suggestion/tests/semanticValidationOverlay.test.ts
+  suggestion/tests/semanticValidationProducer.test.ts
+  suggestion/tests/semanticValidationStore.test.ts
+  suggestion/tests/workBoardIntentRoute.test.ts
+  suggestion/tests/workBoardMonitoringCli.test.ts
+  suggestion/tests/workBoardMonitoringRoute.test.ts
+  suggestion/tests/workBoardMonitoringStore.test.ts
+  suggestion/tests/workBoardMonitoringUi.test.tsx
+  suggestion/tools/run-work-board-monitoring.ts
+  suggestion/tools/start-isolated-e2e-server.mjs
   ```

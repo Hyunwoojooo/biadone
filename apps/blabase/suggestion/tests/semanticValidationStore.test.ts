@@ -2,8 +2,10 @@ import {
   chmod,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
+  symlink,
   utimes,
   writeFile
 } from "node:fs/promises";
@@ -12,6 +14,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { capturePreservingLocalState } from "../src/attention/preserveCapture";
 import {
   createEmptySemanticValidationStore,
   createSemanticValidationRunningReceipt,
@@ -174,6 +177,77 @@ describe("Semantic Validation private store", () => {
     expect(contenders.filter((lease) => lease !== null)).toHaveLength(1);
     expect(recovered?.abandonedRunId).toBe(runId("b"));
     await recovered?.stop();
+  });
+
+  it("recovers a safe receipt temp only on the next authorized mutation", async () => {
+    const cwd = await temporaryWorkspace();
+    await appendRunningUnderAuthority(cwd, runId("a"));
+    const directory = semanticValidationLocalDirectory(cwd);
+    const temporary = join(
+      directory,
+      "receipts.json.995.aaaaaaaaaaaaaaaa.tmp"
+    );
+    await writeFile(temporary, "private-validation-temp-sentinel", {
+      encoding: "utf8",
+      mode: 0o600
+    });
+
+    await expect(
+      capturePreservingLocalState({
+        cwd,
+        scope: "semantic",
+        read: () => readSemanticValidationStore(cwd, INSTALLATION_SECRET)
+      })
+    ).rejects.toBeDefined();
+    expect(await readFile(temporary, "utf8")).toBe(
+      "private-validation-temp-sentinel"
+    );
+
+    await appendRunningUnderAuthority(cwd, runId("b"));
+    expect(await readdir(directory)).toEqual(["receipts.json"]);
+    const captured = await capturePreservingLocalState({
+      cwd,
+      scope: "semantic",
+      read: () => readSemanticValidationStore(cwd, INSTALLATION_SECRET)
+    });
+    expect(captured.status).toBe("available");
+  });
+
+  it("does not delete hostile validation temp symlinks or wrong-mode files", async () => {
+    const symlinkCwd = await temporaryWorkspace();
+    const outside = await temporaryWorkspace();
+    await appendRunningUnderAuthority(symlinkCwd, runId("a"));
+    const outsideTarget = join(outside, "outside-validation-sentinel");
+    await writeFile(outsideTarget, "outside-validation-sentinel", {
+      encoding: "utf8",
+      mode: 0o600
+    });
+    const hostileLink = join(
+      semanticValidationLocalDirectory(symlinkCwd),
+      "receipts.json.994.bbbbbbbbbbbbbbbb.tmp"
+    );
+    await symlink(outsideTarget, hostileLink);
+    await expect(
+      appendRunningUnderAuthority(symlinkCwd, runId("b"))
+    ).rejects.toBeDefined();
+    expect(await readFile(outsideTarget, "utf8")).toBe(
+      "outside-validation-sentinel"
+    );
+
+    const wrongModeCwd = await temporaryWorkspace();
+    await appendRunningUnderAuthority(wrongModeCwd, runId("c"));
+    const wrongModeTemp = join(
+      semanticValidationLocalDirectory(wrongModeCwd),
+      "receipts.json.993.cccccccccccccccc.tmp"
+    );
+    await writeFile(wrongModeTemp, "private-validation-temp-sentinel", {
+      encoding: "utf8",
+      mode: 0o644
+    });
+    await expect(
+      appendRunningUnderAuthority(wrongModeCwd, runId("d"))
+    ).rejects.toBeDefined();
+    expect((await stat(wrongModeTemp)).mode & 0o777).toBe(0o644);
   });
 });
 

@@ -960,6 +960,13 @@ enum LauncherModelSmoke {
                     nextDataRoot.standardizedFileURL.path,
             "post-config request launches only on the new root"
         )
+        for _ in 0..<100 where heldProcesses[2].isRunning {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try expect(
+            !heldProcesses[2].isRunning,
+            "one-shot post-config fake exits before shutdown"
+        )
         try await heldClient.shutdown()
 
         var shutdownRaceLaunchCount = 0

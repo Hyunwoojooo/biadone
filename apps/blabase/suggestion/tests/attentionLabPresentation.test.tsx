@@ -41,6 +41,7 @@ describe("Attention Lab decision presentation", () => {
         response,
         loadFailed: false,
         activeDecisionStatus: "no_action",
+        semanticWriteEnabled: true,
         semanticPresentation: {
           contract: "semantic-continuation-presentation-v0.2",
           schemaVersion: "semantic-continuation-presentation-schema-v0.2",
@@ -63,6 +64,25 @@ describe("Attention Lab decision presentation", () => {
     expect(markup).toContain("항목 실행·결과 반영·외부 변경은 하지 않습니다");
     expect(markup).not.toContain("pass");
     expect(markup).not.toContain("fail");
+  });
+
+  it("keeps semantic persistence controls hidden behind the separate write capability", () => {
+    const response = readyContinuationBoard();
+    if (response.board.primary === null) {
+      throw new TypeError("Synthetic continuation primary missing");
+    }
+    response.board.primary.item.workContextRef =
+      `context_ref_${"a".repeat(43)}`;
+    const markup = renderToStaticMarkup(
+      createElement(ContinuationShadowPanel, {
+        response,
+        loadFailed: false,
+        activeDecisionStatus: "no_action",
+        semanticWriteEnabled: false
+      })
+    );
+    expect(markup).not.toContain("QA 대상 이름");
+    expect(markup).not.toContain("QA 진행 제목으로 확인");
   });
 });
 

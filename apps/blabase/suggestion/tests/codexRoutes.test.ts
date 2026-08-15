@@ -56,6 +56,13 @@ vi.mock("../src/managedCodex/store", () => ({
   clearManagedCodexState: vi.fn(async () => undefined)
 }));
 
+vi.mock("../src/suggestionBoard/monitoring", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../src/suggestionBoard/monitoring")
+  >()),
+  purgeAllWorkBoardMonitoringData: vi.fn(async () => undefined)
+}));
+
 import { POST as connect } from "../app/api/connectors/codex/connect/route";
 import { POST as disconnect } from "../app/api/connectors/codex/disconnect/route";
 import { GET as status } from "../app/api/connectors/codex/status/route";
@@ -77,6 +84,7 @@ import type {
   StoredCodexConfig
 } from "../src/connectors/codex/types";
 import { clearWorkResumptionStateForCodexDisconnect } from "../src/resumption/store";
+import { purgeAllWorkBoardMonitoringData } from "../src/suggestionBoard/monitoring";
 import {
   supersedeRuntimeSourceConnection,
   syncRuntimeSources
@@ -851,6 +859,7 @@ describe("Codex connector routes", () => {
       clearWorkResumptionStateForCodexDisconnect
     ).toHaveBeenCalledOnce();
     expect(deleteStoredCodexConnection).toHaveBeenCalledOnce();
+    expect(purgeAllWorkBoardMonitoringData).toHaveBeenCalledOnce();
     expect(clearManagedCodexState).toHaveBeenCalledTimes(2);
     expect(
       vi.mocked(clearWorkResumptionStateForCodexDisconnect).mock
@@ -874,6 +883,30 @@ describe("Codex connector routes", () => {
     await expect(response.json()).resolves.toEqual({
       status: "disconnected"
     });
+  });
+
+  it("fails the disconnect closed when all-data monitoring purge cannot be verified", async () => {
+    setDevelopmentEnvironment();
+    vi.mocked(purgeAllWorkBoardMonitoringData).mockRejectedValueOnce(
+      new Error("private-monitoring-purge-failed")
+    );
+
+    const response = await disconnect(
+      new Request(
+        "http://localhost:3102/api/connectors/codex/disconnect",
+        {
+          method: "POST",
+          headers: { origin: "http://localhost:3102" }
+        }
+      )
+    );
+
+    expect(response.status).toBe(500);
+    expect(deleteStoredCodexConnection).not.toHaveBeenCalled();
+    expect(clearManagedCodexState).not.toHaveBeenCalled();
+    expect(JSON.stringify(await response.json())).not.toContain(
+      "private-monitoring-purge-failed"
+    );
   });
 });
 

@@ -1,12 +1,22 @@
 import { randomBytes } from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
 import {
-  chmod,
+  lstat,
   mkdir,
+  open,
+  readdir,
   rename,
   unlink,
-  writeFile
+  type FileHandle
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep
+} from "node:path";
 
 import {
   inspectLocalPrivateDirectoryChain,
@@ -21,7 +31,9 @@ import {
   sealSemanticContinuationIntentStore,
   semanticContinuationConfirmationInputSchema,
   semanticContinuationConfirmationTargetSchema,
-  semanticContinuationIntentStoreSchema,
+  semanticContinuationIntentAuthKeyId,
+  semanticContinuationIntentAuthKeyIdSchema,
+  verifySemanticContinuationIntentStore,
   type SemanticContinuationConfirmationInput,
   type SemanticContinuationConfirmationTarget,
   type SemanticContinuationIntentDecision,
@@ -30,6 +42,8 @@ import {
 import { withSemanticContinuationAuthorityLease } from "./validation/store";
 
 const STORE_FILENAME = "intent-store.json";
+const INTENT_TEMP_PATTERN =
+  /^intent-store\.json\.\d+\.[a-f0-9]{16}\.tmp$/u;
 const MUTATION_QUEUES = Symbol.for(
   "blabase.semantic-continuation-mutation-queues.v0.1"
 );
@@ -55,6 +69,16 @@ export class SemanticContinuationStoreError extends Error {
 }
 
 export function semanticContinuationLocalDirectory(
+  cwd = process.cwd(),
+  installationSecret: string
+): string {
+  return join(
+    semanticContinuationLocalRoot(cwd),
+    semanticContinuationIntentAuthKeyId(installationSecret)
+  );
+}
+
+export function semanticContinuationLocalRoot(
   cwd = process.cwd()
 ): string {
   return join(cwd, ".local", "semantic-continuation");
@@ -62,25 +86,34 @@ export function semanticContinuationLocalDirectory(
 
 /** Pure read: invalid, missing, and expired state never rewrites the store. */
 export async function readSemanticContinuationIntentStore(
-  cwd = process.cwd(),
-  mode: LocalReadMode = "maintain"
+  cwd: string,
+  installationSecret: string,
+  _mode: LocalReadMode = "maintain"
 ): Promise<SemanticContinuationStoreReadResult> {
+  const trustedRoot = resolve(cwd);
   const target = join(
-    semanticContinuationLocalDirectory(cwd),
+    semanticContinuationLocalDirectory(trustedRoot, installationSecret),
     STORE_FILENAME
   );
   let text: string;
   try {
+    await assertNoPendingSemanticIntentWrite(
+      trustedRoot,
+      semanticContinuationLocalRoot(trustedRoot)
+    );
     if (
-      mode === "preserve" &&
       (await inspectLocalPrivateDirectoryChain(
-        cwd,
+        trustedRoot,
         dirname(target)
       )) === "missing"
     ) {
       return { status: "missing" };
     }
-    text = await readLocalPrivateText(target, mode, cwd);
+    await assertNoPendingSemanticIntentWrite(
+      trustedRoot,
+      dirname(target)
+    );
+    text = await readLocalPrivateText(target, "preserve", trustedRoot);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return { status: "missing" };
     return { status: "invalid", reason: "READ_FAILED" };
@@ -91,9 +124,12 @@ export async function readSemanticContinuationIntentStore(
   } catch {
     return { status: "invalid", reason: "PARSE_FAILED" };
   }
-  const parsed = semanticContinuationIntentStoreSchema.safeParse(value);
-  return parsed.success
-    ? { status: "available", value: parsed.data }
+  const verified = verifySemanticContinuationIntentStore(
+    value,
+    installationSecret
+  );
+  return verified !== null
+    ? { status: "available", value: verified }
     : { status: "invalid", reason: "SCHEMA_INVALID" };
 }
 
@@ -103,6 +139,7 @@ export async function confirmStoredSemanticContinuationIntent(
     target: SemanticContinuationConfirmationTarget;
     registrySha256: string;
     confirmedAt: string;
+    installationSecret: string;
   },
   cwd = process.cwd()
 ): Promise<{
@@ -122,19 +159,31 @@ export async function confirmStoredSemanticContinuationIntent(
     throw new SemanticContinuationStoreError("TARGET_EXPIRED");
   }
   const storeTarget = join(
-    semanticContinuationLocalDirectory(cwd),
+    semanticContinuationLocalDirectory(cwd, input.installationSecret),
     STORE_FILENAME
   );
+  // Validate and create the controlled chain before entering the legacy
+  // Work Resumption lease. Its recursive lock-directory bootstrap predates
+  // preserve-mode boundaries and must never be allowed to follow an unsafe
+  // `.local` ancestor on behalf of SC-001.
+  await ensurePrivateStorePath(cwd, dirname(storeTarget));
   return withSemanticContinuationAuthorityLease(cwd, () =>
     withMutation(storeTarget, async () => {
-      const read = await readSemanticContinuationIntentStore(cwd);
+      await recoverOrphanedSemanticIntentWritesAcrossNamespaces(cwd);
+      const read = await readSemanticContinuationIntentStore(
+        cwd,
+        input.installationSecret
+      );
       if (read.status === "invalid") {
         throw new SemanticContinuationStoreError("STORE_INVALID");
       }
       const current =
         read.status === "available"
           ? read.value
-          : createEmptySemanticContinuationIntentStore(input.confirmedAt);
+          : createEmptySemanticContinuationIntentStore(
+              input.confirmedAt,
+              input.installationSecret
+            );
       const supersededIds = new Set(
         current.decisions.flatMap((decision) =>
           decision.supersedesDecisionId === null
@@ -157,41 +206,170 @@ export async function confirmStoredSemanticContinuationIntent(
         confirmedAt: input.confirmedAt,
         supersedesDecisionId: superseded?.decisionId ?? null
       });
-      const store = sealSemanticContinuationIntentStore({
-        contract: current.contract,
-        schemaVersion: current.schemaVersion,
-        revision: current.revision + 1,
-        updatedAt: input.confirmedAt,
-        decisions: [...current.decisions, decision].sort(
-          compareSemanticIntentDecisions
-        )
-      });
-      await writePrivateJson(storeTarget, store);
+      const store = sealSemanticContinuationIntentStore(
+        {
+          contract: current.contract,
+          schemaVersion: current.schemaVersion,
+          authKeyId: current.authKeyId,
+          revision: current.revision + 1,
+          updatedAt: input.confirmedAt,
+          decisions: [...current.decisions, decision].sort(
+            compareSemanticIntentDecisions
+          )
+        },
+        input.installationSecret
+      );
+      await writePrivateJson(cwd, storeTarget, store);
       return { store, decision };
     })
   );
 }
 
+async function assertNoPendingSemanticIntentWrite(
+  cwd: string,
+  directory: string
+): Promise<void> {
+  const status = await inspectLocalPrivateDirectoryChain(cwd, directory);
+  if (status === "missing") return;
+  const filenames = await readdir(directory);
+  for (const filename of filenames) {
+    if (!INTENT_TEMP_PATTERN.test(filename)) continue;
+    const handle = await inspectPrivateTemporaryFile(
+      join(directory, filename)
+    );
+    await handle.close();
+    throw new SemanticContinuationStoreError("STORE_INVALID");
+  }
+}
+
+/**
+ * Authorized POST-only recovery. The shared filesystem authority lease is
+ * held, so a recognized temporary file cannot belong to a live SC mutator.
+ */
+async function recoverOrphanedSemanticIntentWrites(
+  cwd: string,
+  directory: string
+): Promise<void> {
+  const status = await inspectLocalPrivateDirectoryChain(cwd, directory);
+  if (status === "missing") return;
+  for (const filename of (await readdir(directory)).sort()) {
+    if (!INTENT_TEMP_PATTERN.test(filename)) continue;
+    const path = join(directory, filename);
+    const handle = await inspectPrivateTemporaryFile(path);
+    try {
+      const pathMetadata = await lstat(path);
+      const handleMetadata = await handle.stat();
+      if (
+        pathMetadata.isSymbolicLink() ||
+        pathMetadata.dev !== handleMetadata.dev ||
+        pathMetadata.ino !== handleMetadata.ino ||
+        !privateFileMetadata(pathMetadata)
+      ) {
+        throw new SemanticContinuationStoreError("STORE_INVALID");
+      }
+      await unlink(path);
+    } finally {
+      await handle.close();
+    }
+  }
+  await ensurePrivateStorePath(cwd, directory);
+}
+
+async function recoverOrphanedSemanticIntentWritesAcrossNamespaces(
+  cwd: string
+): Promise<void> {
+  const root = semanticContinuationLocalRoot(cwd);
+  const status = await inspectLocalPrivateDirectoryChain(cwd, root);
+  if (status === "missing") return;
+
+  // The fixed-root v0.1 location is quarantined rather than read, but a crash
+  // may have left one of its exact temp files behind. Recover it under the
+  // shared cross-process lease before visiting secret-scoped v0.2 stores.
+  await recoverOrphanedSemanticIntentWrites(cwd, root);
+  for (const filename of (await readdir(root)).sort()) {
+    if (!semanticContinuationIntentAuthKeyIdSchema.safeParse(filename).success) {
+      continue;
+    }
+    await recoverOrphanedSemanticIntentWrites(cwd, join(root, filename));
+  }
+}
+
+async function inspectPrivateTemporaryFile(
+  path: string
+): Promise<FileHandle> {
+  try {
+    const handle = await open(
+      path,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const handleMetadata = await handle.stat();
+    const pathMetadata = await lstat(path);
+    if (
+      !privateFileMetadata(handleMetadata) ||
+      !privateFileMetadata(pathMetadata) ||
+      pathMetadata.isSymbolicLink() ||
+      handleMetadata.dev !== pathMetadata.dev ||
+      handleMetadata.ino !== pathMetadata.ino
+    ) {
+      await handle.close();
+      throw new SemanticContinuationStoreError("STORE_INVALID");
+    }
+    return handle;
+  } catch (error) {
+    if (error instanceof SemanticContinuationStoreError) throw error;
+    throw new SemanticContinuationStoreError("STORE_INVALID");
+  }
+}
+
 async function writePrivateJson(
+  cwd: string,
   target: string,
   value: unknown
 ): Promise<void> {
   const directory = dirname(target);
   let temporary: string | null = null;
+  let handle: FileHandle | null = null;
   try {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    await ensurePrivateStorePath(cwd, directory);
+    const existing = await lstat(target).catch((error) => {
+      if (isNodeError(error, "ENOENT")) return null;
+      throw error;
+    });
+    if (
+      existing !== null &&
+      (!privateFileMetadata(existing) || existing.isSymbolicLink())
+    ) {
+      throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+    }
     temporary = `${target}.${process.pid}.${randomBytes(8).toString(
       "hex"
     )}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600
-    });
-    await chmod(temporary, 0o600);
+    handle = await open(
+      temporary,
+      fsConstants.O_CREAT |
+        fsConstants.O_EXCL |
+        fsConstants.O_WRONLY |
+        fsConstants.O_NOFOLLOW,
+      0o600
+    );
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+    const temporaryMetadata = await handle.stat();
+    if (!privateFileMetadata(temporaryMetadata)) {
+      throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+    }
+    await handle.close();
+    handle = null;
+    await ensurePrivateStorePath(cwd, directory);
     await rename(temporary, target);
-    await chmod(target, 0o600);
+    temporary = null;
+    const installed = await lstat(target);
+    if (!privateFileMetadata(installed) || installed.isSymbolicLink()) {
+      throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+    }
+    await syncDirectory(directory);
   } catch {
+    await handle?.close().catch(() => undefined);
     if (temporary !== null) {
       try {
         await unlink(temporary);
@@ -200,6 +378,67 @@ async function writePrivateJson(
       }
     }
     throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+  }
+}
+
+async function ensurePrivateStorePath(
+  cwd: string,
+  directory: string
+): Promise<void> {
+  const root = resolve(cwd);
+  const target = resolve(directory);
+  const relativeTarget = relative(root, target);
+  if (
+    relativeTarget === ".." ||
+    relativeTarget.startsWith(`..${sep}`) ||
+    isAbsolute(relativeTarget)
+  ) {
+    throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+  }
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  const rootMetadata = await lstat(root);
+  if (
+    !rootMetadata.isDirectory() ||
+    rootMetadata.isSymbolicLink() ||
+    (uid !== undefined && rootMetadata.uid !== uid)
+  ) {
+    throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+  }
+  let current = root;
+  for (const component of relativeTarget.split(/[\\/]+/u).filter(Boolean)) {
+    current = join(current, component);
+    try {
+      await mkdir(current, { mode: 0o700 });
+    } catch (error) {
+      if (!isNodeError(error, "EEXIST")) throw error;
+    }
+    const metadata = await lstat(current);
+    if (
+      !metadata.isDirectory() ||
+      metadata.isSymbolicLink() ||
+      (metadata.mode & 0o777) !== 0o700 ||
+      (uid !== undefined && metadata.uid !== uid)
+    ) {
+      throw new SemanticContinuationStoreError("STORE_WRITE_FAILED");
+    }
+  }
+}
+
+function privateFileMetadata(metadata: Stats): boolean {
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  return (
+    metadata.isFile() &&
+    (metadata.mode & 0o777) === 0o600 &&
+    (uid === undefined || metadata.uid === uid)
+  );
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, fsConstants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 

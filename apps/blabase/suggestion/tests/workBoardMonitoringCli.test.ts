@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import {
   mkdtemp,
   readFile,
@@ -18,9 +19,11 @@ import {
   codexLocalDirectory,
   writeStoredCodexConfig
 } from "../src/connectors/codex/localStore";
+import { runtimeCanonicalJson } from "../src/crossSource/canonicalHash";
 import {
   createWorkBoardMonitoringReceipt,
-  recordWorkBoardMonitoringMutation
+  recordWorkBoardMonitoringMutation,
+  workBoardMonitoringLocalDirectory
 } from "../src/suggestionBoard/monitoring";
 import {
   runWorkBoardMonitoringCli
@@ -134,6 +137,44 @@ describe("Work Board monitoring CLI", () => {
     ]) {
       expect(source).not.toContain(productionEngineToken);
     }
+  });
+
+  it("reports an authenticated persisted aggregate mismatch without weakening normal reads", async () => {
+    const cwd = await prepareMonitoringRoot();
+    const path = join(
+      workBoardMonitoringLocalDirectory(cwd, MONITORING_SECRET),
+      "events.json"
+    );
+    const store = JSON.parse(await readFile(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    store.aggregateSha256 = "0".repeat(64);
+    const { storeHmac: _claimedStoreHmac, ...content } = store;
+    store.storeHmac = monitoringStoreHmac(content);
+    await writeFile(path, JSON.stringify(store), { mode: 0o600 });
+
+    const aggregate = await runWorkBoardMonitoringCli(["aggregate"], {
+      cwd,
+      now: MONITORING_NOW
+    });
+    expect(aggregate.exitCode).toBe(2);
+    expect(JSON.parse(aggregate.stdout)).toMatchObject({
+      status: "unavailable",
+      code: "READ_FAILED"
+    });
+
+    const replay = await runWorkBoardMonitoringCli(["replay"], { cwd });
+    expect(replay.exitCode).toBe(1);
+    expect(JSON.parse(replay.stdout)).toMatchObject({
+      status: "mismatch",
+      replay: {
+        status: "mismatch",
+        expectedAggregateSha256: "0".repeat(64),
+        mismatchCodes: ["AGGREGATE_SHA_MISMATCH"]
+      }
+    });
+    expectPrivateValuesAbsent(replay.stdout, cwd);
   });
 
   it("requires one exact command and reports unavailable state without leaking inputs", async () => {
@@ -330,4 +371,13 @@ function expectPrivateValuesAbsent(stdout: string, cwd: string): void {
   ]) {
     expect(stdout).not.toContain(forbidden);
   }
+}
+
+function monitoringStoreHmac(content: Record<string, unknown>): string {
+  const key = createHmac("sha256", Buffer.from(MONITORING_SECRET, "hex"))
+    .update("work-board-monitoring-store-hmac-v0.1", "utf8")
+    .digest();
+  return createHmac("sha256", key)
+    .update(runtimeCanonicalJson(content), "utf8")
+    .digest("hex");
 }

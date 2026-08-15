@@ -1,6 +1,9 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { z } from "zod";
 
 import {
+  runtimeCanonicalJson,
   runtimeSha256,
   runtimeStableId
 } from "../crossSource/canonicalHash";
@@ -14,9 +17,11 @@ import { SEMANTIC_VALIDATION_TITLES } from "./validation/versions";
 export const SEMANTIC_CONTINUATION_INTENT_CONTRACT =
   "semantic-continuation-intent-v0.1" as const;
 export const SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT =
-  "semantic-continuation-intent-store-v0.1" as const;
+  "semantic-continuation-intent-store-v0.2" as const;
 export const SEMANTIC_CONTINUATION_SCHEMA_VERSION =
   "semantic-continuation-schema-v0.1" as const;
+export const SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION =
+  "semantic-continuation-intent-store-schema-v0.2" as const;
 export const SEMANTIC_CONTINUATION_TITLE_OVERLAY_POLICY_VERSION =
   "semantic-continuation-title-overlay-v0.1" as const;
 export const SEMANTIC_CONTINUATION_PRESENTATION_CONTRACT =
@@ -32,6 +37,10 @@ export const SEMANTIC_CONTINUATION_INTENT_TTL_MS =
   24 * 60 * 60 * 1_000;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const installationSecretSchema = sha256Schema;
+export const semanticContinuationIntentAuthKeyIdSchema = z
+  .string()
+  .regex(/^semantic_continuation_intent_key_[a-f0-9]{32}$/u);
 const itemRefSchema = z
   .string()
   .regex(/^item_ref_[A-Za-z0-9_-]{22,128}$/u);
@@ -199,7 +208,10 @@ export const semanticContinuationIntentDecisionSchema =
 const semanticIntentStoreContentObjectSchema = z
   .object({
     contract: z.literal(SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT),
-    schemaVersion: z.literal(SEMANTIC_CONTINUATION_SCHEMA_VERSION),
+    schemaVersion: z.literal(
+      SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION
+    ),
+    authKeyId: semanticContinuationIntentAuthKeyIdSchema,
     revision: z.number().int().nonnegative(),
     updatedAt: timestampSchema,
     decisions: z
@@ -215,11 +227,15 @@ const semanticIntentStoreContentSchema =
 
 export const semanticContinuationIntentStoreSchema =
   semanticIntentStoreContentObjectSchema
-    .extend({ storeSha256: sha256Schema })
+    .extend({ storeSha256: sha256Schema, storeHmac: sha256Schema })
     .strict()
     .superRefine((value, context) => {
       refineSemanticIntentStore(value, context);
-      const { storeSha256: _storeSha256, ...content } = value;
+      const {
+        storeSha256: _storeSha256,
+        storeHmac: _storeHmac,
+        ...content
+      } = value;
       if (value.storeSha256 !== semanticIntentStoreSha256(content)) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
@@ -444,25 +460,81 @@ export function createSemanticContinuationIntentDecision(input: {
 }
 
 export function createEmptySemanticContinuationIntentStore(
-  updatedAt: string
+  updatedAt: string,
+  installationSecret: string
 ): SemanticContinuationIntentStore {
-  return sealSemanticContinuationIntentStore({
-    contract: SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
-    schemaVersion: SEMANTIC_CONTINUATION_SCHEMA_VERSION,
-    revision: 0,
-    updatedAt: timestampSchema.parse(updatedAt),
-    decisions: []
-  });
+  return sealSemanticContinuationIntentStore(
+    {
+      contract: SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
+      schemaVersion: SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION,
+      authKeyId: semanticContinuationIntentAuthKeyId(installationSecret),
+      revision: 0,
+      updatedAt: timestampSchema.parse(updatedAt),
+      decisions: []
+    },
+    installationSecret
+  );
 }
 
 export function sealSemanticContinuationIntentStore(
-  contentInput: z.input<typeof semanticIntentStoreContentSchema>
+  contentInput: z.input<typeof semanticIntentStoreContentSchema>,
+  installationSecret: string
 ): SemanticContinuationIntentStore {
   const content = semanticIntentStoreContentSchema.parse(contentInput);
-  return semanticContinuationIntentStoreSchema.parse({
+  if (
+    content.authKeyId !==
+    semanticContinuationIntentAuthKeyId(installationSecret)
+  ) {
+    throw new TypeError("Semantic intent store key namespace mismatch");
+  }
+  const withHash = {
     ...content,
     storeSha256: semanticIntentStoreSha256(content)
+  };
+  return semanticContinuationIntentStoreSchema.parse({
+    ...withHash,
+    storeHmac: semanticIntentStoreHmac(installationSecret, withHash)
   });
+}
+
+export function verifySemanticContinuationIntentStore(
+  value: unknown,
+  installationSecret: string
+): SemanticContinuationIntentStore | null {
+  const parsed = semanticContinuationIntentStoreSchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (
+    parsed.data.authKeyId !==
+    semanticContinuationIntentAuthKeyId(installationSecret)
+  ) {
+    return null;
+  }
+  const { storeHmac, ...authenticatedContent } = parsed.data;
+  const expected = semanticIntentStoreHmac(
+    installationSecret,
+    authenticatedContent
+  );
+  const claimedBytes = Buffer.from(storeHmac, "hex");
+  const expectedBytes = Buffer.from(expected, "hex");
+  return claimedBytes.length === expectedBytes.length &&
+    timingSafeEqual(claimedBytes, expectedBytes)
+    ? parsed.data
+    : null;
+}
+
+export function semanticContinuationIntentAuthKeyId(
+  installationSecretInput: string
+): string {
+  const installationSecret = installationSecretSchema.parse(
+    installationSecretInput
+  );
+  return `semantic_continuation_intent_key_${createHmac(
+    "sha256",
+    Buffer.from(installationSecret, "hex")
+  )
+    .update("semantic-continuation-intent-key-id-v0.2", "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 function semanticIntentDecisionSha256(value: unknown): string {
@@ -474,9 +546,24 @@ function semanticIntentDecisionSha256(value: unknown): string {
 
 function semanticIntentStoreSha256(value: unknown): string {
   return runtimeSha256({
-    domain: "semantic-continuation-intent-store-hash-v0.1",
+    domain: "semantic-continuation-intent-store-hash-v0.2",
     store: value
   });
+}
+
+function semanticIntentStoreHmac(
+  installationSecret: string,
+  value: unknown
+): string {
+  if (!/^[a-f0-9]{64}$/u.test(installationSecret)) {
+    throw new TypeError("Semantic intent store requires an installation secret");
+  }
+  const key = createHmac("sha256", Buffer.from(installationSecret, "hex"))
+    .update("semantic-continuation-intent-store-hmac-v0.2", "utf8")
+    .digest();
+  return createHmac("sha256", key)
+    .update(runtimeCanonicalJson(value), "utf8")
+    .digest("hex");
 }
 
 function refineSemanticIntentDecision(

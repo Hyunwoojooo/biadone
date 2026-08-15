@@ -171,10 +171,14 @@ async function evaluateLiveSemanticWorkSuggestionBoardInternal(
     cwd,
     scope: "semantic",
     read: async () => {
-      const stored = await readSemanticContinuationIntentStore(
-        cwd,
-        "preserve"
-      );
+      const stored =
+        installationSecret === null
+          ? null
+          : await readSemanticContinuationIntentStore(
+              cwd,
+              installationSecret,
+              "preserve"
+            );
       const validationStored =
         installationSecret === null
           ? null
@@ -183,7 +187,7 @@ async function evaluateLiveSemanticWorkSuggestionBoardInternal(
               installationSecret,
               "preserve"
             );
-      return stored.status === "available"
+      return stored?.status === "available"
         ? buildSemanticContinuationTitlePresentation({
             board: readyResponse.board,
             registrySha256,

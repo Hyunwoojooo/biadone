@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import {
   WORK_BOARD_MONITORING_EVENT_RESERVE,
   WORK_BOARD_MONITORING_MAX_EVENTS,
   createWorkBoardMonitoringReceipt,
+  purgeAllWorkBoardMonitoringData,
   readWorkBoardMonitoringState,
   readWorkBoardMonitoringStore,
   recordWorkBoardMonitoringMutation,
@@ -210,7 +211,7 @@ describe("Work Board monitoring store", () => {
     ).toEqual({ status: "invalid" });
   });
 
-  it("lazily removes the expired prefix and purges all current-key data", async () => {
+  it("lazily removes the expired prefix and supports explicit purge", async () => {
     const cwd = await temporaryRoot();
     await mutate(cwd, {
       operation: "consent",
@@ -247,11 +248,38 @@ describe("Work Board monitoring store", () => {
     expect(read).toEqual({ status: "missing" });
   });
 
+  it("purges all monitoring namespaces after installation-secret rotation", async () => {
+    const cwd = await temporaryRoot();
+    const rotatedSecret = "f".repeat(64);
+    for (const installationSecret of [MONITORING_SECRET, rotatedSecret]) {
+      await recordWorkBoardMonitoringMutation({
+        cwd,
+        installationSecret,
+        mutation: {
+          operation: "consent",
+          consent: true,
+          explicitUserAction: true
+        },
+        clock: () => new Date(MONITORING_NOW)
+      });
+    }
+
+    await purgeAllWorkBoardMonitoringData({
+      cwd,
+      now: new Date(MONITORING_NOW)
+    });
+
+    for (const installationSecret of [MONITORING_SECRET, rotatedSecret]) {
+      await expect(
+        readWorkBoardMonitoringStore({ cwd, installationSecret })
+      ).resolves.toEqual({ status: "missing" });
+    }
+  });
+
   it("fails closed on an unsafe namespace symlink without touching its target", async () => {
     const cwd = await temporaryRoot();
     const outside = await temporaryRoot();
     const directory = workBoardMonitoringLocalDirectory(cwd, MONITORING_SECRET);
-    const { mkdir } = await import("node:fs/promises");
     await mkdir(join(cwd, ".local", "work-board-monitoring"), {
       recursive: true,
       mode: 0o700
@@ -265,6 +293,50 @@ describe("Work Board monitoring store", () => {
       })
     ).rejects.toMatchObject({ code: "STORE_UNAVAILABLE" });
     expect(await readFile(join(outside, "sentinel"), "utf8").catch(() => null)).toBeNull();
+  });
+
+  it("fails all-data purge closed on unexpected or redirecting namespace entries", async () => {
+    const symlinkCwd = await temporaryRoot();
+    const outside = await temporaryRoot();
+    await writeFile(join(outside, "sentinel"), "outside-monitoring", {
+      mode: 0o600
+    });
+    const root = join(symlinkCwd, ".local", "work-board-monitoring");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await symlink(
+      outside,
+      join(root, "work_board_monitor_key_" + "a".repeat(32))
+    );
+    await expect(
+      purgeAllWorkBoardMonitoringData({ cwd: symlinkCwd })
+    ).rejects.toMatchObject({ code: "STORE_UNAVAILABLE" });
+    expect(await readFile(join(outside, "sentinel"), "utf8")).toBe(
+      "outside-monitoring"
+    );
+
+    const unexpectedCwd = await temporaryRoot();
+    await mutate(unexpectedCwd, {
+      operation: "consent",
+      consent: true,
+      explicitUserAction: true
+    });
+    const unexpectedRoot = join(
+      unexpectedCwd,
+      ".local",
+      "work-board-monitoring"
+    );
+    await writeFile(join(unexpectedRoot, "unexpected-private-file"), "x", {
+      mode: 0o600
+    });
+    await expect(
+      purgeAllWorkBoardMonitoringData({ cwd: unexpectedCwd })
+    ).rejects.toMatchObject({ code: "STORE_UNAVAILABLE" });
+    expect(
+      await readWorkBoardMonitoringStore({
+        cwd: unexpectedCwd,
+        installationSecret: MONITORING_SECRET
+      })
+    ).toMatchObject({ status: "available" });
   });
 
   it("reserves capacity for feedback/reset and always leaves the final revoke slot", () => {

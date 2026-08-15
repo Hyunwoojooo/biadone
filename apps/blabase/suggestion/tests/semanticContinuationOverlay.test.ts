@@ -15,6 +15,7 @@ import {
 const ITEM_REF = `item_ref_${"a".repeat(43)}`;
 const CONTEXT_REF = `context_ref_${"b".repeat(43)}`;
 const REGISTRY_SHA = "f".repeat(64);
+const INSTALLATION_SECRET = "e".repeat(64);
 
 describe("Semantic Continuation title overlay", () => {
   it("returns a separate displayTitle envelope and leaves the base Board byte-identical", () => {
@@ -54,7 +55,8 @@ describe("Semantic Continuation title overlay", () => {
     const board = genericBoard();
     const activeStore = storeFor(board);
     const emptyStore = createEmptySemanticContinuationIntentStore(
-      board.generatedAt
+      board.generatedAt,
+      INSTALLATION_SECRET
     );
     const staleBoard = { ...board, generatedAt: "2026-08-14T12:00:00.000Z" };
 
@@ -155,7 +157,8 @@ function storeFor(board: WorkSuggestionBoardPublic) {
   });
   if (target === null) throw new TypeError("Synthetic target missing");
   const empty = createEmptySemanticContinuationIntentStore(
-    "2026-08-13T12:00:00.000Z"
+    "2026-08-13T12:00:00.000Z",
+    INSTALLATION_SECRET
   );
   const decision = createSemanticContinuationIntentDecision({
     confirmation: {
@@ -170,11 +173,15 @@ function storeFor(board: WorkSuggestionBoardPublic) {
     confirmedAt: "2026-08-13T12:00:00.000Z",
     supersedesDecisionId: null
   });
-  return sealSemanticContinuationIntentStore({
-    contract: empty.contract,
-    schemaVersion: empty.schemaVersion,
-    revision: 1,
-    updatedAt: decision.confirmedAt,
-    decisions: [decision]
-  });
+  return sealSemanticContinuationIntentStore(
+    {
+      contract: empty.contract,
+      schemaVersion: empty.schemaVersion,
+      authKeyId: empty.authKeyId,
+      revision: 1,
+      updatedAt: decision.confirmedAt,
+      decisions: [decision]
+    },
+    INSTALLATION_SECRET
+  );
 }

@@ -1,5 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { constants as fsConstants, type Stats } from "node:fs";
+import {
+  constants as fsConstants,
+  type Dirent,
+  type Stats
+} from "node:fs";
 import {
   lstat,
   mkdir,
@@ -65,6 +69,7 @@ const LOCK_FILENAME = "state.lock";
 const LOCK_WAIT_ATTEMPTS = 500;
 const LOCK_WAIT_MS = 10;
 const TEMP_PATTERN = /^events\.json\.[a-f0-9]{32}\.tmp$/u;
+const AUTH_DIRECTORY_PATTERN = /^work_board_monitor_key_[a-f0-9]{32}$/u;
 
 export class WorkBoardMonitoringStoreError extends Error {
   constructor(
@@ -104,6 +109,33 @@ export async function readWorkBoardMonitoringStore(input: {
   cwd?: string;
   installationSecret: string;
 }): Promise<WorkBoardMonitoringStoreReadResult> {
+  return readWorkBoardMonitoringStoreWithVerifier(
+    input,
+    verifyWorkBoardMonitoringStore
+  );
+}
+
+/**
+ * Pure authenticated replay read. Unlike the normal state boundary, this
+ * deliberately leaves aggregate derivation comparison to the replay result.
+ */
+export async function readWorkBoardMonitoringStoreForReplay(input: {
+  cwd?: string;
+  installationSecret: string;
+}): Promise<WorkBoardMonitoringStoreReadResult> {
+  return readWorkBoardMonitoringStoreWithVerifier(
+    input,
+    verifyWorkBoardMonitoringStoreAuthenticity
+  );
+}
+
+async function readWorkBoardMonitoringStoreWithVerifier(
+  input: { cwd?: string; installationSecret: string },
+  verifier: (
+    value: unknown,
+    installationSecret: string
+  ) => WorkBoardMonitoringStore | null
+): Promise<WorkBoardMonitoringStoreReadResult> {
   const cwd = resolve(input.cwd ?? process.cwd());
   const target = join(
     workBoardMonitoringLocalDirectory(cwd, input.installationSecret),
@@ -119,7 +151,7 @@ export async function readWorkBoardMonitoringStore(input: {
     const value = JSON.parse(
       await readLocalPrivateText(target, "preserve", cwd)
     ) as unknown;
-    const verified = verifyWorkBoardMonitoringStore(
+    const verified = verifier(
       value,
       input.installationSecret
     );
@@ -158,7 +190,7 @@ export async function recordWorkBoardMonitoringMutation(input: {
   return withMonitoringLock(cwd, async () => {
     const now = sampleClock(input.clock?.());
     if (input.mutation.operation === "purge") {
-      await purgeNamespace(cwd, input.installationSecret);
+      await purgeAllMonitoringNamespaces(cwd);
       const empty = createEmptyStore(input.installationSecret, now);
       return workBoardMonitoringMutationResponseSchema.parse({
         contract: WORK_BOARD_MONITORING_API_CONTRACT,
@@ -324,7 +356,52 @@ export async function recordWorkBoardMonitoringMutation(input: {
   });
 }
 
+/** Explicit all-data deletion; intentionally independent of Codex config. */
+export async function purgeAllWorkBoardMonitoringData(input: {
+  cwd?: string;
+  now?: Date;
+} = {}) {
+  const cwd = resolve(input.cwd ?? process.cwd());
+  return withMonitoringLock(cwd, async () => {
+    const now = sampleClock(input.now);
+    await purgeAllMonitoringNamespaces(cwd);
+    return workBoardMonitoringMutationResponseSchema.parse({
+      contract: WORK_BOARD_MONITORING_API_CONTRACT,
+      status: "recorded",
+      operation: "purge",
+      consent: false,
+      aggregate: deriveWorkBoardMonitoringQuality({
+        events: [],
+        asOf: now.toISOString()
+      })
+    });
+  });
+}
+
 export function verifyWorkBoardMonitoringStore(
+  value: unknown,
+  installationSecret: string
+): WorkBoardMonitoringStore | null {
+  const store = verifyWorkBoardMonitoringStoreAuthenticity(
+    value,
+    installationSecret
+  );
+  if (
+    store === null ||
+    store.aggregateSha256 !==
+      runtimeSha256(
+        deriveWorkBoardMonitoringQuality({
+          events: store.events,
+          asOf: store.updatedAt
+        })
+      )
+  ) {
+    return null;
+  }
+  return store;
+}
+
+function verifyWorkBoardMonitoringStoreAuthenticity(
   value: unknown,
   installationSecret: string
 ): WorkBoardMonitoringStore | null {
@@ -365,13 +442,6 @@ export function verifyWorkBoardMonitoringStore(
     }
     const { storeHmac: claimedStoreHmac, ...content } = store;
     if (
-      store.aggregateSha256 !==
-        runtimeSha256(
-          deriveWorkBoardMonitoringQuality({
-            events: store.events,
-            asOf: store.updatedAt
-          })
-        ) ||
       !safeHexEqual(
         claimedStoreHmac,
         storeHmac(installationSecret, content)
@@ -865,32 +935,60 @@ async function writeStore(
   }
 }
 
-async function purgeNamespace(
-  cwd: string,
-  installationSecret: string
-): Promise<void> {
-  const directory = workBoardMonitoringLocalDirectory(
-    cwd,
-    installationSecret
-  );
-  const boundary = await inspectLocalPrivateDirectoryChain(cwd, directory);
+async function purgeAllMonitoringNamespaces(cwd: string): Promise<void> {
+  const root = workBoardMonitoringLocalRoot(cwd);
+  const boundary = await inspectLocalPrivateDirectoryChain(cwd, root);
   if (boundary === "missing") return;
-  let names: string[];
+  let entries: Dirent[];
   try {
-    names = await readdir(directory);
+    entries = await readdir(root, { withFileTypes: true });
   } catch {
     throw unavailable();
   }
-  if (
-    names.some(
-      (name) => name !== STORE_FILENAME && !TEMP_PATTERN.test(name)
-    )
-  ) {
-    throw unavailable();
+
+  const namespaceFiles: Array<{ directory: string; paths: string[] }> = [];
+  for (const entry of entries) {
+    if (entry.name === LOCKS_DIRECTORY) continue;
+    if (
+      !AUTH_DIRECTORY_PATTERN.test(entry.name) ||
+      !entry.isDirectory() ||
+      entry.isSymbolicLink()
+    ) {
+      throw unavailable();
+    }
+    const directory = join(root, entry.name);
+    if (
+      (await inspectLocalPrivateDirectoryChain(cwd, directory)) !==
+      "available"
+    ) {
+      throw unavailable();
+    }
+    const names = await readdir(directory);
+    const paths: string[] = [];
+    for (const name of names) {
+      if (name !== STORE_FILENAME && !TEMP_PATTERN.test(name)) {
+        throw unavailable();
+      }
+      const path = join(directory, name);
+      const metadata = await lstat(path).catch(() => null);
+      if (
+        metadata === null ||
+        !privateFileMetadata(metadata) ||
+        metadata.isSymbolicLink()
+      ) {
+        throw unavailable();
+      }
+      paths.push(path);
+    }
+    namespaceFiles.push({ directory, paths });
   }
-  for (const name of names) await unlink(join(directory, name));
-  await rmdir(directory);
-  await syncDirectory(workBoardMonitoringLocalRoot(cwd));
+
+  for (const namespace of namespaceFiles) {
+    for (const path of namespace.paths) await unlink(path);
+    await syncDirectory(namespace.directory);
+    await rmdir(namespace.directory);
+  }
+  await syncDirectory(root);
 }
 
 async function assertPrivateFileIdentity(

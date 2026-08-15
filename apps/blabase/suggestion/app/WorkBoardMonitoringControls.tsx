@@ -58,9 +58,6 @@ export function WorkBoardMonitoringControls({
             >
               동의 철회
             </button>
-            <button type="button" disabled={pending} onClick={onPurge}>
-              모니터링 데이터 모두 삭제
-            </button>
           </div>
           {state.history.length === 0 ? (
             <p>기록된 피드백 없음</p>
@@ -78,6 +75,11 @@ export function WorkBoardMonitoringControls({
           )}
         </>
       )}
+      <div className="workBoardMonitoringActions">
+        <button type="button" disabled={pending} onClick={onPurge}>
+          모니터링 데이터 모두 삭제
+        </button>
+      </div>
     </section>
   );
 }

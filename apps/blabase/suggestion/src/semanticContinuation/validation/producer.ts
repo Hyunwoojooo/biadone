@@ -85,7 +85,9 @@ type SemanticValidationProducerDependencies = {
     entry: SemanticValidationProfileEntry,
     profile: SemanticValidationProfile
   ) => Promise<SemanticValidationStepResult>;
-  readIntentStore: () => Promise<SemanticContinuationStoreReadResult>;
+  readIntentStore: (
+    installationSecret: string
+  ) => Promise<SemanticContinuationStoreReadResult>;
   readValidationStore: (
     installationSecret: string
   ) => Promise<SemanticValidationStoreReadResult>;
@@ -165,7 +167,9 @@ export async function runSemanticContinuationValidationWithDependencies(
         recoveredAt: startedAt,
         endedCodeProvenance: startedCodeProvenance
       });
-      const intentRead = await dependencies.readIntentStore();
+      const intentRead = await dependencies.readIntentStore(
+        installationSecret
+      );
       const intent = currentIntentForBase(intentRead, captured, startedAt);
       if (intent === null) return null;
       const position = nextReceiptPosition(store);
@@ -226,7 +230,7 @@ export async function runSemanticContinuationValidationWithDependencies(
         refreshed === null
           ? null
           : currentIntentForBase(
-              await dependencies.readIntentStore(),
+              await dependencies.readIntentStore(installationSecret),
               refreshed,
               completedAt
             );
@@ -377,7 +381,8 @@ function productionDependencies(
       resolveAttentionCodeProvenance(root, { NODE_ENV: "test" }),
     resolveProfile: resolveFixedSemanticValidationProfile,
     executeStep: executeFixedSemanticValidationStep,
-    readIntentStore: () => readSemanticContinuationIntentStore(root),
+    readIntentStore: (installationSecret) =>
+      readSemanticContinuationIntentStore(root, installationSecret),
     readValidationStore: (installationSecret) =>
       readSemanticValidationStore(root, installationSecret),
     appendReceipt: (input) =>

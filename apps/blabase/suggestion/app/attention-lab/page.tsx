@@ -9,5 +9,11 @@ export const metadata: Metadata = {
 };
 
 export default function AttentionLabPage() {
-  return <AttentionLab />;
+  return (
+    <AttentionLab
+      semanticWriteEnabled={
+        process.env.BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED === "true"
+      }
+    />
+  );
 }

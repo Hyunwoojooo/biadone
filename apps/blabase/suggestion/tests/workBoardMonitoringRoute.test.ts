@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   readConfig: vi.fn(),
   readState: vi.fn(),
-  recordMutation: vi.fn()
+  recordMutation: vi.fn(),
+  purgeAll: vi.fn()
 }));
 
 vi.mock("../src/connectors/codex/localStore", async (importOriginal) => ({
@@ -17,7 +18,8 @@ vi.mock("../src/suggestionBoard/monitoring", async (importOriginal) => ({
     typeof import("../src/suggestionBoard/monitoring")
   >()),
   readWorkBoardMonitoringState: mocks.readState,
-  recordWorkBoardMonitoringMutation: mocks.recordMutation
+  recordWorkBoardMonitoringMutation: mocks.recordMutation,
+  purgeAllWorkBoardMonitoringData: mocks.purgeAll
 }));
 
 import {
@@ -65,6 +67,13 @@ beforeEach(() => {
     status: "recorded",
     operation: "consent",
     consent: true,
+    aggregate
+  });
+  mocks.purgeAll.mockResolvedValue({
+    contract: WORK_BOARD_MONITORING_API_CONTRACT,
+    status: "recorded",
+    operation: "purge",
+    consent: false,
     aggregate
   });
 });
@@ -168,6 +177,19 @@ describe("/api/work-board/monitoring", () => {
       installationSecret: SECRET,
       mutation
     });
+  });
+
+  it("purges every namespace without requiring a current Codex secret", async () => {
+    mocks.readConfig.mockResolvedValue(null);
+    const response = await POST(
+      postRequest({
+        body: { operation: "purge", explicitUserAction: true }
+      })
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.purgeAll).toHaveBeenCalledOnce();
+    expect(mocks.readConfig).not.toHaveBeenCalled();
+    expect(mocks.recordMutation).not.toHaveBeenCalled();
   });
 
   it("accepts a safe GET without Origin but rejects a cross-origin GET", async () => {

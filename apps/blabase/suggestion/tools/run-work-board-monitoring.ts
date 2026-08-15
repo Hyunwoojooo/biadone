@@ -6,7 +6,7 @@ import { z } from "zod";
 import { readStoredCodexConfig } from "../src/connectors/codex/localStore";
 import {
   readWorkBoardMonitoringState,
-  readWorkBoardMonitoringStore,
+  readWorkBoardMonitoringStoreForReplay,
   replayWorkBoardMonitoringStore,
   workBoardMonitoringQualitySchema,
   workBoardMonitoringReplaySchema
@@ -122,7 +122,7 @@ export async function runWorkBoardMonitoringCli(
       );
     }
 
-    const store = await readWorkBoardMonitoringStore({
+    const store = await readWorkBoardMonitoringStoreForReplay({
       cwd,
       installationSecret: config.installationSecret
     });

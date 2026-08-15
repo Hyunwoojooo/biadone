@@ -8,10 +8,15 @@ import {
 } from "../../../../src/attention/access";
 import { readStoredCodexConfig } from "../../../../src/connectors/codex/localStore";
 import {
+  readBoundedJsonRequest,
+  type BoundedJsonReadFailureCode
+} from "../../../../src/http/boundedJson";
+import {
   WORK_BOARD_MONITORING_API_CONTRACT,
   WORK_BOARD_MONITORING_MAX_REQUEST_BYTES,
   WorkBoardMonitoringStoreError,
   type WorkBoardMonitoringErrorCode,
+  purgeAllWorkBoardMonitoringData,
   readWorkBoardMonitoringState,
   recordWorkBoardMonitoringMutation,
   workBoardMonitoringErrorResponseSchema,
@@ -40,14 +45,20 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const gated = gateRequest(request, true);
   if (gated !== null) return gated;
-  const body = await readBoundedJson(request);
-  if (!body.ok) return body.response;
+  const body = await readBoundedJsonRequest(
+    request,
+    WORK_BOARD_MONITORING_MAX_REQUEST_BYTES
+  );
+  if (!body.ok) return boundedJsonError(body.code);
   const parsed = workBoardMonitoringMutationInputSchema.safeParse(
     body.value
   );
   if (!parsed.success) return monitoringError("INVALID_REQUEST", 400);
 
   try {
+    if (parsed.data.operation === "purge") {
+      return monitoringJson(await purgeAllWorkBoardMonitoringData());
+    }
     const installationSecret = await currentInstallationSecret();
     if (installationSecret === null) {
       return monitoringError("AUTH_UNAVAILABLE", 503);
@@ -109,79 +120,24 @@ async function currentInstallationSecret(): Promise<string | null> {
   return config?.installationSecret ?? null;
 }
 
-async function readBoundedJson(
-  request: Request
-): Promise<
-  | { ok: true; value: unknown }
-  | { ok: false; response: NextResponse }
-> {
-  const contentType = request.headers.get("content-type")?.toLowerCase();
-  if (
-    contentType === undefined ||
-    !/^application\/json(?:\s*;\s*charset=utf-8)?$/u.test(contentType)
-  ) {
-    return {
-      ok: false,
-      response: monitoringError("INVALID_CONTENT_TYPE", 415)
-    };
+function boundedJsonError(
+  code: BoundedJsonReadFailureCode
+): NextResponse {
+  if (code === "INVALID_CONTENT_TYPE") {
+    return monitoringError("INVALID_CONTENT_TYPE", 415);
   }
-  const contentLength = request.headers.get("content-length");
-  if (
-    contentLength === null ||
-    !/^[1-9][0-9]{0,4}$/u.test(contentLength)
-  ) {
-    return {
-      ok: false,
-      response: monitoringError("INVALID_CONTENT_LENGTH", 411)
-    };
+  if (code === "MISSING_CONTENT_LENGTH") {
+    return monitoringError("INVALID_CONTENT_LENGTH", 411);
   }
-  const declaredLength = Number(contentLength);
-  if (declaredLength > WORK_BOARD_MONITORING_MAX_REQUEST_BYTES) {
-    return {
-      ok: false,
-      response: monitoringError("INVALID_CONTENT_LENGTH", 413)
-    };
+  if (code === "CONTENT_LENGTH_TOO_LARGE") {
+    return monitoringError("INVALID_CONTENT_LENGTH", 413);
   }
-  if (request.body === null) {
-    return {
-      ok: false,
-      response: monitoringError("INVALID_REQUEST", 400)
-    };
-  }
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let bytesRead = 0;
-  let text = "";
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      bytesRead += chunk.value.byteLength;
-      if (bytesRead > WORK_BOARD_MONITORING_MAX_REQUEST_BYTES) {
-        await reader.cancel();
-        return {
-          ok: false,
-          response: monitoringError("INVALID_CONTENT_LENGTH", 413)
-        };
-      }
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-    text += decoder.decode();
-    if (bytesRead !== declaredLength) {
-      return {
-        ok: false,
-        response: monitoringError("INVALID_CONTENT_LENGTH", 400)
-      };
-    }
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch {
-    return {
-      ok: false,
-      response: monitoringError("INVALID_REQUEST", 400)
-    };
-  } finally {
-    reader.releaseLock();
-  }
+  return monitoringError(
+    code === "CONTENT_LENGTH_MISMATCH"
+      ? "INVALID_CONTENT_LENGTH"
+      : "INVALID_REQUEST",
+    400
+  );
 }
 
 function monitoringError(

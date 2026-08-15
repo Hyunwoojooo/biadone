@@ -79,6 +79,22 @@ describe("Work Board monitoring UI", () => {
     );
   });
 
+  it("keeps explicit all-data purge available when the current key is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      createElement(WorkBoardMonitoringControls, {
+        enabled: true,
+        state: null,
+        error: "로컬 피드백 상태를 확인하지 못했습니다.",
+        pending: false,
+        onConsent: vi.fn(),
+        onPurge: vi.fn()
+      })
+    );
+    expect(markup).toContain("모니터링 데이터 모두 삭제");
+    expect(markup).toContain("로컬 모니터링 상태를 확인할 수 없습니다.");
+    expect(markup).not.toContain("피드백 사용 동의");
+  });
+
   it("does not POST or expose feedback controls before a rendered receipt is acknowledged", () => {
     const authority = monitoringAuthority();
     const receipt = createWorkBoardMonitoringReceipt({

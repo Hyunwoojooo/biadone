@@ -331,15 +331,20 @@ function producerHarness(input?: {
 } {
   const intent = semanticIntent();
   const emptyIntentStore = createEmptySemanticContinuationIntentStore(
-    intent.confirmedAt
+    intent.confirmedAt,
+    INSTALLATION_SECRET
   );
-  const intentStore = sealSemanticContinuationIntentStore({
-    contract: emptyIntentStore.contract,
-    schemaVersion: emptyIntentStore.schemaVersion,
-    revision: 1,
-    updatedAt: intent.confirmedAt,
-    decisions: [intent]
-  });
+  const intentStore = sealSemanticContinuationIntentStore(
+    {
+      contract: emptyIntentStore.contract,
+      schemaVersion: emptyIntentStore.schemaVersion,
+      authKeyId: emptyIntentStore.authKeyId,
+      revision: 1,
+      updatedAt: intent.confirmedAt,
+      decisions: [intent]
+    },
+    INSTALLATION_SECRET
+  );
   let validationStore: SemanticValidationStore =
     input?.initialStore ??
     createEmptySemanticValidationStore({

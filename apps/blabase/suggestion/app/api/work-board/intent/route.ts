@@ -6,6 +6,7 @@ import {
   isLocalAttentionRequest
 } from "../../../../src/attention/access";
 import { isPreserveCaptureError } from "../../../../src/attention/preserveCapture";
+import { readBoundedJsonRequest } from "../../../../src/http/boundedJson";
 import {
   confirmStoredSemanticContinuationIntent,
   findSemanticContinuationConfirmationTarget,
@@ -17,6 +18,7 @@ import { evaluateLiveWorkSuggestionBoardBase } from "../../../../src/suggestionB
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const MAX_INTENT_REQUEST_BYTES = 8 * 1024;
 
 export async function POST(request: Request) {
   if (!isLocalAttentionRequest(request)) {
@@ -32,6 +34,14 @@ export async function POST(request: Request) {
     );
   }
   if (process.env.BLABASE_WORK_BOARD_SHADOW_READ_ENABLED !== "true") {
+    return json(
+      { status: "error", code: "WORK_BOARD_INTENT_DISABLED" },
+      404
+    );
+  }
+  if (
+    process.env.BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED !== "true"
+  ) {
     return json(
       { status: "error", code: "WORK_BOARD_INTENT_DISABLED" },
       404
@@ -57,7 +67,25 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = await request.json().catch(() => null);
+  const bounded = await readBoundedJsonRequest(
+    request,
+    MAX_INTENT_REQUEST_BYTES
+  );
+  if (!bounded.ok) {
+    const status =
+      bounded.code === "INVALID_CONTENT_TYPE"
+        ? 415
+        : bounded.code === "MISSING_CONTENT_LENGTH"
+          ? 411
+          : bounded.code === "CONTENT_LENGTH_TOO_LARGE"
+            ? 413
+            : 400;
+    return json(
+      { status: "error", code: "WORK_BOARD_INTENT_INVALID" },
+      status
+    );
+  }
+  const body = bounded.value;
   const confirmation =
     semanticContinuationConfirmationInputSchema.safeParse(body);
   if (!confirmation.success) {
@@ -72,7 +100,9 @@ export async function POST(request: Request) {
     if (
       base.response.status !== "ready" ||
       base.response.mode !== "full" ||
-      base.registrySha256 === null
+      base.registrySha256 === null ||
+      base.installationSecret === null ||
+      base.installationSecret === undefined
     ) {
       return json(
         { status: "error", code: "WORK_BOARD_INTENT_STALE" },
@@ -94,7 +124,8 @@ export async function POST(request: Request) {
       confirmation: confirmation.data,
       target,
       registrySha256: base.registrySha256,
-      confirmedAt
+      confirmedAt,
+      installationSecret: base.installationSecret
     });
     return json({
       status: "confirmed",

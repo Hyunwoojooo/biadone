@@ -274,17 +274,22 @@ function intentStoreFor(board: WorkSuggestionBoardPublic) {
     supersedesDecisionId: null
   });
   const empty = createEmptySemanticContinuationIntentStore(
-    decision.confirmedAt
+    decision.confirmedAt,
+    INSTALLATION_SECRET
   );
   return {
     decision,
-    store: sealSemanticContinuationIntentStore({
-      contract: empty.contract,
-      schemaVersion: empty.schemaVersion,
-      revision: 1,
-      updatedAt: decision.confirmedAt,
-      decisions: [decision]
-    })
+    store: sealSemanticContinuationIntentStore(
+      {
+        contract: empty.contract,
+        schemaVersion: empty.schemaVersion,
+        authKeyId: empty.authKeyId,
+        revision: 1,
+        updatedAt: decision.confirmedAt,
+        decisions: [decision]
+      },
+      INSTALLATION_SECRET
+    )
   };
 }
 

@@ -67,13 +67,32 @@ describe("POST /api/work-board/intent", () => {
     expect(mocks.confirm).not.toHaveBeenCalled();
   });
 
+  it("keeps persistence disabled unless both read and write flags are exact true", async () => {
+    for (const value of [undefined, "false", "TRUE", "1"] as const) {
+      enableRoute();
+      vi.stubEnv("BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED", value);
+      const response = await POST(request());
+      expect(response.status).toBe(404);
+      expect(mocks.evaluateBase).not.toHaveBeenCalled();
+      expect(mocks.confirm).not.toHaveBeenCalled();
+      vi.clearAllMocks();
+    }
+
+    enableRoute();
+    vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "false");
+    const readDisabled = await POST(request());
+    expect(readDisabled.status).toBe(404);
+    expect(mocks.evaluateBase).not.toHaveBeenCalled();
+  });
+
   it("re-evaluates the generic Board and persists only a server-bound target", async () => {
     enableRoute();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-13T12:01:00.000Z"));
     mocks.evaluateBase.mockResolvedValue({
       response: readyResponse(),
-      registrySha256: REGISTRY_SHA
+      registrySha256: REGISTRY_SHA,
+      installationSecret: "e".repeat(64)
     });
     mocks.confirm.mockResolvedValue({
       store: {},
@@ -110,7 +129,8 @@ describe("POST /api/work-board/intent", () => {
         candidateExpiresAt: "2026-08-14T10:00:00.000Z"
       },
       registrySha256: REGISTRY_SHA,
-      confirmedAt: "2026-08-13T12:01:00.000Z"
+      confirmedAt: "2026-08-13T12:01:00.000Z",
+      installationSecret: "e".repeat(64)
     });
     expect(JSON.stringify(body)).not.toContain(REGISTRY_SHA);
     expect(JSON.stringify(body)).not.toContain("semantic_intent_");
@@ -120,7 +140,8 @@ describe("POST /api/work-board/intent", () => {
     enableRoute();
     mocks.evaluateBase.mockResolvedValue({
       response: readyResponse(),
-      registrySha256: REGISTRY_SHA
+      registrySha256: REGISTRY_SHA,
+      installationSecret: "e".repeat(64)
     });
 
     const response = await POST(
@@ -146,6 +167,26 @@ describe("POST /api/work-board/intent", () => {
     expect(mocks.evaluateBase).not.toHaveBeenCalled();
   });
 
+  it("rejects non-json, missing, mismatched and oversized bodies before evaluation", async () => {
+    enableRoute();
+    const cases = [
+      { request: request({ contentType: "text/plain" }), status: 415 },
+      { request: request({ declaredLength: null }), status: 411 },
+      { request: request({ declaredLength: "1" }), status: 400 },
+      { request: request({ declaredLength: "9000" }), status: 413 }
+    ];
+    for (const testCase of cases) {
+      const response = await POST(testCase.request);
+      expect(response.status).toBe(testCase.status);
+      await expect(response.json()).resolves.toEqual({
+        status: "error",
+        code: "WORK_BOARD_INTENT_INVALID"
+      });
+    }
+    expect(mocks.evaluateBase).not.toHaveBeenCalled();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
   it("returns a sanitized 503 when preserve capture cannot stabilize", async () => {
     enableRoute();
     const failure = new PreserveCaptureError(
@@ -166,11 +207,14 @@ describe("POST /api/work-board/intent", () => {
 function enableRoute(): void {
   vi.stubEnv("NODE_ENV", "development");
   vi.stubEnv("BLABASE_WORK_BOARD_SHADOW_READ_ENABLED", "true");
+  vi.stubEnv("BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED", "true");
   vi.stubEnv("SUGGESTION_ACCESS_PASSWORD", "test-password");
 }
 
 function request(overrides: {
   authorization?: string | null;
+  contentType?: string;
+  declaredLength?: string | null;
   itemRef?: string;
   origin?: string;
   subjectLabel?: string;
@@ -181,20 +225,28 @@ function request(overrides: {
     : overrides.authorization;
   const url = overrides.url ??
     "http://localhost:3102/api/work-board/intent";
+  const body = JSON.stringify({
+    intent: "QA_RUN",
+    subjectLabel: overrides.subjectLabel ?? "blabase",
+    itemRef: overrides.itemRef ?? ITEM_REF,
+    workContextRef: CONTEXT_REF,
+    explicitUserConfirmation: true
+  });
   return new Request(url, {
     method: "POST",
     headers: {
       origin: overrides.origin ?? new URL(url).origin,
-      "content-type": "application/json",
+      "content-type": overrides.contentType ?? "application/json",
+      ...(overrides.declaredLength === null
+        ? { "transfer-encoding": "chunked" }
+        : {
+            "content-length":
+              overrides.declaredLength ??
+              String(new TextEncoder().encode(body).byteLength)
+          }),
       ...(authorization === null ? {} : { authorization })
     },
-    body: JSON.stringify({
-      intent: "QA_RUN",
-      subjectLabel: overrides.subjectLabel ?? "blabase",
-      itemRef: overrides.itemRef ?? ITEM_REF,
-      workContextRef: CONTEXT_REF,
-      explicitUserConfirmation: true
-    })
+    body
   });
 }
 
