@@ -92,9 +92,11 @@ export async function loadWorkCockpitRequest(input: {
   ) => void;
 }) {
   const attentionPromise = input.loadAttention(input.refreshSources);
-  const boardPromise = input.refreshSources
-    ? attentionPromise.then(() => input.loadWorkBoard())
-    : input.loadWorkBoard();
+  // Attention's maintaining read briefly owns the shared local authority
+  // lease. Starting a preserve-only Board capture at the same time makes the
+  // Board correctly fail closed on that lock, so always wait for Attention to
+  // release it before reading the Board.
+  const boardPromise = attentionPromise.then(() => input.loadWorkBoard());
   const boardSettled = settle(boardPromise).then((result) => {
     input.onBoardSettled?.(result);
     return result;

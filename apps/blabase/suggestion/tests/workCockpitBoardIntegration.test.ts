@@ -81,16 +81,19 @@ describe("WorkCockpit canonical Work Board integration", () => {
     expect(monitoringReceiptFromResult(fulfilled)).toBe(receipt);
   });
 
-  it("reports Board failure before a slower Attention request completes", async () => {
+  it("waits for Attention to release its authority lease before loading Board", async () => {
     let finishAttention!: (value: AttentionApiResponse) => void;
     const attention = new Promise<AttentionApiResponse>((resolve) => {
       finishAttention = resolve;
     });
+    const loadWorkBoard = vi
+      .fn()
+      .mockRejectedValue(new Error("auth detail"));
     const boardStates: Array<{ response: unknown; error: string | null }> = [];
     const request = loadWorkCockpitRequest({
       refreshSources: false,
       loadAttention: vi.fn(() => attention),
-      loadWorkBoard: vi.fn().mockRejectedValue(new Error("auth detail")),
+      loadWorkBoard,
       onBoardSettled: (result) => {
         boardStates.push(displayBoardStateFromResult(result));
       }
@@ -98,15 +101,18 @@ describe("WorkCockpit canonical Work Board integration", () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(boardStates).toEqual([
-      { response: null, error: "작업 제안을 불러오지 못했습니다." }
-    ]);
+    expect(loadWorkBoard).not.toHaveBeenCalled();
+    expect(boardStates).toEqual([]);
     finishAttention({
       status: "error",
       code: "TEST",
       message: "test"
     });
     await request;
+    expect(loadWorkBoard).toHaveBeenCalledOnce();
+    expect(boardStates).toEqual([
+      { response: null, error: "작업 제안을 불러오지 못했습니다." }
+    ]);
   });
 
   it("fetches Work Board once and waits for a manual source refresh evaluation", async () => {
@@ -137,9 +143,18 @@ describe("WorkCockpit canonical Work Board integration", () => {
     ]);
   });
 
-  it("keeps initial Board and Attention reads independent without merging feeds", async () => {
-    const attention = vi.fn(async () => ({ status: "error" }) as never);
-    const board = vi.fn(async () => ({ contract: "board" }) as never);
+  it("sequences initial reads without merging their independent results", async () => {
+    const events: string[] = [];
+    const attention = vi.fn(async () => {
+      events.push("attention:start");
+      await Promise.resolve();
+      events.push("attention:end");
+      return { status: "error" } as never;
+    });
+    const board = vi.fn(async () => {
+      events.push("board");
+      return { contract: "board" } as never;
+    });
     const result = await loadWorkCockpitRequest({
       refreshSources: false,
       loadAttention: attention,
@@ -150,6 +165,7 @@ describe("WorkCockpit canonical Work Board integration", () => {
     expect(result.board.status).toBe("fulfilled");
     expect(attention).toHaveBeenCalledOnce();
     expect(board).toHaveBeenCalledOnce();
+    expect(events).toEqual(["attention:start", "attention:end", "board"]);
   });
 
   it("contains no focus or scroll mutation in the canonical panel", async () => {

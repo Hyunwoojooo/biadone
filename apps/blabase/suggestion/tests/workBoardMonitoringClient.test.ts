@@ -58,6 +58,27 @@ describe("Work Board monitoring browser client", () => {
     });
   });
 
+  it("retries bounded preserve 503 responses before accepting a current Board", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(MONITORING_NOW);
+    const authority = monitoringAuthority();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ status: "error" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ status: "error" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json(authority.response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = fetchDisplayOnlyWorkBoardWithMonitoring();
+    await vi.advanceTimersByTimeAsync(400);
+
+    await expect(pending).resolves.toMatchObject({
+      response: authority.response,
+      monitoringReceipt: null
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("drops a tampered, expired, or response-mismatched receipt while preserving display", () => {
     const authority = monitoringAuthority();
     const receipt = createWorkBoardMonitoringReceipt({

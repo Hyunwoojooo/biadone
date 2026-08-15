@@ -17,6 +17,9 @@ import { parseDisplayOnlyWorkBoard } from "./attentionClient";
 
 const JSON_CONTENT_TYPE = /^application\/json(?:\s*;|$)/iu;
 const RECEIPT_PATTERN = /^wbm1\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]{43}$/u;
+const WORK_BOARD_TRANSIENT_RETRY_DELAYS_MS = [
+  100, 300, 700, 1_500, 3_000
+] as const;
 
 export class WorkBoardMonitoringRequestError extends Error {
   constructor() {
@@ -36,9 +39,7 @@ export type WorkBoardDisplayLoad = {
 };
 
 export async function fetchDisplayOnlyWorkBoardWithMonitoring(): Promise<WorkBoardDisplayLoad> {
-  const response = await boundedFetch("/api/work-board", {
-    cache: "no-store"
-  });
+  const response = await fetchWorkBoardAfterTransientPreserveFailures();
   if (!response.ok || !isJson(response)) {
     throw new WorkBoardMonitoringRequestError();
   }
@@ -56,6 +57,26 @@ export async function fetchDisplayOnlyWorkBoardWithMonitoring(): Promise<WorkBoa
     new Date()
   );
   return { response: board, monitoringReceipt: receipt };
+}
+
+async function fetchWorkBoardAfterTransientPreserveFailures(): Promise<Response> {
+  let response = await boundedFetch("/api/work-board", {
+    cache: "no-store"
+  });
+  for (const delayMs of WORK_BOARD_TRANSIENT_RETRY_DELAYS_MS) {
+    if (response.status !== 503) return response;
+    await delay(delayMs);
+    response = await boundedFetch("/api/work-board", {
+      cache: "no-store"
+    });
+  }
+  return response;
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 export async function fetchWorkBoardMonitoringState(): Promise<WorkBoardMonitoringStateResponse> {
