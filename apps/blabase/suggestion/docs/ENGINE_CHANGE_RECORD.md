@@ -5542,3 +5542,66 @@ version constants. No persisted-state or schema migration is required.
   `relative-path<TAB>worktree-SHA256` manifest for 12 source/test files, excluding docs,
   generated output, `.local/` and unrelated worktree changes:
   `2512d3e568e6ffd364c53b509232dbee0cc6a0b3c4ccaeb13a50080e50f87223`.
+
+## Engine Change Record — L-001 data-root shared environment parity correction
+
+- **Date:** 2026-08-16 KST
+- **Owner:** Codex implementation; user remains product, privacy and release approver.
+- **Goal:** Make the native Launcher evaluate the same selected data root with the
+  same allowlisted local connector configuration as the web surface, without changing
+  Board semantics or granting Launcher mutation authority.
+- **Affected pipeline stages:** Launcher-agent startup wiring only. Source mode,
+  scheduler construction, `LauncherService` evaluation and Companion Codex binary
+  resolution now share one data-root-bound environment snapshot. Core Continuation,
+  Work Board composition, overlay, filtering, ordering, actions and IPC projections are
+  unchanged.
+- **Behavior before:** The Launcher parsed an explicit data root but passed ambient
+  `process.env` directly to every runtime component. A packaged process whose working
+  directory was outside that root could therefore miss the root's `.env.local` pointer
+  and its allowlisted GitHub configuration, causing a linked/corroborated semantic
+  continuation shown on web to degrade to Codex-only `single_source` in Launcher.
+- **Behavior after:** Immediately after parsing `dataRoot`, the agent creates exactly
+  one `createSharedLocalEnvSnapshot(process.env, {cwd:dataRoot,mode:"maintain"})` and
+  passes that same object to source-mode resolution, the managed coordinator,
+  `LauncherService` and Companion `resolveCodexBinary`. Ambient values retain
+  precedence when non-empty, while empty allowlisted ambient values retain the existing
+  unset/supplement behavior. Only existing allowlisted keys are supplemented; feature
+  flags and code provenance remain ambient/default-off. The returned exact snapshot
+  object is recorded only in a module-private `WeakSet`, so downstream legacy
+  `loadSharedLocalEnv(snapshot)` calls are no-ops and cannot mix in a different current
+  working directory's pointer. Read-only mode still performs no source sync; there is
+  no per-request env-file read, string marker, path/secret exposure or `process.env`
+  mutation.
+- **Versions before/after:** Launcher IPC v1, Attention v2, Work Board v1, semantic
+  presentation/overlay and every core engine/schema/rule version are unchanged. This is
+  runtime configuration parity, not a new recommendation rule.
+- **Code commit:** Base commit
+  `2e2eedc3da0a5a15176aef843e5416a74cd160c3`; correction is an uncommitted scoped patch
+  pending explicit commit approval.
+- **Evaluation dataset/run IDs:** N/A. No dataset, evaluator, prompt, evidence rule,
+  rank or semantic resolver changed; no quality comparison is claimed.
+- **Commands executed:** Final `npx vitest run tests/localEnv.test.ts
+  tests/launcherAgentEnvironment.test.ts tests/launcherService.test.ts` passed 3
+  files/26 tests, including selected-root isolation, managed same-object propagation
+  and read-only no-coordinator regressions. `npm run typecheck` and full
+  `npm run lint` passed.
+- **Metrics changed:** None measured. The regression fixes cross-surface configuration
+  parity and does not claim recommendation-quality improvement.
+- **Privacy or retention impact:** No new persistence, logging or retention. Secrets and
+  paths remain absent from IPC, public Board data, diagnostics and Git; the in-memory
+  snapshot uses the existing allowlist and ambient-precedence policy.
+- **Regressions or accepted exceptions:** No automated regression in the focused gate.
+  Module-private WeakSet state is exact-object and process-local; legacy callers that
+  pass `process.env` or independently constructed objects keep their existing loading
+  behavior.
+  Packaged-app manual parity, old-agent compatibility and accessibility review remain
+  pending; no baseline/build/package/Swift rerun was required for this TypeScript
+  startup-wiring correction.
+- **Release decision:** Local correction only. Launcher rollout and overall release
+  remain blocked pending the existing human review gates.
+- **Rollback method:** Revert the launcher-agent snapshot wiring; public contracts and
+  stored data require no migration. Disabling the exact Launcher Work Board flag remains
+  the immediate flag-first fallback to legacy Active behavior.
+- **Follow-up work:** Rebuild/restart the clean packaged Launcher and manually compare a
+  single captured web/Launcher Board at the same timestamp; retain the existing human
+  privacy, accessibility, compatibility and release approvals.

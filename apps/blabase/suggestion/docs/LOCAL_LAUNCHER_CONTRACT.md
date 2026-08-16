@@ -51,6 +51,16 @@ source 가용 상태를 확인하는 최소 설정 화면만 둔다.
 
 - 기존 `evaluateCurrentAttention`, canonical
   `evaluateLiveSemanticWorkSuggestionBoard`와 source sync runtime을 재사용한다.
+- `--data-root`를 파싱한 직후 그 root의 `.env.local` pointer를 기준으로
+  `maintain` shared-local-env snapshot을 정확히 한 번 만들고, source mode,
+  scheduler, `LauncherService`, Companion의 Codex binary resolver에 같은 snapshot을
+  전달한다. Ambient 값이 shared file보다 우선하며 shared file은 기존 allowlist key만
+  보충한다. 단, 빈 ambient allowlist 값은 unset으로 취급되어 보충될 수 있다.
+  Snapshot 객체는 module-private `WeakSet`에 resolved로 표시되어 이후 legacy loader가
+  다른 현재 작업 디렉터리의 pointer로 재보충하거나 변경하지 않는다. Feature flag와
+  provenance는 shared file에서 주입되지 않고 ambient default-off 경계를 유지하며,
+  request마다 env file을 다시 읽거나 `process.env`를 변경하거나 path/secret을
+  진단에 기록하지 않는다.
 - 기존 Work Resumption store, exact binding/execution 검증과 Companion daemon을
   재사용한다.
 - 런처 projection과 실행 요청의 현재성 검증을 소유한다.
