@@ -125,6 +125,8 @@ describe("POST /api/work-board/intent", () => {
       target: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
+        candidateKind: "recent_github_push",
+        evidenceBand: "single_source",
         observedAt: "2026-08-13T10:00:00.000Z",
         candidateExpiresAt: "2026-08-14T10:00:00.000Z"
       },

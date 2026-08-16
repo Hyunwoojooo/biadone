@@ -665,9 +665,12 @@ Issue와 Open은 `.local/continuation-actions`의 같은 cross-process root lock
 - Confirmed label을 읽는 GET도 configured Basic auth를 직접 요구하고 auth
   검증 전에는 live evaluation이나 private semantic store read를 수행하지
   않는다. Development middleware bypass만으로 label을 읽을 수 없다.
-- Private intent store/schema는 Q-001에서
-  `semantic-continuation-intent-store-v0.2` /
-  `semantic-continuation-intent-store-schema-v0.2`로 올라갔다. Opaque public
+- Private intent store/schema는 SC-001R에서
+  `semantic-continuation-intent-store-v0.3` /
+  `semantic-continuation-intent-store-schema-v0.3`로 올라갔다. 신규 decision은
+  `semantic-continuation-intent-v0.2`와 overlay policy v0.2를 사용하고 freshly
+  evaluated target의 `candidateKind`와 `evidenceBand`를 decision ID/SHA 및 store
+  SHA/HMAC에 포함한다. Opaque public
   refs, registry SHA-256, observation/candidate expiry, confirmation/effective
   expiry와 supersession 외에 `authKeyId`, canonical SHA-256 및
   installation-secret-derived HMAC을 묶는다. Current secret은 exact
@@ -686,6 +689,11 @@ Issue와 Open은 `.local/continuation-actions`의 같은 cross-process root lock
   Symlink, wrong mode/type/owner 또는 unexpected entry는 그대로 두고 fail closed한다.
   Shared lease bootstrap도 unsafe `.local`/`work-resumption` ancestor를 따라가지
   않는다.
+- Legacy intent v0.1/store v0.2는 separate strict schema와 legacy hash/HMAC domain으로
+  pure-read하며 exact item/context/observedAt/expiry match만 허용한다. GET/sync는 이를
+  rewrite하거나 승격하지 않는다. 다음 explicit confirmation만 history와 supersession
+  chain을 보존한 채 current v0.3 store로 atomic upgrade한다. 구버전 reader가 v0.3을
+  이해하지 못하면 semantic overlay만 fail closed하고 byte-identical base Board는 유지된다.
 - Intent POST body는 exact JSON content type, required `Content-Length`, 8,192-byte
   declared/streamed cap, fatal UTF-8, declared/actual equality와 strict schema를
   semantic evaluation 전에 통과해야 한다. Server page는 write flag 결과만
@@ -701,6 +709,16 @@ Issue와 Open은 `.local/continuation-actions`의 같은 cross-process root lock
   hash, credential 및 pass/fail/completion/result/apply 의미 토큰을 fail
   closed한다. 의미 토큰 검사는 NFKC 정규화와 구분자 제거 뒤에도 적용되어
   camelCase/concatenated claim smuggling을 허용하지 않는다.
+- Overlay resolver는 exact target을 항상 우선한다. Rebinding은 신규 v0.2 decision에만,
+  stored/current candidate가 모두 `linked_workstream`, evidence가 모두
+  `corroborated`, registry/context/candidate expiry가 같고 current observedAt만 엄격히
+  최신인 display/action-null 후보가 정확히 하나일 때 허용한다. Original intent/candidate
+  TTL은 연장하지 않으며 old itemRef가 아직 있거나 kind/evidence가 바뀌거나 후보가
+  ambiguous하면 generic base copy로 fail closed한다. Rebound는 SC-001 제목만 표시한다.
+  SC-002 receipt title과 validation start/terminal currentness는 kind/evidence를 포함한
+  exact target만 인정하며 rebound 상태에서는 provenance/profile/subprocess 전에 종료한다.
+  Stale abandoned validation receipt recovery와 fresh-clock second authority check는 이
+  early exit보다 우선해 dangling receipt 또는 중간 TTL 만료 실행을 만들지 않는다.
 - Targeted regression은 8 files/35 tests, typecheck와 lint를 통과했다.
   Core evaluator input/output semantics와 E-001 v0.3 dataset이 불변이므로
   baseline은 N/A다. Production exposure와 release 승인은 여전히 pending이다.
@@ -708,6 +726,9 @@ Issue와 Open은 `.local/continuation-actions`의 같은 cross-process root lock
   `itemRef+workContextRef+baseGeneratedAt`으로 remount하고 request generation으로
   late completion/refresh를 버린다. Label edit도 generation과 confirmed state를
   즉시 reset하므로 이전 target 또는 이전 label의 완료 copy가 남지 않는다.
+- SC-001R targeted regression은 10 files/77 tests, typecheck, full lint와 production
+  build를 통과했다. Core S1/R1/R2/R3/B1 admission/rank/hash, public Board/wrapper wire,
+  E-001 v0.3 revision 3 dataset은 불변이므로 baseline은 N/A다.
 
 ### 15.1.2 SC-002 explicit local Semantic Validation receipts (implemented 2026-08-13)
 

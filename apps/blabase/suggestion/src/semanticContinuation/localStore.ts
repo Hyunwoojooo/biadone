@@ -25,6 +25,8 @@ import {
 } from "../localReadMode";
 
 import {
+  SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
+  SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION,
   compareSemanticIntentDecisions,
   createEmptySemanticContinuationIntentStore,
   createSemanticContinuationIntentDecision,
@@ -208,8 +210,9 @@ export async function confirmStoredSemanticContinuationIntent(
       });
       const store = sealSemanticContinuationIntentStore(
         {
-          contract: current.contract,
-          schemaVersion: current.schemaVersion,
+          contract: SEMANTIC_CONTINUATION_INTENT_STORE_CONTRACT,
+          schemaVersion:
+            SEMANTIC_CONTINUATION_INTENT_STORE_SCHEMA_VERSION,
           authKeyId: current.authKeyId,
           revision: current.revision + 1,
           updatedAt: input.confirmedAt,

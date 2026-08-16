@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -16,10 +17,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { capturePreservingLocalState } from "../src/attention/preserveCapture";
 import {
+  runtimeCanonicalJson,
+  runtimeSha256,
+  runtimeStableId
+} from "../src/crossSource/canonicalHash";
+import {
   confirmStoredSemanticContinuationIntent,
   readSemanticContinuationIntentStore,
   semanticContinuationLocalDirectory,
   semanticContinuationLocalRoot,
+  semanticContinuationIntentAuthKeyId,
   verifySemanticContinuationIntentStore
 } from "../src/semanticContinuation";
 
@@ -47,6 +54,12 @@ describe("Semantic Continuation private local store", () => {
     expect(read.status).toBe("available");
     if (read.status !== "available") return;
     expect(read.value.revision).toBe(2);
+    expect(read.value.contract).toBe(
+      "semantic-continuation-intent-store-v0.3"
+    );
+    expect(read.value.schemaVersion).toBe(
+      "semantic-continuation-intent-store-schema-v0.3"
+    );
     expect(read.value.decisions).toHaveLength(2);
     expect(second.decision.supersedesDecisionId).toBe(
       first.decision.decisionId
@@ -69,6 +82,49 @@ describe("Semantic Continuation private local store", () => {
     expect(
       verifySemanticContinuationIntentStore(read.value, "d".repeat(64))
     ).toBeNull();
+  });
+
+  it("pure-reads a legacy v0.2 store and upgrades it only on explicit confirmation", async () => {
+    const cwd = await temporaryWorkspace();
+    const directory = semanticContinuationLocalDirectory(
+      cwd,
+      INSTALLATION_SECRET
+    );
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(join(cwd, ".local"), 0o700);
+    await chmod(join(cwd, ".local", "semantic-continuation"), 0o700);
+    await chmod(directory, 0o700);
+    const target = join(directory, "intent-store.json");
+    const legacy = legacyIntentStore();
+    const original = `${JSON.stringify(legacy, null, 2)}\n`;
+    await writeFile(target, original, { encoding: "utf8", mode: 0o600 });
+
+    const read = await readSemanticContinuationIntentStore(
+      cwd,
+      INSTALLATION_SECRET
+    );
+    expect(read.status).toBe("available");
+    if (read.status !== "available") return;
+    expect(read.value.contract).toBe(
+      "semantic-continuation-intent-store-v0.2"
+    );
+    expect(await readFile(target, "utf8")).toBe(original);
+
+    const confirmed = await confirm(
+      cwd,
+      "blabase",
+      "2026-08-13T12:01:00.000Z"
+    );
+    expect(confirmed.store.contract).toBe(
+      "semantic-continuation-intent-store-v0.3"
+    );
+    expect(confirmed.store.decisions.map((decision) => decision.contract)).toEqual([
+      "semantic-continuation-intent-v0.1",
+      "semantic-continuation-intent-v0.2"
+    ]);
+    expect(confirmed.decision.supersedesDecisionId).toBe(
+      legacy.decisions[0]!.decisionId
+    );
   });
 
   it("isolates current-secret state and recovers safe temps from rotated namespaces", async () => {
@@ -342,6 +398,8 @@ function confirm(
       target: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
+        candidateKind: "linked_workstream",
+        evidenceBand: "corroborated",
         observedAt: "2026-08-13T10:00:00.000Z",
         candidateExpiresAt: "2026-08-15T12:00:00.000Z"
       },
@@ -351,4 +409,67 @@ function confirm(
     },
     cwd
   );
+}
+
+function legacyIntentStore() {
+  const stableDecision = {
+    intent: "QA_RUN" as const,
+    subjectLabel: "alpha",
+    labelSource: "explicit_user" as const,
+    explicitUserConfirmation: true as const,
+    itemRef: ITEM_REF,
+    workContextRef: CONTEXT_REF,
+    registrySha256: "f".repeat(64),
+    targetObservedAt: "2026-08-13T10:00:00.000Z",
+    targetCandidateExpiresAt: "2026-08-15T12:00:00.000Z",
+    confirmedAt: "2026-08-13T12:00:00.000Z",
+    expiresAt: "2026-08-14T12:00:00.000Z",
+    supersedesDecisionId: null,
+    overlayPolicyVersion: "semantic-continuation-title-overlay-v0.1" as const,
+    ttlPolicyVersion: "semantic-continuation-intent-ttl-24h-v0.1" as const
+  };
+  const decisionContent = {
+    contract: "semantic-continuation-intent-v0.1" as const,
+    schemaVersion: "semantic-continuation-schema-v0.1" as const,
+    decisionId: runtimeStableId(
+      "semantic_intent",
+      "semantic-continuation-intent-v0.1",
+      stableDecision
+    ),
+    ...stableDecision
+  };
+  const decision = {
+    ...decisionContent,
+    decisionSha256: runtimeSha256({
+      domain: "semantic-continuation-intent-decision-hash-v0.1",
+      decision: decisionContent
+    })
+  };
+  const content = {
+    contract: "semantic-continuation-intent-store-v0.2" as const,
+    schemaVersion: "semantic-continuation-intent-store-schema-v0.2" as const,
+    authKeyId: semanticContinuationIntentAuthKeyId(INSTALLATION_SECRET),
+    revision: 1,
+    updatedAt: decision.confirmedAt,
+    decisions: [decision]
+  };
+  const withHash = {
+    ...content,
+    storeSha256: runtimeSha256({
+      domain: "semantic-continuation-intent-store-hash-v0.2",
+      store: content
+    })
+  };
+  const key = createHmac(
+    "sha256",
+    Buffer.from(INSTALLATION_SECRET, "hex")
+  )
+    .update("semantic-continuation-intent-store-hmac-v0.2", "utf8")
+    .digest();
+  return {
+    ...withHash,
+    storeHmac: createHmac("sha256", key)
+      .update(runtimeCanonicalJson(withHash), "utf8")
+      .digest("hex")
+  };
 }

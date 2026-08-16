@@ -23,6 +23,7 @@ import {
 } from "../src/suggestionBoard/contracts";
 
 const ITEM_REF = `item_ref_${"a".repeat(43)}`;
+const NEW_ITEM_REF = `item_ref_${"c".repeat(43)}`;
 const CONTEXT_REF = `context_ref_${"b".repeat(43)}`;
 const REGISTRY_SHA = "f".repeat(64);
 const INSTALLATION_SECRET = "e".repeat(64);
@@ -153,6 +154,35 @@ describe("Semantic validation presentation resolver", () => {
     );
     expect(board.primary?.item.title).toBe("Recent GitHub activity");
     expect(board.primary?.item.summary).toBe("Recent GitHub activity");
+  });
+
+  it("does not transfer an exact-target QA receipt title onto a rebound snapshot", () => {
+    const board = genericBoard();
+    const { store: intentStore, decision } = intentStoreFor(board);
+    const running = runningStore(decision, "4".repeat(32), null);
+    const passed = terminalStore(
+      running,
+      "passed",
+      null,
+      passedSteps(),
+      CODE,
+      "2026-08-13T12:03:00.000Z"
+    );
+    const rebound = workSuggestionBoardPublicSchema.parse({
+      ...board,
+      primary: board.primary && {
+        ...board.primary,
+        item: {
+          ...board.primary.item,
+          itemRef: NEW_ITEM_REF,
+          observedAt: "2026-08-13T10:01:00.000Z"
+        }
+      }
+    });
+
+    expect(title(rebound, intentStore, passed)).toBe(
+      "blabase QA 진행하기"
+    );
   });
 });
 
@@ -304,12 +334,12 @@ function genericBoard(): WorkSuggestionBoardPublic {
       item: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
-        kind: "recent_github_push",
+        kind: "linked_workstream",
         title: "Recent GitHub activity",
         summary: "Recent GitHub activity",
         observedAt: "2026-08-13T10:00:00.000Z",
         expiresAt: "2026-08-14T10:00:00.000Z",
-        evidenceBand: "single_source",
+        evidenceBand: "corroborated",
         capability: "display",
         action: null,
         caveatCodes: []

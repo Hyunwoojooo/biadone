@@ -28,7 +28,10 @@ import {
   createSemanticContinuationIntentDecision,
   sealSemanticContinuationIntentStore
 } from "../src/semanticContinuation";
-import { workSuggestionBoardPublicSchema } from "../src/suggestionBoard/contracts";
+import {
+  workSuggestionBoardPublicSchema,
+  type WorkSuggestionBoardPublic
+} from "../src/suggestionBoard/contracts";
 import { workBoardApiResponseSchema } from "../src/suggestionBoard/monitoringSchema";
 
 const INSTALLATION_SECRET = "1".repeat(64);
@@ -133,6 +136,125 @@ describe("Semantic Validation fixed producer", () => {
     expect(harness.receipts()).toEqual([]);
   });
 
+  it("rejects a rebound Board before provenance, profile, or subprocess work", async () => {
+    const harness = producerHarness({ bases: [reboundBase()] });
+
+    await expect(
+      runSemanticContinuationValidationWithDependencies(
+        harness.dependencies
+      )
+    ).resolves.toEqual({
+      status: "inconclusive",
+      code: "ACTIVE_INTENT_UNAVAILABLE",
+      runId: RUN_ID,
+      receiptSha256: null,
+      stepStatuses: []
+    });
+    expect(
+      harness.dependencies.resolveCodeProvenance
+    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.resolveProfile).not.toHaveBeenCalled();
+    expect(harness.executeStep).not.toHaveBeenCalled();
+    expect(harness.receipts()).toEqual([]);
+  });
+
+  it("rejects v0.2 kind or evidence mismatch before spawning validation work", async () => {
+    for (const base of [
+      baseWithItem({ kind: "recent_codex_session" }),
+      baseWithItem({ evidenceBand: "single_source" })
+    ]) {
+      const harness = producerHarness({ bases: [base] });
+      await expect(
+        runSemanticContinuationValidationWithDependencies(
+          harness.dependencies
+        )
+      ).resolves.toMatchObject({
+        status: "inconclusive",
+        code: "ACTIVE_INTENT_UNAVAILABLE",
+        stepStatuses: []
+      });
+      expect(
+        harness.dependencies.resolveCodeProvenance
+      ).not.toHaveBeenCalled();
+      expect(harness.dependencies.resolveProfile).not.toHaveBeenCalled();
+      expect(harness.executeStep).not.toHaveBeenCalled();
+      expect(harness.receipts()).toEqual([]);
+    }
+  });
+
+  it("rechecks a fresh clock after profile resolution before starting a receipt", async () => {
+    const harness = producerHarness({
+      moments: [STARTED_AT, "2026-08-14T12:00:00.000Z"]
+    });
+
+    await expect(
+      runSemanticContinuationValidationWithDependencies(
+        harness.dependencies
+      )
+    ).resolves.toMatchObject({
+      status: "inconclusive",
+      code: "ACTIVE_INTENT_UNAVAILABLE",
+      stepStatuses: []
+    });
+    expect(harness.dependencies.resolveProfile).toHaveBeenCalledOnce();
+    expect(harness.executeStep).not.toHaveBeenCalled();
+    expect(harness.receipts()).toEqual([]);
+  });
+
+  it("recovers an abandoned receipt before rejecting a rebound Board", async () => {
+    const intent = semanticIntent();
+    const empty = createEmptySemanticValidationStore({
+      createdAt: "2026-08-13T12:05:00.000Z",
+      installationSecret: INSTALLATION_SECRET
+    });
+    const abandoned = createSemanticValidationRunningReceipt({
+      receiptRevision: 1,
+      previousReceiptSha256: null,
+      runId: ABANDONED_RUN_ID,
+      binding: semanticValidationBindingForIntent(intent),
+      startedCodeProvenance: {
+        kind: "clean",
+        codeState: "clean_commit",
+        codeCommitSha: "a".repeat(40),
+        codeFingerprintSha256: null
+      },
+      startedAt: "2026-08-13T12:05:00.000Z",
+      installationSecret: INSTALLATION_SECRET
+    });
+    const initialStore = appendSemanticValidationReceipt({
+      store: empty,
+      receipt: abandoned,
+      installationSecret: INSTALLATION_SECRET
+    });
+    const harness = producerHarness({
+      abandonedRunId: ABANDONED_RUN_ID,
+      bases: [reboundBase()],
+      initialStore
+    });
+
+    await expect(
+      runSemanticContinuationValidationWithDependencies(
+        harness.dependencies
+      )
+    ).resolves.toMatchObject({
+      status: "inconclusive",
+      code: "ACTIVE_INTENT_UNAVAILABLE",
+      stepStatuses: []
+    });
+    expect(harness.dependencies.resolveProfile).not.toHaveBeenCalled();
+    expect(harness.executeStep).not.toHaveBeenCalled();
+    expect(
+      harness.receipts().map((receipt) => [
+        receipt.runId,
+        receipt.status,
+        receipt.statusReasonCode
+      ])
+    ).toEqual([
+      [ABANDONED_RUN_ID, "running", null],
+      [ABANDONED_RUN_ID, "inconclusive", "RUN_ABANDONED"]
+    ]);
+  });
+
   it("runs in fixed order, fails fast, and persists all three statuses", async () => {
     const harness = producerHarness({
       executeStep: async (step) =>
@@ -219,6 +341,52 @@ describe("Semantic Validation fixed producer", () => {
         { step: "unit_test", status: "passed" }
       ]
     });
+  });
+
+  it("records INTENT_NOT_CURRENT when the terminal Board is only a rebound", async () => {
+    const harness = producerHarness({
+      bases: [liveBase(), reboundBase()]
+    });
+
+    await expect(
+      runSemanticContinuationValidationWithDependencies(
+        harness.dependencies
+      )
+    ).resolves.toMatchObject({
+      status: "inconclusive",
+      code: "INTENT_NOT_CURRENT",
+      stepStatuses: ["passed", "passed", "passed"]
+    });
+    expect(harness.executeStep).toHaveBeenCalledTimes(3);
+    expect(harness.receipts().at(-1)).toMatchObject({
+      status: "inconclusive",
+      statusReasonCode: "INTENT_NOT_CURRENT"
+    });
+  });
+
+  it("records INTENT_NOT_CURRENT for terminal kind or evidence drift", async () => {
+    for (const refreshed of [
+      baseWithItem({ kind: "recent_codex_session" }),
+      baseWithItem({ evidenceBand: "single_source" })
+    ]) {
+      const harness = producerHarness({
+        bases: [liveBase(), refreshed]
+      });
+      await expect(
+        runSemanticContinuationValidationWithDependencies(
+          harness.dependencies
+        )
+      ).resolves.toMatchObject({
+        status: "inconclusive",
+        code: "INTENT_NOT_CURRENT",
+        stepStatuses: ["passed", "passed", "passed"]
+      });
+      expect(harness.executeStep).toHaveBeenCalledTimes(3);
+      expect(harness.receipts().at(-1)).toMatchObject({
+        status: "inconclusive",
+        statusReasonCode: "INTENT_NOT_CURRENT"
+      });
+    }
   });
 
   it("records profile drift without invoking a validation command", async () => {
@@ -319,7 +487,9 @@ type ProducerDependencies = Parameters<
 
 function producerHarness(input?: {
   abandonedRunId?: string | null;
+  bases?: ReturnType<typeof liveBase>[];
   initialStore?: SemanticValidationStore;
+  moments?: string[];
   provenances?: AttentionCodeProvenance[];
   executeStep?: (
     step: SemanticValidationStepResult["step"]
@@ -351,13 +521,15 @@ function producerHarness(input?: {
       createdAt: STARTED_AT,
       installationSecret: INSTALLATION_SECRET
     });
-  const moments = [STARTED_AT, COMPLETED_AT];
+  const moments = input?.moments ?? [STARTED_AT, STARTED_AT, COMPLETED_AT];
   let momentIndex = 0;
   const provenances = input?.provenances ?? [
     cleanAttentionProvenance("a"),
     cleanAttentionProvenance("a")
   ];
   let provenanceIndex = 0;
+  const bases = input?.bases ?? [liveBase(), liveBase()];
+  let baseIndex = 0;
   const executeStep = vi.fn(async (entry: SemanticValidationProfile["entries"][number]) =>
     input?.executeStep
       ? input.executeStep(entry.step)
@@ -374,7 +546,9 @@ function producerHarness(input?: {
       new Date(moments[Math.min(momentIndex++, moments.length - 1)]!),
     createRunId: () => RUN_ID,
     readInstallationSecret: vi.fn(async () => INSTALLATION_SECRET),
-    captureBase: vi.fn(async () => liveBase()),
+    captureBase: vi.fn(async () =>
+      bases[Math.min(baseIndex++, bases.length - 1)]!
+    ),
     resolveCodeProvenance: vi.fn(async () =>
       provenances[Math.min(provenanceIndex++, provenances.length - 1)]!
     ),
@@ -423,6 +597,8 @@ function semanticIntent() {
     target: {
       itemRef: ITEM_REF,
       workContextRef: CONTEXT_REF,
+      candidateKind: "linked_workstream",
+      evidenceBand: "corroborated",
       observedAt: "2026-08-13T10:00:00.000Z",
       candidateExpiresAt: "2026-08-15T12:00:00.000Z"
     },
@@ -443,12 +619,12 @@ function liveBase() {
       item: {
         itemRef: ITEM_REF,
         workContextRef: CONTEXT_REF,
-        kind: "recent_github_push",
+        kind: "linked_workstream",
         title: "Recent GitHub activity",
         summary: "Recent GitHub activity",
         observedAt: "2026-08-13T10:00:00.000Z",
         expiresAt: "2026-08-15T12:00:00.000Z",
-        evidenceBand: "single_source",
+        evidenceBand: "corroborated",
         capability: "display",
         action: null,
         caveatCodes: []
@@ -471,6 +647,43 @@ function liveBase() {
     }),
     registrySha256: REGISTRY_SHA256,
     codeProvenance: cleanAttentionProvenance("a")
+  };
+}
+
+function reboundBase(): ReturnType<typeof liveBase> {
+  return baseWithItem({
+    itemRef: `item_ref_${"f".repeat(43)}`,
+    observedAt: "2026-08-13T10:01:00.000Z"
+  });
+}
+
+function baseWithItem(
+  item: Partial<
+    NonNullable<WorkSuggestionBoardPublic["primary"]>["item"]
+  >
+): ReturnType<typeof liveBase> {
+  const base = liveBase();
+  if (base.response.status !== "ready") {
+    throw new TypeError("Synthetic Board unavailable");
+  }
+  const primary = base.response.board.primary;
+  if (primary === null) throw new TypeError("Synthetic item missing");
+  const board = workSuggestionBoardPublicSchema.parse({
+    ...base.response.board,
+    primary: {
+      ...primary,
+      item: {
+        ...primary.item,
+        ...item
+      }
+    }
+  });
+  return {
+    ...base,
+    response: workBoardApiResponseSchema.parse({
+      ...base.response,
+      board
+    })
   };
 }
 

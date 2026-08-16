@@ -15,8 +15,9 @@ import {
   readSemanticContinuationIntentStore,
   type SemanticContinuationStoreReadResult
 } from "../localStore";
-import type {
-  SemanticContinuationIntentDecision
+import {
+  SEMANTIC_CONTINUATION_INTENT_CONTRACT,
+  type SemanticContinuationIntentDecision
 } from "../contracts";
 import {
   createEmptySemanticValidationStore,
@@ -142,9 +143,39 @@ export async function runSemanticContinuationValidationWithDependencies(
     } catch {
       return inconclusive("BASE_BOARD_UNAVAILABLE", runId);
     }
+    const preflightAt = dependencies.now().toISOString();
+    const preflightIntent = await dependencies.withAuthority(async () =>
+      currentIntentForBase(
+        await dependencies.readIntentStore(installationSecret),
+        captured,
+        preflightAt
+      )
+    );
+    if (preflightIntent === null && lease.abandonedRunId === null) {
+      return inconclusive("ACTIVE_INTENT_UNAVAILABLE", runId);
+    }
     const startedCodeProvenance = normalizeSemanticValidationCodeProvenance(
       await dependencies.resolveCodeProvenance()
     );
+    if (preflightIntent === null) {
+      await dependencies.withAuthority(async () => {
+        const recoveredAt = dependencies.now().toISOString();
+        const store = await requireValidationStore(
+          dependencies,
+          installationSecret,
+          recoveredAt
+        );
+        await recoverAbandonedRun({
+          dependencies,
+          installationSecret,
+          store,
+          abandonedRunId: lease!.abandonedRunId,
+          recoveredAt,
+          endedCodeProvenance: startedCodeProvenance
+        });
+      });
+      return inconclusive("ACTIVE_INTENT_UNAVAILABLE", runId);
+    }
     let profile: SemanticValidationProfile | null = null;
     try {
       profile = await dependencies.resolveProfile();
@@ -446,7 +477,10 @@ function currentIntentForBase(
         candidate.itemRef === entry.item.itemRef &&
         candidate.workContextRef === entry.item.workContextRef &&
         candidate.targetObservedAt === entry.item.observedAt &&
-        candidate.targetCandidateExpiresAt === entry.item.expiresAt
+        candidate.targetCandidateExpiresAt === entry.item.expiresAt &&
+        (candidate.contract !== SEMANTIC_CONTINUATION_INTENT_CONTRACT ||
+          (candidate.targetCandidateKind === entry.item.kind &&
+            candidate.targetEvidenceBand === entry.item.evidenceBand))
     );
     if (decision !== undefined) return decision;
   }

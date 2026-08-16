@@ -318,6 +318,8 @@ function semanticIntent() {
     target: {
       itemRef: ITEM_REF,
       workContextRef: CONTEXT_REF,
+      candidateKind: "linked_workstream",
+      evidenceBand: "corroborated",
       observedAt: "2026-08-13T10:00:00.000Z",
       candidateExpiresAt: "2026-08-15T12:00:00.000Z"
     },

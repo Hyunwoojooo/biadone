@@ -5471,3 +5471,74 @@ version constants. No persisted-state or schema migration is required.
   suggestion/tools/run-work-board-monitoring.ts
   suggestion/tools/start-isolated-e2e-server.mjs
   ```
+
+## SC-001R — linked WorkContext semantic intent currentness correction (2026-08-15 KST)
+
+- **Status:** Implemented and locally validated; default-off/local review scope only.
+  Release remains `blocked_pending_human_review`.
+- **Owner:** Continuation/Semantic owner with independent security review; user remains
+  product and release approver.
+- **Trigger:** A valid explicit `blabase QA 진행하기` confirmation disappeared after a
+  fresh Codex sync even though registry, WorkContext and candidate expiry were unchanged.
+  The linked candidate's `observedAt` and public `itemRef` advanced with the same live
+  WorkContext, while SC-001 required exact item/observation equality.
+- **Behavior before:** All intent decisions used
+  `semantic-continuation-intent-v0.1`, overlay policy v0.1 and private store/schema v0.2.
+  Any itemRef or observedAt drift suppressed the presentation. SC-002 exact currentness
+  compared the original four target fields but had no versioned kind/evidence binding.
+- **Behavior after:** New confirmations use intent/schema v0.2, overlay policy v0.2 and
+  private store/schema/hash/HMAC domains v0.3. Candidate kind and evidence band are
+  freshly derived server-side and included in the decision and authenticated store.
+  Exact match remains first. A fallback display-title rebind is allowed only for one
+  strictly newer `linked_workstream + corroborated` Continuation item with the exact
+  registry, WorkContext and candidate-expiry anchors, `display/action=null`, no lingering
+  old item and valid original TTL. It neither extends TTL nor changes base Board bytes,
+  lane, ordering, score, evidence, caveats, capability or action.
+- **SC-002 boundary:** Rebound items receive only the SC-001
+  `${subjectLabel} QA 진행하기` title. Validation receipt titles, start authority and
+  terminal authority remain exact and include kind/evidence for v0.2 decisions. A
+  rebound/mismatch exits before provenance, profile or validation subprocess work.
+  A fresh second clock prevents mid-preflight expiry, while an acquired abandoned run is
+  terminally recovered before mismatch exit.
+- **Compatibility and migration:** Legacy intent v0.1 inside authenticated store v0.2 is
+  still pure-read and exact-only. GET and source sync never migrate it. The next explicit
+  confirmation atomically writes store v0.3 while preserving history and supersession.
+  Existing local intent therefore requires one explicit reconfirmation before rebinding.
+  An older reader rejects v0.3 and fails closed to the unchanged generic base Board.
+- **Version tuple:** Intent contract/schema v0.1 → v0.2; overlay/currentness policy
+  v0.1 → v0.2; private intent store/schema and store hash/HMAC domains v0.2 → v0.3.
+  Semantic presentation/wrapper remains v0.2. SC-002 receipt/policy, public Work Board
+  v0.1, S1/R1/R2/R3/B1 and E-001 versions are unchanged.
+- **Code provenance:** Base commit
+  `ab24ed84a66b4415b678c377f7712be10c050577`; this record describes an uncommitted
+  scoped patch pending explicit commit approval.
+- **Evaluation:** No comparison run and no quality-metric claim. Mutable E-001 v0.3
+  revision 3 input, candidate admission, rank, hashes and output semantics are unchanged;
+  core baseline is N/A for this post-projection display currentness correction.
+- **Commands and results:** From `suggestion/`, exact final targeted Vitest command covered
+  `semanticContinuationContracts`, `semanticContinuationOverlay`,
+  `semanticContinuationStore`, `semanticValidationContracts`,
+  `semanticValidationOverlay`, `semanticValidationProducer`,
+  `semanticValidationStore`, `workBoardIntentRoute`, `liveWorkBoardShadow` and
+  `workBoardRoute`: 10 files/77 tests PASS. `npm run typecheck`, full `npm run lint` and
+  `npm run build` PASS on Next.js 15.5.21.
+- **Independent QA:** Read-only security review found no remaining Medium+ source/test
+  defect after exact kind/evidence checks, no-spawn preflight, fresh-clock expiry,
+  abandoned-run recovery and fail-closed regression additions. This is advisory AI QA,
+  not human release approval.
+- **Privacy and retention:** Two private generic enums are added; no raw summary, prompt,
+  source/session/repository identifier, path or credential is added to public DTOs,
+  persistence, replay, evaluation or Git. Existing TTL, consent, 0700/0600 storage,
+  secret namespace, purge and retention behavior are unchanged.
+- **Rollback:** Disable Semantic write/read flags or remove the v0.2 producer/rebinder.
+  Do not rewrite v0.3 in place. Old code safely suppresses the unknown store and retains
+  the base Board; users may explicitly reconfirm after returning to a compatible version.
+- **Residual risk:** Rebinding proves a bounded WorkContext-scoped continuation, not a
+  stable raw source lineage. A different linked session inside the same context could
+  satisfy the bounded policy before the unchanged expiry; SC-002 remains exact-only to
+  prevent carrying validation results across that boundary. Human privacy/copy/G2/G3
+  and release approval remain pending.
+- **Scoped fingerprint:** `sc001r-semantic-currentness-content-sha256-v1` hashes a sorted
+  `relative-path<TAB>worktree-SHA256` manifest for 12 source/test files, excluding docs,
+  generated output, `.local/` and unrelated worktree changes:
+  `2512d3e568e6ffd364c53b509232dbee0cc6a0b3c4ccaeb13a50080e50f87223`.

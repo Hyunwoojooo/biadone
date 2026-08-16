@@ -2,8 +2,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Status | **Q-001 `automated_checkpoint_passed`; release `blocked_pending_human_review`** |
-| Date | 2026-08-14 |
+| Status | **Q-001 `automated_checkpoint_passed`; SC-001R currentness correction validated; release `blocked_pending_human_review`** |
+| Date | 2026-08-15 |
 | Owner | User (product decision and release approver); Codex (AI implementation executor and record author) |
 | Authority | `SUGGESTION_ENGINE_VNEXT_TECH_SPEC.md` |
 
@@ -31,6 +31,7 @@
 - 기존 historical exact-resumption 계획은 broad source-local Continuation MVP와 분리되지 않았다.
 - E-001 v0.3 revision 3 scaffold와 authenticated resolver/Board integration, S-001, R-001, R-002, R-003, B-001의 pure synthetic regression checkpoint가 구현·검증됐다. 12 contract oracle, 9 resolver behavior row와 1 Board behavior row가 모두 통과해 22/22 measured/pass이고 deferred는 0이다. A-001은 그 exact core를 바꾸지 않고 단일 live capture를 실제 `S1 → R1 → R2 → R3 → B1` chain으로 통과시키는 action-disabled local shadow slice를 연결한다. PR-002는 PR-001 preserve readers를 Work Board에 연결하고 mutating Work Resumption lease를 preserve-only authority snapshot으로 대체했다. Work Board GET/intent의 base evaluation은 one-asOf `attention-preserve-capture-v0.1` 안에서 connector, context, workflow, binding, managed observability와 attribution을 함께 검증한다. `/api/attention`은 default `maintain`으로 기존 동작을 유지한다. Production G2/G3, manual browser/privacy review 및 release는 여전히 blocked다.
 - Q-001은 base `e2fc9f56066b5d731fddcf9cc1837424a740b450`에서 전체 자동 matrix와 독립 advisory QA를 수행하고, monitoring replay/deletion, Semantic Continuation intent authority/least privilege/browser currentness 및 stale E2E assertions를 보정한다. Exact initial/final evidence와 manual residual은 `SUGGESTION_ENGINE_VNEXT_QA_REPORT.md`에 기록한다. 최종 automated checkpoint literal과 무관하게 release는 `blocked_pending_human_review`다.
+- SC-001R은 live Codex 관측 시각 전진으로 동일한 linked WorkContext의 public `itemRef`가 바뀌면 확인된 QA 제목이 즉시 사라지던 currentness 결함을 보정한다. 신규 v0.2 intent만 `linked_workstream + corroborated`, 동일 registry/context/expiry, strictly-newer 단일 후보에 display-only 제목을 재연결한다. Legacy v0.1 intent와 SC-002 validation authority는 exact-only이며, 기존 intent는 한 번 명시적으로 재확인해야 새 정책을 사용한다.
 
 이 상태는 아래 task별 기록과 2026-08-14 KST Q-001 automated validation 결과를 함께 반영하며, production activation이나 release를 의미하지 않는다.
 
@@ -205,12 +206,12 @@ MVP의 mapping/session CTA는 설정 또는 선택 화면으로 navigation만 �
 - `Attention.no_action`을 전체 추천 실패로 표현하지 않는다.
 - source-local 후보는 bounded copy와 evidence band를 표시한다.
 
-**Semantic Continuation status (Q-001 hardening 2026-08-14):** A-001의 additive local
+**Semantic Continuation status (SC-001R currentness correction 2026-08-15):** A-001의 additive local
 display-only follow-up으로 구현됐다. `POST /api/work-board/intent`는 local,
 same-origin, configured Basic auth, default-off flag 뒤에서 explicit `QA_RUN`
 confirmation만 받고 freshly evaluated unoverlaid `ready/full` Board의 mapped
-display-only Continuation target을 재검증한다. Q-001에서 private intent store/schema를
-v0.2로 올리고 installation-secret HMAC과 `authKeyId`를 추가했다. Current secret은
+display-only Continuation target을 재검증한다. SC-001R에서 신규 intent/schema와 overlay
+policy를 v0.2, private store/schema/hash/HMAC domain을 v0.3으로 올렸다. Current secret은
 `.local/semantic-continuation/<authKeyId>/intent-store.json`만 직접 열며 fixed-root v0.1은
 자동 migrate/reuse하지 않는다. refs/registry/observedAt/candidate expiry/confirmedAt/
 effective expiry와 supersession을 0700/0600 no-follow atomic storage에 보존하고 read는
@@ -226,13 +227,19 @@ UI가 render-time에 사용한다. Missing/corrupt/stale/mismatch는
 `semanticPresentation=null`과 unchanged generic base를 반환한다. Targeted
 label safety는 NFKC/구분자 정규화 뒤의 camelCase/concatenated
 pass/fail/completion/result/apply claim도 fail closed한다.
+Legacy intent v0.1/store v0.2는 pure-read/exact-only이며 GET/sync가 승격하지 않는다.
+다음 explicit confirmation만 history/supersession을 보존해 v0.3으로 atomic upgrade한다.
+신규 v0.2는 stored/current 모두 linked/corroborated이고 registry/context/expiry가 같으며
+observedAt만 strictly newer인 단일 display-only 후보에 original TTL 안에서 제목을
+rebind한다. SC-002 receipt title/start/terminal은 kind/evidence를 포함한 exact target만
+허용하고 rebound에서는 provenance/profile/subprocess 전에 fail closed한다.
 Intent POST는 Board read flag 외에 separate exact default-off
 `BLABASE_SEMANTIC_CONTINUATION_WRITE_ENABLED === "true"`를 요구하고, exact JSON
 content type/length와 8,192-byte declared/streamed cap을 semantic evaluation보다 먼저
 검증한다. UI는 이 server capability가 없으면 form을 렌더하지 않는다. Form은 exact
 item/context/base-generatedAt target으로 remount되고 request generation과 edit reset으로
 late completion이나 이전 label confirmation이 새 target에 남지 않는다.
-Vitest 8 files/35 tests, typecheck와 lint가 pass했다. Core
+SC-001R Vitest 10 files/77 tests, typecheck, full lint와 production build가 pass했다. Core
 engine/E-001 tuple이 불변이므로 baseline은 N/A이며 production/release는
 승인되지 않았다.
 
@@ -396,6 +403,7 @@ commit/currentness가 자동 회귀로 고정되고 수동 privacy/copy 검토�
 | `X-001` | Action gateway | Security + Runtime owner | `A-001`, `R-001`, `U-001` | `src/continuation/actions/*`, `/api/continuation/offers`, `/api/continuation/open`, Setup CTA | **Setup-only slice implemented locally:** wire API/action policy v0.1, internal authority v0.1, private offer/event/store/schema and revalidation/retention v0.2; 30초 HMAC offer, current-secret namespace, candidate-expiry+24시간 retention, fixed `/projects` destination | explicit click only; issue/open capture는 shared root lock 안에서 직렬화; 자동 실행/재시도/mapping 저장/mutation 없음; invalid offer 409 | Contract/store/tamper/restart/secret-rotation/race/expiry/cap/gate/privacy/client/UI targeted regression과 ECR 기록 | Human approval is limited to Setup surface; `open_source`, exact resume and release remain blocked |
 | `L-001` | Launcher Work Board v1 projection | macOS owner | canonical preserve Work Board | launcher TS/Swift projection, client, state and presentation files | default-off display-only Board, unchanged IPC v1/Attention v2 | strict schema, no-double-sync, one fallback, expiry/currentness and Active compatibility | TS service/JSONL/projection tests, Swift build/model smoke; manual old-agent/accessibility check pending | Launcher rollout approval required |
 | `M-001` | Monitor, replay, feedback | Observability + Evaluation owner | `C-001`, then each runtime phase | `src/suggestionBoard/monitoring/*`, Work Board receipt/API, web UI, aggregate CLI | **M-001a Q-001 hardened locally:** 5분 HMAC receipt, consent/render acknowledgement, Continuation/Setup explicit feedback/reset, authenticated aggregate replay, current-key operation store와 config-independent all-namespace purge | default-off web-only; 30일 lazy retention/no background cleanup; implicit signal/Attention/Launcher/ranking/Gold/release 영향 없음 | Contract/HMAC/tamper/TTL/store/concurrency/rotation purge/disconnect/replay mismatch/route/client/UI/CLI/privacy/preserve tests and opt-in browser test; ECR evidence | 30일 local dogfood와 explicit deletion 범위만 approved; privacy/copy and broader M-001/release remain pending |
+| `SC-001R` | Semantic intent currentness correction | Continuation + Security owner | `SC-001`, Q-001 | private intent contract/store, title overlay, validation preflight | intent/schema v0.2, overlay policy v0.2, store/schema v0.3; legacy exact-only; linked/corroborated strictly-newer display rebinding | Core Board/rank/action 불변, original TTL 불변, SC-002 exact-only/no-spawn | 10 files/77 targeted tests, typecheck, lint, build, independent read-only QA | **Implemented/validated 2026-08-15; existing v0.1 intent requires explicit reconfirmation; release remains blocked** |
 | `Q-001` | 통합 QA 및 회귀 검토 | QA reviewer | `E-001`~`M-001` applicable scope | tests, `SUGGESTION_ENGINE_VNEXT_QA_REPORT.md`, private run artifacts | initial/final exact matrix, blocker corrections, risk findings, manual checklist | **`automated_checkpoint_passed` on 2026-08-14.** Final exact root architecture gate pass(7.39s, warnings only/0 errors); mutable contract checkpoint만 인정하고 unresolved risk 명시 | Unit 1,327, full E2E 27 pass/2 skip, 22/22 baseline, opt-in monitoring/race, Launcher build-package와 architecture matrix pass; exact evidence는 QA report 참조 | **Release `blocked_pending_human_review`; human QA/privacy/accessibility/dataset/release sign-off required** |
 | `P-001` | Freeze와 단계적 rollout | Product + Engine + Security owner | `Q-001` | dataset records, ECR, rollout/release record | human-reviewed frozen dataset, recorded hashes/run IDs, rollout decision | 실제 provenance와 rollback owner가 기록됨 | Locked holdout + staged observation | **Required for every promotion stage** |
 
