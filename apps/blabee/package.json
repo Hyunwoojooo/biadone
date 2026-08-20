@@ -1,0 +1,16 @@
+{
+  "name": "blabee-m0-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Disposable Codex Hook/MCP and rollback feasibility spikes for Blabee M0.",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 spikes/m0/tests/*.test.mjs",
+    "test:m0": "node --test --test-concurrency=1 spikes/m0/tests/*.test.mjs",
+    "m0:benchmark": "node spikes/m0/scripts/benchmark-runtimes.mjs",
+    "m0:codex": "node spikes/m0/integration/run-codex-contract.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "description": "Blabee M0 Hook-first decision contract spike.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" SessionStart",
+            "timeout": 3,
+            "statusMessage": "Checking Blabee project activation",
+            "additionalContextLimit": 600
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" UserPromptSubmit",
+            "timeout": 3,
+            "statusMessage": "Binding Blabee prompt episode",
+            "additionalContextLimit": 900
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" Stop",
+            "timeout": 125,
+            "statusMessage": "Waiting for a Blabee decision"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" PermissionRequest",
+            "timeout": 3,
+            "statusMessage": "Notifying Blabee about a Codex approval request"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "blabee": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/scripts/mcp-server.mjs"],
+      "env": {
+        "BLABEE_M0_SOCKET": "${PLUGIN_DATA}/blabee-m0.sock"
+      }
+    }
+  }
+}
