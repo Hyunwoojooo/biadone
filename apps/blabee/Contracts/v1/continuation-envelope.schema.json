@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/continuation-envelope.schema.json",
+  "title": "Blabee v1 continuation envelope",
+  "description": "A discriminated one-time continuation. Pet actions and internal format repair have mutually exclusive fields and dispatch modes.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/pet_action"
+    },
+    {
+      "$ref": "#/$defs/internal_format_repair"
+    }
+  ],
+  "$defs": {
+    "pet_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "continuation_origin",
+        "dispatch_mode",
+        "continuation_id",
+        "continuation_token",
+        "interaction_id",
+        "project_id",
+        "session_id",
+        "source_turn_id",
+        "source_prompt_id",
+        "episode_id",
+        "episode_root_prompt_id",
+        "episode_baseline_checkpoint_id",
+        "decision_boundary_id",
+        "boundary_sequence",
+        "packet_id",
+        "revision",
+        "option_id",
+        "action_id",
+        "action",
+        "issued_at",
+        "expires_at",
+        "in_flight_deadline_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "blabee_episode_continuation"
+        },
+        "continuation_origin": {
+          "const": "pet_action"
+        },
+        "dispatch_mode": {
+          "const": "same_turn_stop"
+        },
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "continuation_token": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/opaque_token"
+        },
+        "interaction_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "project_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "session_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "source_turn_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "source_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_root_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_baseline_checkpoint_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "decision_boundary_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "boundary_sequence": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+        },
+        "packet_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+        },
+        "issued_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "in_flight_deadline_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        }
+      }
+    },
+    "internal_format_repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "continuation_origin",
+        "dispatch_mode",
+        "continuation_id",
+        "continuation_token",
+        "project_id",
+        "session_id",
+        "source_turn_id",
+        "source_prompt_id",
+        "episode_id",
+        "episode_root_prompt_id",
+        "episode_baseline_checkpoint_id",
+        "decision_boundary_id",
+        "boundary_sequence",
+        "repair_request_id",
+        "repair_kind",
+        "repair_attempt",
+        "max_repair_attempts",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        },
+        "kind": {
+          "const": "blabee_episode_continuation"
+        },
+        "continuation_origin": {
+          "const": "internal_format_repair"
+        },
+        "dispatch_mode": {
+          "const": "submitted_envelope"
+        },
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "continuation_token": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/opaque_token"
+        },
+        "project_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "session_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "source_turn_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "source_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_root_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "episode_baseline_checkpoint_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "decision_boundary_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "boundary_sequence": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+        },
+        "repair_request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "repair_kind": {
+          "const": "decision_proposal_schema"
+        },
+        "repair_attempt": {
+          "const": 1
+        },
+        "max_repair_attempts": {
+          "const": 1
+        },
+        "issued_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        }
+      }
+    }
+  }
+}

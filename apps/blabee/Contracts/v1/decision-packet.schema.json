@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/decision-packet.schema.json",
+  "title": "Blabee v1 decision packet",
+  "description": "A coordinator-sealed four-slot decision packet bound to one prompt episode and one decision boundary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "interaction_id",
+    "packet_id",
+    "revision",
+    "project_id",
+    "session_id",
+    "source_turn_id",
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "decision_boundary_id",
+    "boundary_sequence",
+    "valid_after_event_sequence",
+    "sealed_at",
+    "expires_at",
+    "summary",
+    "evidence",
+    "risk",
+    "checkpoint",
+    "choices"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "const": "blabee_decision_packet"
+    },
+    "interaction_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "packet_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "revision": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+    },
+    "project_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "session_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_turn_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_baseline_checkpoint_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "decision_boundary_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "boundary_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "valid_after_event_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "sealed_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "summary": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/evidence_item"
+      }
+    },
+    "risk": {
+      "$ref": "#/$defs/risk"
+    },
+    "checkpoint": {
+      "$ref": "#/$defs/checkpoint"
+    },
+    "choices": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/recommended_slot"
+        },
+        {
+          "$ref": "#/$defs/alternative_slot"
+        },
+        {
+          "$ref": "#/$defs/pause_slot"
+        },
+        {
+          "$ref": "#/$defs/rollback_slot"
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "evidence_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "kind",
+        "status",
+        "summary",
+        "source"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "kind": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "observed",
+            "unknown"
+          ]
+        },
+        "summary": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+        },
+        "source": {
+          "enum": [
+            "local_verified",
+            "codex_reported"
+          ]
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "reasons"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+          }
+        }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "coverage"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "coverage": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "contract_only"
+          ]
+        }
+      }
+    },
+    "recommended_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "kind",
+        "enabled",
+        "disabled_reason",
+        "option_id",
+        "action_id",
+        "action"
+      ],
+      "properties": {
+        "slot": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recommended_action"
+        },
+        "enabled": {
+          "const": true
+        },
+        "disabled_reason": {
+          "type": "null"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+        }
+      }
+    },
+    "alternative_slot": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "slot",
+            "kind",
+            "enabled",
+            "disabled_reason",
+            "option_id",
+            "action_id",
+            "action"
+          ],
+          "properties": {
+            "slot": {
+              "const": 2
+            },
+            "kind": {
+              "const": "alternative_action"
+            },
+            "enabled": {
+              "const": true
+            },
+            "disabled_reason": {
+              "type": "null"
+            },
+            "option_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "action_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "action": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "slot",
+            "kind",
+            "enabled",
+            "disabled_reason",
+            "option_id",
+            "action_id"
+          ],
+          "properties": {
+            "slot": {
+              "const": 2
+            },
+            "kind": {
+              "const": "alternative_action"
+            },
+            "enabled": {
+              "const": false
+            },
+            "disabled_reason": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+            },
+            "option_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "action_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "pause_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "kind",
+        "enabled",
+        "disabled_reason",
+        "option_id",
+        "action_id"
+      ],
+      "properties": {
+        "slot": {
+          "const": 3
+        },
+        "kind": {
+          "const": "pause"
+        },
+        "enabled": {
+          "const": true
+        },
+        "disabled_reason": {
+          "type": "null"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        }
+      }
+    },
+    "rollback_slot": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "slot",
+            "kind",
+            "enabled",
+            "disabled_reason",
+            "option_id",
+            "action_id",
+            "target_checkpoint_id"
+          ],
+          "properties": {
+            "slot": {
+              "const": 4
+            },
+            "kind": {
+              "const": "rollback"
+            },
+            "enabled": {
+              "const": true
+            },
+            "disabled_reason": {
+              "type": "null"
+            },
+            "option_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "action_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "target_checkpoint_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "slot",
+            "kind",
+            "enabled",
+            "disabled_reason",
+            "option_id",
+            "action_id"
+          ],
+          "properties": {
+            "slot": {
+              "const": 4
+            },
+            "kind": {
+              "const": "rollback"
+            },
+            "enabled": {
+              "const": false
+            },
+            "disabled_reason": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+            },
+            "option_id": {
+              "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+            },
+            "action_id": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

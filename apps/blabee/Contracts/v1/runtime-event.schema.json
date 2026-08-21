@@ -1,0 +1,766 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/runtime-event.schema.json",
+  "title": "Blabee v1 decision runtime event",
+  "description": "An append-only decision event. Transport lifecycle and work outcome are separate event categories.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "event_id",
+    "event_sequence",
+    "event_type",
+    "event_category",
+    "occurred_at",
+    "project_id",
+    "session_id",
+    "source_turn_id",
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "decision_boundary_id",
+    "boundary_sequence",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "const": "blabee_runtime_event"
+    },
+    "event_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "event_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "event_type": {
+      "enum": [
+        "decision_boundary_opened",
+        "decision_boundary_closed",
+        "decision_packet_sealed",
+        "decision_selection_claimed",
+        "internal_format_repair_reserved",
+        "internal_format_repair_claimed",
+        "continuation_dispatched",
+        "continuation_consumed",
+        "continuation_transport_completed",
+        "continuation_transport_timed_out_unknown",
+        "work_outcome_recorded",
+        "interaction_expired"
+      ]
+    },
+    "event_category": {
+      "enum": [
+        "decision_lifecycle",
+        "transport",
+        "work_outcome"
+      ]
+    },
+    "occurred_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "project_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "session_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_turn_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_baseline_checkpoint_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "decision_boundary_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "boundary_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "payload": {
+      "$ref": "#/$defs/event_payload"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "$ref": "#/$defs/is_boundary_opened"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "decision_lifecycle"
+          },
+          "payload": {
+            "$ref": "#/$defs/boundary_opened_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_boundary_closed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "decision_lifecycle"
+          },
+          "payload": {
+            "$ref": "#/$defs/boundary_closed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_packet_sealed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "decision_lifecycle"
+          },
+          "payload": {
+            "$ref": "#/$defs/packet_sealed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_selection_claimed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "decision_lifecycle"
+          },
+          "payload": {
+            "$ref": "#/$defs/selection_claimed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_internal_format_repair_reserved"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/internal_format_repair_journal_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_internal_format_repair_claimed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/internal_format_repair_journal_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_continuation_dispatched"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/continuation_dispatched_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_continuation_consumed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/continuation_consumed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_transport_completed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/transport_completed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_transport_timed_out_unknown"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/transport_timed_out_unknown_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_work_outcome_recorded"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "work_outcome"
+          },
+          "payload": {
+            "$ref": "#/$defs/work_outcome_recorded_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/is_interaction_expired"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "decision_lifecycle"
+          },
+          "payload": {
+            "$ref": "#/$defs/interaction_expired_payload"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "event_payload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/boundary_opened_payload"
+        },
+        {
+          "$ref": "#/$defs/boundary_closed_payload"
+        },
+        {
+          "$ref": "#/$defs/packet_sealed_payload"
+        },
+        {
+          "$ref": "#/$defs/selection_claimed_payload"
+        },
+        {
+          "$ref": "#/$defs/internal_format_repair_journal_payload"
+        },
+        {
+          "$ref": "#/$defs/continuation_dispatched_payload"
+        },
+        {
+          "$ref": "#/$defs/continuation_consumed_payload"
+        },
+        {
+          "$ref": "#/$defs/transport_completed_payload"
+        },
+        {
+          "$ref": "#/$defs/transport_timed_out_unknown_payload"
+        },
+        {
+          "$ref": "#/$defs/work_outcome_recorded_payload"
+        },
+        {
+          "$ref": "#/$defs/interaction_expired_payload"
+        }
+      ]
+    },
+    "is_boundary_opened": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "decision_boundary_opened"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_boundary_closed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "decision_boundary_closed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_packet_sealed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "decision_packet_sealed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_selection_claimed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "decision_selection_claimed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_internal_format_repair_reserved": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "internal_format_repair_reserved"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_internal_format_repair_claimed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "internal_format_repair_claimed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_continuation_dispatched": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "continuation_dispatched"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_continuation_consumed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "continuation_consumed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_transport_completed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "continuation_transport_completed"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_transport_timed_out_unknown": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "continuation_transport_timed_out_unknown"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_work_outcome_recorded": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "work_outcome_recorded"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_interaction_expired": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "interaction_expired"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "boundary_opened_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_id"
+      ],
+      "properties": {
+        "proposal_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        }
+      }
+    },
+    "boundary_closed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "close_reason"
+      ],
+      "properties": {
+        "close_reason": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+        }
+      }
+    },
+    "packet_sealed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interaction_id",
+        "packet_id",
+        "revision",
+        "expires_at"
+      ],
+      "properties": {
+        "interaction_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "packet_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        }
+      }
+    },
+    "selection_claimed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection_id",
+        "interaction_id",
+        "packet_id",
+        "revision",
+        "option_id"
+      ],
+      "properties": {
+        "selection_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "interaction_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "packet_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        }
+      }
+    },
+    "correlation_token_fingerprint": {
+      "type": "string",
+      "pattern": "^(sha256|hmac-sha256):[0-9a-f]{64}$"
+    },
+    "internal_format_repair_journal_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_origin",
+        "continuation_id",
+        "repair_request_id",
+        "parent_prompt_id",
+        "repair_kind",
+        "repair_attempt",
+        "max_repair_attempts",
+        "dispatch_mode",
+        "issued_at",
+        "expires_at",
+        "correlation_token_fingerprint"
+      ],
+      "properties": {
+        "continuation_origin": {
+          "const": "internal_format_repair"
+        },
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "repair_request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "parent_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "repair_kind": {
+          "const": "decision_proposal_schema"
+        },
+        "repair_attempt": {
+          "const": 1
+        },
+        "max_repair_attempts": {
+          "const": 1
+        },
+        "dispatch_mode": {
+          "const": "submitted_envelope"
+        },
+        "issued_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "correlation_token_fingerprint": {
+          "$ref": "#/$defs/correlation_token_fingerprint"
+        }
+      }
+    },
+    "continuation_dispatched_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "interaction_id",
+        "packet_id",
+        "revision",
+        "option_id",
+        "action_id",
+        "dispatch_mode",
+        "issued_at",
+        "expires_at",
+        "in_flight_deadline_at"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "interaction_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "packet_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "dispatch_mode": {
+          "const": "same_turn_stop"
+        },
+        "issued_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "in_flight_deadline_at": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        }
+      }
+    },
+    "continuation_consumed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "dispatch_mode"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "dispatch_mode": {
+          "enum": [
+            "same_turn_stop",
+            "submitted_envelope"
+          ]
+        }
+      }
+    },
+    "transport_completed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "transport_status",
+        "work_outcome_status"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "transport_status": {
+          "const": "completed"
+        },
+        "work_outcome_status": {
+          "const": "not_recorded"
+        }
+      }
+    },
+    "transport_timed_out_unknown_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "transport_status",
+        "work_outcome_status",
+        "automatic_retry",
+        "cancellation_inferred",
+        "failure_inferred"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "transport_status": {
+          "const": "timed_out_unknown"
+        },
+        "work_outcome_status": {
+          "const": "unknown"
+        },
+        "automatic_retry": {
+          "const": false
+        },
+        "cancellation_inferred": {
+          "const": false
+        },
+        "failure_inferred": {
+          "const": false
+        }
+      }
+    },
+    "work_outcome_recorded_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "action_id",
+        "work_outcome_status",
+        "summary",
+        "evidence_ids"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "work_outcome_status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "summary": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+          }
+        }
+      }
+    },
+    "interaction_expired_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interaction_id",
+        "packet_id",
+        "revision",
+        "reason",
+        "automatic_selection"
+      ],
+      "properties": {
+        "interaction_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "packet_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "revision": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/revision"
+        },
+        "reason": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+        },
+        "automatic_selection": {
+          "const": false
+        }
+      }
+    }
+  }
+}

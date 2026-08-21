@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/prompt-episode.schema.json",
+  "title": "Blabee v1 prompt episode",
+  "description": "A human-prompt-bounded episode. Pet actions and internal format repair do not create a new episode.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "project_id",
+    "session_id",
+    "episode_id",
+    "episode_root_turn_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "prompt_origin",
+    "state",
+    "opened_at",
+    "rollback_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "const": "blabee_prompt_episode"
+    },
+    "project_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "session_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_turn_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_baseline_checkpoint_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "prompt_origin": {
+      "const": "human"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "paused",
+        "closed"
+      ]
+    },
+    "opened_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "closed_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "close_reason": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/stable_code"
+    },
+    "rollback_policy": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/rollback_policy"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "closed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "closed_at": true,
+          "close_reason": true
+        },
+        "required": [
+          "closed_at",
+          "close_reason"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "properties": {
+                "closed_at": true
+              },
+              "required": [
+                "closed_at"
+              ]
+            },
+            {
+              "properties": {
+                "close_reason": true
+              },
+              "required": [
+                "close_reason"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

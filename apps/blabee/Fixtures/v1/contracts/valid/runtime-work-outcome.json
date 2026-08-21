@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_runtime_event",
+  "event_id": "event_fixture_work_outcome_001",
+  "event_sequence": 17,
+  "event_type": "work_outcome_recorded",
+  "event_category": "work_outcome",
+  "occurred_at": "2026-01-15T09:01:25Z",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_001",
+  "boundary_sequence": 1,
+  "payload": {
+    "continuation_id": "continuation_fixture_pet_001",
+    "action_id": "action_fixture_recommended_001",
+    "work_outcome_status": "succeeded",
+    "summary": "The fictional review completed and its deterministic result was recorded.",
+    "evidence_ids": [
+      "evidence_fixture_review_001"
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 # Blabee Codex 우선 MVP 기술 명세
 
-상태: M0 연동 계약 조건부 승인, v0.1 구현 준비
+상태: M0 연동 계약 조건부 승인, T-006 v1 계약 확정
 날짜: 2026-08-21
 제품 원문: `blabase_decision_layer_product_plan_ko.md`
 
@@ -47,7 +47,7 @@ Codex 작업
 |---|---|---|
 | `informational` | 이 아키텍처를 설명하거나, 모듈을 요약하거나, 질문에 답한다 | 반고정 결정 카드 없이 필요할 때만 조용한 완료 표시를 보여 준다 |
 | `blabee_decision` | 의미 있는 지점에서 작업이 완료, 부분 완료, 실패 또는 차단되었다 | 동적인 권장·대안 작업과 고정된 보류·롤백 슬롯으로 구성된 반고정 카드를 보여 준다 |
-| `codex_native_request` | 권한 요청 또는 Codex가 제공한 질문과 선택지다 | Blabee 결정 카드로 재해석하지 않는다. 공개 Hook v0.1은 감지 가능한 요청의 알림과 원래 Codex UI 열기만 제공하며, 원문·선택지 전체 미러링은 관리형 app-server 단계로 둔다 |
+| `native_request` | 권한 요청 또는 Codex가 제공한 질문과 선택지다 | Blabee 결정 카드로 재해석하지 않는다. 공개 Hook v0.1은 감지 가능한 요청의 알림과 원래 Codex UI 열기만 제공하며, 원문·선택지 전체 미러링은 관리형 app-server 단계로 둔다 |
 
 분류가 불확실하면 `informational`을 안전한 기본값으로 사용한다. 일반 Codex 결과를 보여 주고 단일 키 동작은 실행하지 않는다.
 
@@ -125,7 +125,7 @@ Codex `0.148.0`에서 Pet의 1·2 선택은 새 `UserPromptSubmit`을 만들지 
 - 결정 제안이 있으면 코디네이터에 Pet 활성화를 요청하고 기다린다. 60초가 지나면 한 번 알리고, 120초가 지나면 패킷을 만료시킨다.
 - `권장 작업` 또는 `대안 작업`: 선택 요청의 프로젝트·세션·턴·에피소드·상호작용·패킷·리비전·옵션 바인딩 전체를 검증하고 활성 패킷을 원자적으로 선점한다. 코디네이터는 봉인된 작업 의미 전체와 일회성 연속 진행 토큰을 물질화한 뒤, 대기 중인 `Stop`에 `decision: "block"`과 진행 지시를 반환한다.
 - Codex는 새 사용자 프롬프트 없이 같은 턴을 계속한다. 작업 후 발생하는 `stop_hook_active: true` 후속 `Stop`만 정확한 세션·턴의 연속 진행 **수명 주기 종료**를 한 번 관찰하고 토큰을 소비한다. 이는 선택한 작업의 성공 판정이 아니며 성공·실패는 별도 outcome/evidence로 판단한다. 잘못된 세션·턴·플래그와 중복 후속 Stop은 상태를 다시 바꾸지 않는다.
-- 120초 만료는 Pet 선택 전의 대기 패킷에 적용한다. `internal_format_repair` 제출 토큰 만료는 검증했지만, dispatch 이후 `pet_action`의 in-flight completion TTL은 M0에서 검사하지 않는다. 이 deadline과 timeout outcome은 T-006/T-007에서 확정한다.
+- 120초 만료는 Pet 선택 전의 대기 패킷에 적용한다. T-006은 dispatch 이후 `pet_action`의 `in_flight_deadline_at`과 timeout 결과 계약을 확정했다. deadline을 넘기면 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 실제 시계·저널·복구 구현은 T-007 범위다.
 - `보류`: 재개 캡슐을 저장하고 턴 종료를 허용한다.
 - `롤백`: 검증된 로컬 복원을 수행하고 현재 에피소드를 종료한다. 새 작업을 자동 시작하지 않으며, 다음 재개 시 복원 결과를 같은 세션 컨텍스트에 동기화한다.
 - 120초 만료 시 자동으로 선택하지 않고 재개 캡슐을 저장한 뒤 턴 종료를 허용한다. 만료 후 도착한 단축키는 거부한다.
@@ -139,6 +139,8 @@ Codex `0.148.0`에서 Pet의 1·2 선택은 새 `UserPromptSubmit`을 만들지 
 
 모델과 로컬 엔진은 서로 다른 기록을 소유한다.
 
+이 절의 규범적 원본은 [`Contracts/v1/manifest.json`](Contracts/v1/manifest.json)과 그 매니페스트가 열거하는 JSON Schema 10개다. 실행 가능한 예시는 [`Fixtures/v1/manifest.json`](Fixtures/v1/manifest.json)에 있으며, 아래 JSON은 같은 필드 구조를 설명하기 위한 대표 예시다. 문서와 스키마가 다르면 `Contracts/v1`을 따른다.
+
 ### Codex 결정 제안
 
 Codex가 생성한다.
@@ -146,8 +148,18 @@ Codex가 생성한다.
 ```json
 {
   "schema_version": "1.0",
-  "correlation_token": "turn-token",
   "interaction_kind": "blabee_decision",
+  "proposal_id": "proposal_oauth_001",
+  "correlation_token": "turn_token_oauth_0001",
+  "project_id": "project_oauth",
+  "session_id": "codex_session_oauth",
+  "source_turn_id": "codex_turn_oauth_01",
+  "source_prompt_id": "prompt_oauth_01",
+  "episode_id": "episode_oauth_01",
+  "episode_root_prompt_id": "prompt_oauth_01",
+  "episode_baseline_checkpoint_id": "cp_before_oauth_prompt",
+  "decision_boundary_id": "boundary_oauth_01",
+  "boundary_sequence": 1,
   "task_goal": "OAuth 콜백 구현",
   "outcome": {
     "status": "completed",
@@ -179,21 +191,26 @@ Codex가 생성한다.
 ```json
 {
   "schema_version": "1.0",
-  "interaction_id": "uuid",
-  "packet_id": "uuid",
+  "kind": "blabee_decision_packet",
+  "interaction_id": "interaction_oauth_01",
+  "packet_id": "packet_oauth_01",
   "revision": 1,
-  "session_id": "codex-session-id",
-  "source_turn_id": "codex-turn-id",
-  "source_prompt_id": "prompt-id",
-  "episode_id": "episode-id",
-  "episode_root_prompt_id": "human-prompt-id",
-  "episode_baseline_checkpoint_id": "cp_before_human_prompt",
-  "project_id": "uuid",
-  "valid_after_event_seq": 184,
+  "project_id": "project_oauth",
+  "session_id": "codex_session_oauth",
+  "source_turn_id": "codex_turn_oauth_01",
+  "source_prompt_id": "prompt_oauth_01",
+  "episode_id": "episode_oauth_01",
+  "episode_root_prompt_id": "prompt_oauth_01",
+  "episode_baseline_checkpoint_id": "cp_before_oauth_prompt",
+  "decision_boundary_id": "boundary_oauth_01",
+  "boundary_sequence": 1,
+  "valid_after_event_sequence": 184,
+  "sealed_at": "2026-08-20T12:00:00Z",
   "expires_at": "2026-08-20T12:02:00Z",
   "summary": "OAuth 콜백 구현 완료",
   "evidence": [
     {
+      "evidence_id": "evidence_oauth_tests",
       "kind": "test",
       "status": "passed",
       "summary": "18/18 통과",
@@ -205,8 +222,8 @@ Codex가 생성한다.
     "reasons": []
   },
   "checkpoint": {
-    "id": "cp_before_human_prompt",
-    "coverage": "complete"
+    "id": "cp_before_oauth_prompt",
+    "coverage": "contract_only"
   },
   "choices": [
     {
@@ -216,10 +233,12 @@ Codex가 생성한다.
       "disabled_reason": null,
       "option_id": "opt_recommended",
       "action_id": "act_recommended",
-      "title": "리프레시 토큰 로테이션 구현",
-      "objective": "기존 콜백 위에 토큰 로테이션을 구현",
-      "constraints": ["DB 스키마 유지"],
-      "done_when": ["관련 테스트 통과"]
+      "action": {
+        "title": "리프레시 토큰 로테이션 구현",
+        "objective": "기존 콜백 위에 토큰 로테이션을 구현",
+        "constraints": ["DB 스키마 유지"],
+        "done_when": ["관련 테스트 통과"]
+      }
     },
     {
       "slot": 2,
@@ -228,10 +247,12 @@ Codex가 생성한다.
       "disabled_reason": null,
       "option_id": "opt_alternative",
       "action_id": "act_alternative",
-      "title": "전체 세션 호환성 검사",
-      "objective": "구현을 확장하기 전에 저장 구조 호환성을 검증",
-      "constraints": ["제품 코드 변경 금지"],
-      "done_when": ["지원 범위와 실패 사례 문서화"]
+      "action": {
+        "title": "전체 세션 호환성 검사",
+        "objective": "구현을 확장하기 전에 저장 구조 호환성을 검증",
+        "constraints": ["제품 코드 변경 금지"],
+        "done_when": ["지원 범위와 실패 사례 문서화"]
+      }
     },
     {
       "slot": 3,
@@ -244,11 +265,10 @@ Codex가 생성한다.
     {
       "slot": 4,
       "kind": "rollback",
-      "enabled": true,
-      "disabled_reason": null,
+      "enabled": false,
+      "disabled_reason": "rollback_not_enabled_in_build",
       "option_id": "opt_rollback",
-      "action_id": "act_rollback",
-      "target_checkpoint_id": "cp_before_human_prompt"
+      "action_id": null
     }
   ]
 }
@@ -270,27 +290,34 @@ Codex가 생성한다.
 v0.1의 대표적인 `disabled_reason` 코드는 다음과 같다.
 
 - 대안 슬롯: `no_safe_meaningful_alternative`, `insufficient_evidence`, `policy_blocked`
-- 롤백 슬롯: `not_a_git_repository`, `baseline_dirty`, `checkpoint_partial`, `concurrent_edit`, `head_changed`, `excluded_path_changed`, `external_side_effect`, `size_limit_exceeded`, `retention_capacity_exhausted`
+- 롤백 슬롯: `rollback_not_enabled_in_build`, `not_a_git_repository`, `baseline_dirty`, `checkpoint_partial`, `concurrent_edit`, `head_changed`, `excluded_path_changed`, `external_side_effect`, `size_limit_exceeded`, `retention_capacity_exhausted`
+
+T-006/M1 계약 단계에서는 실제 사용자 저장소 복원을 시작하지 않으므로 슬롯 4를 `rollback_not_enabled_in_build`로 비활성화한다. 스키마가 미래의 활성 롤백 형태를 표현하는 것은 현재 빌드에서 실행을 허용한다는 뜻이 아니다.
 
 ### 연속 진행 봉투와 같은 턴 전달
 
 연속 진행 봉투는 `continuation_origin`으로 구분되는 두 종류다. `pet_action`은 사용자가 선택한 1·2 작업을 운반하고, `internal_format_repair`는 잘못된 결정 제안을 같은 에피소드에서 한 번만 고치도록 요청한다.
 
-Pet은 선택 시 `interaction_id`, `packet_id`, `revision`, `session_id`, `episode_id`, `option_id`만 코디네이터에 제출한다. 코디네이터가 활성 패킷을 원자적으로 선점하고 봉인된 작업 내용을 다시 조회한 뒤 다음 `pet_action` 봉투를 만든다. Pet이 작업 본문이나 토큰을 직접 조립하지 않는다.
+Pet은 선택 시 선택·프로젝트·세션·턴·프롬프트·에피소드·결정 경계·패킷·리비전·옵션 식별자만 코디네이터에 제출한다. 코디네이터가 활성 패킷을 원자적으로 선점하고 봉인된 작업 내용을 다시 조회한 뒤 다음 `pet_action` 봉투를 만든다. Pet이 슬롯 번호, `action_id`, 작업 본문, 토큰을 직접 조립하지 않는다.
 
 ```json
 {
   "schema_version": "1.0",
   "kind": "blabee_selection_request",
-  "selection_id": "uuid",
-  "interaction_id": "uuid",
-  "project_id": "uuid",
-  "session_id": "codex-session-id",
-  "episode_id": "episode-id",
-  "packet_id": "uuid",
+  "selection_id": "selection_oauth_01",
+  "interaction_id": "interaction_oauth_01",
+  "project_id": "project_oauth",
+  "session_id": "codex_session_oauth",
+  "source_turn_id": "codex_turn_oauth_01",
+  "source_prompt_id": "prompt_oauth_01",
+  "episode_id": "episode_oauth_01",
+  "episode_root_prompt_id": "prompt_oauth_01",
+  "episode_baseline_checkpoint_id": "cp_before_oauth_prompt",
+  "decision_boundary_id": "boundary_oauth_01",
+  "boundary_sequence": 1,
+  "packet_id": "packet_oauth_01",
   "revision": 1,
-  "option_id": "opt_recommended",
-  "selected_at": "2026-08-20T12:00:30Z"
+  "option_id": "opt_recommended"
 }
 ```
 
@@ -301,17 +328,20 @@ Pet은 선택 시 `interaction_id`, `packet_id`, `revision`, `session_id`, `epis
   "schema_version": "1.0",
   "kind": "blabee_episode_continuation",
   "continuation_origin": "pet_action",
-  "continuation_id": "uuid",
-  "continuation_token": "opaque-one-time-token",
-  "interaction_id": "uuid",
-  "project_id": "uuid",
-  "session_id": "codex-session-id",
-  "episode_id": "episode-id",
-  "episode_root_prompt_id": "human-prompt-id",
-  "episode_baseline_checkpoint_id": "cp_before_human_prompt",
-  "parent_turn_id": "codex-turn-id",
-  "parent_prompt_id": "prompt-id",
-  "packet_id": "uuid",
+  "dispatch_mode": "same_turn_stop",
+  "continuation_id": "continuation_oauth_01",
+  "continuation_token": "opaque_one_time_token_oauth_01",
+  "interaction_id": "interaction_oauth_01",
+  "project_id": "project_oauth",
+  "session_id": "codex_session_oauth",
+  "source_turn_id": "codex_turn_oauth_01",
+  "source_prompt_id": "prompt_oauth_01",
+  "episode_id": "episode_oauth_01",
+  "episode_root_prompt_id": "prompt_oauth_01",
+  "episode_baseline_checkpoint_id": "cp_before_oauth_prompt",
+  "decision_boundary_id": "boundary_oauth_01",
+  "boundary_sequence": 1,
+  "packet_id": "packet_oauth_01",
   "revision": 1,
   "option_id": "opt_recommended",
   "action_id": "act_recommended",
@@ -321,7 +351,9 @@ Pet은 선택 시 `interaction_id`, `packet_id`, `revision`, `session_id`, `epis
     "constraints": ["DB 스키마 유지"],
     "done_when": ["관련 테스트 통과"]
   },
-  "expires_at": "2026-08-20T12:02:00Z"
+  "issued_at": "2026-08-20T12:00:30Z",
+  "expires_at": "2026-08-20T12:02:00Z",
+  "in_flight_deadline_at": "2026-08-20T12:05:00Z"
 }
 ```
 
@@ -332,36 +364,48 @@ Pet은 선택 시 `interaction_id`, `packet_id`, `revision`, `session_id`, `epis
   "schema_version": "1.0",
   "kind": "blabee_episode_continuation",
   "continuation_origin": "internal_format_repair",
-  "continuation_id": "uuid",
-  "continuation_token": "opaque-one-time-token",
-  "project_id": "uuid",
-  "session_id": "codex-session-id",
-  "episode_id": "episode-id",
-  "episode_root_prompt_id": "human-prompt-id",
-  "episode_baseline_checkpoint_id": "cp_before_human_prompt",
-  "parent_turn_id": "codex-turn-id",
-  "parent_prompt_id": "prompt-id",
-  "repair_request_id": "uuid",
+  "dispatch_mode": "submitted_envelope",
+  "continuation_id": "repair_continuation_oauth_01",
+  "continuation_token": "opaque_repair_token_oauth_01",
+  "project_id": "project_oauth",
+  "session_id": "codex_session_oauth",
+  "source_turn_id": "codex_turn_oauth_01",
+  "source_prompt_id": "prompt_oauth_01",
+  "episode_id": "episode_oauth_01",
+  "episode_root_prompt_id": "prompt_oauth_01",
+  "episode_baseline_checkpoint_id": "cp_before_oauth_prompt",
+  "decision_boundary_id": "boundary_oauth_01",
+  "boundary_sequence": 1,
+  "repair_request_id": "repair_request_oauth_01",
   "repair_kind": "decision_proposal_schema",
   "repair_attempt": 1,
   "max_repair_attempts": 1,
+  "issued_at": "2026-08-20T12:00:30Z",
   "expires_at": "2026-08-20T12:02:00Z"
 }
 ```
 
-코디네이터는 토큰 원문 대신 검증용 해시를 저장한다. Codex `0.148.0` 주 경로에서는 전체 선택 바인딩을 검증한 뒤 봉투의 작업 의미를 대기 중인 `Stop`의 차단 사유에 넣어 같은 턴으로 전달하고, 정확한 `stop_hook_active: true` 후속 `Stop`에서 토큰을 한 번 소비하며 전송 수명 주기의 종료를 기록한다. 이 전이는 `continuation_dispatched → continuation_consumed → continuation_completed` 순서를 가진다. 여기서 `continuation_completed`는 후속 Stop 관찰을 뜻하며 작업 성공을 뜻하지 않는다.
+코디네이터는 토큰 원문 대신 검증용 fingerprint만 저장한다. 토큰은 CSPRNG로 최소 128-bit 엔트로피를 사용해 발급하고, durable journal에는 SHA-256 또는 HMAC-SHA-256 fingerprint만 기록하며 비교는 constant-time으로 수행한다. JSON Schema의 문자열 길이는 엔트로피를 증명하지 않으므로 실제 생성·키 관리·비교 구현과 테스트는 T-007이 담당한다.
 
-제출 봉투 모드는 `internal_format_repair`에만 사용한다. `UserPromptSubmit`은 프로젝트, 세션, 에피소드, 기준 체크포인트, 부모 턴·프롬프트, 만료, `repair_request_id`, `repair_attempt`를 모두 확인한 뒤 기존 에피소드에 연결한다. 동일한 결정 경계에서 최대 한 번만 허용하며 두 번째 실패 뒤에는 일반 결과를 보여 주고 단일 키 실행을 비활성화한다. `pet_action` 제출 봉투, 토큰 누락·만료·재사용 또는 다른 프로젝트·세션·에피소드의 봉투는 사람의 새 프롬프트로 추정하지 않고 자동 진행을 거부한다.
+Codex `0.148.0` 주 경로에서는 전체 선택 바인딩을 검증한 뒤 봉투의 작업 의미를 대기 중인 `Stop`의 차단 사유에 넣어 같은 턴으로 전달하고, 정확한 `stop_hook_active: true` 후속 `Stop`에서 토큰을 한 번 소비하며 전송 수명 주기의 종료를 기록한다. 이 전이는 `continuation_dispatched → continuation_consumed → continuation_transport_completed` 순서를 가진다. `continuation_transport_completed`는 후속 Stop 관찰일 뿐 작업 성공이 아니다. 실제 성공·실패·취소·불명 결과는 별도 `work_outcome_recorded` 이벤트로 기록한다.
+
+dispatch 뒤 `in_flight_deadline_at`까지 작업 결과를 확인하지 못하면 `continuation_transport_timed_out_unknown`을 기록한다. 이 상태는 `work_outcome_status = unknown`, `automatic_retry = false`, `cancellation_inferred = false`, `failure_inferred = false`이며 중복 실행 위험 때문에 자동으로 재시도하지 않는다.
+
+제출 봉투 모드는 `internal_format_repair`에만 사용한다. 발급 시 `internal_format_repair_reserved`를 원자적으로 journal에 추가해 해당 결정 경계의 1회 보정 예산을 즉시 소비하고, 전체 바인딩과 token fingerprint 검증 뒤 `internal_format_repair_claimed`를 정확히 한 번 기록한다. 두 이벤트를 재생하면 프로세스 재시작 뒤에도 새 ID나 토큰으로 두 번째 보정을 발급할 수 없다. 별도 상태 테이블을 진실 원본으로 두지 않고 T-007 상태는 이 journal의 projection으로 만든다.
+
+`UserPromptSubmit`은 프로젝트, 세션, 에피소드, 기준 체크포인트, `source_turn_id`, `source_prompt_id`, 결정 경계, 만료, `repair_request_id`, `repair_attempt`를 모두 확인한 뒤 기존 에피소드에 연결한다. 동일한 결정 경계에서 최대 한 번만 허용하며 두 번째 실패 뒤에는 일반 결과를 보여 주고 단일 키 실행을 비활성화한다. `pet_action` 제출 봉투, 토큰 누락·만료·재사용 또는 다른 프로젝트·세션·에피소드의 봉투는 사람의 새 프롬프트로 추정하지 않고 자동 진행을 거부한다.
 
 `option_id`는 특정 `packet_id`와 `revision` 안에서 사용자가 누른 선택 인스턴스를 식별한다. `action_id`는 그 선택이 가리키는 의미 있는 작업을 식별하며, 비활성 슬롯에서는 `null`이다. `pet_action` 봉투의 `revision`은 원본 결정 패킷의 `revision`을 그대로 복사한 값이다.
 
 불변 조건:
 
-- 패킷 ID와 리비전은 변경할 수 없다.
+- 선택 요청과 continuation은 자신이 가리키는 봉인 패킷의 ID와 리비전을 바꿀 수 없다.
+- 한 결정 경계의 첫 봉인은 `revision = 1`이다. 선택 전 수정은 같은 `interaction_id`·`packet_id`에서 리비전을 정확히 1씩 올릴 때만 허용하며, 선택·만료·종료 뒤에는 다시 봉인할 수 없다. 선택은 항상 최신 봉인 리비전만 claim한다.
 - 선택 동작은 활성 패킷에 대한 권한 획득을 원자적으로 수행해야 한다.
 - 더 새로운 턴, 이벤트 시퀀스 또는 패킷이 생기면 기존 패킷은 무효가 된다.
 - 슬롯 1과 2의 표시 문구와 실행 내용은 현재 패킷에 종속된다. 슬롯 2에 안전하고 의미 있는 대안이 없으면 비활성화하며, 재설계 등 다른 의미로 바꾸지 않는다.
 - `enabled`가 `false`이면 `disabled_reason`이 필수이고 `action_id`는 `null`이며 실행 본문은 없어야 한다. `enabled`가 `true`이면 `disabled_reason`은 `null`이어야 한다.
+- 한 패킷 안의 네 `option_id`는 모두 유일해야 하며, `null`이 아닌 `action_id`도 서로 달라야 한다. 중복 ID로 선택 의미를 모호하게 만들 수 없다.
 - 슬롯 3은 보류, 슬롯 4는 롤백 이외의 의미로 사용할 수 없다.
 - Codex 네이티브 질문과 권한 요청은 별도 상호작용 ID를 사용하며 이 `choices` 배열로 변환하지 않는다.
 - 로컬 근거는 모델이 보고한 근거와 별도로 표시한다.
@@ -370,7 +414,9 @@ Pet은 선택 시 `interaction_id`, `packet_id`, `revision`, `session_id`, `epis
 - 패킷의 `episode_baseline_checkpoint_id`, `checkpoint.id`, 롤백 슬롯의 `target_checkpoint_id`는 정확히 같아야 한다. 하나라도 없거나 다르면 롤백을 비활성화한다.
 - 슬롯 1이나 2를 실행할 때는 숫자가 아니라 패킷·리비전·옵션 ID와 제목·목표·제약·완료 기준 전체를 같은 세션·턴에 전달한다.
 - 슬롯 1이나 2에서 발급하는 `continuation_token`은 현재 프로젝트·세션·턴·패킷·에피소드·옵션에 묶인 일회성 값이며 `same_turn_stop`에서만 소비해야 한다. `UserPromptSubmit`으로의 전환, 재사용과 교차 바인딩을 거부한다.
-- 내부 형식 보정 봉투는 선택 봉투로 가장할 수 없으며 같은 결정 경계에서 `repair_attempt = 1` 한 번만 허용한다.
+- 한 번 선점한 선택에서는 continuation ID나 토큰을 바꾸더라도 두 번째 dispatch를 만들 수 없고, 하나의 continuation은 한 번만 소비할 수 있다.
+- `issued_at < expires_at <= in_flight_deadline_at`을 만족해야 한다. RFC 3339의 1~9자리 소수초를 exact epoch-nanosecond로 비교하며, deadline 이전 timeout, 실재하지 않는 달력 날짜, 종료된 결정 경계의 후속 이벤트는 거부한다.
+- 내부 형식 보정 봉투는 선택 봉투로 가장할 수 없다. `internal_format_repair_reserved`가 결정 경계당 한 번의 보정 예산을 소비하는 유일한 진실 원본이며 새 continuation ID·토큰·repair request ID를 쓰거나 재시작해도 `repair_attempt = 1` 한 번만 허용한다.
 
 ## 7. 반고정 슬롯의 의미
 
@@ -579,7 +625,7 @@ SQLite에는 다음 항목을 저장한다.
 - 1번은 현재 패킷의 권장 작업 전체를 대기 중인 `Stop`을 통해 같은 세션·턴의 연속 진행 지시로 전달하고 현재 에피소드와 기준선을 유지한다.
 - 2번은 현재 패킷의 대안 작업 전체를 같은 방식으로 전달한다. 의미 있는 대안이 없으면 비활성화하고 다른 동작으로 재사용하지 않는다.
 - 비활성 슬롯은 안정적인 `disabled_reason`을 표시하고 `action_id`는 `null`이며 실행 본문을 갖지 않는다.
-- `pet_action`은 same-turn Stop 전용으로 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰은 재사용·만료·다른 프로젝트·세션·에피소드 사용, 부모 턴·프롬프트 불일치를 거부하며 사람의 새 프롬프트로 오인하지 않는다. dispatch 후 `pet_action` in-flight deadline은 별도 인수 기준을 확정해야 한다.
+- `pet_action`은 same-turn Stop 전용으로 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰은 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치를 거부하며 사람의 새 프롬프트로 오인하지 않는다. dispatch 후 deadline 초과는 작업 결과 `unknown`과 자동 재시도 금지로 처리한다.
 - 내부 형식 보정은 같은 결정 경계에서 최대 한 번만 시도하고, 다시 실패하면 일반 결과만 보여 주며 단일 키 실행을 끈다.
 - Codex 네이티브 선택지는 Blabee의 1·2·3·4로 재해석하지 않는다. 공개 Hook v0.1에서는 원래 Codex UI가 표시·응답을 소유하고 Pet은 감지 가능한 요청의 알림과 화면 열기만 제공한다.
 - 보류는 다른 턴을 시작하지 않고 완전한 재개 캡슐을 저장한다.
@@ -620,7 +666,7 @@ M0에서 실제 Codex CLI `0.148.0`과 임시 Git 프로젝트를 사용해 다�
 - Hook 해시 검토는 타당성 픽스처에서만 `--dangerously-bypass-hook-trust`로 우회했다. 마켓플레이스 설치, 번들 코디네이터 자동 시작, 사용자 신뢰 검토, 제품 패키징은 아직 검증하지 않았다. [Codex 플러그인 만들기](https://developers.openai.com/plugins/build/plugins)
 - 롤백 검증은 운영체제 임시 디렉터리 아래 합성 Git 픽스처에만 적용했다. 실제 사용자 작업공간에서 롤백을 활성화하지 않았다.
 
-이 M0 결과는 연동 타당성에 대한 조건부 승인이다. 반복 결정 루프, dispatch 후 in-flight deadline/outcome, 운영 롤백 안전 게이트, 네이티브 Pet과 패키징이 남아 있으므로 실제 사용자 작업공간이나 공개 MVP 사용 승인이 아니다.
+이 M0 결과는 연동 타당성에 대한 조건부 승인이다. T-006은 반복 결정 경계와 dispatch 후 in-flight deadline/outcome을 런타임 독립 계약으로 고정했지만, 이를 실행하는 T-007 상태 머신, 운영 롤백 안전 게이트, 네이티브 Pet과 패키징이 남아 있으므로 실제 사용자 작업공간이나 공개 MVP 사용 승인이 아니다.
 
 남은 제품 선택이 아니라 **후속 측정으로 닫을 기술 증거 게이트**는 운영용 로컬 코디네이터 런타임 하나다. M0 마이크로벤치에서 네이티브 Swift 헬퍼, TypeScript/Node 헬퍼, 소형 C 시스템 바이너리의 제한된 health fixture를 비교했지만, C 구현은 정식 JSON 파서가 아니므로 프로토콜 동등성 근거로 사용하지 않는다. 다음 조건을 모두 기록하기 전까지 제품 런타임은 선택하지 않는다.
 

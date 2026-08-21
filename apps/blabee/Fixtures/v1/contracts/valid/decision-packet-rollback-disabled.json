@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_decision_packet",
+  "interaction_id": "interaction_fixture_001",
+  "packet_id": "packet_fixture_001",
+  "revision": 1,
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_001",
+  "boundary_sequence": 1,
+  "valid_after_event_sequence": 10,
+  "sealed_at": "2026-01-15T09:01:00Z",
+  "expires_at": "2026-01-15T09:03:00Z",
+  "summary": "The fictional parser validation path is ready for review.",
+  "evidence": [
+    {
+      "evidence_id": "evidence_fixture_001",
+      "kind": "contract_test",
+      "status": "passed",
+      "summary": "The deterministic fictional contract sample passed.",
+      "source": "local_verified"
+    }
+  ],
+  "risk": {
+    "level": "low",
+    "reasons": [
+      "fixture_only"
+    ]
+  },
+  "checkpoint": {
+    "id": "checkpoint_fixture_before_prompt_001",
+    "coverage": "contract_only"
+  },
+  "choices": [
+    {
+      "slot": 1,
+      "kind": "recommended_action",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_recommended_001",
+      "action_id": "action_fixture_recommended_001",
+      "action": {
+        "title": "Review the fictional parser change",
+        "objective": "Inspect the fictional parser change for contract regressions.",
+        "constraints": [
+          "Do not modify files outside the fictional fixture project."
+        ],
+        "done_when": [
+          "The review findings are recorded."
+        ]
+      }
+    },
+    {
+      "slot": 2,
+      "kind": "alternative_action",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_alternative_001",
+      "action_id": "action_fixture_alternative_001",
+      "action": {
+        "title": "Run the fictional compatibility check",
+        "objective": "Validate the fictional parser against compatibility samples.",
+        "constraints": [
+          "Use only deterministic fixture inputs."
+        ],
+        "done_when": [
+          "Every fictional compatibility sample has a recorded result."
+        ]
+      }
+    },
+    {
+      "slot": 3,
+      "kind": "pause",
+      "enabled": true,
+      "disabled_reason": null,
+      "option_id": "option_fixture_pause_001",
+      "action_id": "action_fixture_pause_001"
+    },
+    {
+      "slot": 4,
+      "kind": "rollback",
+      "enabled": false,
+      "disabled_reason": "rollback_not_enabled_in_build",
+      "option_id": "option_fixture_rollback_001",
+      "action_id": null
+    }
+  ]
+}

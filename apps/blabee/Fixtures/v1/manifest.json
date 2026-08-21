@@ -1,0 +1,165 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "name": "valid_action",
+      "file": "contracts/valid/action.json",
+      "schema": "action",
+      "valid": true
+    },
+    {
+      "name": "valid_prompt_episode",
+      "file": "contracts/valid/prompt-episode.json",
+      "schema": "prompt_episode",
+      "valid": true
+    },
+    {
+      "name": "valid_decision_proposal",
+      "file": "contracts/valid/decision-proposal.json",
+      "schema": "decision_proposal",
+      "valid": true
+    },
+    {
+      "name": "valid_decision_packet_rollback_disabled",
+      "file": "contracts/valid/decision-packet-rollback-disabled.json",
+      "schema": "decision_packet",
+      "valid": true
+    },
+    {
+      "name": "valid_decision_packet_alternative_disabled",
+      "file": "contracts/valid/decision-packet-alternative-disabled.json",
+      "schema": "decision_packet",
+      "valid": true
+    },
+    {
+      "name": "valid_selection_request",
+      "file": "contracts/valid/selection-request.json",
+      "schema": "selection_request",
+      "valid": true
+    },
+    {
+      "name": "valid_continuation_pet_action",
+      "file": "contracts/valid/continuation-pet-action.json",
+      "schema": "continuation_envelope",
+      "valid": true
+    },
+    {
+      "name": "valid_continuation_format_repair",
+      "file": "contracts/valid/continuation-format-repair.json",
+      "schema": "continuation_envelope",
+      "valid": true
+    },
+    {
+      "name": "valid_native_request_notification_only",
+      "file": "contracts/valid/native-request-notification-only.json",
+      "schema": "native_request",
+      "valid": true
+    },
+    {
+      "name": "valid_resume_capsule",
+      "file": "contracts/valid/resume-capsule.json",
+      "schema": "resume_capsule",
+      "valid": true
+    },
+    {
+      "name": "valid_runtime_transport_completed",
+      "file": "contracts/valid/runtime-transport-completed.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
+      "name": "valid_runtime_work_outcome",
+      "file": "contracts/valid/runtime-work-outcome.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
+      "name": "valid_runtime_timed_out_unknown",
+      "file": "contracts/valid/runtime-timed-out-unknown.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
+      "name": "valid_runtime_format_repair_reserved",
+      "file": "contracts/valid/runtime-format-repair-reserved.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
+      "name": "valid_runtime_format_repair_claimed",
+      "file": "contracts/valid/runtime-format-repair-claimed.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
+      "name": "invalid_selection_slot_number_only",
+      "file": "contracts/invalid/selection-slot-number-only.json",
+      "schema": "selection_request",
+      "valid": false,
+      "expected_error_code": "selection_identifier_binding_required"
+    },
+    {
+      "name": "invalid_selection_missing_boundary",
+      "file": "contracts/invalid/selection-missing-boundary.json",
+      "schema": "selection_request",
+      "valid": false,
+      "expected_error_code": "decision_boundary_required"
+    },
+    {
+      "name": "invalid_decision_packet_disabled_option_with_action",
+      "file": "contracts/invalid/decision-packet-disabled-option-with-action.json",
+      "schema": "decision_packet",
+      "valid": false,
+      "expected_error_code": "disabled_option_payload_forbidden"
+    },
+    {
+      "name": "invalid_decision_packet_wrong_slot_semantics",
+      "file": "contracts/invalid/decision-packet-wrong-slot-semantics.json",
+      "schema": "decision_packet",
+      "valid": false,
+      "expected_error_code": "slot_semantics_mismatch"
+    },
+    {
+      "name": "invalid_continuation_pet_action_wrong_dispatch",
+      "file": "contracts/invalid/continuation-pet-action-wrong-dispatch.json",
+      "schema": "continuation_envelope",
+      "valid": false,
+      "expected_error_code": "dispatch_mode_mismatch"
+    },
+    {
+      "name": "invalid_continuation_format_repair_with_action_fields",
+      "file": "contracts/invalid/continuation-format-repair-with-action-fields.json",
+      "schema": "continuation_envelope",
+      "valid": false,
+      "expected_error_code": "continuation_mode_fields_forbidden"
+    },
+    {
+      "name": "invalid_runtime_timeout_marked_failed",
+      "file": "contracts/invalid/runtime-timeout-marked-failed.json",
+      "schema": "runtime_event",
+      "valid": false,
+      "expected_error_code": "timeout_outcome_must_be_unknown"
+    },
+    {
+      "name": "invalid_runtime_timeout_automatic_retry",
+      "file": "contracts/invalid/runtime-timeout-automatic-retry.json",
+      "schema": "runtime_event",
+      "valid": false,
+      "expected_error_code": "automatic_retry_forbidden"
+    },
+    {
+      "name": "invalid_runtime_transport_completed_claims_success",
+      "file": "contracts/invalid/runtime-transport-completed-claims-success.json",
+      "schema": "runtime_event",
+      "valid": false,
+      "expected_error_code": "transport_completion_cannot_claim_work_success"
+    },
+    {
+      "name": "invalid_runtime_format_repair_raw_correlation_token",
+      "file": "contracts/invalid/runtime-format-repair-raw-correlation-token.json",
+      "schema": "runtime_event",
+      "valid": false,
+      "expected_error_code": "raw_correlation_token_forbidden"
+    }
+  ]
+}

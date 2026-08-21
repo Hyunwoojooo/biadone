@@ -9,8 +9,8 @@
 | T-003 | Stop 대기, 반고정 슬롯, 같은 턴 후속 진행 한 사이클 검증 | T-002 | 높음 | 결정 한 번의 1·2가 봉인된 전체 작업을 대기 중인 Stop을 통해 같은 세션·턴·에피소드로 전달하고, 후속 `stop_hook_active` Stop에서 전송 수명 주기 종료를 한 번 관찰하며, 교차 바인딩·중복 종료·형식 보정 제출 토큰의 재사용/만료·2초 fail-open·선택 전 60초 알림/120초 만료를 검증함. 작업 성공과 dispatch 후 in-flight deadline은 별도임 | done |
 | T-004 | PermissionRequest 알림과 원래 Codex UI 위임 검증 | T-001 | 높음 | Pet은 요청을 알리고 원래 화면으로 이동할 수 있지만 허용·거부 결정을 대신 전송하지 않음 | in_progress |
 | T-005 | 운영 코디네이터 런타임 측정과 선택 | T-002, T-003 | 높음 | TS/Node, 분리 Swift 헬퍼, 소형 독립형 시스템 바이너리의 시작 시간, 메모리, 장애 복구, 서명, DMG 크기를 비교해 선택 기록을 남김 | in_progress |
-| T-006 | v1 결정 패킷과 프롬프트 경계 스키마 확정 | T-002, T-003 | 중간 | 반고정 슬롯, 선택 요청, `pet_action = same_turn_stop`, `internal_format_repair = submitted_envelope`, 프롬프트/에피소드/기준선 필드, dispatch 후 in-flight deadline/outcome의 골든 픽스처와 모드별 재사용·만료·바인딩 불변 조건 테스트가 통과함 | pending |
-| T-007 | 이벤트 저널, 리듀서, 세션 대기열, 원자적 선택 선점 구현 | T-005, T-006 | 높음 | 재시작, 오래된 이벤트, 이중 선택, 같은 턴의 연속 결정 사이클, 전면 카드, 교차 세션 입력 테스트가 통과함 | pending |
+| T-006 | v1 결정 패킷과 프롬프트 경계 스키마 확정 | T-002, T-003 | 중간 | 반고정 슬롯, 선택 요청, `pet_action = same_turn_stop`, `internal_format_repair = submitted_envelope`, 형식 보정 예약·claim durable 이벤트, 프롬프트/에피소드/기준선 필드, dispatch 후 in-flight deadline/outcome의 골든 픽스처와 모드별 재사용·만료·바인딩·재시작 replay 테스트가 통과함 | done |
+| T-007 | 이벤트 저널, 리듀서, 세션 대기열, 원자적 선택 선점 구현 | T-005, T-006 | 높음 | 재시작, 오래된 이벤트, 이중 선택, 형식 보정 예약의 원자적 경계당 1회 소비, CSPRNG 토큰·fingerprint constant-time 검증, 같은 턴의 연속 결정 사이클, 전면 카드, 교차 세션 입력 테스트가 통과함 | pending |
 | T-008 | 사람이 입력한 직전 프롬프트 단위 clean-worktree 체크포인트와 롤백 검증 | 없음 | 치명적 | 합성 임시 Git 픽스처에서 Pet 연속 진행까지 바이트·Git 실행 비트·인덱스 단위 복원하고, unsupported index/config/metadata와 hazard attestation 누락을 포함한 dirty/ignored/submodule/LFS/루트 밖/크기 초과/동시 편집/브랜치·HEAD 변경/외부 효과에서는 fail-closed하며, 복구 스냅샷 생성과 1 GiB 정리 정책을 검증함. 스냅샷 재적용·실패 주입과 실제 작업공간 연결은 별도 제품 작업임 | done |
 | T-009 | 진행 중인 기존 프로젝트의 단계적 도입 구현 | T-006, T-008 | 높음 | 도입 중 저장소를 변경하지 않고, 안전한 기준선이 없을 때는 1·2·3만 제공하며 롤백은 비활성화됨 | pending |
 | T-010 | 반고정 결정 카드를 갖춘 네이티브 macOS Pet 구현 | T-006, T-007 | 중간 | 동적 1·2, 고정 3·4, 다중 세션 전면 카드, 비활성 슬롯, 만료 상태를 정확히 표시하고 입력 초점·다중 디스플레이·오래된 단축키 테스트가 통과함 | pending |
@@ -24,6 +24,7 @@
 - T-001~T-003은 실제 Codex CLI `0.148.0` 임시 프로젝트 계약 픽스처와 자동 테스트를 기준으로 완료했다.
 - T-004는 PermissionRequest 알림 전용·응답 비중계 계약만 확인했다. 원래 Codex UI 열기와 실제 Pet UX가 남아 있어 `in_progress`다.
 - T-005는 Node·Swift·C 마이크로벤치를 끝냈지만 재시작 복구, 지속 부하, 서명·공증, DMG, 업데이트·진단 증거가 부족해 런타임 선택을 완료하지 않았다.
+- T-006은 `Contracts/v1`, `Fixtures/v1`, `Tests/Contracts`의 런타임 독립 계약 범위에서 완료했다. 형식 보정의 durable 예약·claim 이벤트와 replay 규칙은 고정했지만 실제 이벤트 저널·원자적 선택·반복 Pet 루프를 구현했다는 뜻은 아니며 그 책임은 T-007에 남는다.
 - T-008의 `done`은 운영체제 임시 디렉터리 아래 합성 Git 픽스처 범위다. 실제 사용자 프로젝트에서 롤백을 활성화했다는 뜻이 아니다.
 - Codex `0.148.0`의 주 경로는 Pet 선택 뒤 새 `UserPromptSubmit`을 생성하지 않는다. `pet_action`은 대기 중인 `Stop`을 해제해 같은 턴을 계속하고 `stop_hook_active: true` 후속 `Stop`에서 완료하는 전용 경로다. 제출 봉투는 `internal_format_repair`에만 허용한다.
 - T-003은 한 결정 사이클의 증거다. 같은 턴의 두 번째 `emit_decision`은 현재 턴 키 충돌이 있어 반복 Pet 루프는 T-007에서 해결한다.

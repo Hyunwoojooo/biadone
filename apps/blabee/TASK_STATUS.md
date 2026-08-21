@@ -4,13 +4,14 @@
 
 ## 현재 단계
 
-M0 연동 계약 검증 스파이크에서 **결정 한 번 → 연속 진행 한 번**의 왕복과 설명 전용 음성 계약을 입증해 QA 조건부 승인을 받았다. 실제 Codex CLI `0.148.0`, 프로젝트 로컬 Hook/MCP 설정, 가짜 로컬 코디네이터를 연결해 Pet 선택이 터미널 입력 주입이나 별도 LLM API 없이 같은 Codex 턴을 계속하게 할 수 있음을 확인했다. 같은 턴에서 두 번째 결정을 여는 반복 Pet 루프는 아직 입증하지 않았다. 현재 결과는 폐기 가능한 타당성 스파이크이며, 실제 사용자 작업공간이나 공개 MVP 사용 승인이 아니다. 네이티브 Pet·운영 코디네이터·제품 롤백·DMG 패키징은 아직 구현하지 않았다.
+M0 연동 계약 검증에 이어 T-006 런타임 독립 v1 계약을 확정했다. `Contracts/v1`의 Draft 2020-12 스키마와 `Fixtures/v1`의 계약·이벤트 Fixture, `Tests/Contracts`의 오프라인 계약 검사가 반고정 슬롯, 같은 턴의 연속 결정 경계, 선택 선점 바인딩, 두 continuation 모드, 형식 보정의 durable 예약·claim, 전송과 작업 결과의 분리를 고정한다. 실제 Codex CLI `0.148.0` M0 왕복은 여전히 **결정 한 번 → 연속 진행 한 번**만 입증하며, 운영 코디네이터·반복 Pet 루프·네이티브 Pet·제품 롤백·DMG 패키징은 아직 구현하지 않았다.
 
 ## M0 검증 결과
 
 | 범위 | 결과 | 증거 |
 |---|---|---|
-| 전체 자동 테스트 | 완료 | 최종 `npm test` 53/53 통과 |
+| 전체 자동 테스트 | 완료 | 최종 `npm test` 155/155 통과: 기존 M0 53 + v1 계약 102 |
+| v1 계약 패키지 | 완료 | 스키마 10개, Fixture JSON 33개, 계약 테스트 102/102 통과 |
 | Hook/코디네이터 | 완료 | 15개 테스트, 실제 Codex CLI 계약 픽스처 통과 |
 | 체크포인트/복원 | 임시 픽스처 검증 완료 | 운영체제 임시 디렉터리 아래 합성 Git 저장소에서 36개 테스트 통과 |
 | 런타임 비교 | 측정 완료, 선택 보류 | Node·Swift·C의 제한된 health fixture와 시작 지연·RSS·크기 측정. C는 정식 JSON 파서가 아니므로 프로토콜 동등성 근거가 아님 |
@@ -30,7 +31,7 @@ project_enabled
 → pet_action_selected
 → continuation_dispatched
 → continuation_consumed
-→ continuation_completed
+→ continuation_completed  # M0 이벤트명; v1 계약명은 continuation_transport_completed
 ```
 
 Codex `0.148.0`에서 `Stop`의 `decision: "block"`은 새 `UserPromptSubmit`을 만들지 않는다. 같은 턴이 계속되고 작업 뒤의 `Stop`이 `stop_hook_active: true`로 재진입한다. Blabee는 선택 시 프로젝트·세션·턴·에피소드·상호작용·패킷·리비전·옵션 바인딩 전체를 검증해 대기 중인 `Stop`을 해제하고, 후속 `Stop`에서 전송 수명 주기 종료를 정확히 한 번 관찰한다. 이는 일반적인 작업 성공 판정이 아니다. `pet_action`은 이 same-turn Stop 경로 전용이며 `UserPromptSubmit`으로 제출할 수 없다. 제출 봉투 모드는 `internal_format_repair`에만 사용한다.
@@ -54,24 +55,24 @@ Codex `0.148.0`에서 `Stop`의 `decision: "block"`은 새 `UserPromptSubmit`을
 
 ## 작업 상태
 
-- 완료: T-001, T-002, T-003
+- 완료: T-001, T-002, T-003, T-006
 - M0 합성 픽스처 검증 완료: T-008. 실제 사용자 작업공간 연결은 아직 하지 않았다.
 - 진행 중: T-004, T-005
-- 대기: T-006~T-007, T-009~T-014
+- 대기: T-007, T-009~T-014
 
 ## 다음 작업
 
-1. T-006에서 M0 계약을 v1 스키마로 고정한다. `pet_action`은 same-turn Stop 전용, 제출 봉투는 `internal_format_repair` 전용으로 분리하고 dispatch 후 in-flight deadline/outcome을 정의한다.
-2. T-007에서 영속 이벤트 저널, 재시작 복구, 세션 대기열, 원자적 선택 선점과 같은 턴의 반복 결정 경계 식별을 구현한다.
-3. T-005에서 Swift 패키징 슬라이스를 만들고 강제 종료 복구, 지속 부하, Developer ID 서명·공증, DMG 크기, 업데이트·진단을 측정한 뒤 운영 런타임을 선택한다.
-4. T-004에서 원래 Codex UI 열기와 PermissionRequest 알림 UX를 실제 Pet 통합으로 검증한다.
-5. T-008의 합성 복원 코드를 실제 제품에 연결하기 전에 저장소 전체 잠금과 TOCTOU, 같은 경로의 사람 동시 편집, 복구 스냅샷 재적용·실패 주입, sparse/index flags와 비-Git POSIX 메타데이터, 저장소 밖·외부 효과의 fail-closed를 별도 릴리스 게이트로 검증한다.
+1. T-005에서 Swift 패키징 슬라이스를 만들고 강제 종료 복구, 지속 부하, Developer ID 서명·공증, DMG 크기, 업데이트·진단을 측정해 운영 런타임을 선택한다.
+2. T-007에서 `Contracts/v1`을 소비하는 영속 이벤트 저널, 재시작 복구, 세션 대기열, 원자적 선택 선점과 같은 턴의 반복 결정 상태 머신을 구현한다.
+3. T-004에서 원래 Codex UI 열기와 PermissionRequest 알림 UX를 실제 Pet 통합으로 검증한다.
+4. T-008의 합성 복원 코드를 실제 제품에 연결하기 전에 저장소 전체 잠금과 TOCTOU, 같은 경로의 사람 동시 편집, 복구 스냅샷 재적용·실패 주입, sparse/index flags와 비-Git POSIX 메타데이터, 저장소 밖·외부 효과의 fail-closed를 별도 릴리스 게이트로 검증한다.
 
 ## 알려진 위험과 경계
 
 - 같은 턴 `Stop` 재진입은 Codex `0.148.0` 실제 동작으로 확인했지만 버전별 내부 계약이므로 정기 호환성 테스트가 필수다.
-- M0은 한 결정 사이클만 통과했다. 같은 턴 안에서 두 번째 `emit_decision`은 현재 턴 키 충돌이 발생하므로 반복 Pet 루프는 M1 설계 대상이다.
-- 120초는 선택 전 대기 패킷 만료다. `internal_format_repair` 제출 토큰 만료는 검증했지만 dispatch 후 `pet_action` in-flight deadline과 timeout outcome은 아직 정의하지 않았다.
+- M0 런타임은 한 결정 사이클만 통과했다. T-006 계약은 `decision_boundary_id`와 `boundary_sequence`로 같은 턴의 경계 1→2를 표현하고 검증하지만, 이를 실행하는 반복 상태 머신은 T-007에서 구현해야 한다.
+- T-006 계약은 dispatch 후 `in_flight_deadline_at`과 `timed_out_unknown`을 정의했다. timeout은 작업 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 실제 시계·저널·복구 동작은 T-007 범위다.
+- 형식 보정은 발급 시 `internal_format_repair_reserved`가 결정 경계당 1회 예산을 소비하고, 검증 뒤 `internal_format_repair_claimed`가 일회 claim을 기록한다. T-006은 journal replay 불변식만 고정했으며 실제 원자적 영속화와 token fingerprint 구현은 T-007 범위다.
 - M0 하네스는 프로젝트 신뢰를 정확한 whole-table CLI override로 설정하고 Hook 해시 검토를 테스트 전용 `--dangerously-bypass-hook-trust`로 우회했다. 제품 설치에서는 이 우회를 사용할 수 없다.
 - 프로젝트 로컬 MCP 검색 중복 우려는 해소됐지만, 마켓플레이스 설치·번들 코디네이터 자동 시작·신뢰 검토·업데이트·서명·공증·DMG는 아직 검증하지 않았다.
 - Stop의 60초 알림과 120초 만료는 상수와 단축된 결정론적 테스트로 검증했다. 실제 절전·복귀, 장시간 대기, 프로세스 재시작 시계는 후속 검증이 필요하다.

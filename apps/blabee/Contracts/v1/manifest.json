@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "draft": "2020-12",
+  "contracts": [
+    {
+      "name": "common",
+      "file": "common.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/common.schema.json"
+    },
+    {
+      "name": "action",
+      "file": "action.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+    },
+    {
+      "name": "prompt_episode",
+      "file": "prompt-episode.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/prompt-episode.schema.json"
+    },
+    {
+      "name": "decision_proposal",
+      "file": "decision-proposal.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/decision-proposal.schema.json"
+    },
+    {
+      "name": "decision_packet",
+      "file": "decision-packet.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/decision-packet.schema.json"
+    },
+    {
+      "name": "selection_request",
+      "file": "selection-request.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/selection-request.schema.json"
+    },
+    {
+      "name": "continuation_envelope",
+      "file": "continuation-envelope.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/continuation-envelope.schema.json"
+    },
+    {
+      "name": "runtime_event",
+      "file": "runtime-event.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/runtime-event.schema.json"
+    },
+    {
+      "name": "native_request",
+      "file": "native-request.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/native-request.schema.json"
+    },
+    {
+      "name": "resume_capsule",
+      "file": "resume-capsule.schema.json",
+      "id": "https://schemas.blabee.local/contracts/v1/resume-capsule.schema.json"
+    }
+  ]
+}

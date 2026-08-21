@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/resume-capsule.schema.json",
+  "title": "Blabee v1 resume capsule",
+  "description": "The durable, non-executing summary saved when a decision interaction is paused or expires.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "capsule_id",
+    "project_id",
+    "session_id",
+    "source_turn_id",
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "decision_boundary_id",
+    "boundary_sequence",
+    "reason",
+    "summary",
+    "resume_first",
+    "saved_at",
+    "last_event_sequence",
+    "rollback_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "const": "blabee_resume_capsule"
+    },
+    "capsule_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "project_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "session_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_turn_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_baseline_checkpoint_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "decision_boundary_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "boundary_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "reason": {
+      "enum": [
+        "selection_paused",
+        "interaction_expired",
+        "daemon_unavailable",
+        "user_requested"
+      ]
+    },
+    "summary": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+    },
+    "resume_first": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+    },
+    "saved_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "last_event_sequence": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/positive_sequence"
+    },
+    "rollback_policy": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/rollback_policy"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_native_request",
+  "interaction_kind": "native_request",
+  "interaction_id": "interaction_fixture_native_001",
+  "native_request_id": "native_request_fixture_001",
+  "request_type": "permission_request",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "requested_at": "2026-01-15T09:01:30Z",
+  "summary": "The fictional command requests native Codex approval.",
+  "tool_name": "fictional_shell_tool",
+  "relay_policy": {
+    "mode": "notify_and_open_original_codex_ui",
+    "open_target": "original_codex_ui",
+    "response_owner": "codex_native_ui",
+    "blabee_can_allow": false,
+    "blabee_can_deny": false
+  }
+}

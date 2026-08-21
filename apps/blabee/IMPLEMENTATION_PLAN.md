@@ -26,7 +26,7 @@
 - 파일을 변경하는 턴 하나가 Pet에 도달한 뒤, 숫자가 아니라 패킷·리비전·옵션 ID와 작업 의미 전체를 담은 지시로 같은 세션·턴·에피소드에서 이어진다.
 - 센티널은 실험 픽스처 밖의 운영 경로에 남지 않고, 로컬 MCP 경로가 계약 테스트를 통과한다.
 - 사람이 입력한 시작 프롬프트 직전 기준선과 이후 Pet 연속 진행에서 생성된 모든 결정 패킷의 롤백 대상이 동일한 에피소드 ID로 연결된다.
-- `pet_action`의 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰의 재사용·만료·다른 프로젝트·세션·에피소드 사용, 부모 턴·프롬프트 불일치는 거부되고 새 사람 프롬프트로 오인되지 않는다. dispatch 후 `pet_action` in-flight deadline은 M1에서 확정한다.
+- `pet_action`의 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰의 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치는 거부되고 새 사람 프롬프트로 오인되지 않는다. dispatch 후 `pet_action`의 in-flight deadline과 timeout 결과 계약은 T-006에서 확정하고 실제 처리는 T-007에서 구현한다.
 - 내부 형식 보정은 같은 결정 경계에서 한 번만 실행되며 두 번째 실패에는 자동 진행이 없다.
 - 120초 만료 후 자동 동작이나 늦은 단축키 실행이 발생하지 않는다.
 - 코디네이터가 없거나 응답하지 않으면 2초 안에 Hook이 fail-open하며 자동 선택이나 롤백을 실행하지 않는다.
@@ -41,24 +41,24 @@
 - 실제 계약 결과는 `mcp_config_source = project_config_only`, `final_assistant_message = M0_CONTINUED`, `terminal_input_injection = false`, `separate_llm_api_key = false`다.
 - 설명 전용 실제 계약도 통과했다. `--explanation-only`에서는 `project_enabled`, `session_started`, `human_episode_started`만 관찰됐고 결정 제안·대기 이벤트는 0건, `result.txt`는 없었으며 마지막 agent message는 정확히 `M0_EXPLAINED`였다.
 - 실제 검증 범위는 결정 한 번과 연속 진행 한 번이다. 같은 턴 안의 두 번째 `emit_decision`은 현재 턴 키 충돌로 거부되므로 반복 Pet 루프는 M1에서 별도 결정 경계 식별자로 설계한다.
-- 관찰 이벤트는 `project_enabled`, `session_started`, `human_episode_started`, `decision_proposal_received`, `decision_wait_started`, `pet_action_selected`, `continuation_dispatched`, `continuation_consumed`, `continuation_completed`다.
+- 관찰 이벤트는 `project_enabled`, `session_started`, `human_episode_started`, `decision_proposal_received`, `decision_wait_started`, `pet_action_selected`, `continuation_dispatched`, `continuation_consumed`, `continuation_completed`다. 마지막 이름은 M0 관찰기 명칭이며 v1 규범 계약에서는 `continuation_transport_completed`로 분리했다.
 - 터미널 키 입력 주입과 별도 LLM API 키는 사용하지 않았다.
 - 프로젝트 로컬 플러그인 구조는 별도 검증했다. 실제 계약 하네스의 Hook 신뢰 우회 플래그는 테스트 전용이며, 마켓플레이스 설치·번들 코디네이터 자동 시작·서명·공증·DMG는 아직 검증하지 않았다.
 - 롤백은 합성 임시 Git 픽스처에서만 검증했다. 실제 작업공간과 공개 제품에는 연결하지 않았다.
 - 런타임 비교는 완료했지만 최종 선택은 보류한다. Node는 계약 스파이크, Swift는 다음 패키징 후보, C는 정식 JSON 파서가 없는 성능 기준선이다.
-- QA 판단은 M0 연동 타당성에 대한 조건부 승인이다. 실제 사용자 작업공간과 공개 MVP는 반복 루프·in-flight deadline·운영 롤백·패키징의 높은 위험 차단 항목을 닫기 전까지 승인하지 않는다.
+- QA 판단은 M0 연동 타당성에 대한 조건부 승인이다. T-006에서 반복 경계와 in-flight deadline의 데이터 계약을 고정했지만, 실제 사용자 작업공간과 공개 MVP는 T-007 반복 상태 머신·운영 롤백·패키징의 높은 위험 차단 항목을 닫기 전까지 승인하지 않는다.
 
 공식 기능 근거: [Hooks](https://learn.chatgpt.com/docs/hooks), [MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [플러그인 만들기](https://developers.openai.com/plugins/build/plugins).
 
 ## 마일스톤 1 — 프로토콜과 로컬 코디네이터
 
-1. 결정 제안, 결정 패킷, 선택 요청, `pet_action`/`internal_format_repair` 연속 진행 봉투, 네이티브 요청, 재개 캡슐, 런타임 이벤트의 v1 스키마를 확정한다. 패킷에는 `source_prompt_id`, `source_turn_id`, `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`, `expires_at`을 포함한다.
+1. **완료 — T-006:** 결정 제안, 결정 패킷, 선택 요청, `pet_action`/`internal_format_repair` 연속 진행 봉투, 네이티브 요청, 재개 캡슐, 런타임 이벤트의 v1 스키마를 확정했다. 패킷에는 `source_prompt_id`, `source_turn_id`, `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`, `decision_boundary_id`, `boundary_sequence`, `expires_at`을 포함한다.
 2. 영속적인 세션/턴 연결과 이벤트 저널링을 구현한다. 같은 턴 안에서도 완료된 결정 사이클과 다음 결정 경계를 구분해 두 번째 `emit_decision`이 이전 턴 키와 충돌하지 않게 한다.
 3. 패킷 검증, 출처 추적, 만료, 선택권의 원자적 점유를 구현한다.
 4. 세션별 활성 패킷 하나, 전역 전면 카드 하나, 추가 세션 대기열과 명시적 전면 선택 계약을 구현한다. 새 카드가 기존 전면 대상을 빼앗지 않게 한다.
 5. 슬롯 1=동적 권장 작업, 2=동적 대안 작업, 3=고정 보류, 4=고정 롤백인 반고정 계약을 구현한다. 안전하고 의미 있는 대안이 없으면 2번을 사유 코드와 함께 비활성화한다.
 6. 권장·대안 작업을 위해 `packet_id`, `revision`, `option_id`, 제목, 목표, 제약, 완료 기준 전체와 일회성 `continuation_token`을 같은 세션·턴·에피소드의 Stop 연속 진행 지시로 만드는 결정론적 빌더를 구현한다. 이 `pet_action`은 `UserPromptSubmit` 봉투로 변환할 수 없게 한다.
-7. 패킷·옵션 없이 부모 턴·프롬프트와 `repair_kind`, `repair_attempt = 1`을 갖는 내부 형식 보정 빌더를 별도로 구현한다.
+7. 패킷·옵션 없이 `source_turn_id`, `source_prompt_id`, 결정 경계와 `repair_kind`, `repair_attempt = 1`을 갖는 내부 형식 보정 빌더를 별도로 구현한다. 발급 시 `internal_format_repair_reserved`로 결정 경계의 1회 예산을 원자적으로 소비하고, 검증 뒤 `internal_format_repair_claimed`를 기록해 재시작 후에도 중복 보정을 막는다.
 8. Codex 네이티브 질문/권한 요청을 Blabee 결정 패킷과 다른 상호작용 종류와 ID로 보존한다.
 9. SQLite 프로젝트/세션/프롬프트 에피소드/결정 원장을 구현한다.
 10. 검증된 Skill, Hook, 로컬 MCP를 운영 어댑터로 구현해 버전이 부여된 Codex 플러그인으로 패키징한다. 센티널 spike 코드는 포함하지 않는다.
@@ -75,6 +75,17 @@
 - 하나의 패킷을 두 번 실행하거나 잘못된 세션에서 실행할 수 없다.
 - 두 세션에 패킷이 동시에 대기해도 명시적으로 선택한 전면 카드만 실행된다.
 - 코디네이터를 재시작하면 저널을 바탕으로 활성 상태가 복원된다.
+- 형식 보정 상태는 별도 진실 원본 없이 `internal_format_repair_reserved`·`internal_format_repair_claimed` journal projection으로 복원되며, 예약 append와 경계당 1회 예산 소비가 원자적이다.
+- continuation token은 CSPRNG 최소 128-bit로 발급하고 durable journal에는 SHA-256/HMAC-SHA-256 fingerprint만 저장하며, 검증은 constant-time 비교 테스트를 통과한다.
+
+### T-006 실행 결과 — 2026-08-21
+
+- `Contracts/v1`: JSON Schema Draft 2020-12 스키마 10개와 오프라인 `$id` 매니페스트를 확정했다.
+- `Fixtures/v1`: 유효 15개, 무효 10개 계약 Fixture와 동일 턴 경계 1→2·stale 선택·binding mismatch·in-flight timeout·형식 보정 예약/claim·재시작 replay 이벤트 trace 7개를 고정했다.
+- `Tests/Contracts`: strict Ajv 컴파일, 무효 사례의 안정 오류 코드 매핑, 식별자 전용 선택, 반고정 슬롯, 두 continuation 모드의 일회성·만료·exact binding, 형식 보정 예약·claim의 재시작 안전 replay, 전송/작업 결과 분리를 검증한다.
+- `npm run test:contracts`는 102/102, 기존 M0까지 포함한 `npm test`는 155/155 통과했다.
+- T-006은 런타임 독립 계약만 완료했다. 형식 보정의 durable 이벤트 형태와 replay 불변식은 고정했지만 실제 이벤트 저널·원자적 저장·재시작 복구·반복 결정 루프는 T-007에서 구현한다.
+- 실제 사용자 저장소 롤백은 연결하지 않았다. T-006/M1 Fixture에서는 슬롯 4를 `rollback_not_enabled_in_build`로 비활성화한다.
 
 ## 마일스톤 2 — 증거, 체크포인트, 진행 중인 프로젝트 도입
 
@@ -169,7 +180,7 @@
 
 - 정보 제공, 동적 권장 작업, 동적 대안 작업, 대안 없음, 보류, 롤백, 부분 완료, 차단, 실패, 형식 오류, 만료 패킷에 대한 스키마 골든 픽스처
 - `packet_id`, `revision`, `option_id`와 전체 작업 의미 전달, 누락/불일치/숫자 단독 입력 거부에 대한 선택 계약 테스트
-- `pet_action`의 same-turn Stop 전용 전달·수명 주기 종료 관찰과 `UserPromptSubmit` 경로 거부, 선택 전 패킷 만료, `internal_format_repair` 제출 봉투의 토큰 재사용·만료·교차 프로젝트·세션·에피소드·부모 턴/프롬프트 불일치 거부와 형식 보정 1회 한도 테스트. dispatch 후 `pet_action` in-flight deadline/outcome 테스트는 M1에 추가한다.
+- `pet_action`의 same-turn Stop 전용 전달·수명 주기 종료 관찰과 `UserPromptSubmit` 경로 거부, 선택 전 패킷 만료, `internal_format_repair` 제출 봉투의 토큰 재사용·만료·교차 프로젝트·세션·에피소드·`source_turn_id`·`source_prompt_id` 불일치 거부와 형식 보정 1회 한도 테스트. T-006 계약 테스트는 dispatch 후 `pet_action`의 `in_flight_deadline_at`, timeout 결과 `unknown`, 자동 재시도·취소·실패 추론 금지를 고정하며 실제 런타임 시계 처리는 T-007에서 검증한다.
 - 비활성 2·4 슬롯의 안정적인 `disabled_reason`, `action_id = null`, 실행 본문 부재와 단축키 거부 테스트
 - SessionStart, UserPromptSubmit, 도구, 권한 알림, Stop, 재개, 압축, 2초 연결 fail-open, 60초 알림, 120초 만료, 데몬 손실에 대한 실제 시간 초과 Hook 통합 픽스처
 - 절전/복귀와 시스템 시계 앞·뒤 변경에도 연속 단조 시계 기준 60초·120초가 늘어나지 않고, 재시작 후 경과가 모호하면 만료되는지 확인하는 시간 테스트

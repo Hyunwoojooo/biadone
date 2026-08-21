@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "interaction_kind": "blabee_decision",
+  "proposal_id": "proposal_fixture_001",
+  "correlation_token": "fixture_correlation_alpha_0001",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_001",
+  "boundary_sequence": 1,
+  "task_goal": "Add a fictional parser validation path.",
+  "outcome": {
+    "status": "completed",
+    "summary": "Codex reports that the fictional parser validation path was added."
+  },
+  "recommended_next": {
+    "title": "Review the fictional parser change",
+    "objective": "Inspect the fictional parser change for contract regressions.",
+    "constraints": [
+      "Do not modify files outside the fictional fixture project."
+    ],
+    "done_when": [
+      "The review findings are recorded."
+    ]
+  },
+  "alternative_next": {
+    "title": "Run the fictional compatibility check",
+    "objective": "Validate the fictional parser against the compatibility samples.",
+    "constraints": [
+      "Use only deterministic fixture inputs."
+    ],
+    "done_when": [
+      "Every fictional compatibility sample has a recorded result."
+    ]
+  },
+  "pause_capsule": {
+    "resume_first": "Re-open the fictional parser validation report."
+  },
+  "reported_side_effects": []
+}

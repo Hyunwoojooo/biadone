@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/v1/native-request.schema.json",
+  "title": "Blabee v1 native request notice",
+  "description": "A native Codex interaction kept separate from Blabee decision packets. Blabee v0.1 can notify and open the original Codex UI but cannot allow or deny the request.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "interaction_kind",
+    "interaction_id",
+    "native_request_id",
+    "request_type",
+    "project_id",
+    "session_id",
+    "source_turn_id",
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "requested_at",
+    "summary",
+    "relay_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "kind": {
+      "const": "blabee_native_request"
+    },
+    "interaction_kind": {
+      "const": "native_request"
+    },
+    "interaction_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "native_request_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "request_type": {
+      "enum": [
+        "permission_request",
+        "user_input_request"
+      ]
+    },
+    "project_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "session_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_turn_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "source_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_root_prompt_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "episode_baseline_checkpoint_id": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+    },
+    "requested_at": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+    },
+    "summary": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+    },
+    "tool_name": {
+      "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
+    },
+    "relay_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "open_target",
+        "response_owner",
+        "blabee_can_allow",
+        "blabee_can_deny"
+      ],
+      "properties": {
+        "mode": {
+          "const": "notify_and_open_original_codex_ui"
+        },
+        "open_target": {
+          "const": "original_codex_ui"
+        },
+        "response_owner": {
+          "const": "codex_native_ui"
+        },
+        "blabee_can_allow": {
+          "const": false
+        },
+        "blabee_can_deny": {
+          "const": false
+        }
+      }
+    }
+  }
+}

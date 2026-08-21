@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "kind": "blabee_episode_continuation",
+  "continuation_origin": "pet_action",
+  "dispatch_mode": "same_turn_stop",
+  "continuation_id": "continuation_fixture_pet_001",
+  "continuation_token": "fixture_continuation_token_pet_0001",
+  "interaction_id": "interaction_fixture_001",
+  "project_id": "project_fixture_alpha",
+  "session_id": "session_fixture_alpha",
+  "source_turn_id": "turn_fixture_001",
+  "source_prompt_id": "prompt_fixture_001",
+  "episode_id": "episode_fixture_alpha",
+  "episode_root_prompt_id": "prompt_fixture_001",
+  "episode_baseline_checkpoint_id": "checkpoint_fixture_before_prompt_001",
+  "decision_boundary_id": "boundary_fixture_001",
+  "boundary_sequence": 1,
+  "packet_id": "packet_fixture_001",
+  "revision": 1,
+  "option_id": "option_fixture_recommended_001",
+  "action_id": "action_fixture_recommended_001",
+  "action": {
+    "title": "Review the fictional parser change",
+    "objective": "Inspect the fictional parser change for contract regressions.",
+    "constraints": [
+      "Do not modify files outside the fictional fixture project."
+    ],
+    "done_when": [
+      "The review findings are recorded."
+    ]
+  },
+  "issued_at": "2026-01-15T09:01:10Z",
+  "expires_at": "2026-01-15T09:03:10Z",
+  "in_flight_deadline_at": "2026-01-15T09:06:10Z"
+}

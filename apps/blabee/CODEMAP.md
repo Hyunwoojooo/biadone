@@ -1,10 +1,10 @@
 # Blabee 코드맵
 
-상태: v0.1 설계 코드맵 + disposable M0 스파이크. `spikes/m0/`는 계약 증거이며 공개 제품 런타임은 아니다.
+상태: v0.1 설계 코드맵 + T-006 v1 계약 패키지 + disposable M0 스파이크. `Contracts/v1`은 규범 계약이고 `spikes/m0/`는 타당성 증거이며 공개 제품 런타임은 아니다.
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 Hook/MCP, fake coordinator, Git 체크포인트, 런타임 벤치마크와 실제 Codex harness가 `spikes/m0/`에 구현되어 있다. 이는 M0 타당성 증거이며 macOS Pet, installer, 운영 ledger와 production coordinator는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. Hook/MCP, fake coordinator, Git 체크포인트, 런타임 벤치마크와 실제 Codex harness는 `spikes/m0/`의 타당성 증거다. macOS Pet, installer, 운영 ledger와 production coordinator는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
@@ -36,17 +36,18 @@ PromptEpisode
 ├─ episode_baseline_checkpoint_id
 ├─ prompts[]
 │  ├─ source_prompt_id + source_turn_id
-│  ├─ prompt_origin: human_prompt | pet_action | internal_format_repair
-│  └─ continuation_of_prompt_id?
+│  └─ prompt_origin: human
+├─ continuations[]                  # pet_action/format repair는 새 episode를 만들지 않음
 └─ rollback_eligibility
 
 DecisionProposal
 └─ correlation_token + recommended action + optional alternative
 
 DecisionPacket
-├─ packet_id + revision + valid_after_event_seq
+├─ packet_id + revision + valid_after_event_sequence
 ├─ source_prompt_id + source_turn_id + episode_id
 ├─ episode_root_prompt_id + episode_baseline_checkpoint_id
+├─ decision_boundary_id + boundary_sequence
 └─ slots
    ├─ 1: recommended, dynamic, enabled
    ├─ 2: alternative, dynamic, optional/disabled + disabled_reason
@@ -54,9 +55,14 @@ DecisionPacket
    └─ 4: rollback, fixed meaning, eligibility-gated + disabled_reason
 
 ContinuationEnvelope
-├─ common: one-time token + session/episode/baseline + parent turn/prompt
-├─ pet_action: packet/revision/option/action + full action payload
-└─ internal_format_repair: repair request/kind/attempt, exactly once
+├─ common: one-time token + session/episode/baseline + source turn/prompt + decision boundary
+├─ pet_action: same_turn_stop + packet/revision/option/action + in-flight deadline
+└─ internal_format_repair: submitted_envelope + repair request/kind/attempt, exactly once
+
+RuntimeEvent
+├─ pet_action: dispatched → consumed → transport completed/timeout → work outcome
+└─ internal_format_repair: reserved → claimed
+   └─ reserved가 boundary당 1회 예산의 durable 진실 원본, token 원문 대신 fingerprint만 저장
 
 NativeCodexRequest
 └─ native_request_id + session/turn correlation + original UI locator
@@ -85,6 +91,38 @@ spikes/m0/
 └── tests/                   # 53 passing tests
 ```
 
+### 실제 T-006 계약 트리
+
+```text
+Contracts/v1/
+├── manifest.json                  # 10개 Draft 2020-12 스키마의 오프라인 $id 목록
+├── common.schema.json             # 공용 ID, 시간, 에피소드·결정 경계 binding
+├── action.schema.json
+├── prompt-episode.schema.json
+├── decision-proposal.schema.json
+├── decision-packet.schema.json
+├── selection-request.schema.json
+├── continuation-envelope.schema.json
+├── runtime-event.schema.json
+├── native-request.schema.json
+└── resume-capsule.schema.json
+
+Fixtures/v1/
+├── manifest.json                  # 유효 15 + 무효 10 계약 사례
+├── contracts/{valid,invalid}/
+└── event-traces/                  # 7개: 경계 1→2, stale/binding/timeout, repair journal/restart
+
+Tests/Contracts/
+├── contract-harness.mjs           # strict/offline Ajv 컴파일과 오류 코드 매핑
+├── rfc3339.mjs                    # 실재 달력 날짜를 확인하는 오프라인 date-time 형식
+├── decision-packet-semantic.mjs   # 교차 슬롯 ID·체크포인트 의미 불변식
+├── continuation-claim.mjs         # 테스트용 일회성·만료·exact-binding 의미 검증기
+├── semantic-trace.mjs             # 경계·전송·결과 이벤트 의미 검증기
+└── v1-contracts.test.mjs          # 102개 계약 검사
+```
+
+이 트리는 런타임 언어와 무관한 규범 계약이다. `continuation-claim.mjs`와 `semantic-trace.mjs`는 계약을 실행하는 테스트용 참조 검증기이며 운영 코디네이터가 아니다.
+
 ## 제안 소스 트리
 
 ```text
@@ -95,15 +133,7 @@ apps/blabee/
 ├── CODEMAP.md
 ├── AGENT_TASKS.md
 ├── TASK_STATUS.md
-├── Contracts/
-│   ├── decision-proposal.schema.json
-│   ├── decision-packet.schema.json
-│   ├── selection-request.schema.json
-│   ├── continuation-envelope.schema.json
-│   ├── prompt-episode.schema.json
-│   ├── native-request.schema.json
-│   ├── checkpoint.schema.json
-│   └── resume-capsule.schema.json
+├── Contracts/v1/                   # 구현됨: 규범 스키마 10개 + manifest
 ├── Plugin/
 │   ├── .codex-plugin/plugin.json
 │   ├── hooks/hooks.json
@@ -151,7 +181,7 @@ apps/blabee/
 │   ├── CoordinatorRuntimeComparison/
 │   └── AppServerManagedMode/
 ├── Tests/
-│   ├── Contracts/
+│   ├── Contracts/                  # 구현됨: 오프라인 계약·의미 테스트
 │   ├── Episodes/
 │   ├── DecisionCards/
 │   ├── Rollback/
@@ -159,9 +189,8 @@ apps/blabee/
 │   ├── NativeRequests/
 │   └── MacOS/
 └── Fixtures/
+    ├── v1/                         # 구현됨: 계약 25개 + event trace 7개
     ├── hooks/
-    ├── decisions/
-    ├── native-requests/
     ├── checkpoints/
     └── codex-versions/
 ```
@@ -242,7 +271,7 @@ PermissionRequest / Codex native request
 - 유효한 카드가 있으면 60초에 한 번 다시 알리고, 120초에 패킷을 만료한다.
 - 만료 시 어떤 슬롯도 자동 선택하지 않으며 재개 캡슐을 저장한다.
 - 만료 후 입력, 이전 `packet_id`/`revision`, 더 오래된 event sequence, 예상 episode·상태가 다른 입력은 거부한다.
-- 120초 만료는 선택 전 대기 패킷에 적용한다. 같은 턴 작업이 dispatch된 뒤의 실행 deadline과 성공/실패 outcome은 M0에 없으며 후속 상태 머신에서 별도로 모델링한다.
+- 120초 만료는 선택 전 대기 패킷에 적용한다. T-006은 dispatch 뒤 `in_flight_deadline_at`과 timeout 결과 `unknown`·자동 재시도 금지, 형식 보정 예약·claim의 durable replay 계약을 고정했다. 실제 단조 시계, 원자적 journal append, 재시작 복구와 성공/실패 outcome 수집은 T-007 상태 머신이 소유한다.
 - 세션마다 활성 Pet 상호작용은 하나이며, 선택 claim은 원자적으로 한 번만 성공한다.
 - 시스템 전체의 전면 카드는 하나뿐이다. 추가 세션 카드는 대기열에 남고 새 카드가 전면 대상을 자동으로 빼앗지 않는다.
 - 전역 단축키는 화면에서 명시적으로 선택된 전면 카드의 프로젝트·세션·에피소드·패킷 ID가 모두 맞을 때만 적용한다.
