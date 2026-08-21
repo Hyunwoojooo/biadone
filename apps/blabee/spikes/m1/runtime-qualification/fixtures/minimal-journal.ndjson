@@ -1,0 +1,4 @@
+{"schema_version":"blabee.t005.qualification-event.v1","event_id":"qualification_event_0001","event_sequence":1,"event_type":"decision_boundary_opened","payload":{"decision_boundary_id":"qualification_boundary_001"}}
+{"schema_version":"blabee.t005.qualification-event.v1","event_id":"qualification_event_0002","event_sequence":2,"event_type":"decision_packet_sealed","payload":{"decision_boundary_id":"qualification_boundary_001"}}
+{"schema_version":"blabee.t005.qualification-event.v1","event_id":"qualification_event_0003","event_sequence":3,"event_type":"decision_selection_claimed","payload":{"decision_boundary_id":"qualification_boundary_001","slot":1}}
+{"schema_version":"blabee.t005.qualification-event.v1","event_id":"qualification_event_0004","event_sequence":4,"event_type":"continuation_dispatched","payload":{"decision_boundary_id":"qualification_boundary_001","continuation_origin":"pet_action"}}

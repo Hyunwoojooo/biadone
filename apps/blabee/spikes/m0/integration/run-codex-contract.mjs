@@ -15,6 +15,110 @@ const pluginRoot = path.join(m0Root, "plugins", "blabee-m0");
 const coordinatorEntry = path.join(m0Root, "coordinator", "server.mjs");
 const hookEntry = path.join(pluginRoot, "scripts", "hook.mjs");
 const mcpEntry = path.join(pluginRoot, "scripts", "mcp-server.mjs");
+const SENSITIVE_DIAGNOSTIC_KEYS = new Set(["correlation_token", "continuation_token"]);
+const REDACTED_DIAGNOSTIC_VALUE = "<redacted>";
+
+function collectDiagnosticSecrets(value, secrets = new Set(), encodedDepth = 0) {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(
+      /"(?:correlation|continuation)_token"\s*:\s*"([^"]*)"/g,
+    )) {
+      if (match[1].length > 0) secrets.add(match[1]);
+    }
+    for (const match of value.matchAll(
+      /\\"(?:correlation|continuation)_token\\"\s*:\s*\\"([^"\\]*)\\"/g,
+    )) {
+      if (match[1].length > 0) secrets.add(match[1]);
+    }
+    for (const match of value.matchAll(
+      /(?:correlation|continuation)_token\s*=\s*([^;\s."']+)/g,
+    )) {
+      if (match[1].length > 0) secrets.add(match[1]);
+    }
+    if (encodedDepth < 4) {
+      for (const line of value.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) continue;
+        try {
+          collectDiagnosticSecrets(JSON.parse(trimmed), secrets, encodedDepth + 1);
+        } catch {
+          // Diagnostic input may mix JSONL and plain text. Regex redaction still applies.
+        }
+      }
+    }
+    return secrets;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectDiagnosticSecrets(item, secrets, encodedDepth);
+    return secrets;
+  }
+  if (!value || typeof value !== "object") return secrets;
+
+  for (const [key, item] of Object.entries(value)) {
+    if (SENSITIVE_DIAGNOSTIC_KEYS.has(key) && typeof item === "string" && item.length > 0) {
+      secrets.add(item);
+    }
+    collectDiagnosticSecrets(item, secrets, encodedDepth);
+  }
+  return secrets;
+}
+
+function redactDiagnosticString(value, secrets, encodedDepth) {
+  let redacted = value;
+  for (const secret of secrets) redacted = redacted.replaceAll(secret, REDACTED_DIAGNOSTIC_VALUE);
+  redacted = redacted
+    .replace(
+      /(\\"(?:correlation|continuation)_token\\"\s*:\s*\\")[^"\\]*(\\")/g,
+      `$1${REDACTED_DIAGNOSTIC_VALUE}$2`,
+    )
+    .replace(
+      /("(?:correlation|continuation)_token"\s*:\s*")[^"]*(")/g,
+      `$1${REDACTED_DIAGNOSTIC_VALUE}$2`,
+    )
+    .replace(
+      /((?:correlation|continuation)_token\s*=\s*)[^;\s."']+/g,
+      `$1${REDACTED_DIAGNOSTIC_VALUE}`,
+    );
+
+  if (encodedDepth >= 4) return redacted;
+  let parsedAny = false;
+  const lines = redacted.split("\n").map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return line;
+    try {
+      parsedAny = true;
+      return JSON.stringify(
+        redactDiagnosticNode(JSON.parse(trimmed), secrets, encodedDepth + 1),
+      );
+    } catch {
+      return line;
+    }
+  });
+  return parsedAny ? lines.join("\n") : redacted;
+}
+
+function redactDiagnosticNode(value, secrets, encodedDepth = 0) {
+  if (typeof value === "string") {
+    return redactDiagnosticString(value, secrets, encodedDepth);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactDiagnosticNode(item, secrets, encodedDepth));
+  }
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      SENSITIVE_DIAGNOSTIC_KEYS.has(key)
+        ? REDACTED_DIAGNOSTIC_VALUE
+        : redactDiagnosticNode(item, secrets, encodedDepth),
+    ]),
+  );
+}
+
+export function redactDiagnostics(value) {
+  return redactDiagnosticNode(value, collectDiagnosticSecrets(value));
+}
 
 function quoteShell(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
@@ -255,10 +359,12 @@ async function main() {
           "Create result.txt containing exactly M0_CREATED followed by one newline.",
           "Then call the Blabee emit_decision MCP tool exactly once, using every exact identifier from the Blabee boundary developer context.",
           "Copy that same boundary correlation_token into proposal.correlation_token as well.",
-          "Use schema_version 1.0, interaction_kind blabee_decision, task_goal 'Verify live continuation', outcome status completed and summary 'M0 file created'.",
-          "Set recommended_next title to 'Verify the M0 continuation', objective to 'Read result.txt and reply exactly M0_CONTINUED without editing files or calling emit_decision again', constraints to ['Do not edit files'], and done_when to ['Final reply is exactly M0_CONTINUED'].",
+          "Use schema_version 1.0, interaction_kind blabee_decision, task_goal 'Stage first live continuation', outcome status completed and summary 'M0 file created'.",
+          "Set recommended_next title to 'Stage the second M0 decision'.",
+          "Set its objective to: Read result.txt, then call the Blabee emit_decision MCP tool exactly once using the same exact project_id, session_id, source_turn_id, source_prompt_id, episode_id, and correlation_token from the original Blabee boundary developer context. Copy that correlation_token into the second proposal. For the second proposal use schema_version 1.0, interaction_kind blabee_decision, task_goal 'Verify second live continuation', outcome status completed and summary 'Second M0 decision staged', recommended_next title 'Finish the second M0 continuation', objective 'Read result.txt and reply exactly M0_CONTINUED_TWICE without editing files or calling emit_decision again', constraints ['Do not edit files', 'Do not call emit_decision again'], done_when ['Final reply is exactly M0_CONTINUED_TWICE'], alternative_next null, pause_capsule {}, and reported_side_effects []. After the second MCP call is accepted, reply exactly M0_WAITING_2.",
+          "Set the first recommended_next constraints to ['Do not edit files', 'Do not submit a new user prompt'] and done_when to ['Second decision proposal is accepted and reply is exactly M0_WAITING_2'].",
           "Set alternative_next to null, pause_capsule to {}, and reported_side_effects to [].",
-          "After the MCP tool accepts the proposal, reply M0_WAITING. When the Blabee continuation arrives, execute its full action.",
+          "After the first MCP tool call accepts the proposal, reply exactly M0_WAITING_1. When each Blabee continuation arrives, execute its full action.",
         ].join(" ");
 
     const mcpConfigOverride =
@@ -308,10 +414,12 @@ async function main() {
       codexStderr += chunk.toString("utf8");
     });
 
-    let selection = null;
+    const selections = [];
     try {
       if (!explanationOnly) {
-        selection = await pollAndSelect({ socketPath, codexChild: codex });
+        for (let cycle = 0; cycle < 2; cycle += 1) {
+          selections.push(await pollAndSelect({ socketPath, codexChild: codex }));
+        }
       }
     } catch (error) {
       let state = null;
@@ -326,22 +434,41 @@ async function main() {
       } catch (hookDebugError) {
         if (hookDebugError.code !== "ENOENT") hookDebug = hookDebugError.message;
       }
+      const diagnostics = redactDiagnostics({
+        errorMessage: error.message,
+        codexStdout,
+        codexStderr,
+        hookDebug,
+        coordinatorError,
+        state,
+      });
       throw new Error(
         [
-          error.message,
+          diagnostics.errorMessage,
           `fixture_root=${fixtureRoot}`,
           `codex_exit_code=${codex.exitCode}`,
-          `codex_stdout=${codexStdout || "<empty>"}`,
-          `codex_stderr=${codexStderr || "<empty>"}`,
-          `hook_debug=${hookDebug}`,
-          `coordinator_stderr=${coordinatorError || "<empty>"}`,
-          `coordinator_state=${JSON.stringify(state)}`,
+          `codex_stdout=${diagnostics.codexStdout || "<empty>"}`,
+          `codex_stderr=${diagnostics.codexStderr || "<empty>"}`,
+          `hook_debug=${diagnostics.hookDebug}`,
+          `coordinator_stderr=${diagnostics.coordinatorError || "<empty>"}`,
+          `coordinator_state=${JSON.stringify(diagnostics.state)}`,
         ].join("\n"),
         { cause: error },
       );
     }
     const exit = await waitForExit(codex, 120_000);
-    assert.equal(exit.code, 0, `Codex failed: ${codexStderr}`);
+    if (exit.code !== 0) {
+      let failureState = null;
+      try {
+        failureState = await requestJsonl({ socketPath, type: "get_state" });
+      } catch (stateError) {
+        failureState = { unavailable: stateError.message };
+      }
+      const diagnostics = redactDiagnostics({ codexStderr, state: failureState });
+      throw new Error(
+        `Codex failed with exit_code=${exit.code}: ${diagnostics.codexStderr || "<empty>"}`,
+      );
+    }
 
     const state = await requestJsonl({ socketPath, type: "get_state" });
     const eventTypes = state.events.map((event) => event.type);
@@ -360,7 +487,9 @@ async function main() {
     for (const required of requiredEvents) {
       assert.ok(eventTypes.includes(required), `missing coordinator event: ${required}`);
     }
-    const humanEpisode = state.events.find((event) => event.type === "human_episode_started");
+    const humanEpisodes = state.events.filter((event) => event.type === "human_episode_started");
+    assert.equal(humanEpisodes.length, 1, "the live contract must keep one human episode");
+    const [humanEpisode] = humanEpisodes;
     const codexEvents = parseCodexJsonl(codexStdout);
     const assistantMessages = codexEvents
       .filter((event) => event.type === "item.completed" && event.item?.type === "agent_message")
@@ -372,12 +501,68 @@ async function main() {
       await assert.rejects(readFile(path.join(fixtureRoot, "result.txt")), { code: "ENOENT" });
       assert.equal(finalAssistantMessage, "M0_EXPLAINED");
     } else {
-      const continuation = state.events.find((event) => event.type === "continuation_consumed");
-      assert.equal(continuation.payload.session_id, humanEpisode.payload.session_id);
-      assert.equal(continuation.payload.episode_id, humanEpisode.payload.episode_id);
-      assert.equal(continuation.payload.dispatch_mode, "same_turn_stop");
+      const decisionEvents = state.events.filter(
+        (event) => event.type === "decision_proposal_received",
+      );
+      const eventCount = (type) => state.events.filter((event) => event.type === type).length;
+      for (const eventType of [
+        "decision_proposal_received",
+        "decision_wait_started",
+        "pet_action_selected",
+        "continuation_dispatched",
+        "continuation_consumed",
+        "continuation_completed",
+      ]) {
+        assert.equal(eventCount(eventType), 2, `${eventType} must occur once per boundary`);
+      }
+      const continuations = state.events.filter(
+        (event) => event.type === "continuation_consumed",
+      );
+      const completions = state.events.filter(
+        (event) => event.type === "continuation_completed",
+      );
+      assert.equal(decisionEvents.length, 2);
+      assert.equal(continuations.length, 2);
+      assert.equal(completions.length, 2);
+      assert.deepEqual(
+        decisionEvents.map((event) => event.payload.boundary_sequence),
+        [1, 2],
+      );
+      assert.notEqual(decisionEvents[0].payload.packet_id, decisionEvents[1].payload.packet_id);
+      assert.notEqual(
+        continuations[0].payload.continuation_id,
+        continuations[1].payload.continuation_id,
+      );
+      for (const decision of decisionEvents) {
+        const packet = state.packets.find(
+          (candidate) => candidate.packet_id === decision.payload.packet_id,
+        );
+        assert.ok(packet, `missing packet ${decision.payload.packet_id}`);
+        assert.equal(packet.boundary_sequence, decision.payload.boundary_sequence);
+        assert.equal(decision.payload.session_id, humanEpisode.payload.session_id);
+        assert.equal(decision.payload.source_turn_id, humanEpisode.payload.source_turn_id);
+        assert.equal(decision.payload.source_prompt_id, humanEpisode.payload.source_prompt_id);
+        assert.equal(decision.payload.episode_id, humanEpisode.payload.episode_id);
+        assert.equal(
+          packet.episode_root_prompt_id,
+          humanEpisode.payload.episode_root_prompt_id,
+        );
+        assert.equal(
+          packet.episode_baseline_checkpoint_id,
+          humanEpisode.payload.episode_baseline_checkpoint_id,
+        );
+      }
+      for (const continuation of continuations) {
+        assert.equal(continuation.payload.session_id, humanEpisode.payload.session_id);
+        assert.equal(continuation.payload.episode_id, humanEpisode.payload.episode_id);
+        assert.equal(continuation.payload.dispatch_mode, "same_turn_stop");
+      }
+      assert.deepEqual(
+        selections.map((selection) => selection.interaction.packet_id),
+        decisionEvents.map((event) => event.payload.packet_id),
+      );
       assert.equal(await readFile(path.join(fixtureRoot, "result.txt"), "utf8"), "M0_CREATED\n");
-      assert.equal(finalAssistantMessage, "M0_CONTINUED");
+      assert.equal(finalAssistantMessage, "M0_CONTINUED_TWICE");
     }
 
     process.stdout.write(
@@ -390,8 +575,11 @@ async function main() {
           session_id: humanEpisode.payload.session_id,
           episode_id: humanEpisode.payload.episode_id,
           contract_kind: explanationOnly ? "explanation_passthrough" : "decision_continuation",
-          selected_packet_id: selection?.interaction.packet_id ?? null,
-          selected_option_id: selection?.option.option_id ?? null,
+          decision_cycle_count: selections.length,
+          selected_packet_ids: selections.map((selection) => selection.interaction.packet_id),
+          selected_option_ids: selections.map((selection) => selection.option.option_id),
+          selected_packet_id: selections[0]?.interaction.packet_id ?? null,
+          selected_option_id: selections[0]?.option.option_id ?? null,
           observed_events: eventTypes,
           final_assistant_message: finalAssistantMessage,
           mcp_config_source: projectMcpOnly
@@ -404,6 +592,18 @@ async function main() {
         2,
       )}\n`,
     );
+  } catch (error) {
+    let failureState = null;
+    try {
+      failureState = await requestJsonl({ socketPath, type: "get_state" });
+    } catch {
+      // The coordinator may be the failed component. Named-field redaction still applies.
+    }
+    const diagnostics = redactDiagnostics({
+      errorStack: error.stack ?? error.message,
+      state: failureState,
+    });
+    throw new Error(diagnostics.errorStack);
   } finally {
     if (codex?.exitCode === null) codex.kill("SIGTERM");
     if (coordinator?.exitCode === null) coordinator.kill("SIGTERM");
@@ -411,7 +611,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack ?? error.message}\n`);
-  process.exitCode = 1;
-});
+if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`${redactDiagnostics(error.stack ?? error.message)}\n`);
+    process.exitCode = 1;
+  });
+}

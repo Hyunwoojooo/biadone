@@ -12,6 +12,13 @@ const BINDING_FIELDS = Object.freeze([
   "boundary_sequence",
 ]);
 
+const TURN_LINEAGE_FIELDS = Object.freeze([
+  "source_prompt_id",
+  "episode_id",
+  "episode_root_prompt_id",
+  "episode_baseline_checkpoint_id",
+]);
+
 const BOUNDARY_EVENT_TYPES = new Set([
   "decision_boundary_opened",
   "decision_boundary_closed",
@@ -85,7 +92,7 @@ function boundaryIdentityKey(binding) {
 }
 
 function turnKey(binding) {
-  return `${binding.project_id}\0${binding.session_id}\0${binding.source_turn_id}\0${binding.episode_id}`;
+  return `${binding.project_id}\0${binding.session_id}\0${binding.source_turn_id}`;
 }
 
 function hasCompleteBinding(binding) {
@@ -96,6 +103,10 @@ function hasCompleteBinding(binding) {
 
 function bindingsEqual(left, right) {
   return BINDING_FIELDS.every((field) => left[field] === right[field]);
+}
+
+function turnLineageEqual(left, right) {
+  return TURN_LINEAGE_FIELDS.every((field) => left[field] === right[field]);
 }
 
 function continuationId(wrapperEvent) {
@@ -202,6 +213,8 @@ export function validateSemanticTrace(trace) {
   const latestBoundaryByTurn = new Map();
   const claimedBoundaries = new Set();
   const continuations = new Map();
+  const continuationIdentities = new Map();
+  const continuationFingerprints = new Map();
   const timedOutBoundaries = new Set();
   const formatRepairReservations = new Map();
   const restartAfterEventSequence = trace.restart_after_event_sequence;
@@ -247,6 +260,9 @@ export function validateSemanticTrace(trace) {
       if (boundaries.has(key)) return failure("decision_boundary_reopened", index, "a boundary may be opened only once");
       const currentTurnKey = turnKey(binding);
       const latest = latestBoundaryByTurn.get(currentTurnKey);
+      if (latest && !turnLineageEqual(binding, latest)) {
+        return failure("decision_boundary_lineage_mismatch", index, "same-turn decision boundary lineage changed");
+      }
       if (latest && binding.boundary_sequence !== latest.boundary_sequence + 1) {
         return failure("boundary_sequence_not_contiguous", index, "same-turn boundaries must increase contiguously");
       }
@@ -409,10 +425,24 @@ export function validateSemanticTrace(trace) {
       }
       const timing = validateRepairJournalTime(wrapperEvent, index);
       if (timing.failure) return timing.failure;
+      if (continuationIdentities.has(data.continuation_id)) {
+        return failure("continuation_already_dispatched", index, "continuation_id must be globally unique across continuation origins");
+      }
+      if (continuationFingerprints.has(data.correlation_token_fingerprint)) {
+        return failure("token_fingerprint_duplicate", index, "correlation token fingerprint must be globally unique");
+      }
       formatRepairReservations.set(key, {
         payload: Object.fromEntries(FORMAT_REPAIR_JOURNAL_FIELDS.map((field) => [field, data[field]])),
         reservedAt: timing.journaledAt,
         claimed: false,
+      });
+      continuationIdentities.set(data.continuation_id, {
+        origin: "internal_format_repair",
+        boundaryKey: key,
+      });
+      continuationFingerprints.set(data.correlation_token_fingerprint, {
+        origin: "internal_format_repair",
+        continuationId: data.continuation_id,
       });
       continue;
     }
@@ -453,7 +483,7 @@ export function validateSemanticTrace(trace) {
       if (timing.failure) return timing.failure;
       const id = continuationId(wrapperEvent);
       if (typeof id !== "string" || id.length === 0) return failure("continuation_id_missing", index, "dispatch requires continuation_id");
-      if (continuations.has(id)) return failure("continuation_already_dispatched", index, "continuation_id must be unique");
+      if (continuationIdentities.has(id)) return failure("continuation_already_dispatched", index, "continuation_id must be globally unique across continuation origins");
       if (timedOutBoundaries.has(key)) return failure("automatic_retry_after_timeout", index, "a timed-out boundary cannot dispatch an automatic retry");
       const data = traceEventData(wrapperEvent);
       if (
@@ -476,7 +506,13 @@ export function validateSemanticTrace(trace) {
         consumed: false,
         workOutcomeRecorded: false,
         inFlightDeadlineAt: timing.inFlightDeadlineAt,
+        issuedAt: parseStrictRfc3339DateTime(data.issued_at),
+        expiresAt: parseStrictRfc3339DateTime(data.expires_at),
         dispatchMode: data.dispatch_mode,
+      });
+      continuationIdentities.set(id, {
+        origin: "pet_action",
+        boundaryKey: key,
       });
       currentBoundary.dispatchedContinuationId = id;
       continue;
@@ -491,6 +527,17 @@ export function validateSemanticTrace(trace) {
         return failure("continuation_dispatch_mode_mismatch", index, "consumed dispatch_mode must match the dispatched continuation");
       }
       if (continuation.consumed) return failure("continuation_already_consumed", index, "continuation may be consumed once");
+      if (continuation.terminal) return failure("transport_already_terminal", index, "a terminal transport cannot consume its continuation");
+      const consumedAt = parseStrictRfc3339DateTime(occurredAt(wrapperEvent));
+      if (consumedAt === null) {
+        return failure("continuation_consumed_time_invalid", index, "consumption occurred_at must be a strict RFC3339 date-time");
+      }
+      if (consumedAt < continuation.issuedAt) {
+        return failure("continuation_not_yet_valid", index, "continuation cannot be consumed before issued_at");
+      }
+      if (consumedAt >= continuation.expiresAt) {
+        return failure("continuation_expired", index, "continuation must be consumed before expires_at");
+      }
       continuation.consumed = true;
       continue;
     }

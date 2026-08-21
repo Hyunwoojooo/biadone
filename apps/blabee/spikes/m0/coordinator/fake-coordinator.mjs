@@ -23,6 +23,7 @@ const REQUIRED_PROPOSAL_KEYS = [
   "recommended_next",
 ];
 const SUPPORTED_REPAIR_KINDS = new Set(["decision_proposal_schema"]);
+const MAX_SAME_TURN_BOUNDARIES = 2;
 
 function requiredString(value, name) {
   if (typeof value !== "string" || value.length === 0) {
@@ -425,14 +426,41 @@ export class FakeCoordinator {
     }
 
     const key = this.turnKey(sessionId, turnId);
-    if (this.proposals.has(key)) {
+    const previousProposal = this.proposals.get(key);
+    const previousPacket = previousProposal
+      ? this.packets.get(previousProposal.packet_id)
+      : null;
+    const previousDispatch = this.activeDispatchForTurn(sessionId, turnId);
+    const mayStageNextBoundary =
+      previousProposal?.boundary_sequence === 1 &&
+      previousPacket?.state === "continuation_dispatched" &&
+      previousDispatch?.packet_id === previousPacket.packet_id;
+    if (previousProposal && !mayStageNextBoundary) {
+      throw Object.assign(new Error("proposal_already_exists_for_turn"), {
+        code: "proposal_conflict",
+      });
+    }
+    const boundarySequence = previousProposal
+      ? previousProposal.boundary_sequence + 1
+      : 1;
+    if (boundarySequence > MAX_SAME_TURN_BOUNDARIES) {
       throw Object.assign(new Error("proposal_already_exists_for_turn"), {
         code: "proposal_conflict",
       });
     }
 
-    const packet = this.buildPacket({ session, turnId, promptId, proposal });
-    this.proposals.set(key, { packet_id: packet.packet_id, proposal: clone(proposal) });
+    const packet = this.buildPacket({
+      session,
+      turnId,
+      promptId,
+      proposal,
+      boundarySequence,
+    });
+    this.proposals.set(key, {
+      packet_id: packet.packet_id,
+      boundary_sequence: boundarySequence,
+      proposal: clone(proposal),
+    });
     this.packets.set(packet.packet_id, packet);
     this.emit("decision_proposal_received", {
       project_id: projectId,
@@ -442,6 +470,7 @@ export class FakeCoordinator {
       episode_id: episodeId,
       packet_id: packet.packet_id,
       revision: packet.revision,
+      boundary_sequence: boundarySequence,
       proposal: clone(proposal),
     });
     return { accepted: true, packet: clone(packet) };
@@ -453,7 +482,7 @@ export class FakeCoordinator {
     });
   }
 
-  buildPacket({ session, turnId, promptId, proposal }) {
+  buildPacket({ session, turnId, promptId, proposal, boundarySequence }) {
     const packetId = makeId("packet");
     const interactionId = makeId("interaction");
     const checkpointId = session.episode.episode_baseline_checkpoint_id;
@@ -497,6 +526,7 @@ export class FakeCoordinator {
       interaction_id: interactionId,
       packet_id: packetId,
       revision: 1,
+      boundary_sequence: boundarySequence,
       project_id: session.project_id,
       session_id: session.session_id,
       source_turn_id: turnId,
@@ -515,8 +545,23 @@ export class FakeCoordinator {
     const sessionId = requiredString(payload.session_id, "session_id");
     const turnId = requiredString(payload.turn_id, "turn_id");
     const turnKey = this.turnKey(sessionId, turnId);
-    const dispatch = this.dispatches.get(turnKey);
-    if (dispatch) return this.completeDispatchedContinuation(payload, dispatch);
+    const dispatch = this.activeDispatchForTurn(sessionId, turnId);
+    if (dispatch) {
+      const completion = this.completeDispatchedContinuation(payload, dispatch);
+      if (completion.status !== "continuation_completed") return completion;
+
+      const stagedProposal = this.proposals.get(turnKey);
+      const stagedPacket = stagedProposal
+        ? this.packets.get(stagedProposal.packet_id)
+        : null;
+      if (
+        stagedPacket?.state === "proposed" &&
+        stagedPacket.boundary_sequence === dispatch.boundary_sequence + 1
+      ) {
+        return this.startDecisionWait(stagedPacket);
+      }
+      return completion;
+    }
 
     const proposalRecord = this.proposals.get(turnKey);
     if (!proposalRecord) return { status: "no_proposal" };
@@ -525,8 +570,18 @@ export class FakeCoordinator {
     if (!packet || packet.session_id !== sessionId || packet.source_turn_id !== turnId) {
       return { status: "no_proposal" };
     }
-    if (packet.state !== "proposed") return { status: "stale_packet" };
+    if (packet.state !== "proposed") {
+      const latestDispatch = this.latestDispatchForTurn(sessionId, turnId);
+      if (latestDispatch?.state === "completed" && latestDispatch.packet_id === packet.packet_id) {
+        return { status: "continuation_already_completed" };
+      }
+      return { status: "stale_packet" };
+    }
 
+    return this.startDecisionWait(packet);
+  }
+
+  startDecisionWait(packet) {
     packet.state = "waiting";
     packet.wait_started_at_ms = this.now();
     packet.expires_at = new Date(packet.wait_started_at_ms + this.expiryMs).toISOString();
@@ -534,6 +589,7 @@ export class FakeCoordinator {
       interaction_id: packet.interaction_id,
       packet_id: packet.packet_id,
       revision: packet.revision,
+      boundary_sequence: packet.boundary_sequence,
       project_id: packet.project_id,
       session_id: packet.session_id,
       episode_id: packet.episode_id,
@@ -560,6 +616,7 @@ export class FakeCoordinator {
           reason: "decision_timeout",
           interaction_id: packet.interaction_id,
           packet_id: packet.packet_id,
+          boundary_sequence: packet.boundary_sequence,
           project_id: packet.project_id,
           session_id: packet.session_id,
           episode_id: packet.episode_id,
@@ -617,12 +674,16 @@ export class FakeCoordinator {
         interaction_id: packet.interaction_id,
         packet_id: packet.packet_id,
         revision: packet.revision,
+        boundary_sequence: packet.boundary_sequence,
         option_id: option.option_id,
         action_id: option.action_id,
         continuation_id: envelope.continuation_id,
         token_hash: hashToken(envelope.continuation_token),
       };
-      this.dispatches.set(this.turnKey(packet.session_id, packet.source_turn_id), dispatch);
+      this.dispatches.set(
+        this.boundaryKey(packet.session_id, packet.source_turn_id, packet.boundary_sequence),
+        dispatch,
+      );
       interaction.state = "continuation_dispatched";
       packet.state = "continuation_dispatched";
       stopResult = {
@@ -638,6 +699,7 @@ export class FakeCoordinator {
         interaction_id: packet.interaction_id,
         packet_id: packet.packet_id,
         revision: packet.revision,
+        boundary_sequence: packet.boundary_sequence,
         option_id: option.option_id,
         action_id: option.action_id,
         continuation_id: envelope.continuation_id,
@@ -651,6 +713,7 @@ export class FakeCoordinator {
       this.emit("episode_paused", {
         interaction_id: packet.interaction_id,
         packet_id: packet.packet_id,
+        boundary_sequence: packet.boundary_sequence,
         project_id: packet.project_id,
         session_id: packet.session_id,
         episode_id: packet.episode_id,
@@ -668,6 +731,7 @@ export class FakeCoordinator {
       this.emit("rollback_intent", {
         interaction_id: packet.interaction_id,
         packet_id: packet.packet_id,
+        boundary_sequence: packet.boundary_sequence,
         project_id: packet.project_id,
         session_id: packet.session_id,
         episode_id: packet.episode_id,
@@ -750,6 +814,7 @@ export class FakeCoordinator {
           source_turn_id: dispatch.turn_id,
           source_prompt_id: dispatch.source_prompt_id,
           episode_id: dispatch.episode_id,
+          boundary_sequence: dispatch.boundary_sequence,
         });
       }
     }
@@ -849,6 +914,7 @@ export class FakeCoordinator {
       interaction_id: interaction.interaction_id,
       packet_id: interaction.packet_id,
       revision: interaction.revision,
+      boundary_sequence: interaction.boundary_sequence,
       project_id: interaction.project_id,
       session_id: interaction.session_id,
       episode_id: interaction.episode_id,
@@ -867,6 +933,7 @@ export class FakeCoordinator {
       interaction_id: dispatch.interaction_id,
       packet_id: dispatch.packet_id,
       revision: dispatch.revision,
+      boundary_sequence: dispatch.boundary_sequence,
       option_id: dispatch.option_id,
       action_id: dispatch.action_id,
       continuation_id: dispatch.continuation_id,
@@ -875,6 +942,32 @@ export class FakeCoordinator {
 
   turnKey(sessionId, turnId) {
     return `${sessionId}\0${turnId}`;
+  }
+
+  boundaryKey(sessionId, turnId, boundarySequence) {
+    return `${this.turnKey(sessionId, turnId)}\0${boundarySequence}`;
+  }
+
+  activeDispatchForTurn(sessionId, turnId) {
+    for (const dispatch of this.dispatches.values()) {
+      if (
+        dispatch.session_id === sessionId &&
+        dispatch.turn_id === turnId &&
+        dispatch.state === "dispatched"
+      ) {
+        return dispatch;
+      }
+    }
+    return null;
+  }
+
+  latestDispatchForTurn(sessionId, turnId) {
+    let latest = null;
+    for (const dispatch of this.dispatches.values()) {
+      if (dispatch.session_id !== sessionId || dispatch.turn_id !== turnId) continue;
+      if (!latest || dispatch.boundary_sequence > latest.boundary_sequence) latest = dispatch;
+    }
+    return latest;
   }
 
   storeContinuation(token, envelope, expiresAtMs, dispatchMode) {

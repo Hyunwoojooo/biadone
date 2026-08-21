@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blabee Decision"
+  short_description: "의미 있는 작업 경계만 Blabee의 다음 결정으로 연결합니다"
+  default_prompt: "$blabee-decision으로 현재 작업 경계의 다음 결정을 정확한 컨텍스트에 연결해 주세요."

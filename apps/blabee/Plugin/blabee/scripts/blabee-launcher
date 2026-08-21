@@ -1,0 +1,30 @@
+#!/bin/sh
+
+mode=${1:-}
+
+if [ "${BLABEE_COORDINATOR_BINARY+x}" = "x" ]; then
+  coordinator_binary=$BLABEE_COORDINATOR_BINARY
+else
+  coordinator_binary=/Applications/Blabee.app/Contents/MacOS/blabee-coordinator
+fi
+
+case "$coordinator_binary" in
+  /*) ;;
+  *) coordinator_binary= ;;
+esac
+
+if [ -n "$coordinator_binary" ] && [ -f "$coordinator_binary" ] && [ -x "$coordinator_binary" ]; then
+  exec "$coordinator_binary" "$@"
+fi
+
+if [ "$mode" = "hook" ]; then
+  # Blabee availability must never prevent normal Codex use.
+  exit 0
+fi
+
+if [ "$mode" = "mcp" ]; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Blabee coordinator binary is unavailable."}}'
+  exit 127
+fi
+
+exit 64

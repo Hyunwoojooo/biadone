@@ -83,6 +83,18 @@ Codex 작업
 
 Blabee는 Codex Plugin/Hook 레이어에서 통합되므로 어떤 터미널 호스트를 사용하는지는 중요하지 않다. 앱은 OCR, AppleScript 터미널 자동화, 합성 터미널 키 입력을 핵심 경로로 사용해서는 안 된다.
 
+### T-011 구현 경계
+
+현재 `Plugin/blabee/`는 Codex Plugin v0.1.0의 Skill, `SessionStart`·`UserPromptSubmit`·`Stop`·`PermissionRequest` Hook과 로컬 MCP 설정을 소유한다. Skill은 완료·부분 완료·실패·차단처럼 다음 선택이 필요한 의미 있는 작업 경계에서만 `emit_decision`을 호출하며, 설명·구조·상태 확인·일반 질문과 Codex 네이티브 권한 요청은 평소 응답 경로에 남긴다. Pre/PostToolUse 근거 수집은 이 T-011 구현에 포함하지 않았다.
+
+`blabee-coordinator daemon`은 `CoordinatorOperationalApplication` 하나를 UDS에 연결한다. 외부 allowlist는 프로젝트 활성화, 세션 시작, 사람 프롬프트, 결정 제안, Stop, 권한 알림, Pet 상태 조회와 full selection으로 한정한다. Pet 선택은 숫자가 아니라 v1 `blabee_selection_request`의 16개 필드를 모두 받아 현재 packet·revision·option과 9-field binding을 byte-exact로 검증한다. 저수준 journal append, direct semantic selection과 token consume은 운영 UDS에서 호출할 수 없다.
+
+UDS runtime directory는 `0700`, socket과 lease는 `0600`이고 양방향 peer effective UID가 현재 사용자와 같아야 한다. 한 줄 요청은 1 MiB 미만, 동시 연결은 64개로 제한한다. 활성 socket은 회수하지 않고 같은 UID의 stale socket만 교체하며 종료 때 소유한 inode만 제거한다. socket 경로와 독립된 저장소 singleton은 정규화한 절대 DB 경로의 domain-separated SHA-256 identity로 `~/Library/Application Support/Blabee/runtime/authority/`에서 획득한다. 같은 DB·다른 socket의 두 번째 coordinator도 storage 초기화 전에 거부한다. 서로 다른 경로가 hard link 또는 특수 볼륨 alias로 같은 inode를 가리키는 경우는 현재 path identity가 합치지 못하는 잔여 위험이다.
+
+사람 프롬프트 correlation token은 지정된 `UserPromptSubmit` `additionalContext`에 한 번 제공하고 MCP proposal의 지정 필드로만 되돌려 받는다. exact binding 뒤에는 같은 값을 proposal free text에 복사한 입력을 journal write 전에 거부하며 MCP·Pet·UDS 공개 응답과 로그에 다시 노출하지 않는다. action continuation의 원문 token은 `route_consume_pet_action` 성공 뒤 폐기하고 Stop block reason에는 non-secret continuation ID·binding·봉인 action만 포함한다. Stop 원문 메시지는 저장하지 않고 process-local HMAC observation digest와 request generation으로 delivery, replay와 후속 completion을 구분한다.
+
+운영 application은 open/seal, 선택, transport completion/close와 scheduler terminal append의 pre-commit 실패 및 commit 뒤 응답 유실을 authoritative journal replay로 재조정한다. open→seal은 journal에서 인접하게 기록하고 최초 seal 시도의 연속 단조 anchor를 재시도에도 유지한다. 선택 commit 여부를 즉시 확인할 수 없으면 250 ms backoff로 authority를 다시 읽되 원문 continuation token을 복원하거나 재발급하지 않는다. durable selection이 확인되면 action은 `continuation_dispatch_failed_closed`, pause는 `paused`로 waiter를 해제하며, 미커밋이면 기존 pending 선택을 그대로 재시도할 수 있다. expiry·timeout·close와 staged promotion은 정확한 terminal binding을 사용해 한 번만 적용한다.
+
 ## 5. Plugin 계약
 
 ### SessionStart
@@ -123,9 +135,9 @@ Codex `0.148.0`에서 Pet의 1·2 선택은 새 `UserPromptSubmit`을 만들지 
 - Hook이 로컬 코디네이터에 2초 안에 연결되지 않으면 Blabee 자동 동작을 비활성화하고 성공 상태로 종료해 일반 Codex 사용을 막지 않는다.
 - 현재 턴에 유효한 결정 제안이 없으면 성공 상태로 종료하고 턴이 정상적으로 끝나게 한다.
 - 결정 제안이 있으면 코디네이터에 Pet 활성화를 요청하고 기다린다. 60초가 지나면 한 번 알리고, 120초가 지나면 패킷을 만료시킨다.
-- `권장 작업` 또는 `대안 작업`: 선택 요청의 프로젝트·세션·턴·에피소드·상호작용·패킷·리비전·옵션 바인딩 전체를 검증하고 활성 패킷을 원자적으로 선점한다. 코디네이터는 봉인된 작업 의미 전체와 일회성 연속 진행 토큰을 물질화한 뒤, 대기 중인 `Stop`에 `decision: "block"`과 진행 지시를 반환한다.
-- Codex는 새 사용자 프롬프트 없이 같은 턴을 계속한다. 작업 후 발생하는 `stop_hook_active: true` 후속 `Stop`만 정확한 세션·턴의 연속 진행 **수명 주기 종료**를 한 번 관찰하고 토큰을 소비한다. 이는 선택한 작업의 성공 판정이 아니며 성공·실패는 별도 outcome/evidence로 판단한다. 잘못된 세션·턴·플래그와 중복 후속 Stop은 상태를 다시 바꾸지 않는다.
-- 120초 만료는 Pet 선택 전의 대기 패킷에 적용한다. T-006은 dispatch 이후 `pet_action`의 `in_flight_deadline_at`과 timeout 결과 계약을 확정했다. deadline을 넘기면 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 실제 시계·저널·복구 구현은 T-007 범위다.
+- `권장 작업` 또는 `대안 작업`: 선택 요청의 프로젝트·세션·턴·에피소드·상호작용·패킷·리비전·옵션 바인딩 전체를 검증하고 활성 패킷을 원자적으로 선점한다. 코디네이터는 봉인된 작업 의미 전체와 일회성 연속 진행 토큰을 물질화한다. T-011 제품 adapter는 원문 토큰을 process-local secret corpus에 등록한 뒤 `route_consume_pet_action`으로 즉시 한 번 소비하고, 그 성공 뒤에만 대기 중인 `Stop`에 `decision: "block"`과 봉인된 작업·비민감 binding을 반환한다. 원문 토큰은 Hook·MCP·Pet·UDS 출력에 넣지 않는다.
+- Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 않는다. Codex 공식 문서상 Stop Hook의 `reason`은 모델에게 새 사용자 프롬프트처럼 작동하는 continuation prompt다. 지원 판정한 CLI에서는 같은 turn lineage가 유지되는지 exact-version 계약으로 검증한다. 작업 후 발생하는 `stop_hook_active: true` 후속 `Stop`은 이미 소비된 정확한 세션·턴의 연속 진행에 대해 **전송 수명 주기 종료**만 한 번 기록한다. 이는 선택한 작업의 성공 판정이 아니며 성공·실패는 별도 outcome/evidence로 판단한다. 잘못된 세션·턴·플래그, 전달 관찰과 같은 Stop 재전달, 이미 본 중복 Stop은 상태를 다시 바꾸지 않는다.
+- 120초 만료는 Pet 선택 전의 대기 패킷에 적용한다. T-006/B1은 dispatch 이후 `pet_action`의 `in_flight_deadline_at`과 timeout 결과 계약을 고정했고, B2는 coordinator-owned 120초 Pet·형식 보정 token과 300초 in-flight window를 연속 단조 시계로 실행한다. token consume/claim과 transport completion 시각은 외부 입력 대신 logical monotonic time으로 덮어쓴다. deadline을 넘기면 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 절전 경과는 포함하고 wall clock 변경은 권한 판정에 사용하지 않으며, 재시작으로 monotonic anchor를 증명할 수 없으면 fail-closed한다.
 - `보류`: 재개 캡슐을 저장하고 턴 종료를 허용한다.
 - `롤백`: 검증된 로컬 복원을 수행하고 현재 에피소드를 종료한다. 새 작업을 자동 시작하지 않으며, 다음 재개 시 복원 결과를 같은 세션 컨텍스트에 동기화한다.
 - 120초 만료 시 자동으로 선택하지 않고 재개 캡슐을 저장한 뒤 턴 종료를 허용한다. 만료 후 도착한 단축키는 거부한다.
@@ -385,9 +397,9 @@ Pet은 선택 시 선택·프로젝트·세션·턴·프롬프트·에피소드�
 }
 ```
 
-코디네이터는 토큰 원문 대신 검증용 fingerprint만 저장한다. 토큰은 CSPRNG로 최소 128-bit 엔트로피를 사용해 발급하고, durable journal에는 SHA-256 또는 HMAC-SHA-256 fingerprint만 기록하며 비교는 constant-time으로 수행한다. JSON Schema의 문자열 길이는 엔트로피를 증명하지 않으므로 실제 생성·키 관리·비교 구현과 테스트는 T-007이 담당한다.
+코디네이터는 토큰 원문 대신 검증용 fingerprint만 저장한다. 토큰은 CSPRNG로 최소 128-bit 엔트로피를 사용해 발급하고, durable journal에는 SHA-256 또는 HMAC-SHA-256 fingerprint만 기록하며 비교는 constant-time으로 수행한다. JSON Schema의 문자열 길이는 엔트로피를 증명하지 않으므로 T-007a 참조 코어가 생성·비교 의미를 구현했다. T-007b-A는 외부 32-byte 키와 영속 sidecar HMAC을, T-007b-A2는 OS Keychain freshness CAS를 구현했다. 키 회전과 일반 운영자 복구 정책은 후속 안전 게이트다.
 
-Codex `0.148.0` 주 경로에서는 전체 선택 바인딩을 검증한 뒤 봉투의 작업 의미를 대기 중인 `Stop`의 차단 사유에 넣어 같은 턴으로 전달하고, 정확한 `stop_hook_active: true` 후속 `Stop`에서 토큰을 한 번 소비하며 전송 수명 주기의 종료를 기록한다. 이 전이는 `continuation_dispatched → continuation_consumed → continuation_transport_completed` 순서를 가진다. `continuation_transport_completed`는 후속 Stop 관찰일 뿐 작업 성공이 아니다. 실제 성공·실패·취소·불명 결과는 별도 `work_outcome_recorded` 이벤트로 기록한다.
+Codex `0.148.0` 주 경로에서는 전체 선택 바인딩을 검증한 뒤 원문 토큰을 process-local로만 보유해 즉시 한 번 소비하고, 소비가 성공한 봉투의 작업 의미만 대기 중인 `Stop`의 차단 사유에 넣어 같은 턴으로 전달한다. 정확한 `stop_hook_active: true` 후속 `Stop`에서는 토큰을 다시 다루지 않고 전송 수명 주기의 종료만 기록한다. 이 전이는 `continuation_dispatched → continuation_consumed → Hook block 전달 → continuation_transport_completed` 순서를 가진다. `continuation_transport_completed`는 후속 Stop 관찰일 뿐 작업 성공이 아니다. 실제 성공·실패·취소·불명 결과는 별도 `work_outcome_recorded` 이벤트로 기록한다.
 
 dispatch 뒤 `in_flight_deadline_at`까지 작업 결과를 확인하지 못하면 `continuation_transport_timed_out_unknown`을 기록한다. 이 상태는 `work_outcome_status = unknown`, `automatic_retry = false`, `cancellation_inferred = false`, `failure_inferred = false`이며 중복 실행 위험 때문에 자동으로 재시도하지 않는다.
 
@@ -600,6 +612,34 @@ SQLite에는 다음 항목을 저장한다.
 - 체크포인트 메타데이터와 블롭 참조
 - 재개 캡슐과 Plugin/지침 버전
 
+`decision_packet_sealed` 이벤트에 없는 전체 패킷 본문과 `continuation_dispatched` 이벤트에 없는 token fingerprint는 각각 불변 packet document·verification sidecar로 같은 트랜잭션에 저장한다. T-007b-A는 SQLite 밖의 32-byte 키로 두 sidecar의 exact row identity와 packet/seal/selection/action/verification binding을 HMAC 인증한다. 런타임 이벤트는 이전 MAC·sequence·row identity를 결합한 MAC chain과 인증된 head anchor로 보호하고, 손상·교체·중간/마지막 행 삭제·orphan/missing artifact를 재시작 시 fail-closed한다.
+
+T-007b-A는 low-level persistence kernel이고 T-007b-B1이 그 앞의 제품 의미 경계를 구현한다. B1은 T-007a의 12개 이벤트 replay/projection과 11개 command, latest revision·stale·expiry·rollback-disabled·reseal 판정을 Swift로 포팅했다. 실행 순서는 `load → replay → decide → candidate replay → atomic append`이며 CAS 충돌은 최대 2회만 재시도한다. 토큰은 retry 전에 한 번 생성하고 append 성공 전에는 effect를 반환하지 않는다. 제품 NDJSON은 `execute_command`만 허용하며 low-level `append`는 test-harness compile flag에서만 존재한다.
+
+식별자는 의미 계층에서 저장 전에 NFC를 요구한다. 저장된 ID를 가리키는 선택·continuation·packet/checkpoint 참조는 Swift의 canonical-equivalence `String ==`가 아니라 UTF-8 byte-exact로 비교한다. 이 규칙은 고정된 Contracts/v1 JSON Schema를 바꾸지 않는다. JSON 숫자 wire gate는 모든 v1 숫자를 exact Int64 정수로 제한한다. 일반 정수 lexeme는 Int64 전체 범위를 허용하고, Foundation이 Double로 해석하는 decimal/exponent 표기는 정확성이 보장되는 ±2^53까지만 허용한다. SQLite text는 명시적 UTF-8 byte length로 bind/read해 embedded NUL을 보존한다.
+
+키 파일은 `0600`, 상위 디렉터리는 `0700`이어야 하고 `openat` 기반 경로 검사로 symlink를 거부한다. 이 경계는 다른 UID에 대한 파일 권한 보호이며 같은 UID 프로세스의 키 읽기를 막지 않는다. T-007b-A2는 OS Keychain에 strict canonical `initializing`/`committed`/`pending` freshness record를 두고 SQLite metadata의 불변 `database_id`, generation, event sequence와 head MAC을 결합한다. Keychain item의 `kSecAttrGeneric`에는 canonical record digest를 저장해 compare-and-swap하며, append 전체 전이는 process mutex와 키 디렉터리의 `0600` `flock` 안에서 실행한다.
+
+새 저장소는 DB·키·anchor가 모두 없을 때만 만든다. 먼저 Keychain `initializing` identity를 기록하고 그 identity로 키와 DB 생성을 재개한다. 기존 DB 또는 키가 있는데 anchor가 없으면 pre-A2 상태를 자동 migration/adoption하지 않고 `freshness_anchor_missing`으로 차단한다. anchor가 남은 상태에서 DB·키가 없거나 DB가 0-byte이면 lock 파일을 만들기 전의 무변경 preflight와 lock 뒤 recheck에서 `freshness_storage_missing`으로 차단한다.
+
+append의 freshness 순서는 다음과 같다.
+
+```text
+DB와 Keychain committed checkpoint 비교
+→ SQLite BEGIN IMMEDIATE 및 batch 적용
+→ Keychain pending(from, to, canonical batch digest) CAS/read-back
+→ SQLite COMMIT
+→ 전체 authenticated replay
+→ Keychain committed(to) CAS/read-back
+→ 성공 응답
+```
+
+`pending + target DB`는 전체 replay가 성공한 뒤에만 committed로 승격한다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 과거 DB 복원을 구분할 수 없으므로 자동 취소하지 않고 정확히 같은 canonical batch digest의 append 재시도만 허용한다. Keychain보다 오래되거나 같은 sequence에서 head가 다른 authentic DB는 첫 event를 반환하기 전에 `freshness_rollback_detected`로 차단한다. crash injection은 pending 뒤/SQLite commit 전, SQLite commit 뒤/freshness finalize 전, committed read-back 뒤를 각각 85/87/88/86 exit로 검증한다.
+
+Keychain `errSecDecode`와 `errSecInvalidKeychain`은 anchor 손상, 잠금·interaction 불가 등은 unavailable로 fail-closed한다. 현재 unsigned CLI는 Data Protection Keychain 사용 시 `errSecMissingEntitlement(-34018)`가 발생해 legacy login Keychain을 사용하며 UI 차단에 deprecated `kSecUseAuthenticationUIFail` 경고가 남아 있다. signed wrapper, provisioning/access group, `LAContext`, code-signing ACL과 deprecated API 교체는 T-012 범위다. 같은 UID 공격자의 Keychain item 삭제·교체와 DB·키·anchor 동시 제거는 A2만으로 구분하지 못하며, exact batch가 없는 `pending + source DB`에는 운영자 복구가 필요하다.
+
+runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 원문 token/correlation 값을 DB·WAL·SHM·로그에서 찾는 방어선이다. 재시작하면 다시 등록하며, 런타임이 본 적 없는 임의 secret 전체의 비유출을 증명하는 장치로 해석하지 않는다.
+
 소스 내용과 체크포인트 블롭은 로컬에 둔다. MVP에는 Blabee 클라우드 추론 백엔드가 없다.
 
 ## 14. 안전 경계
@@ -640,6 +680,8 @@ SQLite에는 다음 항목을 저장한다.
 - `high`·`critical` 위험 작업은 전역 숫자 단축키로 시작할 수 없고, Pet의 위험 확인과 이후 Codex 네이티브 승인을 서로 대체하지 않는다.
 - 60초에는 알림만 표시하고, 120초에는 자동 선택 없이 패킷을 만료하고 재개 캡슐을 저장하며 늦은 입력을 거부한다.
 - 로컬 코디네이터 연결이 2초 안에 성립하지 않으면 Hook은 fail-open하고 어떤 자동 선택이나 롤백도 실행하지 않는다.
+- Keychain freshness checkpoint보다 오래되거나 같은 sequence/head가 다른 authentic DB, DB·키 loss, anchor 누락/손상에서는 event를 반환하거나 저장 파일을 자동 생성하지 않는다.
+- freshness `pending + target DB`는 전체 authenticated replay 뒤에만 finalize하고, `pending + source DB`는 정확히 같은 canonical batch 재시도 외에는 자동 취소·진행하지 않는다.
 - 공개 v0.1의 네이티브 권한 알림에서는 원래 Codex UI 열기만 가능하고 허용/거부는 전송되지 않는다.
 - 기본 CLI는 동일한 Plugin 경로를 통해 Terminal, iTerm, VS Code 터미널, Orca에서 동작한다.
 - 터미널에 다시 진입하지 않고 저위험 결정 루프를 연속 세 번 완료한다.
@@ -661,18 +703,17 @@ M0에서 실제 Codex CLI `0.148.0`과 임시 Git 프로젝트를 사용해 다�
 - `.codex/hooks.json`과 프로젝트의 `.codex/config.toml`만으로 `SessionStart → UserPromptSubmit → MCP emit_decision → Stop 대기 → Pet 선택 → 같은 턴 연속 진행 → 수명 주기 종료 관찰`이 성공했다. MCP 검색을 위해 별도의 직접 `-c` 서버 주입은 필요하지 않았다.
 - 실제 결과의 `mcp_config_source`는 `project_config_only`, `final_assistant_message`는 정확히 `M0_CONTINUED`, `terminal_input_injection`과 `separate_llm_api_key`는 모두 `false`였다.
 - 설명 전용 음성 계약도 실제 CLI에서 통과했다. `--explanation-only` 실행은 `project_enabled`, `session_started`, `human_episode_started`만 기록했고 `decision_proposal_received`와 `decision_wait_started`는 0건, `result.txt`는 생성되지 않았으며 `final_assistant_message`는 정확히 `M0_EXPLAINED`였다.
-- 이 결과는 **결정 한 번 → 연속 진행 한 번**의 사이클만 입증한다. 현재 같은 Codex 턴 안에서 두 번째 `emit_decision`은 턴 키 충돌이 발생하므로 반복 Pet 루프는 M1에서 결정 경계 식별자와 상태 전이를 다시 설계해야 한다.
+- 이 역사적 `0.148.0` M0 결과는 **결정 한 번 → 연속 진행 한 번**의 사이클만 입증한다. `0.148.0` 반복 두 사이클은 아직 미검증이다.
 - 선택은 전체 패킷 바인딩을 검증했고, 터미널 키 입력이나 별도 LLM API 키를 사용하지 않았다.
-- Hook 해시 검토는 타당성 픽스처에서만 `--dangerously-bypass-hook-trust`로 우회했다. 마켓플레이스 설치, 번들 코디네이터 자동 시작, 사용자 신뢰 검토, 제품 패키징은 아직 검증하지 않았다. [Codex 플러그인 만들기](https://developers.openai.com/plugins/build/plugins)
+- Hook 해시 검토는 타당성 픽스처에서만 `--dangerously-bypass-hook-trust`로 우회했다. T-011에서 격리한 `CODEX_HOME`과 로컬 marketplace를 사용한 Plugin 설치·cache-buster 업데이트·제거는 실제 Codex CLI `0.149.0`으로 통과했다. 번들 코디네이터 자동 시작, 사용자 Hook 신뢰 검토와 제품 패키징은 아직 검증하지 않았다. [Codex 플러그인 만들기](https://developers.openai.com/plugins/build/plugins)
 - 롤백 검증은 운영체제 임시 디렉터리 아래 합성 Git 픽스처에만 적용했다. 실제 사용자 작업공간에서 롤백을 활성화하지 않았다.
 
-이 M0 결과는 연동 타당성에 대한 조건부 승인이다. T-006은 반복 결정 경계와 dispatch 후 in-flight deadline/outcome을 런타임 독립 계약으로 고정했지만, 이를 실행하는 T-007 상태 머신, 운영 롤백 안전 게이트, 네이티브 Pet과 패키징이 남아 있으므로 실제 사용자 작업공간이나 공개 MVP 사용 승인이 아니다.
+이 M0 결과는 연동 타당성에 대한 조건부 승인이다. T-005는 Node와 Swift의 공통 NDJSON·durable append/replay·partial-tail·지속 부하·단조 대기 probe·진단·ad-hoc 서명·측정용 DMG를 비교해 **Swift 네이티브 헬퍼를 제품 런타임으로 선택**했다. Node는 계약 참조, C는 정식 JSON parser가 없는 health 전용 성능 기준선이다.
 
-남은 제품 선택이 아니라 **후속 측정으로 닫을 기술 증거 게이트**는 운영용 로컬 코디네이터 런타임 하나다. M0 마이크로벤치에서 네이티브 Swift 헬퍼, TypeScript/Node 헬퍼, 소형 C 시스템 바이너리의 제한된 health fixture를 비교했지만, C 구현은 정식 JSON 파서가 아니므로 프로토콜 동등성 근거로 사용하지 않는다. 다음 조건을 모두 기록하기 전까지 제품 런타임은 선택하지 않는다.
+T-007a는 런타임 중립 JavaScript 참조 코어에서 순수 `decide`/`reduce`/`replay`, 같은 턴 경계 1→2, CAS 선택 선점, 패킷·sidecar 결합, CSPRNG/fingerprint, 형식 보정과 timeout `unknown`을 구현해 독립 QA를 통과했다.
 
-- Plugin/Hook 배포 크기와 시작 지연
-- 120초 Stop 대기와 프로세스 재시작 시의 안정성
-- macOS 앱과의 IPC, 서명·공증, 자동 업데이트 복잡도
-- 단일 파일 배포 가능성, 진단 가능성, 메모리 사용량
+T-007b-A는 Swift 저수준 제품 영속 커널에서 strict ingress 4개 타입과 manifest fixture 20개, SQLite WAL/FULL/FK, 프로세스 간 CAS, crash·SIGKILL·commit 후 replay, runtime event MAC chain/head anchor, packet/verification row-bound HMAC을 구현했다. T-007b-A2는 strict Keychain freshness state, immutable DB checkpoint, digest CAS, secure process lock, storage preflight/recheck와 rollback/loss/crash reconciliation을 추가했다. T-007b-B1은 Swift 의미 state/application과 제품 semantic 경계를 추가해 low-level append의 제품 노출을 차단했다. B2는 atomic same-session pending, multi-session queue, explicit foreground/no-steal, exact selection, routed Pet token consume, fixed-window format-repair claim과 continuous deadline scheduler를 추가하고 direct B1 selection/token-consume/scheduler command를 제품 API에서 차단했다. 진단 가림 회귀 추가 직전 Swift package 62/62, T-007a 33/33, persistence 40/40과 전체 `npm test` 247/247이 통과했다. 가림 회귀 추가 뒤 M0는 55/55가 통과했고 실제 Codex 두 사이클도 재통과했지만, 최신 전 범위 248개 중 2개는 macOS Keychain `security` 조회 환경 timeout으로 남았다.
 
-현재는 Node를 계약 스파이크에 유지하고, Swift를 다음 macOS 패키징 후보로 삼으며, C는 성능 기준선으로만 유지한다. 이 게이트를 통과하기 전에는 런타임 언어를 제품 계약으로 고정하지 않는다.
+T-007b-C에서는 실제 Codex CLI `0.149.0`과 M0 fake coordinator의 격리 픽스처가 같은 session·turn·episode lineage로 `boundary_sequence` 1→2, 결정 두 사이클, `M0_CONTINUED_TWICE`를 통과했다. 별도 Swift 제품 게이트는 같은 lineage에서 각 경계의 선택·dispatch·consume·전송 종료·작업 결과·경계 종료를 포함한 16개 이벤트를 영속화하고 재시작 후 재생했다. T-011은 이 의미를 실제 제품 Hook/MCP CLI, Pet API용 UDS test client와 고수준 Swift application/UDS에 옮겼다. 네이티브 Pet UI 결합은 T-010이다.
+
+따라서 실제 사용자 작업공간이나 공개 MVP 사용 승인은 아니다. T-011의 고수준 adapter·단일 daemon/UDS ownership·full selection·원문 continuation token 비노출은 구현됐지만 실제 사용자 Hook 신뢰와 로그인 Keychain 제품 daemon qualification이 남아 있다. 실제 장시간 macOS sleep 운영 검증, 운영 롤백 안전 게이트, 네이티브 Pet, Developer ID 서명·공증 패키징과 signed Data Protection Keychain도 후속 범위다. 같은 UID anchor 삭제·교체, DB·키·anchor 동시 제거와 exact batch가 없는 pending-source 복구도 현재 범위 밖이다.

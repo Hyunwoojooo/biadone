@@ -27,8 +27,27 @@ import { isStrictRfc3339DateTime, parseStrictRfc3339DateTime } from "./rfc3339.m
 
 const suitePromise = loadV1ContractSuite();
 
+const TRACE_BINDING_FIELDS = Object.freeze([
+  "project_id",
+  "session_id",
+  "source_turn_id",
+  "source_prompt_id",
+  "episode_id",
+  "episode_root_prompt_id",
+  "episode_baseline_checkpoint_id",
+  "decision_boundary_id",
+  "boundary_sequence",
+]);
+
 function clone(value) {
   return structuredClone(value);
+}
+
+function copyTraceBinding(targetEvent, sourceEvent) {
+  const target = extractRuntimeEvent(targetEvent);
+  const source = extractRuntimeEvent(sourceEvent);
+  for (const field of TRACE_BINDING_FIELDS) target[field] = source[field];
+  return targetEvent;
 }
 
 function caseFor(suite, predicate, description) {
@@ -577,6 +596,34 @@ test("internal format repair journal replay preserves one boundary reservation b
       expires_at: "2026-01-15T09:02:00Z",
     },
   });
+  const boundaryClosed = (suffix) => ({
+    ...clone(opened),
+    event_id: `event_inline_format_repair_closed_${suffix}`,
+    event_type: "decision_boundary_closed",
+    event_category: "decision_lifecycle",
+    occurred_at: "2026-01-15T09:00:31Z",
+    payload: { close_reason: "format_repair_claimed" },
+  });
+  const nextBoundaryOpened = (suffix) => ({
+    ...clone(opened),
+    event_id: `event_inline_format_repair_boundary_opened_${suffix}`,
+    occurred_at: "2026-01-15T09:00:32Z",
+    decision_boundary_id: `boundary_fixture_repair_journal_${suffix}`,
+    boundary_sequence: 2,
+    payload: { proposal_id: `proposal_inline_format_repair_${suffix}` },
+  });
+  const reservationForBoundary = (boundaryEvent, suffix, overrides = {}) => {
+    const event = copyTraceBinding(freshReservation(suffix), boundaryEvent);
+    event.occurred_at = "2026-01-15T09:00:33Z";
+    event.payload = {
+      ...event.payload,
+      parent_prompt_id: extractRuntimeEvent(boundaryEvent).source_prompt_id,
+      issued_at: "2026-01-15T09:00:33Z",
+      expires_at: "2026-01-15T09:02:33Z",
+      ...overrides,
+    };
+    return event;
+  };
 
   await t.test("reserved then claimed is a valid journal pair", () => {
     const trace = traceFrom("valid_format_repair_journal_pair", [opened, reservedFixture, claimedFixture]);
@@ -610,6 +657,40 @@ test("internal format repair journal replay preserves one boundary reservation b
       { restart_after_event_sequence: 3 },
     );
     assertSemanticError(trace, "format_repair_already_reserved_for_boundary", runtimeValidator, trace.name);
+  });
+
+  await t.test("continuation identity cannot be reused by a repair in another boundary", () => {
+    const closed = boundaryClosed("duplicate_identity");
+    const nextOpened = nextBoundaryOpened("duplicate_identity");
+    const duplicate = reservationForBoundary(nextOpened, "duplicate_identity", {
+      continuation_id: reservedFixture.payload.continuation_id,
+    });
+    const trace = traceFrom("format_repair_global_continuation_identity_reuse", [
+      opened,
+      reservedFixture,
+      claimedFixture,
+      closed,
+      nextOpened,
+      duplicate,
+    ]);
+    assertSemanticError(trace, "continuation_already_dispatched", runtimeValidator, trace.name);
+  });
+
+  await t.test("correlation fingerprint cannot be reused by a repair in another boundary", () => {
+    const closed = boundaryClosed("duplicate_fingerprint");
+    const nextOpened = nextBoundaryOpened("duplicate_fingerprint");
+    const duplicate = reservationForBoundary(nextOpened, "duplicate_fingerprint", {
+      correlation_token_fingerprint: reservedFixture.payload.correlation_token_fingerprint,
+    });
+    const trace = traceFrom("format_repair_global_fingerprint_reuse", [
+      opened,
+      reservedFixture,
+      claimedFixture,
+      closed,
+      nextOpened,
+      duplicate,
+    ]);
+    assertSemanticError(trace, "token_fingerprint_duplicate", runtimeValidator, trace.name);
   });
 
   await t.test("a reservation may be claimed once", () => {
@@ -739,6 +820,73 @@ test("semantic trace mutations fail closed with stable lifecycle error codes", a
     return event;
   };
 
+  const repairReservedFixture = caseFor(
+    suite,
+    (item) => item.valid && item.name === "valid_runtime_format_repair_reserved",
+    "a valid internal-format-repair reservation event",
+  ).value;
+  const repairClaimedFixture = caseFor(
+    suite,
+    (item) => item.valid && item.name === "valid_runtime_format_repair_claimed",
+    "a valid internal-format-repair claim event",
+  ).value;
+  const makeRepairPairForBoundary = (boundaryEvent, suffix, reservedAt, claimedAt, overrides = {}) => {
+    const reserved = copyTraceBinding(clone(repairReservedFixture), boundaryEvent);
+    extractRuntimeEvent(reserved).event_id = `event_cross_origin_repair_reserved_${suffix}`;
+    extractRuntimeEvent(reserved).occurred_at = reservedAt;
+    reserved.payload = {
+      ...reserved.payload,
+      continuation_id: `continuation_cross_origin_repair_${suffix}`,
+      repair_request_id: `repair_request_cross_origin_${suffix}`,
+      parent_prompt_id: extractRuntimeEvent(boundaryEvent).source_prompt_id,
+      issued_at: reservedAt,
+      expires_at: "2026-01-15T10:02:30Z",
+      correlation_token_fingerprint: `sha256:${"c".repeat(64)}`,
+      ...overrides,
+    };
+    const claimed = copyTraceBinding(clone(repairClaimedFixture), boundaryEvent);
+    extractRuntimeEvent(claimed).event_id = `event_cross_origin_repair_claimed_${suffix}`;
+    extractRuntimeEvent(claimed).occurred_at = claimedAt;
+    claimed.payload = clone(reserved.payload);
+    return [reserved, claimed];
+  };
+
+  await t.test("repair continuation identity cannot be reused by pet action dispatch", () => {
+    const trace = mutate(sameTurn, "repair_identity_reused_by_pet_action", (candidate) => {
+      const firstOpenIndex = candidate.events.findIndex((event) => traceEventType(event) === "decision_boundary_opened");
+      const firstOpen = candidate.events[firstOpenIndex];
+      const petContinuationId = traceEventData(eventOfType(candidate, "continuation_dispatched")).continuation_id;
+      const pair = makeRepairPairForBoundary(
+        firstOpen,
+        "before_pet",
+        "2026-01-15T10:00:00.100000000Z",
+        "2026-01-15T10:00:00.200000000Z",
+        { continuation_id: petContinuationId },
+      );
+      candidate.events.splice(firstOpenIndex + 1, 0, ...pair);
+    });
+    assertSemanticError(trace, "continuation_already_dispatched", runtimeValidator, trace.name);
+  });
+
+  await t.test("pet action continuation identity cannot be reused by repair", () => {
+    const trace = mutate(sameTurn, "pet_action_identity_reused_by_repair", (candidate) => {
+      const secondOpenIndex = candidate.events.findIndex(
+        (event, index) => traceEventType(event) === "decision_boundary_opened" && index > 0,
+      );
+      const secondOpen = candidate.events[secondOpenIndex];
+      const firstPetContinuationId = traceEventData(eventOfType(candidate, "continuation_dispatched")).continuation_id;
+      const [reservation] = makeRepairPairForBoundary(
+        secondOpen,
+        "after_pet",
+        "2026-01-15T10:00:07.100000000Z",
+        "2026-01-15T10:00:07.200000000Z",
+        { continuation_id: firstPetContinuationId },
+      );
+      candidate.events.splice(secondOpenIndex + 1, 0, reservation);
+    });
+    assertSemanticError(trace, "continuation_already_dispatched", runtimeValidator, trace.name);
+  });
+
   await t.test("a claimed selection dispatches only one continuation", () => {
     const trace = mutate(sameTurn, "duplicate_dispatch_for_selection", (candidate) => {
       const index = candidate.events.findIndex((event) => traceEventType(event) === "continuation_dispatched");
@@ -765,6 +913,48 @@ test("semantic trace mutations fail closed with stable lifecycle error codes", a
       traceEventData(eventOfType(candidate, "continuation_consumed")).dispatch_mode = "submitted_envelope";
     });
     assertSemanticError(trace, "continuation_dispatch_mode_mismatch", runtimeValidator, trace.name);
+  });
+
+  await t.test("consumption one nanosecond before issued_at is rejected", () => {
+    const trace = mutate(sameTurn, "consumption_one_nanosecond_before_issued", (candidate) => {
+      const consumed = eventOfType(candidate, "continuation_consumed");
+      extractRuntimeEvent(consumed).occurred_at = "2026-01-15T10:00:02.999999999Z";
+    });
+    assertSemanticError(trace, "continuation_not_yet_valid", runtimeValidator, trace.name);
+  });
+
+  await t.test("consumption at expires_at is rejected", () => {
+    const trace = mutate(sameTurn, "consumption_at_expiry", (candidate) => {
+      const dispatch = eventOfType(candidate, "continuation_dispatched");
+      const consumed = eventOfType(candidate, "continuation_consumed");
+      extractRuntimeEvent(consumed).occurred_at = traceEventData(dispatch).expires_at;
+    });
+    assertSemanticError(trace, "continuation_expired", runtimeValidator, trace.name);
+  });
+
+  await t.test("a completed transport cannot consume again", () => {
+    const trace = mutate(sameTurn, "consumption_after_completed_transport", (candidate) => {
+      const completedIndex = candidate.events.findIndex((event) => traceEventType(event) === "continuation_transport_completed");
+      const consumed = clone(eventOfType(candidate, "continuation_consumed"));
+      extractRuntimeEvent(consumed).event_id = `${extractRuntimeEvent(consumed).event_id}_after_completed`;
+      extractRuntimeEvent(consumed).occurred_at = "2026-01-15T10:00:04.000000001Z";
+      candidate.events.splice(completedIndex + 1, 0, consumed);
+    });
+    assertSemanticError(trace, "continuation_already_consumed", runtimeValidator, trace.name);
+  });
+
+  await t.test("a timed-out transport cannot consume afterward", () => {
+    const trace = mutate(timeout, "consumption_after_timeout", (candidate) => {
+      const dispatch = eventOfType(candidate, "continuation_dispatched");
+      const timeoutIndex = candidate.events.findIndex((event) => traceEventType(event) === "continuation_transport_timed_out_unknown");
+      const consumed = copyTraceBinding(clone(eventOfType(sameTurn, "continuation_consumed")), dispatch);
+      extractRuntimeEvent(consumed).event_id = "event_trace_timeout_consumed_after_terminal";
+      extractRuntimeEvent(consumed).occurred_at = "2026-01-15T12:05:03.000000001Z";
+      traceEventData(consumed).continuation_id = traceEventData(dispatch).continuation_id;
+      traceEventData(consumed).dispatch_mode = traceEventData(dispatch).dispatch_mode;
+      candidate.events.splice(timeoutIndex + 1, 0, consumed);
+    });
+    assertSemanticError(trace, "transport_already_terminal", runtimeValidator, trace.name);
   });
 
   await t.test("completed transport requires a prior consumed event", () => {
@@ -941,6 +1131,22 @@ test("semantic trace mutations fail closed with stable lifecycle error codes", a
     });
     assertSemanticError(trace, "previous_decision_boundary_still_open", runtimeValidator, trace.name);
   });
+
+  for (const lineageField of [
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+  ]) {
+    await t.test(`same-turn boundary lineage keeps ${lineageField} immutable`, () => {
+      const trace = mutate(sameTurn, `same_turn_changed_${lineageField}`, (candidate) => {
+        const nextOpened = eventOfType(candidate, "decision_boundary_opened", 1);
+        extractRuntimeEvent(nextOpened)[lineageField] = `${extractRuntimeEvent(nextOpened)[lineageField]}_changed`;
+        if (lineageField === "episode_id") extractRuntimeEvent(nextOpened).boundary_sequence = 1;
+      });
+      assertSemanticError(trace, "decision_boundary_lineage_mismatch", runtimeValidator, trace.name);
+    });
+  }
 
   const firstPacket = eventOfType(sameTurn, "decision_packet_sealed");
   const firstOpen = eventOfType(sameTurn, "decision_boundary_opened");

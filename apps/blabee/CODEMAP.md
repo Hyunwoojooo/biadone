@@ -1,16 +1,16 @@
 # Blabee 코드맵
 
-상태: v0.1 설계 코드맵 + T-006 v1 계약 패키지 + disposable M0 스파이크. `Contracts/v1`은 규범 계약이고 `spikes/m0/`는 타당성 증거이며 공개 제품 런타임은 아니다.
+상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-011 Codex 운영 어댑터와 Plugin. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator, `Plugin/blabee/`는 Codex 진입점이며 `spikes/`는 자격·타당성 증거다.
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. Hook/MCP, fake coordinator, Git 체크포인트, 런타임 벤치마크와 실제 Codex harness는 `spikes/m0/`의 타당성 증거다. macOS Pet, installer, 운영 ledger와 production coordinator는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time과 T-011 Hook/MCP/Pet UDS adapter를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 macOS Pet UI와 installer는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
 - **구현 후보/스파이크**: 계약 검증과 측정 전에는 production 구조로 간주하지 않는다.
 
-특히 TypeScript/Node는 Hook·MCP 왕복을 빠르게 확인하기 위한 스파이크 후보이고, Swift helper와 소형 독립형 시스템 바이너리는 배포 특성을 비교할 후보일 뿐이다. 공개 코디네이터의 구현 언어와 프로세스 토폴로지는 아직 확정하지 않는다. 네이티브 macOS Pet UI는 SwiftUI/AppKit 제품 경계로 유지한다.
+T-005 자격 시험 결과 공개 코디네이터의 제품 런타임은 Swift 네이티브 헬퍼로 선택했다. Node ESM은 계약 참조·빠른 실험 하네스, C는 정식 JSON parser가 없는 health 전용 성능 기준선이다. T-007a JavaScript 코어는 런타임 중립 port 의미를 고정하고, T-007b-A/A2/B1/B2 Swift Package가 SQLite·외부 키 인증·Keychain freshness CAS·semantic application·routing/time을 구현한다. T-011은 그 앞에 조건부 결정 Skill, 공식 Hook/MCP CLI, 고수준 operational application, 단일 UDS/storage owner와 Pet API를 연결한다. 공개 dispatch 승인은 실제 Hook 신뢰·제품 daemon/Keychain qualification과 T-012 배포 격리 뒤에 판단한다. 네이티브 macOS Pet UI는 SwiftUI/AppKit 제품 경계로 유지한다.
 
 ## v0.1 도메인 경계
 
@@ -63,6 +63,12 @@ RuntimeEvent
 ├─ pet_action: dispatched → consumed → transport completed/timeout → work outcome
 └─ internal_format_repair: reserved → claimed
    └─ reserved가 boundary당 1회 예산의 durable 진실 원본, token 원문 대신 fingerprint만 저장
+
+CoordinatorPersistence (T-007a port → T-007b-A Swift adapter)
+├─ runtime event: 이전 MAC·sequence·row identity를 결합한 MAC chain + 인증된 head anchor
+├─ sealed packet document: exact packet/seal/selection/action binding + row-bound HMAC
+└─ verification record: exact dispatch binding + token fingerprint + row-bound HMAC
+   └─ 원문 token/action body는 저장하지 않음
 
 NativeCodexRequest
 └─ native_request_id + session/turn correlation + original UI locator
@@ -118,10 +124,109 @@ Tests/Contracts/
 ├── decision-packet-semantic.mjs   # 교차 슬롯 ID·체크포인트 의미 불변식
 ├── continuation-claim.mjs         # 테스트용 일회성·만료·exact-binding 의미 검증기
 ├── semantic-trace.mjs             # 경계·전송·결과 이벤트 의미 검증기
-└── v1-contracts.test.mjs          # 102개 계약 검사
+└── v1-contracts.test.mjs          # 114개 계약 검사
 ```
 
 이 트리는 런타임 언어와 무관한 규범 계약이다. `continuation-claim.mjs`와 `semantic-trace.mjs`는 계약을 실행하는 테스트용 참조 검증기이며 운영 코디네이터가 아니다.
+
+### 실제 T-005 런타임 자격 트리
+
+```text
+spikes/m1/runtime-qualification/
+├── fixtures/minimal-journal.ndjson
+├── lib/ndjson-client.mjs
+├── runtimes/
+│   ├── node/coordinator.mjs       # 계약 참조 후보
+│   └── swift/Coordinator.swift    # 선택한 제품 런타임 후보
+├── scripts/qualify-runtimes.mjs   # 공통 복구·부하·패키징 자격 실행기
+└── README.md
+
+Tests/RuntimeQualification/
+└── runtime-qualification.test.mjs # 4개 자격 검사
+```
+
+이 트리는 언어 선택 증거이지 제품 코디네이터가 아니다. ad-hoc 서명과 측정용 DMG는 통과했지만 Developer ID identity는 0개였고 공증은 측정하지 않았다. 공개 앱 DMG와 updater는 T-012가 소유한다.
+
+### 실제 T-007a 참조 코어 트리
+
+```text
+src/coordinator-core/
+├── decide.mjs                     # 명령을 순수 이벤트·문서·효과 계획으로 결정
+├── state.mjs                      # v1 이벤트와 sidecar를 순수 reduce/replay
+├── journal.mjs                    # expected-sequence CAS port + InMemoryJournal
+├── token.mjs                      # CSPRNG token, SHA/HMAC, constant-time 검증
+├── shared.mjs
+├── errors.mjs
+├── index.mjs
+└── README.md
+
+Tests/CoordinatorCore/
+└── coordinator-core.test.mjs      # 33개 reducer/journal 불변식 검사
+```
+
+v1 런타임 이벤트가 수명 주기 상태의 진실 원본이다. `decision_packet_sealed`에 전체 작업 본문이 없어서 봉인 패킷 문서 sidecar를, `continuation_dispatched`에 Pet token fingerprint가 없어서 verification sidecar를 이벤트 batch와 함께 원자 저장한다. sidecar는 불변이며 누락·고아·binding 불일치 replay는 fail-closed한다. `InMemoryJournal`은 reference adapter이므로 영속성이나 프로세스 간 안전성을 주장하지 않는다. T-007b-A가 이 port를 아래 Swift 제품 커널로 구현했다.
+
+### 실제 T-007b-A/A2/B1/B2 및 T-011 Swift 제품 트리
+
+```text
+src/coordinator-swift/
+├── Package.swift
+├── README.md
+├── Sources/
+│   ├── BlabeeCoordinator/
+│   │   ├── main.swift                     # legacy/daemon/hook/mcp mode와 제품 조립
+│   │   ├── OperationalCLI.swift           # 공식 Hook output과 MCP emit_decision
+│   │   ├── UnixDomainSocketTransport.swift # single owner, peer UID, allowlist
+│   │   ├── FixtureTransportHandler.swift  # test-harness 전용 transport 격리기
+│   │   └── OperationalRoundTripTestSupport.swift # harness-only freshness/token audit
+│   └── CoordinatorSwift/
+│       ├── ContractPin.swift              # manifest와 schema hash 고정
+│       ├── CoordinatorError.swift
+│       ├── RFC3339Instant.swift           # exact nanosecond 시각
+│       ├── CoordinatorBinding.swift       # typed 9-field binding/key
+│       ├── ContinuationToken.swift        # CSPRNG, SHA/HMAC, constant-work 비교
+│       ├── IdentifierNormalization.swift  # NFC 저장 ID + UTF-8 exact 참조
+│       ├── CoordinatorSemanticState.swift # 12개 이벤트 replay/projection
+│       ├── CoordinatorSemanticApplication.swift # 11개 command + atomic application
+│       ├── CoordinatorRoutingApplication.swift # queue/foreground + continuous time authority
+│       ├── CoordinatorOperationalApplication.swift # Hook/MCP/Pet 고수준 상태기계
+│       ├── StopObservationLedger.swift    # 원문 없는 HMAC Stop 관찰 ledger
+│       ├── StrictJSON.swift               # UTF-8/중복 키/depth/정확한 Int64 wire gate
+│       ├── V1IngressValidator.swift       # 영속 경계 4개 v1 계약 validator
+│       ├── StorageKey.swift               # 외부 32-byte 키·mode·openat 경로 검사
+│       ├── FreshnessAnchor.swift          # strict anchor record/checkpoint/CAS port
+│       ├── KeychainFreshnessAnchorStore.swift # Keychain digest CAS와 오류 분류
+│       ├── StorageProcessLock.swift       # process mutex + secure 0600 flock
+│       └── SQLiteJournal.swift            # WAL/FULL/FK, MAC, freshness crash protocol
+└── Tests/CoordinatorSwiftTests/
+    ├── CoordinatorSwiftTests.swift
+    ├── SemanticFoundationTests.swift
+    ├── SemanticReplayTests.swift
+    ├── SemanticApplicationTests.swift
+    ├── RoutingApplicationTests.swift
+    └── OperationalApplicationTests.swift  # full selection, Stop/staging/timeout
+
+Tests/CoordinatorPersistence/
+├── runtime-harness.mjs
+├── coordinator-persistence.test.mjs       # 영속·보안 독립 프로세스 통합 검사
+└── same-turn-repeat-product-gate.test.mjs # 같은 turn lineage 경계 1→2 제품 게이트
+
+Tests/CoordinatorOperational/
+├── operational-roundtrip.test.mjs         # 실제 Swift 구성요소 두 경계 결합 gate
+├── plugin-package.test.mjs                # manifest, Hook/MCP, Skill 계약
+├── plugin-lifecycle.test.mjs              # 격리 install/update/remove
+└── uds-transport.test.mjs                 # UDS owner, 보안, concurrency, cleanup
+```
+
+T-007b-A는 SQLite `BEGIN IMMEDIATE` transaction 안에서 runtime event와 packet/verification sidecar를 원자 저장하고 expected sequence CAS를 수행한다. 이벤트는 MAC chain과 인증된 head anchor, sidecar는 exact row identity를 포함한 HMAC으로 인증한다. strict ingress는 이 persistence 경계가 받는 4개 계약 타입과 manifest fixture 20개를 지원하며 v1의 다른 계약 타입까지 범용 CLI ingress로 구현했다고 주장하지 않는다.
+
+T-007b-B1 application은 T-007a와 동등한 lifecycle command/reducer 의미 검증 뒤 candidate snapshot을 다시 replay하고 A/A2 journal에 원자 append한다. B2 `CoordinatorRoutingApplication`은 같은 세션 pending 하나를 seal/replay 양쪽에서 강제하고 다중 세션 queue, 명시적 foreground, exact selection과 `mach_continuous_time` 권위를 소유한다. T-011 `CoordinatorOperationalApplication`은 `enable_project`·`session_start`·`user_prompt_submit`·`emit_decision`·`stop`·`permission_request`·`get_state`·`select`만 UDS에 노출하고, Pet 선택 전체를 v1 16-field selection request와 봉인 packet에 결합한다. direct low-level operation과 raw `append`는 운영 UDS allowlist 밖이다.
+
+제품 `daemon`은 정규화한 절대 DB 경로 identity의 process-lifetime authority를 저장소 초기화 전에 획득한다. socket runtime directory는 `0700`, socket/lease는 `0600`, peer는 같은 effective UID여야 하며 1 MiB 미만의 한 줄 요청과 최대 64개 동시 연결만 받는다. Stop은 요청 generation과 HMAC digest로 최초 전달·중복·후속 완료를 구분하고 원문 assistant message를 ledger에 저장하지 않는다. 사람 프롬프트 correlation token은 지정된 `UserPromptSubmit` context와 MCP 입력에만 한 번 왕복하며, 바인딩 뒤 free-text copy·공개 응답·로그를 차단한다. action continuation의 원문 token은 Stop block 응답 전에 소비하고 공개 경로에 싣지 않는다.
+
+외부 키는 32 bytes, 파일 `0600`, 상위 디렉터리 `0700`이고 symlink 경로를 fail-closed한다. A2는 OS Keychain에 strict `initializing`/`committed`/`pending` record와 불변 DB identity·generation·sequence·head를 저장하고 `kSecAttrGeneric` digest CAS로 갱신한다. append 전체에 process mutex와 `0600` `flock`을 유지하며, Keychain pending 뒤 SQLite commit과 전체 authenticated replay를 거쳐 committed로 finalize한다. 과거 authentic DB snapshot, DB·키 loss, anchor 누락은 event 반환 전에 차단한다.
+
+`pending + source DB`는 COMMIT 전 종료와 COMMIT 후 DB rollback을 구분할 수 없어 자동 취소하지 않으며 exact canonical batch 재시도만 허용한다. 기존 DB·키에 anchor가 없는 pre-A2 상태도 자동 migration/adoption하지 않는다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하므로 signed wrapper의 Data Protection Keychain/access group·`LAContext`, same-UID anchor 삭제·교체와 DB·키·anchor 동시 삭제 방어는 T-012/후속 보안 경계다.
 
 ## 제안 소스 트리
 
@@ -134,12 +239,16 @@ apps/blabee/
 ├── AGENT_TASKS.md
 ├── TASK_STATUS.md
 ├── Contracts/v1/                   # 구현됨: 규범 스키마 10개 + manifest
+├── src/coordinator-core/            # 구현됨: T-007a 런타임 중립 참조 reducer/journal
+├── src/coordinator-swift/           # 구현됨: T-007b-A/A2/B1/B2 Swift 제품 코디네이터
 ├── Plugin/
-│   ├── .codex-plugin/plugin.json
-│   ├── hooks/hooks.json
-│   ├── skills/blabee-decision/SKILL.md
-│   └── mcp/                         # 운영 proposal transport; 구현 언어 미정
-├── Coordinator/                     # 구현 언어·프로세스 토폴로지 미정
+│   └── blabee/                       # 구현됨: Codex Plugin v0.1.0
+│       ├── .codex-plugin/plugin.json
+│       ├── .mcp.json                 # blabee-coordinator mcp
+│       ├── hooks/hooks.json          # SessionStart/UserPromptSubmit/Stop/PermissionRequest
+│       ├── scripts/blabee-launcher   # Hook fail-open 실행기
+│       └── skills/blabee-decision/SKILL.md
+├── Coordinator/                     # 후속 확장 제안; 현재 구현은 src/coordinator-swift
 │   ├── Domain/
 │   │   ├── Episodes/
 │   │   ├── DecisionCards/
@@ -182,6 +291,9 @@ apps/blabee/
 │   └── AppServerManagedMode/
 ├── Tests/
 │   ├── Contracts/                  # 구현됨: 오프라인 계약·의미 테스트
+│   ├── CoordinatorCore/            # 구현됨: T-007a 참조 코어 31개 테스트
+│   ├── RuntimeQualification/       # 구현됨: T-005 공통 자격 4개 테스트
+│   ├── CoordinatorPersistence/     # 구현됨: T-007b-A/A2 영속 통합 40개 테스트
 │   ├── Episodes/
 │   ├── DecisionCards/
 │   ├── Rollback/
@@ -206,7 +318,7 @@ Installer / Doctor ─────────┘               │
                               Git / Ledger / Local IPC adapters
 ```
 
-Domain은 AppKit, Hook 실행 형식, MCP 서버 구현 언어, Git 명령, SQLite 드라이버에 의존하지 않는다. Plugin은 제안을 제출하고 선택 결과를 전달할 뿐 로컬 근거·위험·롤백 가능성을 권위 있게 결정하지 않는다.
+Domain은 AppKit, Hook 실행 형식, MCP 서버 구현 언어, Git 명령, SQLite 드라이버에 의존하지 않는다. T-007a `src/coordinator-core/`는 이 의존성 방향과 lifecycle 의미를 검증하는 JavaScript 참조 구현이고, T-007b-B1 `src/coordinator-swift/`는 같은 의미의 Swift application을 A/A2 journal port 위에 제공한다. C의 Hook orchestration은 제품 `execute_command` 포트만 호출해야 한다. Plugin은 제안을 제출하고 선택 결과를 전달할 뿐 로컬 근거·위험·롤백 가능성을 권위 있게 결정하지 않는다.
 
 ## 운영 런타임 흐름
 
@@ -271,7 +383,8 @@ PermissionRequest / Codex native request
 - 유효한 카드가 있으면 60초에 한 번 다시 알리고, 120초에 패킷을 만료한다.
 - 만료 시 어떤 슬롯도 자동 선택하지 않으며 재개 캡슐을 저장한다.
 - 만료 후 입력, 이전 `packet_id`/`revision`, 더 오래된 event sequence, 예상 episode·상태가 다른 입력은 거부한다.
-- 120초 만료는 선택 전 대기 패킷에 적용한다. T-006은 dispatch 뒤 `in_flight_deadline_at`과 timeout 결과 `unknown`·자동 재시도 금지, 형식 보정 예약·claim의 durable replay 계약을 고정했다. 실제 단조 시계, 원자적 journal append, 재시작 복구와 성공/실패 outcome 수집은 T-007 상태 머신이 소유한다.
+- 120초 만료는 선택 전 대기 패킷에 적용한다. B2는 sleep을 포함하는 `mach_continuous_time`으로 60초 reminder·120초 expiry·Pet/형식 보정 token 120초·300초 in-flight timeout을 실행한다. wall jump와 forged timestamp는 logical audit time으로 덮어쓰고 재시작 모호성은 fail-closed 처리한다. T-011은 실제 Stop 입력을 HMAC observation과 request generation으로 구분해 최초 delivery와 후속 active Stop completion을 연결하며, timeout으로 승격된 staged 경계에만 active Stop을 새 waiter로 한 번 허용한다.
+- T-011 운영 계층은 open/seal·selection·completion/close·scheduler terminal append의 pre-commit 실패와 commit 뒤 응답 유실을 journal authority로 재조정한다. open→seal 인접성과 최초 seal의 continuous-clock anchor를 보존하고, 모호한 selection authority read는 250 ms backoff하되 원문 token을 재발급하지 않는다. terminal notice와 staged promotion은 exact boundary key로 한 번만 적용한다.
 - 세션마다 활성 Pet 상호작용은 하나이며, 선택 claim은 원자적으로 한 번만 성공한다.
 - 시스템 전체의 전면 카드는 하나뿐이다. 추가 세션 카드는 대기열에 남고 새 카드가 전면 대상을 자동으로 빼앗지 않는다.
 - 전역 단축키는 화면에서 명시적으로 선택된 전면 카드의 프로젝트·세션·에피소드·패킷 ID가 모두 맞을 때만 적용한다.
@@ -328,8 +441,12 @@ Pet의 1·2는 작업 지시이지 Codex 네이티브 승인이 아니다. `high
 | 테스트 범위 | 고정해야 할 불변식 |
 |---|---|
 | Contracts | 슬롯 1/2 동적 의미, 2 disabled 사유, 3/4 고정 의미, 선택/형식 보정 봉투 구분, unknown field와 숫자-only 실행 거부 |
+| Coordinator core | 순수 decide/reduce/replay, 정확한 packet revision/option, CAS 한 번 선점, sidecar 불변식, prototype-key 안전 projection, 같은 턴 lineage·패킷 의미 검증, CSPRNG·fingerprint, timeout unknown, 전송/outcome 분리 |
+| Coordinator persistence | strict ingress/contract pin, WAL/FULL/FK, 프로세스 간 CAS, crash·post-commit replay, event MAC chain/head anchor, exact sidecar binding/HMAC, Keychain initializing/committed/pending CAS, old authentic DB·key/DB/anchor loss fail-closed, 원문 token 비저장 |
+| Coordinator semantic port | 12개 이벤트·11개 command, latest revision, stale, expiry, rollback-disabled, reseal, candidate replay, CAS/token/effect 경계, NFC/byte-exact ID, product raw append 차단 |
+| Runtime qualification | Node/Swift 공통 NDJSON, durable append/replay, partial-tail, 지속 부하, 단조 wait, 진단, ad-hoc signing과 측정용 DMG |
 | Episodes | 사람이 입력한 프롬프트만 새 기준선을 만들고 Pet 1·2 same-turn 작업과 기계적 재시도는 같은 episode에 남음 |
-| Hook integration | 운영 MCP proposal, proposal 없는 Stop 즉시 종료, same-turn Stop 전달 모드, 프로젝트 재바인딩 폐기, 2초 fail-open |
+| T-011 operational integration | Plugin install/update/remove, 공식 Hook/MCP shape, 고수준 UDS allowlist, same-UID/single-owner/size·concurrency, full 16-field Pet selection, staged boundary, same-turn Stop 전달·후속 완료, secret 비유출, 2초 connect fail-open |
 | Timeout/stale | 선택 전 60초 재알림·120초 만료·자동 선택 없음, 늦은 키·이전 리비전·중복 선점 거부, submitted-envelope의 교차 바인딩·만료·재사용 거부 |
 | Rollback | clean-worktree 한 episode 복원, recovery snapshot, byte/mode/index 검증, 특수 index/filemode/unknown attestation과 비 Git·제외 경계에서 4 disabled, 1 GiB 보호 정리 |
 | Native requests | 결정 카드와 분리, notification-only permission, 원래 Codex UI가 응답 소유 |
@@ -344,8 +461,8 @@ Pet의 1·2는 작업 지시이지 Codex 네이티브 승인이 아니다. `high
 - app-server 기반 완전 제어와 네이티브 권한·질문 응답 중계
 - 임의 터미널 화면/OCR/PTY 감시, AppleScript 키 입력 주입
 - dirty-worktree, 무시 파일, LFS, 하위 모듈, 저장소 밖 파일 또는 외부 효과의 완전 롤백
-- 검증 전 TypeScript/Node coordinator 또는 Swift helper를 production 구현으로 확정하는 결정
-- M0 fake coordinator의 한 턴 1회 결정 사이클을 반복 Pet workflow로 간주하는 것
+- T-005 spike 또는 T-007a JavaScript 참조 코어를 그대로 production coordinator로 승격하는 것. T-007b-A/A2/B1/B2/T-011 Swift 코디네이터도 실제 Hook 신뢰·제품 daemon qualification과 T-012 signed Data Protection Keychain/배포 검증 전에는 공개 coordinator가 아니며 low-level `append`나 direct semantic selection을 비신뢰 입력에 직접 노출하지 않는다.
+- M0 fake coordinator의 두 결정 사이클만으로 Hook→Swift 운영 Pet workflow가 완성됐다고 간주하는 것
 
 ## 코드 재사용 원칙
 

@@ -1,6 +1,6 @@
 # Blabee MVP 구현 계획
 
-상태: M0 타당성 스파이크 완료, 마일스톤 1 준비 중
+상태: M0·T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-011 운영 어댑터 구현·검증 진행 중
 업데이트: 2026-08-21
 
 ## 마일스톤 0 — 연동 계약 검증 스파이크
@@ -26,7 +26,7 @@
 - 파일을 변경하는 턴 하나가 Pet에 도달한 뒤, 숫자가 아니라 패킷·리비전·옵션 ID와 작업 의미 전체를 담은 지시로 같은 세션·턴·에피소드에서 이어진다.
 - 센티널은 실험 픽스처 밖의 운영 경로에 남지 않고, 로컬 MCP 경로가 계약 테스트를 통과한다.
 - 사람이 입력한 시작 프롬프트 직전 기준선과 이후 Pet 연속 진행에서 생성된 모든 결정 패킷의 롤백 대상이 동일한 에피소드 ID로 연결된다.
-- `pet_action`의 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰의 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치는 거부되고 새 사람 프롬프트로 오인되지 않는다. dispatch 후 `pet_action`의 in-flight deadline과 timeout 결과 계약은 T-006에서 확정하고 실제 처리는 T-007에서 구현한다.
+- `pet_action`의 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰의 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치는 거부되고 새 사람 프롬프트로 오인되지 않는다. dispatch 후 `pet_action`의 in-flight deadline과 timeout 결과 계약은 T-006/B1에서 고정했고 B2 연속 단조 scheduler가 실제 terminal event를 제출한다.
 - 내부 형식 보정은 같은 결정 경계에서 한 번만 실행되며 두 번째 실패에는 자동 진행이 없다.
 - 120초 만료 후 자동 동작이나 늦은 단축키 실행이 발생하지 않는다.
 - 코디네이터가 없거나 응답하지 않으면 2초 안에 Hook이 fail-open하며 자동 선택이나 롤백을 실행하지 않는다.
@@ -40,12 +40,12 @@
 - 실제 Codex CLI `0.148.0` 임시 프로젝트에서 `.codex/hooks.json`과 프로젝트의 `.codex/config.toml`만으로 `SessionStart → UserPromptSubmit → MCP emit_decision → Stop → Pet 선택 → 같은 턴 연속 진행 → 수명 주기 종료 관찰`을 확인했다. 마지막 agent message가 정확히 `M0_CONTINUED`여서 이 라이브 픽스처의 작업 성공도 별도로 확인했다.
 - 실제 계약 결과는 `mcp_config_source = project_config_only`, `final_assistant_message = M0_CONTINUED`, `terminal_input_injection = false`, `separate_llm_api_key = false`다.
 - 설명 전용 실제 계약도 통과했다. `--explanation-only`에서는 `project_enabled`, `session_started`, `human_episode_started`만 관찰됐고 결정 제안·대기 이벤트는 0건, `result.txt`는 없었으며 마지막 agent message는 정확히 `M0_EXPLAINED`였다.
-- 실제 검증 범위는 결정 한 번과 연속 진행 한 번이다. 같은 턴 안의 두 번째 `emit_decision`은 현재 턴 키 충돌로 거부되므로 반복 Pet 루프는 M1에서 별도 결정 경계 식별자로 설계한다.
+- `0.148.0`의 역사적 M0 증거는 결정 한 번과 연속 진행 한 번이다. T-007b-C에서 `0.149.0` 실제 Hook+M0 격리 픽스처를 두 결정 사이클로 확장해 같은 lineage와 `boundary_sequence` 1→2, `M0_CONTINUED_TWICE`를 확인했다. 별도 Swift 제품 게이트도 같은 lineage의 두 경계를 16개 이벤트로 영속·재생했다.
 - 관찰 이벤트는 `project_enabled`, `session_started`, `human_episode_started`, `decision_proposal_received`, `decision_wait_started`, `pet_action_selected`, `continuation_dispatched`, `continuation_consumed`, `continuation_completed`다. 마지막 이름은 M0 관찰기 명칭이며 v1 규범 계약에서는 `continuation_transport_completed`로 분리했다.
 - 터미널 키 입력 주입과 별도 LLM API 키는 사용하지 않았다.
-- 프로젝트 로컬 플러그인 구조는 별도 검증했다. 실제 계약 하네스의 Hook 신뢰 우회 플래그는 테스트 전용이며, 마켓플레이스 설치·번들 코디네이터 자동 시작·서명·공증·DMG는 아직 검증하지 않았다.
+- 프로젝트 로컬 플러그인 구조는 별도 검증했다. 실제 계약 하네스의 Hook 신뢰 우회 플래그는 테스트 전용이며, 마켓플레이스 설치·번들 코디네이터 자동 시작·Developer ID 서명·공증·실제 앱 DMG는 아직 검증하지 않았다.
 - 롤백은 합성 임시 Git 픽스처에서만 검증했다. 실제 작업공간과 공개 제품에는 연결하지 않았다.
-- 런타임 비교는 완료했지만 최종 선택은 보류한다. Node는 계약 스파이크, Swift는 다음 패키징 후보, C는 정식 JSON 파서가 없는 성능 기준선이다.
+- T-005 공통 자격 시험에서 Node·Swift의 durable append, 강제 종료 replay, partial-tail 복구, 지속 부하, 단조 대기 probe, 구조화 진단, ad-hoc 서명과 측정용 DMG를 비교해 Swift 네이티브 헬퍼를 제품 런타임으로 선택했다. Node는 계약 참조, C는 정식 JSON 파서가 없는 health 전용 성능 기준선이다.
 - QA 판단은 M0 연동 타당성에 대한 조건부 승인이다. T-006에서 반복 경계와 in-flight deadline의 데이터 계약을 고정했지만, 실제 사용자 작업공간과 공개 MVP는 T-007 반복 상태 머신·운영 롤백·패키징의 높은 위험 차단 항목을 닫기 전까지 승인하지 않는다.
 
 공식 기능 근거: [Hooks](https://learn.chatgpt.com/docs/hooks), [MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [플러그인 만들기](https://developers.openai.com/plugins/build/plugins).
@@ -53,15 +53,15 @@
 ## 마일스톤 1 — 프로토콜과 로컬 코디네이터
 
 1. **완료 — T-006:** 결정 제안, 결정 패킷, 선택 요청, `pet_action`/`internal_format_repair` 연속 진행 봉투, 네이티브 요청, 재개 캡슐, 런타임 이벤트의 v1 스키마를 확정했다. 패킷에는 `source_prompt_id`, `source_turn_id`, `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`, `decision_boundary_id`, `boundary_sequence`, `expires_at`을 포함한다.
-2. 영속적인 세션/턴 연결과 이벤트 저널링을 구현한다. 같은 턴 안에서도 완료된 결정 사이클과 다음 결정 경계를 구분해 두 번째 `emit_decision`이 이전 턴 키와 충돌하지 않게 한다.
-3. 패킷 검증, 출처 추적, 만료, 선택권의 원자적 점유를 구현한다.
-4. 세션별 활성 패킷 하나, 전역 전면 카드 하나, 추가 세션 대기열과 명시적 전면 선택 계약을 구현한다. 새 카드가 기존 전면 대상을 빼앗지 않게 한다.
-5. 슬롯 1=동적 권장 작업, 2=동적 대안 작업, 3=고정 보류, 4=고정 롤백인 반고정 계약을 구현한다. 안전하고 의미 있는 대안이 없으면 2번을 사유 코드와 함께 비활성화한다.
-6. 권장·대안 작업을 위해 `packet_id`, `revision`, `option_id`, 제목, 목표, 제약, 완료 기준 전체와 일회성 `continuation_token`을 같은 세션·턴·에피소드의 Stop 연속 진행 지시로 만드는 결정론적 빌더를 구현한다. 이 `pet_action`은 `UserPromptSubmit` 봉투로 변환할 수 없게 한다.
-7. 패킷·옵션 없이 `source_turn_id`, `source_prompt_id`, 결정 경계와 `repair_kind`, `repair_attempt = 1`을 갖는 내부 형식 보정 빌더를 별도로 구현한다. 발급 시 `internal_format_repair_reserved`로 결정 경계의 1회 예산을 원자적으로 소비하고, 검증 뒤 `internal_format_repair_claimed`를 기록해 재시작 후에도 중복 보정을 막는다.
+2. **조건부 완료 — T-007b-A/B1/B2/C:** T-007a journal port의 영속 경계를 Swift 제품 커널과 SQLite 이벤트 저널로 구현하고 B1 의미 application 및 B2 routing/time 경계로 감쌌다. C는 실제 Hook 반복과 Swift 제품 반복을 분리된 게이트로 검증했다. T-011이 두 경계를 연결하는 운영 adapter를 구현했으며, 공개 dispatch에는 실환경 Hook 신뢰·제품 daemon qualification이 더 필요하다.
+3. **조건부 완료 — T-007b-A/A2:** strict v1 ingress와 패킷·출처·선택 binding, 프로세스 간 CAS, crash-safe 원자 transaction에 OS Keychain freshness high-water를 결합했다. 불변 DB identity·generation·sequence·head를 strict `initializing`/`committed`/`pending` record로 추적하고 과거 authentic DB snapshot과 DB·키 손실을 fail-closed한다.
+4. **조건부 완료 — T-007b-B1/B2:** B1에서 T-007a와 동등한 Swift lifecycle command/reducer 및 제품 semantic 경계를 구현했다. B2는 그 앞에 세션별 활성 패킷 하나, 전역 전면 카드 하나, 추가 세션 대기열과 명시적 전면 선택 계약을 두고 새 카드의 foreground 선점을 막는다. direct B1 selection·Pet token consume·scheduler command는 제품 API에서 차단하고 token consume/claim은 routed monotonic authority를 거친다.
+5. **부분 완료 — T-007a:** 슬롯 1·2의 동적 의미와 disabled 대안, 슬롯 3 보류를 참조 코어에서 구현했다. 슬롯 4 제품 롤백은 계속 비활성이고 실제 실행기는 후속 범위다.
+6. **조건부 완료 — T-007a/T-007b-A/T-007b-C/T-011:** 봉인된 정확한 패킷·리비전·옵션에서 작업 전체를 읽는 의미와 exact packet/seal/selection/action/verification 영속 binding을 구현했다. T-011 운영 adapter는 Pet의 full 16-field selection과 후속 Stop phase/idempotency gate를 적용한다.
+7. **조건부 완료 — T-007b-A/A2:** 형식 보정 예약·claim, 결정 경계당 정확히 한 번, CSPRNG 최소 128-bit 토큰/fingerprint 의미를 crash-safe 영속 트랜잭션에 연결했다. 외부 32-byte 키와 row-bound HMAC, Keychain freshness CAS를 구현했다. 키 회전과 일반 운영자 복구는 후속 범위다.
 8. Codex 네이티브 질문/권한 요청을 Blabee 결정 패킷과 다른 상호작용 종류와 ID로 보존한다.
-9. SQLite 프로젝트/세션/프롬프트 에피소드/결정 원장을 구현한다.
-10. 검증된 Skill, Hook, 로컬 MCP를 운영 어댑터로 구현해 버전이 부여된 Codex 플러그인으로 패키징한다. 센티널 spike 코드는 포함하지 않는다.
+9. **조건부 완료 — T-007b-A/A2/B1/B2:** SQLite 이벤트·패킷·검증 원장, Keychain freshness high-water, Swift 의미 projection, 세션 queue·foreground·continuous deadline projection을 구현했다. foreground와 monotonic anchor는 의도적으로 비영속이며 재시작 때 fail-closed한다.
+10. **조건부 완료 — T-011:** 검증된 Skill, Hook, 로컬 MCP를 Swift 운영 어댑터와 단일 UDS owner에 연결해 버전 `0.1.0` Codex 플러그인으로 패키징했다. 운영 패키지에는 센티널 spike 코드를 포함하지 않는다. Keychain 없는 실제 SQLite/Swift 제품 구성요소로 Hook→MCP→Stop→Pet 두 경계 1→2 결합 왕복을 통과했으며, 수동 Hook 신뢰와 로그인 Keychain 제품 daemon은 실환경 게이트로 남긴다.
 11. 알파 기준 Codex `0.148.0`을 고정하고 지원 버전 허용 목록을 만든다.
 12. `blabee doctor`에 앱, 데몬, 플러그인, Hook 신뢰 설정, Codex 버전/허용 목록, 프로젝트 활성화 여부 검사를 추가한다.
 
@@ -74,7 +74,7 @@
 - 두 연속 진행 봉투의 필수 필드를 구분하며 형식 보정은 같은 결정 경계에서 한 번만 허용한다.
 - 하나의 패킷을 두 번 실행하거나 잘못된 세션에서 실행할 수 없다.
 - 두 세션에 패킷이 동시에 대기해도 명시적으로 선택한 전면 카드만 실행된다.
-- 코디네이터를 재시작하면 저널을 바탕으로 활성 상태가 복원된다.
+- 코디네이터를 재시작하면 저널을 바탕으로 lifecycle을 복원하되, monotonic 경과를 증명할 수 없는 pending packet과 unterminated continuation은 각각 expiry와 `timed_out_unknown`으로 fail-closed하고 foreground는 명시적으로 다시 선택해야 한다.
 - 형식 보정 상태는 별도 진실 원본 없이 `internal_format_repair_reserved`·`internal_format_repair_claimed` journal projection으로 복원되며, 예약 append와 경계당 1회 예산 소비가 원자적이다.
 - continuation token은 CSPRNG 최소 128-bit로 발급하고 durable journal에는 SHA-256/HMAC-SHA-256 fingerprint만 저장하며, 검증은 constant-time 비교 테스트를 통과한다.
 
@@ -83,9 +83,43 @@
 - `Contracts/v1`: JSON Schema Draft 2020-12 스키마 10개와 오프라인 `$id` 매니페스트를 확정했다.
 - `Fixtures/v1`: 유효 15개, 무효 10개 계약 Fixture와 동일 턴 경계 1→2·stale 선택·binding mismatch·in-flight timeout·형식 보정 예약/claim·재시작 replay 이벤트 trace 7개를 고정했다.
 - `Tests/Contracts`: strict Ajv 컴파일, 무효 사례의 안정 오류 코드 매핑, 식별자 전용 선택, 반고정 슬롯, 두 continuation 모드의 일회성·만료·exact binding, 형식 보정 예약·claim의 재시작 안전 replay, 전송/작업 결과 분리를 검증한다.
-- `npm run test:contracts`는 102/102, 기존 M0까지 포함한 `npm test`는 155/155 통과했다.
-- T-006은 런타임 독립 계약만 완료했다. 형식 보정의 durable 이벤트 형태와 replay 불변식은 고정했지만 실제 이벤트 저널·원자적 저장·재시작 복구·반복 결정 루프는 T-007에서 구현한다.
+- T-006 완료 당시 `npm run test:contracts`는 102/102, 기존 M0까지 포함한 `npm test`는 155/155 통과했다. T-005와 T-007a를 포함한 현재 통합 결과는 아래 실행 결과에 기록한다.
+- T-006은 런타임 독립 계약만 완료했다. 이후 T-007a가 의미 상태 머신을, T-007b-A가 저수준 이벤트 저널·원자 저장·재시작 복구를, T-007b-B1이 Swift semantic application port를, B2가 세션 라우팅·시간 처리를 구현했고 C가 실제 Hook 반복과 제품 상태 반복을 분리된 게이트로 검증했다.
 - 실제 사용자 저장소 롤백은 연결하지 않았다. T-006/M1 Fixture에서는 슬롯 4를 `rollback_not_enabled_in_build`로 비활성화한다.
+
+### T-005, T-007a 및 T-007b-A/A2/B1/B2/C 실행 결과 — 2026-08-21
+
+- T-005는 Node와 Swift에 공통 NDJSON·durable journal 자격 계약을 적용해 강제 종료 replay, partial-tail 절단, 지속 부하, 구조화 진단, 축약한 명목상 120초 단조 대기, ad-hoc 서명과 측정용 DMG를 통과시켰다. Swift 네이티브 헬퍼를 제품 런타임으로 선택하고 Node는 계약 참조, C는 health 전용 기준선으로 남겼다.
+- 유효한 Developer ID codesign identity는 읽기 전용 확인에서 0개였고 Apple 공증은 측정하지 않았다. 공개 서명·공증 앱 DMG, updater와 `blabee doctor`는 T-012 범위다.
+- T-007a는 JavaScript ESM의 런타임 중립 참조 코어로 순수 `decide`/`reduce`/`replay`, 예상 sequence 기반 CAS append, 같은 턴 경계 1→2, stale·교차 세션·비활성·중복 선택 거부, 슬롯 1·2 dispatch와 슬롯 3 pause를 구현했다.
+- v1 `decision_packet_sealed` 이벤트가 작업 본문 전체를 담지 않으므로 봉인 패킷 문서 sidecar를, `continuation_dispatched` 이벤트가 Pet token fingerprint를 담지 않으므로 검증 sidecar를 추가했다. 두 sidecar는 관련 런타임 이벤트와 원자 저장되고 불변이며, 수명 주기 상태의 진실 원본은 계속 v1 런타임 이벤트다. 원문 토큰과 작업 본문은 검증 sidecar에 저장하지 않는다.
+- 참조 코어 31개 테스트가 패킷 exact resolution, 모든 유효 trace prefix replay, CSPRNG·SHA/HMAC·constant-time 검증, format repair exactly-once, timeout `unknown`, 전송 종료와 작업 outcome 분리, prototype-key 충돌 fail-closed, command/replay 동등성, 같은 턴의 불변 prompt/checkpoint lineage와 패킷 의미 검증을 통과했다. T-007a가 지원하지 않는 enabled rollback도 명시적으로 거부한다.
+- T-007a QA와 동기화하며 계약 의미 검증에 같은 턴 lineage, 전역 continuation ID·fingerprint 재사용 금지, consume 유효 시간과 terminal 이후 재소비 금지를 추가했다.
+- T-007b-A는 독립 Swift Package의 제품 영속 커널로 strict JSON/고정 v1 ingress, contract hash pin, SQLite WAL/FULL/FK와 프로세스 간 CAS, crash/SIGKILL·commit 후 replay를 구현했다. ingress는 영속 경계의 4개 계약 타입과 manifest fixture 20개를 지원하며 나머지 계약 타입을 범용 CLI ingress로 주장하지 않는다.
+- T-007b-B1은 T-007a의 12개 런타임 이벤트와 11개 command를 Swift로 포팅했다. application은 `load → replay → decide → candidate replay → atomic append` 순서를 강제하고 CAS 충돌을 최대 2회만 재시도하며, 토큰은 재시도 전 한 번만 생성하고 commit 전에는 effect로 노출하지 않는다.
+- T-007b-B2는 같은 프로젝트·세션의 pending interaction 하나를 decision/replay 양쪽에서 원자적으로 강제하고, 여러 세션 queue·명시적 foreground/no-steal·exact binding selection을 제품 API에 연결했다. `mach_continuous_time`과 주입 clock으로 60초 reminder, 120초 expiry, coordinator-owned 120초 Pet·형식 보정 token/300초 in-flight deadline을 처리한다. token 소비와 transport 완료의 audit 시각도 logical monotonic time으로 덮어써 외부 wall timestamp와 기간을 권위로 사용하지 않는다.
+- B2 재시작은 process-local foreground와 token claim anchor를 복원하지 않는다. monotonic anchor를 증명할 수 없는 persisted pending packet은 audit `expires_at`에서 만료하고 terminal 없는 continuation은 `in_flight_deadline_at`에서 `timed_out_unknown`으로 정확히 한 번 기록한다. 새 product event loop는 stdin `poll(2)` timeout과 readable-cycle 선처리로 정상·비정상 입력 폭주 중에도 deadline을 진행한다.
+- 런타임 이벤트는 MAC chain과 인증된 head anchor로, packet/verification sidecar는 exact row identity를 포함한 HMAC으로 인증한다. 외부 32-byte 키는 파일 `0600`·상위 디렉터리 `0700`·symlink fail-closed 정책을 따르며 `openat` 기반 경로 검사를 사용한다.
+- QA 보강으로 exact packet/seal/selection/action/verification binding, exact Int64, DB·키 손실, exact `sqlite_schema`와 trigger 변조, 필수 contract pin, test-only crash gate, post-commit replay를 검증했다. runtime-known secret corpus는 프로세스가 관찰·등록한 값만 검사하고 재시작 시 다시 등록하며, 보지 못한 임의 secret 전체를 탐지한다고 주장하지 않는다.
+- T-007b-A2는 strict canonical `initializing`/`committed`/`pending` Keychain record, immutable DB identity와 generation/sequence/head metadata, `kSecAttrGeneric` digest CAS, process mutex와 `0600` `flock`을 추가했다. storage preflight와 lock 뒤 recheck는 DB/키 loss나 anchor 누락에서 파일을 만들지 않으며, 기존 DB·키에 anchor가 없는 pre-A2 상태를 자동 migration/adoption하지 않는다.
+- append는 Keychain `pending(from,to,batch digest)`을 CAS한 뒤 SQLite를 commit하고, 전체 authenticated replay 뒤에만 `committed(to)`를 CAS한다. `pending + target DB`는 replay 성공 뒤 finalize하고, `pending + source DB`는 자동 취소하지 않으며 exact canonical batch 재시도만 허용한다. crash point 85/87/88/86으로 각 경계를 검증했다.
+- 과거 authentic DB snapshot, DB·키 손실, anchor 누락/손상, Keychain CAS 경쟁과 concurrent writer를 fail-closed했다. Keychain `errSecDecode`/`errSecInvalidKeychain`은 corrupt, 잠금·interaction 불가는 unavailable로 분류하고 test namespace cleanup은 명시적 gate와 `test-` account로 제한했다.
+- B1 제품 NDJSON은 `execute_command`만 노출한다. raw `append`는 `BLABEE_JOURNAL_TEST_HARNESS` compile flag로 만든 테스트 바이너리에만 존재한다. 생성 토큰은 허용된 effect에 stdout 1회만 나타나고 DB·WAL·SHM·stderr에는 기록하지 않으며, consume과 로그는 제출 토큰을 다시 출력하지 않는다.
+- Swift 식별자는 저장 시 NFC를 요구하고 참조 비교는 UTF-8 byte-exact로 수행한다. SQLite text bind/read는 명시적 UTF-8 byte length를 사용해 NUL 포함 ID를 보존한다. decimal/exponent 정수 표기는 Foundation 반올림을 막기 위해 ±2^53까지만 허용하고 일반 정수 표기는 Int64 전체 범위를 유지한다.
+- A/A2 기준선은 Swift unit 27/27, persistence Node 통합 40/40, 당시 통합 `npm test` 242/242였다. 진단 가림 회귀 추가 직전 전체 `npm test`는 247/247 통과했다. 추가 뒤 최신 실행은 248개 중 246개가 통과했고, 나머지 2개는 macOS Keychain `security` 조회가 각각 30초 동안 응답하지 않은 환경 timeout이다. 현재 집중 결과는 Swift package 62/62, T-007a 33/33, persistence 이전 독립 실행 40/40, M0 55/55다. 전 범위에서 발견한 Int64 초과 NDJSON 응답 상관관계도 안전한 request-ID 전용 복구로 수정했다. 현재 `SQLiteJournal.swift` SHA-256은 `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`이다.
+- T-007b-A/A2 판정은 제품 영속·freshness 커널 범위의 조건부 완료다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하며, 서명된 wrapper와 Data Protection Keychain/access group·`LAContext` 전환은 T-012에 남는다. 같은 UID 공격자의 Keychain 삭제·교체와 DB·키·anchor 동시 제거, exact batch가 없는 pending-source 운영 복구는 A2 밖이다.
+- T-007b-C는 실제 Codex CLI `0.149.0`+M0 fake coordinator의 두 사이클과 Swift 제품 coordinator의 16-event 반복 게이트를 각각 통과해 조건부 완료했고, T-007 전체는 `done`으로 판정한다. T-011은 고수준 Hook/MCP/Pet adapter, 단일 daemon/UDS ownership, full selection binding, Stop observation digest와 원문 continuation token 비노출을 구현했다. 실제 장시간 macOS sleep, 로그인 Keychain 제품 daemon과 수동 Hook 신뢰 검토는 패키징·실환경 게이트에 남는다. `pending + source DB`와 응답 유실 뒤 원문 토큰 재발급 금지는 안전하게 차단되지만 운영자 복구 UX가 필요하다.
+
+### T-011 실행 결과 — 2026-08-22
+
+- `Plugin/blabee/`에 Skill, 4개 Hook, MCP 설정, fail-open launcher를 포함한 Codex Plugin v0.1.0을 추가했다. 모든 답변을 결정 카드로 바꾸지 않으며 운영 경로에 M0 센티널이나 fake coordinator가 없다.
+- `CoordinatorOperationalApplication`이 project/session/prompt/proposal/Stop/permission/Pet state/full selection만 노출하고, v1 16-field selection과 봉인 packet의 9-field binding을 exact 검증한다. 1·2는 동적, 3은 보류, 4는 `rollback_not_enabled_in_build`다.
+- 하나의 UDS owner가 `0700` runtime directory, `0600` socket/lease, 양방향 peer UID, 1 MiB 한 줄·64개 동시 연결, stale same-UID socket 회수와 owned-inode cleanup을 강제한다. 정규화한 절대 DB 경로 identity의 별도 storage authority가 같은 DB·다른 socket의 두 번째 제품 프로세스를 storage 초기화 전에 차단한다.
+- 지정된 UserPromptSubmit context 외 correlation token 재노출과 proposal free-text copy를 차단한다. action continuation 원문 token은 Stop block 전에 소비하며 DB/WAL/SHM·Hook/MCP/Pet/UDS 공개 응답에 싣지 않는다. Stop 원문 메시지 대신 HMAC observation과 request generation으로 delivery/completion을 구분한다.
+- 실제 제품 Hook/MCP CLI와 test-only in-memory freshness를 사용하는 실제 SQLiteJournal→Routing→Operational→UDS를 연결해 같은 lineage의 경계 1→2, staged promotion, full Pet selection 두 번과 마지막 completion을 센티널 없이 통과했다.
+- 부모 최종 `npm run test:t011` 23/23, Swift Operational 12/12와 Routing 16/16이 통과했다. Operational은 최종 동결 소스에서 3회 연속 재통과했다. 새 결합 gate 3/3 반복과 최신 UDS 종료 집중 18/18도 통과했다. Python Plugin/Skill validator는 PyYAML 부재로 실행 전에 중단됐지만 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 검사가 통과했다.
+- open/seal, 선택, completion/close, expiry/timeout의 pre-commit 실패와 commit 뒤 응답 유실을 fault injection으로 검증했다. open→seal journal 인접성과 최초 seal의 monotonic anchor를 유지하고, 선택 commit이 모호하면 authoritative journal을 250 ms backoff로 재조정하되 원문 continuation token은 재발급하지 않는다. terminal notice와 staged promotion은 exactly-once로 수렴한다.
+- 실제 로그인 Keychain 제품 daemon은 비밀번호 prompt를 피하기 위해 실행하지 않았다. Hook 신뢰 수동 검토, signed Data Protection Keychain, PATH/launchd/doctor/DMG/터미널 매트릭스는 T-012에 남는다.
 
 ## 마일스톤 2 — 증거, 체크포인트, 진행 중인 프로젝트 도입
 
@@ -180,7 +214,7 @@
 
 - 정보 제공, 동적 권장 작업, 동적 대안 작업, 대안 없음, 보류, 롤백, 부분 완료, 차단, 실패, 형식 오류, 만료 패킷에 대한 스키마 골든 픽스처
 - `packet_id`, `revision`, `option_id`와 전체 작업 의미 전달, 누락/불일치/숫자 단독 입력 거부에 대한 선택 계약 테스트
-- `pet_action`의 same-turn Stop 전용 전달·수명 주기 종료 관찰과 `UserPromptSubmit` 경로 거부, 선택 전 패킷 만료, `internal_format_repair` 제출 봉투의 토큰 재사용·만료·교차 프로젝트·세션·에피소드·`source_turn_id`·`source_prompt_id` 불일치 거부와 형식 보정 1회 한도 테스트. T-006 계약 테스트는 dispatch 후 `pet_action`의 `in_flight_deadline_at`, timeout 결과 `unknown`, 자동 재시도·취소·실패 추론 금지를 고정하며 실제 런타임 시계 처리는 T-007에서 검증한다.
+- `pet_action`의 same-turn Stop 전용 전달·수명 주기 종료 관찰과 `UserPromptSubmit` 경로 거부, 선택 전 패킷 만료, `internal_format_repair` 제출 봉투의 토큰 재사용·만료·교차 프로젝트·세션·에피소드·`source_turn_id`·`source_prompt_id` 불일치 거부와 형식 보정 1회 한도 테스트. T-006/B1은 dispatch 후 `pet_action`의 `in_flight_deadline_at`, timeout 결과 `unknown`, 자동 재시도·취소·실패 추론 금지를 고정하며 B2가 실제 연속 단조 runtime 시계를 검증한다.
 - 비활성 2·4 슬롯의 안정적인 `disabled_reason`, `action_id = null`, 실행 본문 부재와 단축키 거부 테스트
 - SessionStart, UserPromptSubmit, 도구, 권한 알림, Stop, 재개, 압축, 2초 연결 fail-open, 60초 알림, 120초 만료, 데몬 손실에 대한 실제 시간 초과 Hook 통합 픽스처
 - 절전/복귀와 시스템 시계 앞·뒤 변경에도 연속 단조 시계 기준 60초·120초가 늘어나지 않고, 재시작 후 경과가 모호하면 만료되는지 확인하는 시간 테스트

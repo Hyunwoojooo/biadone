@@ -15,6 +15,7 @@ import { FakeCoordinator } from "../coordinator/fake-coordinator.mjs";
 import { requestJsonl } from "../coordinator/jsonl-client.mjs";
 import { parseContinuationPrompt } from "../coordinator/protocol.mjs";
 import { startJsonlServer } from "../coordinator/server.mjs";
+import { redactDiagnostics } from "../integration/run-codex-contract.mjs";
 import {
   parseSentinelOnce,
   SENTINEL_END,
@@ -25,6 +26,39 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const m0Root = path.resolve(here, "..");
 const hookScript = path.join(m0Root, "plugins/blabee-m0/scripts/hook.mjs");
 const mcpScript = path.join(m0Root, "plugins/blabee-m0/scripts/mcp-server.mjs");
+
+test("live contract diagnostics redact boundary and continuation tokens", () => {
+  const correlationToken = "correlation-secret-value";
+  const continuationToken = "continuation-secret-value";
+  const escapedContinuationToken = "escaped-continuation-secret";
+  const diagnostics = redactDiagnostics({
+    codexStdout:
+      `correlation_token=${correlationToken}; ` +
+      JSON.stringify({ proposal: { correlation_token: correlationToken } }),
+    state: {
+      correlation_token: correlationToken,
+      continuation_token: continuationToken,
+      nested: `continuation token echoed without a label: ${continuationToken}`,
+    },
+    orphanNamedValue: "correlation_token=orphan-secret",
+    nestedJsonl: JSON.stringify({
+      item: {
+        arguments: JSON.stringify({ continuation_token: escapedContinuationToken }),
+      },
+    }),
+    unlabeledNestedEcho: escapedContinuationToken,
+    safe: "packet_123",
+  });
+  const serialized = JSON.stringify(diagnostics);
+
+  assert.equal(serialized.includes(correlationToken), false);
+  assert.equal(serialized.includes(continuationToken), false);
+  assert.equal(serialized.includes("orphan-secret"), false);
+  assert.equal(serialized.includes(escapedContinuationToken), false);
+  assert.equal(diagnostics.state.correlation_token, "<redacted>");
+  assert.equal(diagnostics.state.continuation_token, "<redacted>");
+  assert.equal(diagnostics.safe, "packet_123");
+});
 
 function proposal({ alternative = true, suffix = "A" } = {}) {
   return {
@@ -498,6 +532,127 @@ test("Stop accepts only the exact pending turn and slot 1 returns a sealed full 
     assert.match(replay.reason, /dispatch_mode_mismatch/);
     const stored = [...coordinator.continuations.values()][0];
     assert.equal("continuation_token" in stored.envelope, false);
+  });
+});
+
+test("one turn can complete two contiguous decision continuations exactly once", async () => {
+  await withServer(async ({ socketPath }) => {
+    const episode = await beginEpisode(socketPath, {
+      sessionId: "repeat-session",
+      turnId: "repeat-turn",
+      prompt: "Run two decision boundaries in one turn",
+    });
+
+    const firstProposal = await emitProposal(
+      socketPath,
+      episode,
+      proposal({ suffix: "REPEAT-ONE" }),
+    );
+    assert.equal(firstProposal.packet.boundary_sequence, 1);
+    await assert.rejects(
+      emitProposal(socketPath, episode, proposal({ suffix: "DUPLICATE-PENDING" })),
+      /proposal_already_exists_for_turn/,
+    );
+
+    const firstStopPromise = rpc(socketPath, "stop", {
+      hook_event_name: "Stop",
+      session_id: episode.sessionId,
+      turn_id: episode.turnId,
+      cwd: episode.cwd,
+      stop_hook_active: false,
+      last_assistant_message: "first boundary ready",
+    });
+    const firstInteraction = await waitForWaitingInteraction(socketPath);
+    await assert.rejects(
+      emitProposal(socketPath, episode, proposal({ suffix: "DUPLICATE-WAITING" })),
+      /proposal_already_exists_for_turn/,
+    );
+    const firstOption = firstInteraction.choices.find((option) => option.slot === 1);
+    await rpc(socketPath, "select", selection(firstInteraction, firstOption));
+    const firstStop = await firstStopPromise;
+    assert.equal(firstStop.decision, "block");
+    const firstContinuation = parseContinuationPrompt(firstStop.reason);
+
+    const secondProposal = await emitProposal(
+      socketPath,
+      episode,
+      proposal({ suffix: "REPEAT-TWO" }),
+    );
+    assert.equal(secondProposal.packet.boundary_sequence, 2);
+    await assert.rejects(
+      emitProposal(socketPath, episode, proposal({ suffix: "DUPLICATE-STAGED" })),
+      /proposal_already_exists_for_turn/,
+    );
+
+    const secondStopPromise = rpc(socketPath, "stop", {
+      hook_event_name: "Stop",
+      session_id: episode.sessionId,
+      turn_id: episode.turnId,
+      cwd: episode.cwd,
+      stop_hook_active: true,
+      last_assistant_message: "first continuation staged the next boundary",
+    });
+    const secondInteraction = await waitForWaitingInteraction(socketPath);
+    assert.notEqual(secondInteraction.interaction_id, firstInteraction.interaction_id);
+    const secondOption = secondInteraction.choices.find((option) => option.slot === 2);
+    await rpc(socketPath, "select", selection(secondInteraction, secondOption));
+    const secondStop = await secondStopPromise;
+    assert.equal(secondStop.decision, "block");
+    const secondContinuation = parseContinuationPrompt(secondStop.reason);
+
+    assert.notEqual(secondProposal.packet.packet_id, firstProposal.packet.packet_id);
+    assert.notEqual(secondContinuation.continuation_id, firstContinuation.continuation_id);
+    assert.equal(firstContinuation.option_id, firstOption.option_id);
+    assert.equal(secondContinuation.option_id, secondOption.option_id);
+
+    assert.deepEqual(
+      await rpc(socketPath, "stop", {
+        hook_event_name: "Stop",
+        session_id: episode.sessionId,
+        turn_id: episode.turnId,
+        cwd: episode.cwd,
+        stop_hook_active: true,
+        last_assistant_message: "second continuation finished",
+      }),
+      { status: "continuation_completed" },
+    );
+    assert.deepEqual(
+      await rpc(socketPath, "stop", {
+        hook_event_name: "Stop",
+        session_id: episode.sessionId,
+        turn_id: episode.turnId,
+        cwd: episode.cwd,
+        stop_hook_active: true,
+        last_assistant_message: "duplicate terminal Stop",
+      }),
+      { status: "continuation_already_completed" },
+    );
+
+    const state = await rpc(socketPath, "get_state");
+    const packets = state.packets
+      .filter((packet) => packet.session_id === episode.sessionId)
+      .sort((left, right) => left.boundary_sequence - right.boundary_sequence);
+    assert.deepEqual(packets.map((packet) => packet.boundary_sequence), [1, 2]);
+    for (const packet of packets) {
+      assert.equal(packet.session_id, episode.ids.session_id);
+      assert.equal(packet.source_turn_id, episode.ids.source_turn_id);
+      assert.equal(packet.source_prompt_id, episode.ids.source_prompt_id);
+      assert.equal(packet.episode_id, episode.ids.episode_id);
+      assert.equal(packet.episode_root_prompt_id, episode.ids.episode_root_prompt_id);
+      assert.equal(
+        packet.episode_baseline_checkpoint_id,
+        episode.ids.episode_baseline_checkpoint_id,
+      );
+    }
+
+    const eventCount = (type) => state.events.filter((event) => event.type === type).length;
+    assert.equal(eventCount("decision_proposal_received"), 2);
+    assert.equal(eventCount("decision_wait_started"), 2);
+    assert.equal(eventCount("pet_action_selected"), 2);
+    assert.equal(eventCount("continuation_dispatched"), 2);
+    assert.equal(eventCount("continuation_consumed"), 2);
+    assert.equal(eventCount("continuation_completed"), 2);
+    assert.deepEqual(state.dispatches.map((dispatch) => dispatch.state), ["completed", "completed"]);
   });
 });
 

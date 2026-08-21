@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "blabee": {
+      "command": "blabee-coordinator",
+      "args": [
+        "mcp"
+      ],
+      "env_vars": [
+        "BLABEE_SOCKET"
+      ]
+    }
+  }
+}

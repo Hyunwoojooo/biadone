@@ -1,0 +1,56 @@
+{
+  "description": "Codex 작업 경계를 로컬 Blabee 코디네이터와 연결합니다.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook SessionStart",
+            "timeout": 8,
+            "statusMessage": "Blabee 프로젝트 연결 확인 중",
+            "additionalContextLimit": 600
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook UserPromptSubmit",
+            "timeout": 8,
+            "statusMessage": "Blabee 작업 경계 연결 중",
+            "additionalContextLimit": 1200
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook Stop",
+            "timeout": 130,
+            "statusMessage": "Blabee에서 다음 결정 대기 중"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook PermissionRequest",
+            "timeout": 8,
+            "statusMessage": "Blabee에 권한 요청 알림 전송 중"
+          }
+        ]
+      }
+    ]
+  }
+}

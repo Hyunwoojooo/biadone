@@ -6,11 +6,15 @@
 
 `decision_boundary_id`와 `boundary_sequence`는 같은 Codex 턴에서 이어지는 여러 결정 경계를 구분한다. `revision`은 한 경계 안에서 봉인된 패킷의 리비전이므로 경계 순서와 다른 개념이다. 패킷, 선택, 연속 진행 봉투, 결정 런타임 이벤트는 프로젝트·세션·턴·프롬프트·에피소드·결정 경계 바인딩을 모두 가진다.
 
+같은 `project_id`·`session_id`·`source_turn_id`에서 이어지는 경계는 `source_prompt_id`, `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`를 바꿀 수 없다. 사람이 새 프롬프트를 제출해 새 턴을 만들 때만 새 에피소드와 기준선을 시작한다.
+
 한 경계의 첫 패킷은 `revision: 1`이다. 선택 전 갱신은 같은 `interaction_id`와 `packet_id`에서 리비전을 정확히 1씩 올릴 때만 가능하다. 선택, 만료, 경계 종료 뒤에는 패킷을 다시 봉인할 수 없고 선택은 항상 최신 리비전을 가리켜야 한다.
 
 선택 요청은 식별자와 `boundary_sequence`·`revision`만 운반한다. 슬롯 번호, `action_id`, 토큰, 작업 본문은 Pet이 제출할 수 없다. 코디네이터가 봉인된 패킷에서 선택 의미를 다시 읽어야 한다.
 
-T-006은 이 문서 형태와 패킷 내부 의미까지만 고정한다. 선택의 `option_id`가 현재·미만료 패킷의 활성 슬롯인지 원자적으로 조회하고 그 슬롯의 봉인된 작업만 물질화하는 resolver는 T-007 운영 상태 머신이 구현한다.
+T-006은 이 문서 형태와 패킷 내부 의미를 고정한다. T-007a 참조 코어와 T-007b-B1 Swift application은 선택의 `option_id`가 현재·미만료 패킷의 활성 슬롯인지 원자적으로 조회하고 그 슬롯의 봉인된 작업만 물질화하는 resolver 의미를 구현했다. T-007b-C는 M0 실제 Hook 반복과 Swift 제품 상태 반복을 분리된 게이트로 검증했다. 실제 Hook→Swift 운영 연결은 T-011이 구현한다.
+
+v1 JSON Schema의 `identifier` 정의는 문자열 형태와 길이만 고정한다. 코디네이터 의미 계층에서 새로 생성·저장하는 식별자는 NFC 정규형이어야 하고, 이미 저장된 식별자를 가리키는 값은 UTF-8 바이트가 정확히 같아야 한다. 이는 Swift `String`의 canonical-equivalence 비교가 서로 다른 wire ID를 같은 키로 취급하지 못하게 하는 의미 불변식이며, 고정된 v1 스키마 해시를 변경하지 않는다.
 
 결정 패킷은 네 슬롯을 정확히 이 순서로 가진다.
 
@@ -31,11 +35,11 @@ T-006은 이 문서 형태와 패킷 내부 의미까지만 고정한다. 선택
 
 `pet_action`은 `dispatch_mode: "same_turn_stop"`만 허용한다. `internal_format_repair`는 `dispatch_mode: "submitted_envelope"`만 허용하며 같은 결정 경계에서 `repair_attempt = max_repair_attempts = 1`이다. 두 봉투의 필드는 서로 섞을 수 없다.
 
-두 모드 모두 전체 바인딩과 만료 시각이 정확히 일치할 때만 한 번 claim할 수 있다. `internal_format_repair`는 새 ID와 토큰을 발급하더라도 같은 결정 경계에서 두 번째로 claim할 수 없다. Pet dispatch는 `issued_at < expires_at <= in_flight_deadline_at` 순서를 지켜야 하며 deadline 전에는 timeout으로 기록할 수 없다. 형식 보정의 예약·claim 이벤트는 각각 `issued_at <= occurred_at < expires_at` 범위 안에 있어야 한다.
+두 모드 모두 전체 바인딩과 만료 시각이 정확히 일치할 때만 한 번 claim할 수 있다. `continuation_id`와 token fingerprint는 Pet 작업과 형식 보정을 합친 저널 전체에서 재사용할 수 없다. `internal_format_repair`는 새 ID와 토큰을 발급하더라도 같은 결정 경계에서 두 번째로 claim할 수 없다. Pet dispatch는 `issued_at < expires_at <= in_flight_deadline_at` 순서를 지켜야 하며 deadline 전에는 timeout으로 기록할 수 없다. 형식 보정의 예약·claim 이벤트는 각각 `issued_at <= occurred_at < expires_at` 범위 안에 있어야 한다.
 
 형식 보정은 일반 Pet `continuation_dispatched`를 재사용하지 않는다. 발급 시 `internal_format_repair_reserved`를 원자적으로 durable journal에 추가하고, 이 이벤트 하나만 해당 결정 경계의 1회 보정 예산을 소비했다는 진실 원본으로 취급한다. 토큰과 전체 봉투 바인딩 검증이 끝난 뒤에는 `internal_format_repair_claimed`를 정확히 한 번 추가한다. T-007 reducer는 두 이벤트의 최상위 프로젝트·세션·턴·프롬프트·에피소드·결정 경계 바인딩과 payload의 `continuation_id`, `repair_request_id`, `parent_prompt_id`, 시도 제한, 전달 모드, 발급·만료 시각을 재생해 재시작 뒤에도 예약·claim 상태를 복구해야 한다. `parent_prompt_id`는 이벤트 최상위 `source_prompt_id`와 정확히 일치해야 한다.
 
-원문 continuation/correlation token은 어떤 durable event에도 기록하지 않는다. 발급자는 CSPRNG로 최소 128-bit 엔트로피의 토큰을 만들고 journal에는 `sha256:<64 lowercase hex>` 또는 `hmac-sha256:<64 lowercase hex>` 형태의 `correlation_token_fingerprint`만 남긴다. 검증 비교는 constant-time으로 수행해야 한다. 실제 토큰 생성, fingerprint 키 관리와 비교 구현은 T-007 책임이다.
+원문 continuation/correlation token은 어떤 durable event에도 기록하지 않는다. 발급자는 CSPRNG로 최소 128-bit 엔트로피의 토큰을 만들고 journal에는 `sha256:<64 lowercase hex>` 또는 `hmac-sha256:<64 lowercase hex>` 형태의 `correlation_token_fingerprint`만 남긴다. 검증 비교는 constant-time으로 수행해야 한다. T-007a 참조 코어는 생성·fingerprint·비교 의미를 구현했으며, 제품 키 보관·회전과 영속 sidecar 인증은 T-007b 책임이다.
 
 ## M1 롤백 정책
 
