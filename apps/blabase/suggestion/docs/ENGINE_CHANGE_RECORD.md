@@ -8244,3 +8244,161 @@ appending this receipt.
 - Parent code rollback: Remains governed by the earlier Stage10 V0.1 Engine Change Records.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B1-IDENTITY-AND-QA-RECEIPT-2026-08-22:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22:begin -->
+
+## Colin Common-Contract Freeze Decision Receipt: ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22
+
+- Date: 2026-08-22
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David role, gate, package, receipt, artifact, review, or approval: none
+- Goal: Record Colin's decision on every blocking Section 20.1 item and freeze the exact common V0.2
+  source-verification contract without changing the reviewed proposal bytes.
+- Affected pipeline stages: Governance and contract lifecycle record only. No runtime or semantic
+  pipeline stage is changed.
+- Decision evidence: After receiving a Decision Packet that grouped all 21 Section 20.1 choices and
+  stated their effects and tradeoffs, Colin explicitly chose option 1 on 2026-08-22. Option 1 was
+  approval of every Section 20.1 item and approval of the external common-contract freeze receipt
+  and status transition for the exact bound proposal blob.
+- Common contract freeze decision: `APPROVED` and `ACCEPTED` by Colin for the exact bound blob.
+
+### Bound immutable identities and lifecycle transition
+
+- Contract ID: `blabase-common-suggestion-evidence-source-verification-v0.2`
+- Exact bound proposal Git blob SHA: `0bdb0bc5d57d207ff1ff8b393d83a1d750eb7715`
+- Correction/package commit SHA: `ceb8085ecf4f1b87173800041d0f2919a66bf567`
+- Identity/QA receipt commit SHA: `a4cc5c71ddcadec385423cb868b4ac5a7319747e`
+- Identity/QA receipt ECR Git blob SHA: `5ae8e2f1ea487ae5e2b82e0b3330b7e33a32c26e`
+- Prior evidence receipt:
+  `ECR-STAGE10-2B1-IDENTITY-AND-QA-RECEIPT-2026-08-22`
+- Status embedded in the exact bound proposal blob:
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`
+- External lifecycle transition recorded by this receipt:
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW` -> `CONTRACT_FROZEN_BY_COLIN`
+- Resulting external lifecycle state: `CONTRACT_FROZEN_BY_COLIN`
+
+The proposal source file and the exact bound proposal blob remain byte-for-byte unchanged. The
+historical `TBD_UNCOMMITTED` and `TBD_AT_FREEZE` placeholders in those immutable bytes are satisfied
+externally for this freeze by the full correction/package commit, exact proposal blob, identity/QA
+receipt commit, and identity/QA receipt ECR blob recorded above. They are not silently rewritten.
+
+This freeze receipt is not contained in the correction/package commit, the bound proposal blob, or
+the earlier identity/QA receipt commit and ECR blob. It is a later external decision record and does
+not claim self-reference to a commit or blob containing itself.
+
+### Section 20.1 blocking decisions: 21/21 Yes
+
+Each decision below is recorded separately. The 21/21 summary does not replace the individual
+decisions.
+
+1. **Yes.** Freeze contract ID
+   `blabase-common-suggestion-evidence-source-verification-v0.2`.
+2. **Yes.** Satisfy the `TBD_AT_FREEZE` identity requirement with the exact full proposal Git blob
+   SHA recorded above and record the explicit proposal-to-frozen status transition. The immutable
+   historical placeholder remains unchanged in the bound blob and is resolved externally by this
+   receipt.
+3. **Yes.** Accept the deterministic common callback/count/byte/work-unit cap table and exact
+   canonical-input work formula in Section 13, independently of later provider-specific caps.
+4. **Yes.** Accept that any wall/monotonic watchdog is operational-only, cannot select a lineage
+   result, and makes an interrupted attempt operationally incomplete/unsealed.
+5. **Yes.** Accept the mechanically observable source-local/global trap and isolation matrix,
+   including global handling for process/worker loss, memory/resource termination, corruption, or
+   unprovable containment.
+6. **Yes.** Accept the exact Stage 3 failure-code union, closed code/detail mapping, five
+   discriminated exact-key source-status variants, and Calendar-only timezone rejection pair with
+   positive Calendar and negative four-source type-contract tests.
+7. **Yes.** Accept `projectedRecordCount` as a non-negative safe integer no greater than the common
+   deterministic 50,000,000 projected-record cap, with all non-finite, fractional, and unsafe forms
+   rejected.
+8. **Yes.** Accept trusted snapshot-creation `issuedAt`, the exact
+   `issuedAt <= verificationStartedAt < expiresAt` relation, both current-generation checks, and
+   identical stale/empty-plan lifecycle semantics.
+9. **Yes.** Satisfy the `V0_1_DRIFT_CORRECTION_COMMIT_SHA: TBD_UNCOMMITTED` identity requirement with
+   the full correction/package commit SHA recorded above, bind the external exact-byte QA result to
+   that SHA and the exact proposal identity through the prior identity/QA receipt and this receipt,
+   and confirm the historical Stage10-2A SHAs are not that identity. The immutable historical
+   placeholder remains unchanged in the bound blob and is resolved externally by this receipt.
+10. **Yes.** Accept the private schema identities shown in the proposed type definitions.
+11. **Yes.** Accept HMAC-SHA-256, domain `blabase.lineage.collector-seal.v0.2`, purpose
+    `source-collector-seal`, and the exact canonical preimage formula as the collector-seal default.
+12. **Yes.** Require collector-seal and privacy-scope HMAC to use separate key material, versions,
+    handles, domains, and purposes.
+13. **Yes.** Accept the V0.2 wrapper strategy that uses the unchanged V0.1 kernel result as the
+    exact Stage 1 and Stage 2 preflight.
+14. **Yes.** Accept the runtime-owned opaque table and atomic generation model; reject all
+    caller-mintable plain snapshots and functions.
+15. **Yes.** Accept the exact lifecycle inequalities, including invalidity at expiry, revocation,
+    and deletion equality.
+16. **Yes.** Accept exact context, case, dataset, account/user, comparison-scope, run, request, and
+    attempt binding for replay.
+17. **Yes.** Accept fixed source execution order and continued bounded processing of later
+    available sources after a per-source failure.
+18. **Yes.** Accept the existing-code failure mapping and frozen V0.1 Stage 3 precedence.
+19. **Yes.** Accept that `verified: true` in Stage10-2B is private and always
+    `authoritative: false`.
+20. **Yes.** Accept GitHub as the first vertical slice.
+21. **Yes.** Accept that each source bundle's concrete caps and wire contract are prerequisites
+    frozen in that source slice rather than invented in this common contract.
+
+### Freeze scope and binding effect
+
+- Frozen scope: Only the common V0.2 source-verification contract embodied by exact proposal blob
+  `0bdb0bc5d57d207ff1ff8b393d83a1d750eb7715` is frozen.
+- The common rules and identities approved in the 21 decisions above are accepted as the frozen
+  common contract. Any modification requires a new proposal state or version and a new explicit
+  Colin decision; the frozen proposal blob must never be mutated.
+- Stage10-2B remains private and always `authoritative: false`. Stage10-2C alone may first activate
+  authority or produce `authoritative: true`.
+- The A/B/C identical-engine invariant remains binding: A is structured evidence only, B is that
+  same structured evidence plus neutral Dayflow evidence, C is neutral Dayflow evidence only, and
+  only the evidence set may differ.
+- The Dayflow evidence-only invariant remains binding. Dayflow supplies capture, storage, privacy,
+  OCR, and preprocessing evidence only and cannot supply suggestion semantics, output, ranking, or
+  engine-control signals.
+
+### Explicit non-authorizations and unresolved prerequisites
+
+- This receipt does not approve or implement the GitHub private verifier.
+- Section 20.2 keeps freeze of the exact GitHub source-bundle sub-contract and its
+  provider-specific equal-or-lower caps, and approval of GitHub verifier implementation, as
+  separate later Colin decisions.
+- This receipt does not activate GitHub or any provider capability and does not approve operational
+  key provisioning, provider artifacts, live APIs, mixed-source integration, Stage10-2C, release,
+  rollout, production authority, or any public or authority-bearing surface.
+- Provider-specific bundle schemas, exact versions, hashes, caps, the approved Calendar profile
+  artifact, collector key provisioning, and every source-slice prerequisite remain unresolved by
+  design. Nothing in this receipt invents, freezes, or implements them.
+- Release decision: Not released.
+- Implementation decision: Not approved.
+
+### Bound technical evidence and execution record
+
+The prior identity/QA receipt bound the current-byte full-suite result of 168/168 files and
+1,593/1,593 tests passing, including 48/48 affected lineage tests, plus passing typecheck and lint,
+to the immutable identities above. Its external QA chain ended `PASS` with no remaining technical
+or document blocker. This decision receipt relies on that bound evidence and does not duplicate it
+as a new execution.
+
+- Commands executed while appending this receipt: none.
+- Tests or checks run while appending this receipt: none.
+- Git commands run while appending this receipt: none.
+- Evaluation dataset version and SHA-256: not applicable; no evaluation input or semantic behavior
+  changed.
+- Candidate run ID and comparison run ID: none.
+- Metrics changed: none.
+- Privacy, retention, and data impact: unchanged. No secret, credential, raw conversation, private
+  evidence, provider data, provider artifact, model call, dataset, or user data was added or used.
+
+### Next permitted task, release boundary, and rollback
+
+- Next permitted planning task: Prepare and freeze the exact GitHub source-bundle sub-contract and
+  provider-specific equal-or-lower caps for a separate Colin decision.
+- No runtime implementation may start from this receipt alone.
+- Reopen or rollback this common-contract freeze only through an explicit Colin decision recorded
+  in a new proposal/decision receipt. Never silently mutate the bound proposal blob.
+- Reverting or voiding this receipt does not alter the bound correction code, proposal blob, or
+  prior identity/QA evidence and requires Colin's explicit decision.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22:end -->
