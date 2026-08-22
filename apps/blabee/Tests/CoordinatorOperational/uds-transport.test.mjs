@@ -81,8 +81,16 @@ async function startFakeCoordinator(handler) {
           ok: true,
           result,
         })}\n`);
-      } catch {
-        socket.destroy();
+      } catch (error) {
+        if (typeof error?.coordinatorCode === "string") {
+          socket.end(`${JSON.stringify({
+            request_id: JSON.parse(buffer.subarray(0, newline).toString("utf8")).request_id,
+            ok: false,
+            error: { code: error.coordinatorCode, message: "request failed" },
+          })}\n`);
+        } else {
+          socket.destroy();
+        }
       }
     });
   });
@@ -606,8 +614,72 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
       status: "waiting_for_selection",
     });
     assert.equal(responses[3].result.isError, true);
+    assert.deepEqual(responses[3].result.structuredContent, {
+      accepted: false,
+      error_code: "coordinator_unavailable_or_rejected",
+      retryable: false,
+    });
     assert.equal(forwardedCalls, 1, "invalid exact-key wrappers must not reach UDS");
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("MCP exposes only allowlisted decision failure metadata", async () => {
+  let forwardedCalls = 0;
+  const fake = await startFakeCoordinator(() => {
+    forwardedCalls += 1;
+    const error = new Error("fixture coordinator rejection");
+    error.coordinatorCode = forwardedCalls === 1
+      ? "proposal_source_prompt_mismatch"
+      : "database_integrity_failed";
+    throw error;
+  });
+  const arguments_ = {
+    project_id: proposal.project_id,
+    session_id: proposal.session_id,
+    source_turn_id: proposal.source_turn_id,
+    source_prompt_id: proposal.source_prompt_id,
+    episode_id: proposal.episode_id,
+    correlation_token: proposal.correlation_token,
+    proposal: operationalProposal,
+  };
+  const messages = ["binding", "internal"].map((id) => ({
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name: "emit_decision", arguments: arguments_ },
+  }));
+  try {
+    const result = await runBinary(
+      ["mcp", "--socket", fake.socketPath],
+      { input: `${messages.map((message) => JSON.stringify(message)).join("\n")}\n` },
+    );
+    assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
+    assert.equal(result.stderr, "");
+    const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(responses[0].result.structuredContent, {
+      accepted: false,
+      error_code: "proposal_source_prompt_mismatch",
+      retryable: true,
+    });
+    assert.deepEqual(responses[1].result.structuredContent, {
+      accepted: false,
+      error_code: "coordinator_unavailable_or_rejected",
+      retryable: false,
+    });
+    for (const response of responses) {
+      assert.equal(response.result.isError, true);
+      assert.equal(
+        response.result.content[0].text,
+        "Blabee coordinator unavailable or rejected the proposal.",
+      );
+    }
+    assert.equal(forwardedCalls, 2);
+    assert.equal(result.stdout.includes(proposal.correlation_token), false);
+    assert.equal(result.stdout.includes(proposal.task_goal), false);
+    assert.equal(result.stdout.includes("database_integrity_failed"), false);
   } finally {
     await fake.close();
   }
@@ -641,6 +713,11 @@ test("MCP transport failure is a generic isError result without raw payload", as
     assert.equal(result.stderr, "");
     const response = JSON.parse(result.stdout);
     assert.equal(response.result.isError, true);
+    assert.deepEqual(response.result.structuredContent, {
+      accepted: false,
+      error_code: "coordinator_unavailable_or_rejected",
+      retryable: false,
+    });
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
     assert.equal(result.stdout.includes(proposal.task_goal), false);
   } finally {

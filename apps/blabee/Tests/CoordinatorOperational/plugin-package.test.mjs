@@ -253,7 +253,10 @@ test("decision skill gates emission and preserves the exact wrapper/proposal con
   ]);
   assert.equal(payload.proposal.schema_version, "1.0");
   assert.equal(payload.proposal.interaction_kind, "blabee_decision");
-  assert.match(skill, /정확히 한 번 호출/);
+  assert.match(skill, /기본적으로 한 번 호출/);
+  assert.match(skill, /proposal_source_prompt_mismatch/);
+  assert.match(skill, /보정 재시도를 한 번/);
+  assert.match(skill, /prompt 이외의 값도 다르거나/);
   assert.match(skill, /설명, 코드 구조 설명, 상태 확인, 일반 질문/);
   assert.match(skill, /권한 승인이나 네이티브 질문/);
   assert.match(skill, /모든 답변을 번호 선택지나 고정된 1~4 형식으로 바꾸지 않는다/);

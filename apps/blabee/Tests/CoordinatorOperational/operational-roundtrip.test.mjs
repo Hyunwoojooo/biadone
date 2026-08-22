@@ -361,7 +361,7 @@ async function readStorageArtifacts(databasePath) {
   return Buffer.concat(values);
 }
 
-test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries without token leakage", async () => {
+test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and completes two boundaries without leakage", async () => {
   const server = await startOperationalServer();
   const productBuild = await buildProductCoordinator();
   const productBinary = await readFile(productBuild.binaryPath);
@@ -418,6 +418,35 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
     ].map((key) => [key, contextValue(designatedContext, key)]));
     assert.equal(userPrompt.stdout.split(ids.correlation_token).length - 1, 1);
 
+    const assistantPrivateMarker = "fictional-private-finalization-marker";
+    const fallbackInput = JSON.stringify(hookPayload("Stop", {
+      cwd: server.enabledProjectPath,
+      turn_id: ids.source_turn_id,
+      stop_hook_active: false,
+      last_assistant_message: `short action result ${assistantPrivateMarker}`,
+    }));
+    const fallbackStop = await runBuiltBinary(
+      productBuild,
+      ["hook", "Stop", "--socket", server.socketPath],
+      { input: fallbackInput },
+    );
+    assert.deepEqual(
+      { code: fallbackStop.code, signal: fallbackStop.signal, stderr: fallbackStop.stderr },
+      { code: 0, signal: null, stderr: "" },
+    );
+    const fallbackOutput = JSON.parse(fallbackStop.stdout);
+    assert.equal(fallbackOutput.decision, "block");
+    assert.match(fallbackOutput.reason, /finalization self-check/);
+    assert.equal(fallbackStop.stdout.includes(assistantPrivateMarker), false);
+    assert.equal(fallbackStop.stdout.includes(ids.correlation_token), false);
+
+    const replayedFallbackStop = await runBuiltBinary(
+      productBuild,
+      ["hook", "Stop", "--socket", server.socketPath],
+      { input: fallbackInput },
+    );
+    assert.deepEqual(replayedFallbackStop, fallbackStop);
+
     const firstMCP = await emitDecision(
       productBuild,
       server.socketPath,
@@ -434,8 +463,8 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
         input: JSON.stringify(hookPayload("Stop", {
           cwd: server.enabledProjectPath,
           turn_id: ids.source_turn_id,
-          stop_hook_active: false,
-          last_assistant_message: "boundary one ready",
+          stop_hook_active: true,
+          last_assistant_message: "finalization self-check emitted boundary one",
         })),
       },
     );
@@ -546,6 +575,10 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
     const publicOutputWithoutDesignatedContext = [
       sessionStart.stdout,
       sessionStart.stderr,
+      fallbackStop.stdout,
+      fallbackStop.stderr,
+      replayedFallbackStop.stdout,
+      replayedFallbackStop.stderr,
       firstMCP.result.stdout,
       firstMCP.result.stderr,
       JSON.stringify(firstWaiting.response),
@@ -565,12 +598,14 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
       JSON.stringify(finalState),
     ].join("\n");
     assert.equal(publicOutputWithoutDesignatedContext.includes(ids.correlation_token), false);
+    assert.equal(publicOutputWithoutDesignatedContext.includes(assistantPrivateMarker), false);
     assert.equal(publicOutputWithoutDesignatedContext.includes('"correlation_token"'), false);
     assert.equal(publicOutputWithoutDesignatedContext.includes('"continuation_token"'), false);
     assert.equal(designatedContext.includes(ids.correlation_token), true);
 
     const storageBytes = await readStorageArtifacts(server.databasePath);
     assert.equal(storageBytes.includes(Buffer.from(ids.correlation_token)), false);
+    assert.equal(storageBytes.includes(Buffer.from(assistantPrivateMarker)), false);
     assert.equal(storageBytes.includes(Buffer.from('"correlation_token"')), false);
     assert.equal(storageBytes.includes(Buffer.from('"continuation_token":')), false);
 

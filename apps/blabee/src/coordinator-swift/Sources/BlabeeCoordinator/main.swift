@@ -388,7 +388,10 @@ private func response(
             throw CoordinatorError("invalid_request", "validate requires a supported contract and object document")
         }
         let data = try StrictJSONTransport.data(forJSONObject: document)
-        _ = try V1IngressValidator().validate(data, as: contract)
+        let validated = try V1IngressValidator().validate(data, as: contract)
+        if case .continuationEnvelope = validated {
+            journal.secretCorpus.registerKnownSecrets(inJSONObject: document)
+        }
         return (requestID, operation, ["valid": true, "contract": contract.rawValue])
     default:
         throw CoordinatorError("invalid_request", "unsupported operation")

@@ -173,7 +173,7 @@ struct DoctorApplication {
     static let alphaBaselineVersion = "0.148.0"
     static let supportedVersions: Set<String> = []
     static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
-    static let skillSHA256 = "d902f84629685fecde57bb283e7126fdfa7013fd45ceb75ce902cbf512fc2003"
+    static let skillSHA256 = "a6ac83e213cafb755e75f92d63f7a47fe90a8c0bfa7b4e88c42fb02f3dcc4b52"
     static let skillAgentSHA256 = "48f8357783a6f96d1d387501e78ba2ed6785c9945a80d1a45c14dff341ee9520"
     static let bundledLauncherData = Data(("""
     #!/bin/sh

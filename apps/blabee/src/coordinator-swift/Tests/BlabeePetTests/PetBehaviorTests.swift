@@ -34,6 +34,28 @@ private func blabeePetFocus(
     return identity
 }
 
+@Test("BlabeePet distinguishes ready from an actual in-flight continuation")
+@MainActor
+func blabeePetReadyAndWorkingPresentation() throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+    #expect(viewModel.presentationState == .ready)
+    #expect(viewModel.presentationState.displayTitle == "준비됨")
+
+    var inFlight = petTestSnapshotObject(cards: [])
+    var routing = try #require(inFlight["routing"] as? [String: Any])
+    routing["in_flight_count"] = 1
+    inFlight["routing"] = routing
+    try viewModel.receiveSnapshotDataForTesting(petTestData(inFlight))
+    #expect(viewModel.presentationState == .working)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+    #expect(viewModel.presentationState == .ready)
+}
+
 @Test("BlabeePet does nothing without an explicit local foreground")
 @MainActor
 func blabeePetNoForegroundNoOp() async throws {
@@ -231,6 +253,7 @@ func blabeePetFreshSelectionIDPerCard() async throws {
     await transport.enqueue(type: "select", response: try petTestSelectionResponse())
     await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
     await viewModel.requestPanelSelection(1)
+    #expect(viewModel.presentationState == .ready)
 
     let payloads = await transport.requestPayloads(type: "select")
     #expect(payloads.count == 2)
@@ -297,6 +320,7 @@ func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     await pauseViewModel.handleGlobalSlot(3)
     #expect(await pauseTransport.requestCount(type: "select") == 1)
     #expect(pauseViewModel.riskConfirmation == nil)
+    #expect(pauseViewModel.presentationState == .paused)
 }
 
 @Test("BlabeePet treats ambiguous selection failure as stale until refocused")

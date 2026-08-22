@@ -148,12 +148,14 @@ private func handleMCPMessage(
                 "structuredContent": forwarded,
             ], secretCorpus: messageSecretCorpus)
         } catch {
+            let failure = publicEmitDecisionFailure(error)
             try writeMCPResult(id: message["id"], value: [
                 "isError": true,
                 "content": [[
                     "type": "text",
                     "text": "Blabee coordinator unavailable or rejected the proposal.",
                 ]],
+                "structuredContent": failure,
             ], secretCorpus: messageSecretCorpus)
         }
     default:
@@ -163,6 +165,24 @@ private func handleMCPMessage(
             message: "method_not_found",
             secretCorpus: messageSecretCorpus
         )
+    }
+}
+
+private func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
+    let code = error.coordinatorError.code
+    switch code {
+    case "proposal_source_prompt_mismatch":
+        return [
+            "accepted": false,
+            "error_code": code,
+            "retryable": true,
+        ]
+    default:
+        return [
+            "accepted": false,
+            "error_code": "coordinator_unavailable_or_rejected",
+            "retryable": false,
+        ]
     }
 }
 

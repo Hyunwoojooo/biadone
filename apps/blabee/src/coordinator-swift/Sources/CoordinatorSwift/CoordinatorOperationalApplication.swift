@@ -74,6 +74,11 @@ public actor CoordinatorOperationalApplication {
         let continuation: CheckedContinuation<Data, Error>
     }
 
+    private struct FinalizationFallback {
+        var stopLedger: StopObservationLedger
+        let response: Data
+    }
+
     private let routing: CoordinatorRoutingApplication
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
@@ -87,6 +92,7 @@ public actor CoordinatorOperationalApplication {
     private var stagedByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     private var registrations: [String: ProposalRegistration] = [:]
     private var waiters: [CoordinatorBindingKey: Waiter] = [:]
+    private var finalizationFallbacks: [CoordinatorTurnKey: FinalizationFallback] = [:]
     private var pendingTimeNotices: [Data] = []
     private var pendingCompletionClosures: Set<CoordinatorBindingKey> = []
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
@@ -422,7 +428,7 @@ private extension CoordinatorOperationalApplication {
         }
         return try publicData([
             "enabled": true,
-            "additionalContext": "Blabee is enabled for this project. Call blabee.emit_decision only after concrete work reaches a meaningful decision boundary; do not emit for explanations or ordinary status answers.",
+            "additionalContext": "Blabee is enabled for this project. For an action-type request, every completed, partial, blocked, or failed result must call blabee.emit_decision before finalizing, even when the result is short or text-only. Do not emit for explanations, structure descriptions, status checks, or general questions.",
         ])
     }
 
@@ -462,6 +468,7 @@ private extension CoordinatorOperationalApplication {
             {
                 throw CoordinatorError("session_decision_boundary_active")
             }
+            finalizationFallbacks.removeValue(forKey: key)
         }
 
         let promptID = try identifier(idGenerator("prompt"), "source_prompt_id")
@@ -514,34 +521,42 @@ private extension CoordinatorOperationalApplication {
         }
         try byteExactRequire(session.projectID, projectID, "proposal_binding_mismatch")
         try byteExactRequire(session.latestTurnID, turnID, "proposal_binding_mismatch")
-        try byteExactRequire(session.latestPromptID, promptID, "proposal_binding_mismatch")
         try byteExactRequire(episode.episodeID, episodeID, "proposal_binding_mismatch")
         try byteExactRequire(session.correlationToken, correlationToken, "proposal_binding_mismatch")
 
         // The designated proposal field is the only legal occurrence of this
-        // per-prompt token. Register it only after exact binding succeeds, then
-        // reject any copy embedded in free text before opening a boundary.
+        // per-prompt token. Register it only after the session token and all
+        // non-prompt bindings succeed. Reject any copy embedded in free text
+        // before classifying an isolated prompt transcription mismatch.
         secretCorpus.register(correlationToken)
         var proposalWithoutDesignatedToken = proposal
         proposalWithoutDesignatedToken["correlation_token"] = NSNull()
         try secretCorpus.assertNoKnownSecret(inJSONObject: proposalWithoutDesignatedToken)
+        try byteExactRequire(
+            session.latestPromptID,
+            promptID,
+            "proposal_source_prompt_mismatch"
+        )
 
         let contextKey = [projectID, sessionID, turnID, promptID, episodeID, correlationToken]
             .joined(separator: "\u{0}")
+        let turnKey = CoordinatorTurnKey(
+            projectID: projectID,
+            sessionID: sessionID,
+            sourceTurnID: turnID
+        )
         if let existing = registrations[proposalID] {
             try require(existing.canonical == canonical, "proposal_id_conflict")
             try require(existing.contextKey.utf8.elementsEqual(contextKey.utf8), "proposal_id_conflict")
             if boundaries[existing.boundaryKey]?.acceptance == nil {
                 try resumeInitialActivation(boundaryKey: existing.boundaryKey)
             }
-            return try requireOperational(boundaries[existing.boundaryKey]?.acceptance)
+            let acceptance = try requireOperational(boundaries[existing.boundaryKey]?.acceptance)
+            finalizationFallbacks.removeValue(forKey: turnKey)
+            return acceptance
         }
 
-        let turnKey = CoordinatorTurnKey(
-            projectID: projectID,
-            sessionID: sessionID,
-            sourceTurnID: turnID
-        )
+        let acceptsFinalizationStop = finalizationFallbacks[turnKey] != nil
         let sequence: Int64
         let phase: BoundaryPhase
         if let activeKey = activeByTurn[turnKey], let active = boundaries[activeKey] {
@@ -580,7 +595,7 @@ private extension CoordinatorOperationalApplication {
             deliveryGeneration: nil,
             continuationID: nil,
             acceptance: nil,
-            acceptsActiveStopAsWaiter: false,
+            acceptsActiveStopAsWaiter: acceptsFinalizationStop,
             openEventID: nil,
             openedAt: nil,
             openedEventSequence: nil,
@@ -619,6 +634,7 @@ private extension CoordinatorOperationalApplication {
             contextKey: contextKey,
             boundaryKey: key
         )
+        finalizationFallbacks.removeValue(forKey: turnKey)
         return try requireOperational(boundary.acceptance)
     }
 
@@ -645,13 +661,23 @@ private extension CoordinatorOperationalApplication {
         guard let session = sessions[sessionID] else {
             return try publicData(["status": "no_proposal"])
         }
+        guard Self.byteExact(session.latestTurnID, turnID) else {
+            return try publicData(["status": "no_proposal"])
+        }
         let turnKey = CoordinatorTurnKey(
             projectID: session.projectID,
             sessionID: sessionID,
             sourceTurnID: turnID
         )
         guard let key = activeByTurn[turnKey], var boundary = boundaries[key] else {
-            return try publicData(["status": "no_proposal"])
+            return try finalizationFallbackStop(
+                turnKey: turnKey,
+                sessionID: sessionID,
+                turnID: turnID,
+                activeFlag: activeFlag,
+                message: message,
+                generation: requestGeneration
+            )
         }
         guard let observation = boundary.stopLedger.register(
             sessionID: sessionID,
@@ -726,6 +752,54 @@ private extension CoordinatorOperationalApplication {
         boundary.acceptsActiveStopAsWaiter = false
         boundaries[key] = boundary
         return try await waitForSelection(key: key, observation: observation)
+    }
+
+    func finalizationFallbackStop(
+        turnKey: CoordinatorTurnKey,
+        sessionID: String,
+        turnID: String,
+        activeFlag: Bool,
+        message: String,
+        generation: UInt64
+    ) throws -> Data {
+        guard !activeFlag else {
+            return try publicData(["status": "no_proposal"])
+        }
+
+        if let fallback = finalizationFallbacks[turnKey] {
+            var replayLedger = fallback.stopLedger
+            guard replayLedger.register(
+                sessionID: sessionID,
+                turnID: turnID,
+                stopHookActive: activeFlag,
+                lastAssistantMessage: message,
+                generation: generation
+            ) == nil else {
+                return try publicData(["status": "no_proposal"])
+            }
+            return fallback.response
+        }
+
+        let reason = "Before finishing, perform one Blabee finalization self-check for the current human request. If it was an action-type request and the result is completed, partial, blocked, or failed, call blabee.emit_decision exactly once using the exact current Hook context, even when the result is short or text-only. If it was only an explanation, structure description, status check, or general question, do not call the tool. Then provide the final response; do not repeat this self-check."
+        let response = try publicData([
+            "decision": "block",
+            "reason": reason,
+        ])
+        var ledger = StopObservationLedger(keyData: stopObservationHMACKey)
+        guard ledger.register(
+            sessionID: sessionID,
+            turnID: turnID,
+            stopHookActive: activeFlag,
+            lastAssistantMessage: message,
+            generation: generation
+        ) != nil else {
+            throw CoordinatorError("finalization_stop_observation_missing")
+        }
+        finalizationFallbacks[turnKey] = FinalizationFallback(
+            stopLedger: ledger,
+            response: response
+        )
+        return response
     }
 
     func waitForSelection(
@@ -1295,7 +1369,7 @@ private extension CoordinatorOperationalApplication {
               let correlation = session.correlationToken
         else { throw CoordinatorError("session_prompt_context_missing") }
         let identifiers = try publicIdentifiers(session: session)
-        let context = "Blabee boundary: project_id=\(session.projectID); session_id=\(session.sessionID); source_turn_id=\(turnID); source_prompt_id=\(promptID); episode_id=\(episode.episodeID); episode_root_prompt_id=\(episode.rootPromptID); episode_baseline_checkpoint_id=\(episode.baselineCheckpointID); correlation_token=\(correlation). Use these exact values only when calling blabee.emit_decision."
+        let context = "Blabee boundary: project_id=\(session.projectID); session_id=\(session.sessionID); source_turn_id=\(turnID); source_prompt_id=\(promptID); episode_id=\(episode.episodeID); episode_root_prompt_id=\(episode.rootPromptID); episode_baseline_checkpoint_id=\(episode.baselineCheckpointID); correlation_token=\(correlation). Use these exact values only when calling blabee.emit_decision. For an action-type request, every completed, partial, blocked, or failed result must call it before finalizing, even when the result is short or text-only. Do not call it for explanations, structure descriptions, status checks, or general questions."
         return try publicData([
             "enabled": true,
             "prompt_origin": "human",

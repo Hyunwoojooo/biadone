@@ -311,6 +311,7 @@ export async function assembleMacOSApp({
   outputPath,
   sourceRoot = defaultSourceRoot,
   adhocSign = false,
+  cleanupOnFailure = true,
 } = {}) {
   const binary = requireAbsolutePath(binaryPath, "--binary");
   const requestedOutput = requireAbsolutePath(outputPath, "--output");
@@ -445,11 +446,13 @@ export async function assembleMacOSApp({
       manifest,
     };
   } catch (error) {
-    if (outputReserved) {
-      await rm(output, { recursive: true, force: true });
-    }
-    if (stagingCreated) {
-      await rm(staging, { recursive: true, force: true });
+    if (cleanupOnFailure) {
+      if (outputReserved) {
+        await rm(output, { recursive: true, force: true });
+      }
+      if (stagingCreated) {
+        await rm(staging, { recursive: true, force: true });
+      }
     }
     throw error;
   }

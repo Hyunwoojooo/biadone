@@ -602,6 +602,7 @@ struct PetRootView: View {
         case .waiting: .blue
         case .paused: .yellow
         case .recoveryCapable: .green
+        case .ready: .green
         case .disconnected, .working: .secondary
         }
     }

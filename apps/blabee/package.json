@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Blabee v1 contracts, Codex feasibility spikes, and the runtime-neutral coordinator reference core.",
   "scripts": {
-    "test": "node --test --test-concurrency=1 spikes/m0/tests/*.test.mjs Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs",
+    "test": "node --test --test-concurrency=1 spikes/m0/tests/*.test.mjs Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
     "test:m0": "node --test --test-concurrency=1 spikes/m0/tests/*.test.mjs",
     "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
     "test:t005": "node --test --test-concurrency=1 Tests/RuntimeQualification/*.test.mjs",
@@ -13,7 +13,9 @@
     "test:t007b-a": "node --test --test-concurrency=1 Tests/CoordinatorPersistence/*.test.mjs",
     "test:t011": "node --test --test-concurrency=1 Tests/CoordinatorOperational/*.test.mjs",
     "test:t012": "node --test --test-concurrency=1 Tests/AppPackaging/*.test.mjs",
+    "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs",
+    "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
     "m0:benchmark": "node spikes/m0/scripts/benchmark-runtimes.mjs",
     "m0:codex": "node spikes/m0/integration/run-codex-contract.mjs",
     "m1:qualify": "node spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"

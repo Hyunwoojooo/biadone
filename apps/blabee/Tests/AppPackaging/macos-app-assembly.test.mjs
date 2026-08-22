@@ -291,6 +291,48 @@ test("assembler rejects Info.plist value type drift and cleans staging", async (
   assert.deepEqual(leftovers, []);
 });
 
+test("assembler cleanup opt-out preserves its exact partial staging tree", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceRoot = join(fixture.root, "source-preserve-partial");
+  const infoDirectory = join(sourceRoot, "Packaging", "macos");
+  await mkdir(infoDirectory, { recursive: true });
+  await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
+  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await copyCanonicalLaunchAgent(sourceRoot);
+  const canonicalInfo = await readFile(
+    join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+    "utf8",
+  );
+  await writeFile(
+    join(infoDirectory, "Info.plist"),
+    canonicalInfo.replace(
+      "<key>LSUIElement</key>\n\t<true/>",
+      "<key>LSUIElement</key>\n\t<string>true</string>",
+    ),
+  );
+
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: fixture.binary,
+      outputPath: fixture.output,
+      sourceRoot,
+      cleanupOnFailure: false,
+    }),
+    /Info\.plist LSUIElement must be true \(boolean\)/,
+  );
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+    entry.startsWith(".Blabee.app.staging-"));
+  assert.equal(leftovers.length, 1);
+  const preservedInfo = join(
+    fixture.root,
+    leftovers[0],
+    "Contents",
+    "Info.plist",
+  );
+  assert.equal((await lstat(preservedInfo)).isFile(), true);
+});
+
 test("assembler rejects LaunchAgent key, type, and service argv drift", async (t) => {
   const fixture = await makeWorkspace(t);
   const sourceRoot = join(fixture.root, "source-launch-agent-drift");

@@ -61,7 +61,7 @@
 7. **조건부 완료 — T-007b-A/A2:** 형식 보정 예약·claim, 결정 경계당 정확히 한 번, CSPRNG 최소 128-bit 토큰/fingerprint 의미를 crash-safe 영속 트랜잭션에 연결했다. 외부 32-byte 키와 row-bound HMAC, Keychain freshness CAS를 구현했다. 키 회전과 일반 운영자 복구는 후속 범위다.
 8. Codex 네이티브 질문/권한 요청을 Blabee 결정 패킷과 다른 상호작용 종류와 ID로 보존한다.
 9. **조건부 완료 — T-007b-A/A2/B1/B2:** SQLite 이벤트·패킷·검증 원장, Keychain freshness high-water, Swift 의미 projection, 세션 queue·foreground·continuous deadline projection을 구현했다. foreground와 monotonic anchor는 의도적으로 비영속이며 재시작 때 fail-closed한다.
-10. **조건부 완료 — T-011:** 검증된 Skill, Hook, 로컬 MCP를 Swift 운영 어댑터와 단일 UDS owner에 연결해 버전 `0.1.0` Codex 플러그인으로 패키징했다. 운영 패키지에는 센티널 spike 코드를 포함하지 않는다. Keychain 없는 실제 SQLite/Swift 제품 구성요소로 Hook→MCP→Stop→Pet 두 경계 1→2 결합 왕복을 통과했으며, 수동 Hook 신뢰와 로그인 Keychain 제품 daemon은 실환경 게이트로 남긴다.
+10. **조건부 완료 — T-011:** 검증된 Skill, Hook, 로컬 MCP를 Swift 운영 어댑터와 단일 UDS owner에 연결해 버전 `0.1.0` Codex 플러그인으로 패키징했다. 운영 패키지에는 센티널 spike 코드를 포함하지 않는다. action-type 결과에서 proposal이 누락되면 최초 inactive Stop이 finalization self-check를 한 번 요청하고, 생성된 경계를 active Stop→Pet 선택에 연결한다. 설명형 응답은 카드 없이 fail-open한다. Keychain 없는 실제 SQLite/Swift 제품 구성요소로 이 누락 복구부터 Hook→MCP→Stop→Pet 두 경계 1→2 결합 왕복을 통과했고, 실제 사용자 Plugin·개별 Hook 신뢰·primary login Keychain foreground service/Pet 왕복, service 재시작 fail-closed와 live prompt-only correction도 통과했다. 새 변경의 설치본 dogfood와 실제 sleep은 실환경 게이트로 남긴다.
 11. 알파 기준 Codex `0.148.0`을 고정하고 지원 버전 허용 목록을 만든다.
 12. `blabee doctor`에 앱, 데몬, 플러그인, Hook 신뢰 설정, Codex 버전/허용 목록, 프로젝트 활성화 여부 검사를 추가한다.
 
@@ -108,7 +108,7 @@
 - Swift 식별자는 저장 시 NFC를 요구하고 참조 비교는 UTF-8 byte-exact로 수행한다. SQLite text bind/read는 명시적 UTF-8 byte length를 사용해 NUL 포함 ID를 보존한다. decimal/exponent 정수 표기는 Foundation 반올림을 막기 위해 ±2^53까지만 허용하고 일반 정수 표기는 Int64 전체 범위를 유지한다.
 - A/A2 기준선은 Swift unit 27/27, persistence Node 통합 40/40, 당시 통합 `npm test` 242/242였다. 진단 가림 회귀 추가 직전 전체 `npm test`는 247/247 통과했다. 추가 뒤 최신 실행은 248개 중 246개가 통과했고, 나머지 2개는 macOS Keychain `security` 조회가 각각 30초 동안 응답하지 않은 환경 timeout이다. T-007b-B2 완료 당시 집중 결과는 Swift package 62/62, T-007a 33/33, persistence 이전 독립 실행 40/40, M0 55/55였다. 전 범위에서 발견한 Int64 초과 NDJSON 응답 상관관계도 안전한 request-ID 전용 복구로 수정했다. 현재 `SQLiteJournal.swift` SHA-256은 `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`이다.
 - T-007b-A/A2 판정은 제품 영속·freshness 커널 범위의 조건부 완료다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하며, 서명된 wrapper와 Data Protection Keychain/access group·`LAContext` 전환은 T-012에 남는다. 같은 UID 공격자의 Keychain 삭제·교체와 DB·키·anchor 동시 제거, exact batch가 없는 pending-source 운영 복구는 A2 밖이다.
-- T-007b-C는 실제 Codex CLI `0.149.0`+M0 fake coordinator의 두 사이클과 Swift 제품 coordinator의 16-event 반복 게이트를 각각 통과해 조건부 완료했고, T-007 전체는 `done`으로 판정한다. T-011은 고수준 Hook/MCP/Pet adapter, 단일 daemon/UDS ownership, full selection binding, Stop observation digest와 원문 continuation token 비노출을 구현했다. 실제 장시간 macOS sleep, 로그인 Keychain 제품 daemon과 수동 Hook 신뢰 검토는 패키징·실환경 게이트에 남는다. `pending + source DB`와 응답 유실 뒤 원문 토큰 재발급 금지는 안전하게 차단되지만 운영자 복구 UX가 필요하다.
+- T-007b-C는 실제 Codex CLI `0.149.0`+M0 fake coordinator의 두 사이클과 Swift 제품 coordinator의 16-event 반복 게이트를 각각 통과해 조건부 완료했고, T-007 전체는 `done`으로 판정한다. T-011은 고수준 Hook/MCP/Pet adapter, 단일 daemon/UDS ownership, full selection binding, Stop observation digest와 원문 continuation token 비노출을 구현했다. 실제 사용자 Hook 신뢰·primary login Keychain foreground service/Pet 왕복, service 재시작 fail-closed와 live prompt-only correction도 통과했으며 장시간 macOS sleep은 실환경 게이트에 남는다. `pending + source DB`와 응답 유실 뒤 원문 토큰 재발급 금지는 안전하게 차단되지만 운영자 복구 UX가 필요하다.
 
 ### T-011 실행 결과 — 2026-08-22
 
@@ -116,10 +116,12 @@
 - `CoordinatorOperationalApplication`이 project/session/prompt/proposal/Stop/permission/Pet state/full selection만 노출하고, v1 16-field selection과 봉인 packet의 9-field binding을 exact 검증한다. 1·2는 동적, 3은 보류, 4는 `rollback_not_enabled_in_build`다.
 - 하나의 UDS owner가 `0700` runtime directory, `0600` socket/lease, 양방향 peer UID, 1 MiB 한 줄·64개 동시 연결, stale same-UID socket 회수와 owned-inode cleanup을 강제한다. 정규화한 절대 DB 경로 identity의 별도 storage authority가 같은 DB·다른 socket의 두 번째 제품 프로세스를 storage 초기화 전에 차단한다.
 - 지정된 UserPromptSubmit context 외 correlation token 재노출과 proposal free-text copy를 차단한다. action continuation 원문 token은 Stop block 전에 소비하며 DB/WAL/SHM·Hook/MCP/Pet/UDS 공개 응답에 싣지 않는다. Stop 원문 메시지 대신 HMAC observation과 request generation으로 delivery/completion을 구분한다.
-- 실제 제품 Hook/MCP CLI와 test-only in-memory freshness를 사용하는 실제 SQLiteJournal→Routing→Operational→UDS를 연결해 같은 lineage의 경계 1→2, staged promotion, full Pet selection 두 번과 마지막 completion을 센티널 없이 통과했다.
-- 부모 최종 `npm run test:t011` 23/23, Swift Operational 12/12와 Routing 16/16이 통과했다. Operational은 최종 동결 소스에서 3회 연속 재통과했다. 새 결합 gate 3/3 반복과 최신 UDS 종료 집중 18/18도 통과했다. Python Plugin/Skill validator는 PyYAML 부재로 실행 전에 중단됐지만 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 검사가 통과했다.
+- 실제 제품 Hook/MCP CLI와 test-only in-memory freshness를 사용하는 실제 SQLiteJournal→Routing→Operational→UDS를 연결해 proposal 없는 최초 Stop의 finalization self-check, exact replay, self-check 뒤 active Stop waiter, 같은 lineage의 경계 1→2, staged promotion, full Pet selection 두 번과 마지막 completion을 센티널 없이 통과했다. assistant 원문 marker도 공개 출력과 DB/WAL/SHM에 남지 않았다.
+- 실제 사용자 Plugin·신뢰된 네 Hook·primary login Keychain foreground service에서 pending sealed 경계 중 service를 종료·재기동했다. 기존 경계는 `restart_elapsed_ambiguous`, `automatic_selection=false`로 terminal 처리되고 공개 state가 비었다. 재기동 후 새 경계는 권장 선택→dispatch→same-turn consume→transport completed→terminal close와 `T011_RESTART_RECOVERED`를 통과했다.
+- 실제 prompt-only correction에서는 첫 `source_prompt_id` 단독 mismatch가 전용 오류로 pre-write 거부됐고, 같은 proposal·나머지 wrapper의 해당 필드만 복원한 한 번의 재시도가 수락됐다. 세션 기록은 `only_source_prompt_id_differed=true`, `retried=true`, 두 번째 accepted를 보였고 저널에는 corrected open/seal 한 쌍만 추가됐다. 경계는 pause로 닫혀 최종 공개 state가 비었다.
+- 최신 `npm run test:t011` 24/24와 전체 Swift package의 Swift Testing 164/164+XCTest 5/5가 통과했다. 실제 제품 결합 gate는 decision 누락 fallback부터 두 경계 완료까지 단독 재통과했다. Python Plugin/Skill validator는 PyYAML 부재로 실행 전에 중단됐지만 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 검사가 통과했다.
 - open/seal, 선택, completion/close, expiry/timeout의 pre-commit 실패와 commit 뒤 응답 유실을 fault injection으로 검증했다. open→seal journal 인접성과 최초 seal의 monotonic anchor를 유지하고, 선택 commit이 모호하면 authoritative journal을 250 ms backoff로 재조정하되 원문 continuation token은 재발급하지 않는다. terminal notice와 staged promotion은 exactly-once로 수렴한다.
-- 실제 로그인 Keychain 제품 daemon은 비밀번호 prompt를 피하기 위해 실행하지 않았다. Hook 신뢰 수동 검토, signed Data Protection Keychain, PATH/launchd/doctor/DMG/터미널 매트릭스는 T-012에 남는다.
+- 실제 사용자 local marketplace/Plugin 설치, 프로젝트 활성화, 네 Hook 개별 신뢰와 legacy primary login Keychain foreground service·Pet은 로컬 도그푸딩에서 실행했다. foreground service 재시작 fail-closed와 live prompt-only correction도 통과했다. 실제 sleep/복귀는 T-011/T-010에, signed Data Protection Keychain, PATH/launchd/DMG/터미널 매트릭스는 T-012에 남는다.
 
 ## 마일스톤 2 — 증거, 체크포인트, 진행 중인 프로젝트 도입
 
@@ -186,7 +188,8 @@
 - Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 현재 소스에서 통과했다. `npm run test:t011` 23/23과 `npm run test:contracts` 114/114도 재통과했다.
 - `/tmp`의 격리 UDS·임시 번들·호스트 프로브로 실제 WindowServer 1차 qualification을 수행했다. Pet·설정·Picker 조작 중 호스트 active/key/focus와 입력 연속성을 유지했고, 취소 복원과 격리 저장/재시작, 실제 Carbon 충돌 label, 유효 카드의 exact 14-field focus·16-field select를 확인했다. 접기→펼치기→접기 위치 점프를 발견해 lower-trailing anchor 보존으로 수정했고 실제 frame이 `92×92@(3328,1328) → 440×620@(2980,800) → 92×92@(3328,1328)`로 왕복했다.
 - Keychain 없는 실제 UDS와 제품 Hook·MCP·Stop 경로의 연속 시계 qualification에서 reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 focus/select 거부와 최종 빈 routing 상태를 확인했다. Pet의 local foreground 시각 표시는 computer-use runtime 중단으로 별도 환경 게이트에 남겼다.
-- 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, Pet 시각 만료·sleep, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
+- 실제 사용자 도그푸딩에서 `Option+Space` 무선택, 카드 클릭 local focus, 포인터를 Pet 밖에 둔 물리 `Option+3`을 연속 수행했다. 불변 저널은 단일 `option_pause_*` claim과 `episode_paused`, 뒤 continuation 0건을 기록했다. 입력 장치는 통제된 사용자 수행 보고, 결과는 저널을 근거로 한다.
+- 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 확장 카드 시각 캡처, 나머지 물리 슬롯과 키보드 레이아웃, Pet 시각 만료·sleep, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
 
 ## 마일스톤 4 — 패키징과 내부 사용
 

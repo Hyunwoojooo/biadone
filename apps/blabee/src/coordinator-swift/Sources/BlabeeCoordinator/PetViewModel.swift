@@ -42,6 +42,7 @@ final class PetWorkspaceApplicationOpener: PetExternalApplicationOpening {
 enum PetPresentationState: String, Sendable, Equatable {
     case disconnected
     case malformed
+    case ready
     case working
     case waiting
     case reminder
@@ -53,6 +54,7 @@ enum PetPresentationState: String, Sendable, Equatable {
         switch self {
         case .disconnected: "연결 대기"
         case .malformed: "안전하게 중지됨"
+        case .ready: "준비됨"
         case .working: "작업 중"
         case .waiting: "결정 대기"
         case .reminder: "결정 알림"
@@ -157,7 +159,7 @@ final class PetViewModel: ObservableObject {
         if let snapshot, snapshot.routing.inFlightCount > 0 { return .working }
         if let lastTerminalPresentation { return lastTerminalPresentation }
         if snapshot?.interactions.isEmpty == false { return .waiting }
-        return .working
+        return .ready
     }
 
     var isRecoveryCapable: Bool {
@@ -707,7 +709,7 @@ final class PetViewModel: ObservableObject {
             localForegroundIdentity = nil
             pendingFocusIdentity = nil
             riskConfirmation = nil
-            lastTerminalPresentation = outcome == "pause" ? .paused : .working
+            lastTerminalPresentation = outcome == "pause" ? .paused : nil
             updateHotKeyEligibility()
             if let selectionReturnApplication {
                 _ = externalApplicationOpener.open(selectionReturnApplication)

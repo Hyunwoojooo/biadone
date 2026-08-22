@@ -109,12 +109,33 @@ Keychain unit test까지 통과했지만 로그인 Keychain을 사용하는 실�
 - 시험 뒤 임시 Pet·driver·server 프로세스를 모두 종료하고 이번 실행에서 생성한
   `/private/tmp` 디렉터리 7개를 제거한 뒤 경로 부재를 확인했다.
 
+## 실제 물리 `Option+3` pause qualification
+
+로컬 도그푸딩 번들의 실제 Codex `0.149.0`·Plugin·제품 service·Pet을 연결하고,
+테스트 실행 여부를 고르는 읽기 전용 결정 경계를 생성했다. 사용자는 포인터 자동화 없이
+`Option+Space`로 Pet을 펼치고, 대기 카드를 한 번 클릭해 Pet 프로세스의 local focus를
+설정한 뒤 포인터를 Pet 밖으로 옮겨 물리 키보드의 `Option+3`을 눌렀다.
+
+- `Option+Space` 뒤에는 선택 이벤트가 생기지 않았고, 카드가 봉인된 뒤 실제 선택 전까지
+  `decision_selection_claimed`는 없었다.
+- 불변 이벤트 저널 sequence 25는 `decision_selection_claimed`와
+  `option_pause_*`, sequence 26은 `decision_boundary_closed`와
+  `episode_paused`를 기록했다.
+- 같은 경계의 selection claim 수는 정확히 1건이었고 pause 뒤 continuation 이벤트는
+  0건이었다. Codex Stop Hook은 정상 종료했으며 파일 변경과 테스트 실행은 없었다.
+- 이벤트 저널에는 키보드 장치나 물리 입력 여부를 나타내는 필드가 없다. 따라서 입력 방식은
+  통제된 사용자 수행 보고, 선택 의미·단일 실행·pause 종료는 불변 저널을 근거로 판정한다.
+- computer-use runtime이 별도로 중단돼 확장 카드 본문을 자동 캡처하지 못했다. 이 시각
+  증거는 물리 pause 결과와 분리해 남은 수동 게이트로 유지한다.
+- 시험 뒤 Codex는 exit 0으로 끝났고 검증용 Pet과 foreground service는 `Ctrl+C`로
+  종료했다.
+
 ## 남은 수동 게이트
 
 1. 다중 디스플레이 이동·분리·재연결, Spaces, 전체 화면과 Stage Manager에서
    panel 위치와 표시를 확인한다.
-2. 실제 물리 키로 전역 Carbon 전달을 확인하고 한국어·영문 등 키보드 레이아웃별
-   표시와 입력을 검증한다. 자동화 입력은 앱 대상이라 전역 단축키를 발생시키지 못했다.
+2. 물리 슬롯 1·2·4와 고위험 확인 경로, 한국어·영문 등 키보드 레이아웃별 표시와
+   입력을 검증한다. local focus 뒤 물리 슬롯 3 pause는 통과했다.
 3. Pet local foreground의 `결정 알림`·`만료됨` 시각 상태와 장시간 sleep/복귀 뒤
    늦은 물리 입력 거부를 확인한다. 실제 권위 상태의 60/120초와 늦은 UDS 입력 거부는 통과했다.
 4. Terminal, VS Code, Orca 각각에서 선택 후 호스트 복귀와 PermissionRequest 알림을
@@ -128,6 +149,6 @@ Keychain unit test까지 통과했지만 로그인 Keychain을 사용하는 실�
 - Developer ID 서명, 공증, DMG, updater, `blabee doctor`
 - signed Data Protection Keychain/access group과 실제 제품 daemon 통합
 
-따라서 T-010은 실제 macOS 1차와 실시간 deadline qualification까지 통과했지만
-현재 `in_progress`다. 남은 디스플레이·Space·sleep·물리 키·실제 호스트 앱
-매트릭스가 통과해야 `done`으로 전환한다.
+따라서 T-010은 실제 macOS 1차, 실시간 deadline과 local focus 뒤 물리 슬롯 3 pause
+qualification까지 통과했지만 현재 `in_progress`다. 남은 시각 캡처·디스플레이·Space·
+키보드 레이아웃·sleep·다른 슬롯·실제 호스트 앱 매트릭스가 통과해야 `done`으로 전환한다.

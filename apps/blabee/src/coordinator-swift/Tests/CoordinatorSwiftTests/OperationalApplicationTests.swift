@@ -470,6 +470,112 @@ private func expectAnyOperationalError(
     }
 }
 
+@Test("Operational finalization self-check blocks once, replays, then fails open")
+func operationalFinalizationSelfCheckOneTime() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "finalization_once")
+    let firstStop = try operationalStop(
+        ids: ids,
+        active: false,
+        message: "A short text-only action result"
+    )
+
+    let first = try await fixture.app.handle(type: "stop", payload: firstStop)
+    let firstObject = try operationalObject(first)
+    #expect(firstObject["decision"] as? String == "block")
+    let reason = try #require(firstObject["reason"] as? String)
+    #expect(reason.contains("action-type request"))
+    #expect(reason.contains("short or text-only"))
+    #expect(!reason.contains(ids["correlation_token"]!))
+
+    let replayed = try await fixture.app.handle(type: "stop", payload: firstStop)
+    #expect(replayed == first)
+
+    let changedInitial = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: false,
+                message: "A different initial Stop must not start another check"
+            )
+        )
+    )
+    #expect(changedInitial["status"] as? String == "no_proposal")
+
+    let explanationCompletion = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: true,
+                message: "This was only an explanation, so no proposal was emitted"
+            )
+        )
+    )
+    #expect(explanationCompletion["status"] as? String == "no_proposal")
+    #expect(try fixture.journal.load().journalSequence == 0)
+}
+
+@Test("Operational fallback proposal admits the active Stop as its waiter")
+func operationalFinalizationFallbackProposalWaits() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "finalization_emit")
+    let fallback = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: false,
+                message: "Action completed without an initial proposal"
+            )
+        )
+    )
+    #expect(fallback["decision"] as? String == "block")
+
+    let accepted = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: "finalization_emit")
+            ))
+        )
+    )
+    #expect(accepted["accepted"] as? Bool == true)
+    #expect(accepted["staged"] as? Bool == false)
+
+    let activeWait = Task {
+        try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: true,
+                message: "Finalization self-check emitted the missing proposal"
+            )
+        )
+    }
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 1))
+    )
+    let selectedBlock = try operationalObject(await activeWait.value)
+    #expect(selectedBlock["decision"] as? String == "block")
+
+    let completed = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: true,
+                message: "The selected continuation completed"
+            )
+        )
+    )
+    #expect(completed["status"] as? String == "continuation_completed")
+}
+
 @Test("Operational proposal seals rollback-disabled packet and consumes token before Stop completion")
 func operationalPacketSelectionAndCompletion() async throws {
     let fixture = try operationalFixture()
@@ -1434,6 +1540,81 @@ func operationalValidationAndPause() async throws {
     let paused = try operationalObject(await stopTask.value)
     #expect(paused["status"] as? String == "paused")
     #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load()).boundaries.values.first?.closed == true)
+}
+
+@Test("Operational prompt-only proposal correction is pre-write and idempotent")
+func operationalPromptOnlyProposalCorrection() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "prompt_correction")
+    let proposal = operationalProposal(ids, suffix: "prompt_correction")
+
+    var secretBearingProposal = proposal
+    var secretBearingAction = secretBearingProposal["recommended_next"] as! [String: Any]
+    secretBearingAction["objective"] = "Do not persist \(ids["correlation_token"]!)"
+    secretBearingProposal["recommended_next"] = secretBearingAction
+    var secretBearingWrongPrompt = operationalWrapper(ids, proposal: secretBearingProposal)
+    secretBearingWrongPrompt["source_prompt_id"] = "prompt_transcribed_incorrectly"
+    await expectOperationalError("raw_continuation_token_forbidden") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(secretBearingWrongPrompt)
+        )
+    }
+
+    var wrongPrompt = operationalWrapper(ids, proposal: proposal)
+    wrongPrompt["source_prompt_id"] = "prompt_transcribed_incorrectly"
+    await expectOperationalError("proposal_source_prompt_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrongPrompt)
+        )
+    }
+    var snapshot = try fixture.journal.load()
+    #expect(snapshot.journalSequence == 0)
+    #expect(snapshot.documents.isEmpty)
+
+    var nonPromptMismatches: [[String: Any]] = []
+    for key in ["project_id", "session_id", "source_turn_id", "episode_id"] {
+        var wrapper = operationalWrapper(ids, proposal: proposal)
+        wrapper[key] = "mismatched_\(key)"
+        nonPromptMismatches.append(wrapper)
+    }
+    var wrongTokenIDs = ids
+    wrongTokenIDs["correlation_token"] = "mismatched_correlation_token"
+    nonPromptMismatches.append(operationalWrapper(
+        wrongTokenIDs,
+        proposal: operationalProposal(wrongTokenIDs, suffix: "prompt_correction")
+    ))
+
+    for wrapper in nonPromptMismatches {
+        await expectOperationalError("proposal_binding_mismatch") {
+            _ = try await fixture.app.handle(
+                type: "emit_decision",
+                payload: operationalData(wrapper)
+            )
+        }
+        snapshot = try fixture.journal.load()
+        #expect(snapshot.journalSequence == 0)
+        #expect(snapshot.documents.isEmpty)
+    }
+
+    let corrected = operationalWrapper(ids, proposal: proposal)
+    let accepted = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(corrected)
+    )
+    snapshot = try fixture.journal.load()
+    #expect(snapshot.journalSequence == 2)
+    #expect(snapshot.documents.count == 1)
+
+    let repeated = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(corrected)
+    )
+    #expect(repeated == accepted)
+    let repeatedSnapshot = try fixture.journal.load()
+    #expect(repeatedSnapshot.journalSequence == snapshot.journalSequence)
+    #expect(repeatedSnapshot.documents == snapshot.documents)
 }
 
 @Test("Operational scheduler closes expiry and timeout before activating staged work")

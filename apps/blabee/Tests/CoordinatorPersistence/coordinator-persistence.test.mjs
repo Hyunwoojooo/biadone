@@ -2104,6 +2104,24 @@ test("runtime-known secrets are rejected from allowed values and never reach sto
         document: baseContinuation,
       }), "register typed continuation secret");
 
+      const invalidCandidate = `fictional-invalid-${randomBytes(24).toString("hex")}`;
+      const invalidEnvelope = structuredClone(baseContinuation);
+      invalidEnvelope.continuation_token = invalidCandidate;
+      invalidEnvelope.unknown_field = "must fail typed validation";
+      assertSanitizedError(
+        await client.request({
+          op: "validate",
+          contract: "continuation_envelope",
+          document: invalidEnvelope,
+        }),
+        "contract_validation_failed",
+        "invalid typed continuation envelope",
+      );
+      assertSanitizedOk(
+        await client.request({ request_id: invalidCandidate, op: "health" }),
+        "invalid typed input must not register a process-lifetime secret",
+      );
+
       const suite = await contractSuitePromise;
       const validatePacket = suite.compiled.validatorsByName.get("decision_packet");
       const validateEvent = suite.compiled.validatorsByName.get("runtime_event");
@@ -2190,11 +2208,11 @@ test("runtime-known secrets are rejected from allowed values and never reach sto
       { filename: "stdout", bytes: client.stdoutBytes },
       { filename: "stderr", bytes: client.stderrBytes },
     );
-    for (const { bytes } of observedArtifacts) {
+    for (const { bytes, filename } of observedArtifacts) {
       assert.equal(
         bytes.includes(Buffer.from(sensitiveValue)),
         false,
-        "a runtime-known sensitive value reached a forbidden artifact",
+        `${filename} contained a runtime-known sensitive value`,
       );
     }
     for (const line of client.stderrText.split("\n").filter(Boolean)) {
