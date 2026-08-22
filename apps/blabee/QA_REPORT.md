@@ -1,6 +1,6 @@
-# Blabee M0, T-005, T-006, T-007, T-010 및 T-011 QA 보고서
+# Blabee M0, T-005, T-006, T-007, T-010, T-011 및 T-012 QA 보고서
 
-상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인
+상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-2 설치·등록 전 service/LaunchAgent 계약 조건부 승인
 검토일: 2026-08-22
 대상: `spikes/m0/`, `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서
 
@@ -30,9 +30,23 @@ T-011은 코드와 Keychain 없는 실제 제품 구성요소 결합 범위에�
 
 T-010은 실제 macOS 1차 qualification 범위에서 조건부 승인한다. 비활성 floating `NSPanel`, routing 순서와 exact binding을 보존하는 다중 세션 카드, 명시적 14-field focus 뒤 16-field selection, single-flight 선택, disabled·stale·expired·ambiguous 입력의 fail-closed, high/critical 1·2 확인을 구현했다. 단축키 설정은 Option을 포함한 제한된 picker만 제공하고 Option 단독 문자를 차단하며, 중복·미지원 조합을 저장 전에 거부한다. 활성 등록 중 하나라도 실패하면 후보 전체를 저장하지 않고 이전 설정과 binding을 복원하며, 카드 label도 실제 등록·충돌·실패·확인·비활성 상태를 반영한다. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, 취소와 저장/재시작, 실제 Carbon 충돌 진단, 유효 카드 focus/select를 확인했다. 독립 QA가 찾은 접기/펼치기 위치 점프와 화면 축소 뒤 정상 크기 미복원은 lower-trailing anchor 보존, intended-size 복원과 frame 회귀로 수정했다. PermissionRequest는 새 요청만 알리고 Allow/Deny를 중계하지 않는다. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 외부 앱으로만 best-effort 복귀한다. Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 통과했다.
 
+T-010 실시간 deadline qualification도 조건부 승인한다. Keychain 없는 실제 SQLite→Routing→Operational→UDS와 제품 Hook·MCP·Stop을 연결해 reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 exact focus/select의 `interaction_not_waiting`, 최종 `interactions=0`·`pending=0`·`in_flight_count=0`·`selection_enabled=false`를 확인했다. Pet 시각 상태는 computer-use runtime 중단으로 확인하지 못했으므로 이 승인에 포함하지 않는다. 환경 QA는 호스트 복귀 계약을 앱 PID 수준으로 제한한다. 현재 소스에는 원래 창·탭·Space identity가 없어 동일 앱의 정확한 창 복귀를 보장할 수 없다.
+
+T-012a 읽기 전용 Doctor 기반은 후속 패키징 개발용으로 조건부 승인한다. 전용 `doctor_status`는 일반 request generation, scheduler/reconciliation과 journal/freshness를 우회하고 exact 빈 payload와 enabled project의 정렬된 최소 projection만 허용한다. Doctor는 Codex exact 버전, Plugin installed/enabled/version/local source, override/source identity, v0.1.0 manifest·MCP·Hook·launcher·Skill exact 계약, PATH coordinator identity, 앱·daemon·프로젝트 범위를 fail-closed로 검사한다. JSON 숫자 `0/1`은 Boolean으로 받지 않고 raw subprocess·환경·로컬 경로·세션/토큰을 출력하지 않는다. Hook 신뢰는 Codex `/hooks`에서 사용자가 현재 definition hash를 검토해야 하는 `action_required`로 유지한다. 이 승인은 공개 배포 승인이 아니다. 서명된 고정 설치 root 없이 path 전체 ancestor rename/교체 TOCTOU를 보안 증명하지 못하고 subprocess timeout도 process group 전체를 종료하지 않으며, same-UID UDS 응답은 daemon identity의 암호학적 증명이 아니다.
+
+T-012b-1 로컬 앱 조립 기반은 설치 전 개발 자격 범위에서 조건부 승인한다. assembler는 저장소·시스템 임시 영역 밖 출력을 거부하고, 기존 출력과 symlink·특수 파일·비실행 바이너리·plist 타입 drift를 fail-closed한다. sibling staging 뒤 최종 경로를 `mkdir`로 원자 선점하고 `Contents`를 게시해 동시 builder가 기존 빈 앱 디렉터리를 교체하지 못하게 한다. exact Contracts/Plugin parity와 manifest의 모든 hash·size·mode를 검사한다. 정확한 앱 bundle 무인자/LaunchServices 실행만 Pet으로 연결하고 기존 CLI dispatch를 보존한다. 이 승인은 entitlement 없는 ad-hoc Hardened Runtime의 로컬 구조·무결성 자격이며 Developer ID·공증·Gatekeeper·signed Data Protection Keychain·설치/자동 시작 승인이 아니다. 신뢰된 로컬 소스 파일이 `lstat` 뒤 교체되는 same-UID TOCTOU는 낮은 잔여 위험으로 남는다.
+
+T-012b-1 독립 QA가 처음 보고한 임의 절대 출력 허용과 최종 directory rename 경쟁 두 Medium finding은 canonical 출력 root 제한, 원자적 최종 경로 선점과 동시 builder 회귀로 닫혔다. 재검토 결과 새 차단 finding 없이 통과했다. 최종 경로 선점과 `Contents` 게시 사이의 매우 짧은 빈 디렉터리 노출은 빌드 명령 완료 전 산출물을 사용하지 않는 로컬 모델에서 수용한다.
+
+T-012b-2 제품 service 부트스트랩은 설치·등록 전 계약 범위에서 조건부 승인한다. `service`는 추가 인자와 환경 기반 path override를 거부하고 exact app/executable/Resources/real Contracts 및 Application Support 고정 경로만 typed daemon configuration으로 전달한다. 기존 개발용 `daemon` parser 의미는 유지하고 제품 경로에는 Keychain 시험 namespace 환경을 전달하지 않는다. 설정 ingress는 missing을 빈 프로젝트로 처리하되 존재하는 config directory/file에는 current-user owner, exact `0700`/`0600`, real directory/regular file, `openat`·`O_NONBLOCK`·`O_NOFOLLOW`·bounded read, strict JSON·exact keys·version·path limits와 normalization duplicate 거부를 적용한다.
+
+번들 LaunchAgent는 `Contents/Library/LaunchAgents`의 정적 plist이며 exact `Label`·`BundleProgram`·`ProgramArguments`·`RunAtLoad`만 허용한다. plist는 manifest와 app seal에 포함되고 서명 후 변조가 탐지된다. 실제 수명주기 검증 전에 재시작 루프를 만들지 않도록 `KeepAlive`는 제외했다. 이 승인은 `SMAppService` 등록, 사용자 승인, 로그인/crash 복구, 제품 Keychain, Developer ID 또는 공개 자동 시작 승인이 아니다. Application Support 상위 ancestor 전체를 directory descriptor로 순회하지 않고 같은 UID의 동일 inode 동시 내용 변경을 완전히 차단하지 못하는 점은 잔여 hardening 경계다.
+
+T-012b-2 독립 최종 QA는 `service.json`이 FIFO이면 regular-file `fstat` 전에 blocking `openat`에서 멈출 수 있는 Medium finding 1건을 보고했다. 파일 open에 `O_NONBLOCK`을 추가하고 mode `0600` FIFO가 즉시 `product_service_config_unsafe`로 거부되는 회귀를 추가해 닫았다. 재검토는 차단 finding 없이 통과했다. 같은 크기의 same-inode 동시 변경과 Contracts 상위 ancestor 전체의 descriptor traversal 부재는 Low 잔여 위험으로 유지한다.
+
 현재 operational proposal path는 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 생성한다. 따라서 high/critical 확인, 채워진 evidence/checkpoint와 활성 rollback UI는 fixture로 fail-closed 동작을 검증했지만 아직 실제 Hook→MCP→Pet 제안에서 end-to-end로 도달하지 않는다.
 
-이 승인은 공개 운영 또는 실제 사용자 Pet dispatch 승인이 아니다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 과거 DB 복원을 구분할 수 없어 자동 취소하지 않으며 exact canonical batch가 없으면 운영자 복구가 필요하다. commit 후 응답이 유실되면 권한 재발급을 금지하므로 continuation이 사용 불가능해질 수 있다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하고, 같은 UID 공격자가 Keychain까지 삭제·교체하거나 DB·키·anchor를 모두 제거하는 경우는 A2 경계 밖이다. 실제 사용자 Hook 신뢰, 로그인 Keychain 제품 daemon, Pet의 다중 디스플레이·Spaces·물리 전역 키·실시간 만료·실제 호스트 앱 매트릭스와 signed Data Protection Keychain은 아직 함께 검증하지 않았다.
+이 승인은 공개 운영 또는 실제 사용자 Pet dispatch 승인이 아니다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 과거 DB 복원을 구분할 수 없어 자동 취소하지 않으며 exact canonical batch가 없으면 운영자 복구가 필요하다. commit 후 응답이 유실되면 권한 재발급을 금지하므로 continuation이 사용 불가능해질 수 있다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하고, 같은 UID 공격자가 Keychain까지 삭제·교체하거나 DB·키·anchor를 모두 제거하는 경우는 A2 경계 밖이다. 실제 사용자 Hook 신뢰, 로그인 Keychain 제품 daemon, Pet의 다중 디스플레이·Spaces·물리 전역 키·Pet 시각 만료·sleep·실제 호스트 앱 매트릭스와 signed Data Protection Keychain은 아직 함께 검증하지 않았다.
 
 T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었다. T-007a QA에서 찾은 같은 턴 lineage, 전역 continuation ID·fingerprint, consume 시간·terminal 순서 불일치를 의미 검증기에 동기화했고 계약 검사는 114개로 늘었다. 낮음으로 보고된 중첩 미등록 스키마 탐지 공백도 completeness 검사를 재귀화해 닫았다.
 
@@ -61,7 +75,16 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - T-010 Swift Pet: 35/35 통과. strict snapshot parsing, routing 순서와 bijective join, 명시적 focus/no-steal, stale·expiry·single-flight, 위험 확인, PermissionRequest 알림, 안전 조합·draft·영속 설정, 실제 상태 label, 등록 실패 전체 rollback·복원 실패 진단, retired candidate ID와 lower-trailing frame 왕복 회귀 포함
 - T-010과 연동한 Swift Operational: 14/14, Routing 필터: 18/18(Routing 16 + Pet 2) 통과. `focus_interaction` exact 14-field binding과 foreground 없는 `select` 거부 포함
 - T-010 실제 macOS 1차 qualification: 호스트 active/key/focus 유지와 `A→AB` 입력, Picker·취소, 격리 저장/재시작, 실제 Carbon 충돌, frame exact 왕복, 유효 카드 14-field focus·16-field select 통과
+- T-010 실제 연속 시계 qualification: reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 focus/select `interaction_not_waiting`, 최종 interactions/pending/in-flight 0과 selection disabled 통과. Pet 시각 상태는 computer-use `runtime_unavailable`로 미검증
 - T-010 최신 독립 QA: lower-trailing resize·화면 복귀 크기 복원과 문서 경계를 재검토해 Critical/High/Medium/Low finding 없음, Pet 35/35와 `git diff --check` 재통과
+- T-012a Doctor 집중: 18/18 통과. read-only projection, strict args/Bool, alpha/allowlist, redacted deterministic output, Plugin source/version/manifest/layout/Skill exactness, MCP runtime identity, subprocess pipe drain, UDS 전용 dispatch 포함
+- T-012a 관련 회귀: Operational 15/15, Routing 18/18, T-011 운영 23/23, v1 계약 114/114 통과. 실제 로컬 Doctor는 현재 미설치 환경과 Codex `0.149.0`을 예상대로 exit 1로 보고
+- T-012b-1 패키징: 5/5 통과. 전체 Contracts/Plugin 경로·내용 parity, plist 값·Boolean 타입, manifest 전 항목 hash/size/mode, 허용 출력 root, symlink·특수 파일, 기존 출력, 동시 builder와 staging 정리를 포함
+- T-012b-1 Swift Pet/Doctor/앱 진입: 55/55 통과. 정확한 앱 무인자와 정상 LaunchServices PSN은 Pet, lookalike·malformed PSN·기존 CLI는 legacy/명시 dispatch를 유지
+- T-012b-1 실제 release 앱: `adhoc,runtime`, identifier `com.biadone.blabee`, deep/strict codesign 검증 통과. Info.plist 변조 뒤 검증 실패. 번들에서 실행한 Doctor는 coordinator runtime·app bundle·embedded coordinator·Plugin layout을 통과하고 미설치/미실행 항목은 예상대로 overall fail
+- T-012b-2 Product service: 집중 10/10, Swift Pet 전체 65/65 통과. exact bundle/Contracts, 추가 인자, missing/invalid/unsafe/symlink/FIFO/oversize config와 deterministic project path를 포함
+- T-012b-2 패키징: 7/7 통과. LaunchAgent exact 위치·네 키·type·service argv·mode·manifest, key/type drift, ad-hoc seal과 서명 후 plist 변조 거부를 포함
+- T-012b-2 회귀: T-011 23/23, v1 계약 114/114, release build 통과. 실제 임시 앱 codesign deep/strict와 bundled Doctor의 read-only app/runtime/embedded/plugin 검사 통과
 - 최종 Swift package: XCTest 5/5 + Swift Testing 106/106 통과
 - T-007b-A strict ingress: 영속 경계 4개 계약 타입, manifest fixture 20개 Ajv oracle parity 통과
 - 현재 production `SQLiteJournal.swift` SHA-256: `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`
@@ -160,6 +183,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 2. **복구 스냅샷 재적용**: 현재는 생성·보존만 검증했다. staged Git object의 독립 보존, index/manifest 해시, 원자적 저장, 실제 재적용, 삭제·reset·catalog 단계별 실패 주입을 통과해야 한다.
 3. **실사용 Hook→Swift→Pet qualification**: T-011은 Keychain 없는 실제 제품 구성요소에서 첫 action 중 다음 proposal staging, 후속 active Stop의 이전 경계 terminal 처리와 다음 경계 open/seal, 단일 UDS/storage owner와 원문 token 비노출을 하나의 두 경계 경로로 연결했다. T-010은 격리된 실제 WindowServer에서 비활성 panel·Picker·Carbon 충돌·frame 왕복·focus/select를 통과했다. 공개 dispatch 전 실제 사용자 Hook 신뢰 검토, 로그인 Keychain 제품 daemon, sleep/재시작, 다중 디스플레이·Spaces·물리 전역 키·Terminal/VS Code/Orca 복귀를 한 실환경 경로에서 통과해야 한다.
 4. **배포 Keychain 격리**: unsigned CLI에서는 Data Protection Keychain이 `errSecMissingEntitlement(-34018)`로 거부되어 legacy login Keychain을 사용한다. 현재 UI 차단에는 deprecated `kSecUseAuthenticationUIFail` 경고도 남아 있다. T-012에서 signed wrapper, provisioning/access group, `LAContext`, code-signing ACL을 검증하고 deprecated API를 교체해야 한다. 같은 UID 공격자의 anchor 삭제·교체와 DB·키·anchor 동시 삭제는 현재 A2만으로 차단하지 못한다.
+5. **Doctor의 공개용 경로·프로세스 격리**: T-012a는 final component `O_NOFOLLOW`, fd 기반 bounded read와 exact identity/content 검사를 적용했지만, 서명된 고정 root 없이 전체 ancestor tree의 동시 rename/교체를 보안 증명하지 않는다. subprocess timeout도 직접 자식만 TERM/KILL한다. 공개 Doctor 전 directory-FD traversal, 서명/codesign 결합과 별도 process group TERM/KILL 회귀가 필요하다.
 
 ### Medium
 

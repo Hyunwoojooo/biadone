@@ -22,6 +22,19 @@ actor FixtureTransportHandler: CoordinatorOperationalHandling {
         ])
     }
 
+    func doctorStatus(payload: Data) async throws -> Data {
+        let object = try StrictJSONTransport.object(
+            from: payload,
+            limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
+        )
+        guard object.isEmpty else { throw CoordinatorError("doctor_status_payload_invalid") }
+        return try StrictJSONTransport.data(forJSONObject: [
+            "schema_version": "1.0",
+            "kind": "blabee_doctor_status",
+            "projects": [],
+        ])
+    }
+
     func processTime() async throws -> [Data] {
         schedulerPasses += 1
         return []

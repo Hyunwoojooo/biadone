@@ -1,6 +1,6 @@
 # T-010 네이티브 macOS Pet 구현 보고서
 
-상태: 코드·headless 안전 게이트와 실제 macOS 1차 qualification 통과, 환경 매트릭스 진행 중
+상태: 코드·headless 안전 게이트, 실제 macOS 1차와 실시간 deadline qualification 통과, 환경 매트릭스 진행 중
 작성일: 2026-08-22
 
 ## 결과
@@ -86,13 +86,37 @@ Keychain unit test까지 통과했지만 로그인 Keychain을 사용하는 실�
   고정 `⌥3`, disabled rollback을 확인했다. 권장 선택은 정확한 16-field request를
   한 번만 보내고 Pet을 `작업 중`으로 전환했으며 호스트 포커스는 유지됐다.
 
+## 실제 연속 시계 60/120초 qualification
+
+제품 Keychain과 사용자 프로젝트를 사용하지 않는 `/tmp`의 test-harness UDS에서
+실제 `mach_continuous_time` scheduler와 제품 Hook·MCP·Stop·Pet 공개 상태 경로를
+연결해 벽시계 시간을 기다렸다.
+
+- 대기 시작 상태는 `reminder_due=false`, 만료까지 `119,948 ms`였다.
+- 알림은 시작 뒤 `60,056.709 ms`에 `reminder_due=true`로 관찰됐고, 남은 만료
+  시간은 `59,898 ms`였다.
+- interaction은 `120,030.318 ms`에 제거됐다. 보관한 exact 14-field focus와
+  16-field selection을 뒤늦게 다시 보내자 모두 `interaction_not_waiting`으로
+  거부됐다.
+- 최종 공개 상태는 `interactions=0`, `routing.pending=0`, `in_flight_count=0`,
+  `selection_enabled=false`였다. 대기 중이던 Stop Hook도 exit 0, 빈 stdout·stderr로
+  종료됐다. 빈 Hook 출력만으로는 fail-open과 구분하지 않고 최종 state와 늦은 요청
+  거부를 주 증거로 사용했다.
+- 네이티브 Pet 프로세스도 같은 socket에 연결했지만 Orca computer-use runtime이
+  `runtime_unavailable`로 끊겨 Pet 자체 local foreground와 `결정 알림`·`만료됨`
+  시각 상태는 자동 증거로 확보하지 못했다. 이 UI 항목은 남은 호스트 매트릭스에
+  포함하며 권위 상태 통과로 대신하지 않는다.
+- 시험 뒤 임시 Pet·driver·server 프로세스를 모두 종료하고 이번 실행에서 생성한
+  `/private/tmp` 디렉터리 7개를 제거한 뒤 경로 부재를 확인했다.
+
 ## 남은 수동 게이트
 
 1. 다중 디스플레이 이동·분리·재연결, Spaces, 전체 화면과 Stage Manager에서
    panel 위치와 표시를 확인한다.
 2. 실제 물리 키로 전역 Carbon 전달을 확인하고 한국어·영문 등 키보드 레이아웃별
    표시와 입력을 검증한다. 자동화 입력은 앱 대상이라 전역 단축키를 발생시키지 못했다.
-3. 실제 60초 알림과 120초 만료, 장시간 sleep/복귀 뒤 늦은 입력 거부를 확인한다.
+3. Pet local foreground의 `결정 알림`·`만료됨` 시각 상태와 장시간 sleep/복귀 뒤
+   늦은 물리 입력 거부를 확인한다. 실제 권위 상태의 60/120초와 늦은 UDS 입력 거부는 통과했다.
 4. Terminal, VS Code, Orca 각각에서 선택 후 호스트 복귀와 PermissionRequest 알림을
    확인한다.
 5. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 앱으로
@@ -104,5 +128,6 @@ Keychain unit test까지 통과했지만 로그인 Keychain을 사용하는 실�
 - Developer ID 서명, 공증, DMG, updater, `blabee doctor`
 - signed Data Protection Keychain/access group과 실제 제품 daemon 통합
 
-따라서 T-010은 실제 macOS 1차 qualification까지 통과했지만 현재 `in_progress`다.
-남은 환경·시간·실제 호스트 매트릭스가 통과해야 `done`으로 전환한다.
+따라서 T-010은 실제 macOS 1차와 실시간 deadline qualification까지 통과했지만
+현재 `in_progress`다. 남은 디스플레이·Space·sleep·물리 키·실제 호스트 앱
+매트릭스가 통과해야 `done`으로 전환한다.

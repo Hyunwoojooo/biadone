@@ -372,6 +372,77 @@ private func operationalStop(
     ])
 }
 
+@Test("Operational doctor status is an exact read-only projection")
+func operationalDoctorStatusIsPure() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "doctor")
+    _ = try await fixture.app.handle(
+        type: "enable_project",
+        payload: operationalData([
+            "cwd": "/tmp/blabee-operational-disabled",
+            "project_id": "project_operational_disabled",
+            "enabled": false,
+        ])
+    )
+    for (path, projectID) in [
+        ("/tmp/z-doctor", "project_operational_z_doctor"),
+        ("/tmp/é-doctor", "project_operational_unicode_doctor"),
+    ] {
+        _ = try await fixture.app.handle(
+            type: "enable_project",
+            payload: operationalData(["cwd": path, "project_id": projectID])
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "doctor")
+        ))
+    )
+    let stopTask = Task {
+        try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(ids: ids, active: false, message: "doctor due boundary")
+        )
+    }
+    _ = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        focusWhenWaiting: false
+    )
+    fixture.clock.advance(seconds: 120)
+    let before = try fixture.journal.load()
+
+    let first = try await fixture.app.doctorStatus(payload: operationalData([:]))
+    let second = try await fixture.app.doctorStatus(payload: operationalData([:]))
+    #expect(first == second)
+    let status = try operationalObject(first)
+    #expect(status["schema_version"] as? String == "1.0")
+    #expect(status["kind"] as? String == "blabee_doctor_status")
+    let projects = try #require(status["projects"] as? [[String: Any]])
+    #expect(projects.count == 3)
+    #expect(projects.allSatisfy { Set($0.keys) == Set(["cwd", "enabled"]) })
+    let projectPaths = try projects.map { try #require($0["cwd"] as? String) }
+    #expect(projectPaths == projectPaths.sorted {
+        $0.utf8.lexicographicallyPrecedes($1.utf8)
+    })
+    #expect(projectPaths.contains(ids["cwd"]!))
+    #expect(projects.allSatisfy { $0["enabled"] as? Bool == true })
+    #expect(!first.contains(Data("project_id".utf8)))
+
+    let after = try fixture.journal.load()
+    #expect(after.journalSequence == before.journalSequence)
+    #expect(after.events == before.events)
+    #expect(try CoordinatorSemanticReplay.replay(after).boundaries.values.first?.closed == false)
+
+    await expectOperationalError("doctor_status_payload_invalid") {
+        _ = try await fixture.app.doctorStatus(payload: operationalData(["unexpected": true]))
+    }
+    _ = try await fixture.app.processTime()
+    #expect(try operationalObject(await stopTask.value)["status"] as? String == "expired")
+}
+
 private func expectOperationalError(
     _ code: String,
     operation: () async throws -> Void

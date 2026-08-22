@@ -124,6 +124,30 @@ public actor CoordinatorOperationalApplication {
         }
     }
 
+    /// Returns the minimum daemon state needed by read-only diagnostics.
+    /// This deliberately does not advance generation, process routing time,
+    /// reconcile pending work, or touch the journal/freshness stores.
+    public func doctorStatus(payload: Data) throws -> Data {
+        let object = try StrictJSONTransport.object(from: payload)
+        try require(object.isEmpty, "doctor_status_payload_invalid")
+        let projectObjects = projects.values
+            .filter(\.enabled)
+            .sorted { left, right in
+                left.path.utf8.lexicographicallyPrecedes(right.path.utf8)
+            }
+            .map { project in
+                [
+                    "cwd": project.path,
+                    "enabled": project.enabled,
+                ] as [String: Any]
+            }
+        return try publicData([
+            "schema_version": "1.0",
+            "kind": "blabee_doctor_status",
+            "projects": projectObjects,
+        ])
+    }
+
     /// Handles only high-level operational requests. Low-level semantic
     /// commands are deliberately not exposed through this dispatch surface.
     public func handle(type: String, payload: Data) async throws -> Data {

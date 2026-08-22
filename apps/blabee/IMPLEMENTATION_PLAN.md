@@ -185,7 +185,8 @@
 - 현재 operational 제안 생성은 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 고정한다. 따라서 `high`·`critical` 확인, 채워진 evidence/checkpoint 상세와 활성 롤백은 Pet fixture로 안전 동작을 검증한 경로이며 아직 실제 제안에서 end-to-end로 도달하지 않는다.
 - Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 현재 소스에서 통과했다. `npm run test:t011` 23/23과 `npm run test:contracts` 114/114도 재통과했다.
 - `/tmp`의 격리 UDS·임시 번들·호스트 프로브로 실제 WindowServer 1차 qualification을 수행했다. Pet·설정·Picker 조작 중 호스트 active/key/focus와 입력 연속성을 유지했고, 취소 복원과 격리 저장/재시작, 실제 Carbon 충돌 label, 유효 카드의 exact 14-field focus·16-field select를 확인했다. 접기→펼치기→접기 위치 점프를 발견해 lower-trailing anchor 보존으로 수정했고 실제 frame이 `92×92@(3328,1328) → 440×620@(2980,800) → 92×92@(3328,1328)`로 왕복했다.
-- 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, 실제 60/120초·sleep, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
+- Keychain 없는 실제 UDS와 제품 Hook·MCP·Stop 경로의 연속 시계 qualification에서 reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 focus/select 거부와 최종 빈 routing 상태를 확인했다. Pet의 local foreground 시각 표시는 computer-use runtime 중단으로 별도 환경 게이트에 남겼다.
+- 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, Pet 시각 만료·sleep, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
 
 ## 마일스톤 4 — 패키징과 내부 사용
 
@@ -198,6 +199,29 @@
 7. 주간, 새 Codex 버전 발견 시, Blabee 릴리스 전에 호환성 계약 검사를 실행하는 절차를 만든다.
 8. 일주일 동안 내부 사용을 진행하며 결정 커버리지, 지연 시간, 연속 루프, 수정 비율, 롤백 성공률을 기록한다.
 9. 고위험 및 롤백 릴리스 게이트를 실행한다.
+
+T-012a 실행 결과:
+
+- `blabee-coordinator doctor`와 operational state를 변경하지 않는 전용 UDS `doctor_status`를 구현했다.
+- Codex exact 버전, Plugin 설치/version/local source와 v0.1.0 manifest·MCP·Hook·launcher·Skill 계약, PATH coordinator identity, 앱/daemon/프로젝트 범위를 fail-closed로 검사한다.
+- Hook 신뢰는 자동 추정하지 않고 항상 `/hooks` 수동 검토를 요구한다. 지원 allowlist는 아직 비어 있다.
+- Doctor 18/18, Operational 15/15, T-011 23/23, v1 계약 114/114가 통과했다. 실제 signed app·Keychain·DMG·공증·버전 승인·터미널 매트릭스와 공개용 TOCTOU/process-group hardening은 후속 단계다.
+
+T-012b-1 실행 결과:
+
+- 저장소 또는 시스템 임시 영역의 명시적 절대 경로에만 `Blabee.app`을 조립한다. 기존 출력은 덮어쓰지 않고, sibling staging을 완료한 뒤 최종 디렉터리를 원자 선점해 `Contents`를 게시한다.
+- 앱에는 고정 `Info.plist`, 단일 release `blabee-coordinator`, exact `Contracts/v1`, exact `Plugin/blabee`, 서명 전 파일 경로·크기·모드·SHA-256 manifest를 포함한다. 입력/출력 symlink와 특수 파일, 잘못된 plist 값·타입, 비실행 바이너리, 동시 조립을 fail-closed한다.
+- 정확한 `com.biadone.blabee`의 `Blabee.app` 무인자 실행과 정상 LaunchServices PSN만 Pet 모드로 연결하고, 기존 명령과 일반 CLI 무인자/legacy 인자는 그대로 유지한다.
+- 패키징 5/5, Swift Pet/Doctor/진입 55/55, T-011 23/23, v1 계약 114/114가 통과했다. 실제 release 앱은 entitlement 없이 `adhoc,runtime` 서명과 deep/strict 검증을 통과했고 Info.plist 변조 후 검증은 실패했다.
+- 이 단계는 로컬 조립 자격이다. `/Applications`, PATH, 셸 설정, launchd/로그인 항목, Keychain, Developer ID, 공증, Gatekeeper, DMG를 변경하거나 승인하지 않는다.
+
+T-012b-2 실행 결과:
+
+- 제품 `service` 모드는 exact `Blabee.app` identity와 `Contents/Resources/Contracts/v1`을 요구하고, Application Support 아래 DB·key·socket·설정 경로를 고정 파생한다. 추가 인자와 `HOME`·`BLABEE_SOCKET` 기반 우회를 허용하지 않으며 기존 개발용 `daemon` 계약은 유지한다.
+- `config/service.json`은 exact v1 스키마, 절대 프로젝트 경로, 64 KiB·256개·4096 byte 상한을 적용한다. 설정 디렉터리 `0700`, 파일 `0600`, 현재 사용자 소유, regular/non-symlink 조건과 descriptor 기반 bounded read를 fail-closed로 검사한다. 설정 누락은 활성 프로젝트 0개이고 기존의 잘못된 설정은 시작 실패다.
+- 정적 LaunchAgent plist를 `Contents/Library/LaunchAgents`에 서명 전 포함한다. exact 네 키와 `service` argv를 강제하고 assembly manifest에 hash·size·mode를 기록한다. 실제 수명주기 검증 전에는 `RunAtLoad`만 사용하며 `KeepAlive`는 제외한다.
+- Product service 10/10, Swift Pet 전체 65/65, 패키징 7/7, T-011 23/23, v1 계약 114/114가 통과했다. 실제 release 앱의 ad-hoc deep/strict 서명과 LaunchAgent 변조 거부도 통과했다.
+- 이 단계는 설치·등록 전 계약 자격이다. 실제 `service`, Keychain, `SMAppService.register()`, launchctl, `/Applications`, Developer ID, 공증 또는 DMG는 실행·변경하지 않았다.
 
 완료 조건:
 

@@ -1,10 +1,10 @@
 # Blabee 코드맵
 
-상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator와 Pet, `Plugin/blabee/`는 Codex 진입점이며 `spikes/`는 자격·타당성 증거다.
+상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin + T-012a 읽기 전용 Doctor + T-012b-1 로컬 앱 번들 + T-012b-2 제품 service 부트스트랩과 정적 LaunchAgent 계약. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator·Pet·Doctor, `Plugin/blabee/`는 Codex 진입점이며 `Packaging/macos`와 `scripts/build-macos-app.mjs`는 설치 전 앱 조립 경계다. `spikes/`는 자격·타당성 증거다.
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter와 T-010 SwiftUI/AppKit Pet을 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet은 코드·headless 안전 게이트와 실제 macOS 1차 qualification을 통과했고 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter, T-010 SwiftUI/AppKit Pet과 T-012a `DoctorApplication.swift`를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet과 read-only Doctor 기반은 자동 안전 게이트를 통과했지만 실제 앱·서명·DMG와 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
@@ -332,6 +332,79 @@ Installer / Doctor ─────────┘               │
 ```
 
 Domain은 AppKit, Hook 실행 형식, MCP 서버 구현 언어, Git 명령, SQLite 드라이버에 의존하지 않는다. T-007a `src/coordinator-core/`는 이 의존성 방향과 lifecycle 의미를 검증하는 JavaScript 참조 구현이고, T-007b-B1 `src/coordinator-swift/`는 같은 의미의 Swift application을 A/A2 journal port 위에 제공한다. C의 Hook orchestration은 제품 `execute_command` 포트만 호출해야 한다. Plugin은 제안을 제출하고 선택 결과를 전달할 뿐 로컬 근거·위험·롤백 가능성을 권위 있게 결정하지 않는다.
+
+## T-012a Doctor 경로
+
+```text
+blabee-coordinator doctor
+├─ local static checks
+│  ├─ app / embedded coordinator / PATH MCP identity
+│  ├─ codex --version + codex plugin list --json
+│  └─ Plugin v0.1.0 manifest / Hook / MCP / launcher / Skill
+└─ secure same-UID UDS
+   └─ doctor_status({})
+      └─ enabled projects: cwd + enabled only
+```
+
+`doctor_status`는 `CoordinatorOperationalApplication.handle`과 `get_state`를 사용하지
+않아 generation, scheduler, reconciliation과 journal을 전진시키지 않는다. Plugin
+정적 검사가 통과해도 Hook 신뢰를 의미하지 않으며 `/hooks` 수동 검토는 별도
+`action_required`다. T-012a는 진단 기반일 뿐 signed app/codesign/공증 또는
+same-UID daemon identity를 증명하는 공개 보안 경계가 아니다.
+
+## T-012b-1 로컬 앱 조립 경로
+
+```text
+release blabee-coordinator ─┐
+Packaging/macos/Info.plist ─┼─> sibling staging Blabee.app
+Contracts/v1 ───────────────┤      ├─ plist exact 값·타입 검사
+Plugin/blabee ──────────────┘      ├─ 파일·symlink·mode·hash 검사
+                                  ├─ 선택적 ad-hoc Hardened Runtime 서명
+                                  └─ final path 원자 선점 + Contents 게시
+```
+
+완성된 앱은 `Contents/MacOS/blabee-coordinator` 하나와
+`Contents/Resources/{Contracts/v1,Plugin/blabee}`를 가진다. 정확한 bundle
+identity의 무인자 실행만 Pet으로 해석하며, shell의 무인자 실행과 기존
+daemon/doctor/hook/mcp/legacy 명령은 바꾸지 않는다. assembler는 저장소 또는
+시스템 임시 영역만 출력 대상으로 허용하고 기존 경로를 덮어쓰지 않는다.
+
+서명 전 assembly manifest는 layout과 입력 payload의 재현성을 기록하지만,
+ad-hoc 서명이 추가한 Mach-O 서명 영역의 사후 hash manifest가 아니다. 이 경로는
+Developer ID·공증·Gatekeeper·Data Protection Keychain·설치/자동 시작을
+증명하지 않는다.
+
+## T-012b-2 제품 service 부트스트랩 경로
+
+```text
+Contents/Library/LaunchAgents/com.biadone.blabee.coordinator.plist
+  └─ BundleProgram: Contents/MacOS/blabee-coordinator
+     ProgramArguments[1]: service
+     RunAtLoad: true
+             │
+             ▼
+ProductInvocationResolver
+  └─ explicit service
+      └─ ProductServiceBootstrap
+          ├─ exact app / executable / Resources / real Contracts/v1
+          ├─ Application Support/Blabee 고정 경로
+          └─ config/service.json secure bounded read
+              └─ DaemonRuntimeConfiguration
+                  └─ 기존 ContractPin → authority → Keychain → SQLite
+                     → routing → operational → UDS 경로
+```
+
+`ProductServiceConfiguration.swift`는 제품 경로 해석과 read-only 설정 ingress를
+소유한다. `main.swift`의 typed `DaemonRuntimeConfiguration`은 기존 개발용
+`DaemonArguments`와 새 제품 설정을 같은 daemon core로 합치되, 제품 경로에는
+Keychain 시험 namespace 환경을 전달하지 않는다. `service`는 추가 인자를 거부하고
+`HOME`, `BLABEE_SOCKET`, CWD 또는 저장소 경로 fallback을 사용하지 않는다.
+
+조립기는 LaunchAgent plist를 서명 전에 복사해 assembly manifest와 앱 seal에
+포함한다. plist는 아직 `SMAppService`에 등록되지 않은 정적 계약이고
+`ServiceManagement` 호출도 없다. 실제 로그인 수명주기 전에는 crash loop 위험을
+줄이기 위해 `KeepAlive`를 넣지 않는다. 따라서 현재 코드맵은 자동 시작 가능성을
+위한 번들 구조를 보여줄 뿐 자동 시작·복구가 검증됐다는 뜻은 아니다.
 
 ## 운영 런타임 흐름
 

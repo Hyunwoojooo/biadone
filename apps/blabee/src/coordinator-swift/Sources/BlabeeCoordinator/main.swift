@@ -94,6 +94,33 @@ private struct DaemonArguments {
     }
 }
 
+private struct DaemonRuntimeConfiguration {
+    let database: URL
+    let key: URL
+    let contracts: URL
+    let socketPath: String
+    let enabledProjectPaths: [String]
+    let freshnessEnvironment: [String: String]
+
+    init(_ arguments: DaemonArguments) {
+        database = arguments.database
+        key = arguments.key
+        contracts = arguments.contracts
+        socketPath = arguments.socketPath
+        enabledProjectPaths = arguments.enabledProjectPaths
+        freshnessEnvironment = ProcessInfo.processInfo.environment
+    }
+
+    init(_ configuration: ProductServiceConfiguration) {
+        database = configuration.database
+        key = configuration.key
+        contracts = configuration.contracts
+        socketPath = configuration.socketPath
+        enabledProjectPaths = configuration.enabledProjectPaths
+        freshnessEnvironment = [:]
+    }
+}
+
 private struct FreshnessRuntimeConfiguration {
     let store: KeychainFreshnessAnchorStore
     let deleteForTesting: Bool
@@ -636,13 +663,26 @@ private func runLegacyCoordinator(arguments rawArguments: [String]) throws {
 
 private func runDaemon(arguments rawArguments: [String]) throws {
     let arguments = try DaemonArguments(rawArguments)
+    try runDaemon(configuration: DaemonRuntimeConfiguration(arguments))
+}
+
+private func runProductService(arguments: [String]) throws {
+    let environment = try ProductServiceEnvironment.live()
+    let configuration = try ProductServiceBootstrap.resolve(
+        arguments: arguments,
+        environment: environment
+    )
+    try runDaemon(configuration: DaemonRuntimeConfiguration(configuration))
+}
+
+private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) throws {
     try ContractPin.verify(contractsDirectory: arguments.contracts)
     let authorityLease = try CoordinatorAuthorityLease(databaseURL: arguments.database)
     // Acquire the process-lifetime owner lease before storage initialization.
     // The socket itself is published only after the full application is ready.
     let server = try UnixDomainSocketServer(socketPath: arguments.socketPath)
     let freshness = try FreshnessRuntimeConfiguration(
-        environment: ProcessInfo.processInfo.environment
+        environment: arguments.freshnessEnvironment
     )
     if freshness.deleteForTesting {
         try freshness.store.deleteForTesting()
@@ -850,12 +890,23 @@ private func runTransportFixture(arguments: [String]) throws {
 
 do {
     let commandLine = CommandLine.arguments
-    let mode = commandLine.count > 1 ? commandLine[1] : nil
+    let mode = ProductInvocationResolver.mode(
+        commandLineArguments: commandLine,
+        environment: .live()
+    )
     switch mode {
     case "daemon":
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
+    case "service":
+        try runProductService(arguments: Array(commandLine.dropFirst(2)))
     case "pet":
         try runPet(arguments: Array(commandLine.dropFirst(2)))
+    case "doctor":
+        let rawArguments = Array(commandLine.dropFirst(2))
+        let arguments = try DoctorArguments(rawArguments)
+        let execution = DoctorApplication().run(arguments: arguments)
+        try FileHandle.standardOutput.write(contentsOf: execution.outputData())
+        if execution.exitCode != 0 { exit(execution.exitCode) }
     case "hook":
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":

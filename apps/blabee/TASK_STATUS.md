@@ -4,7 +4,7 @@
 
 ## 현재 단계
 
-M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. T-010은 이 API에 연결되는 비활성 floating `NSPanel`, 다중 세션 foreground, 반고정 결정 카드, 안전 범위의 단축키 설정 UI·동적 label, 위험 확인과 PermissionRequest 알림을 구현했다. 실제 WindowServer 1차 qualification에서 비활성 포커스, Picker·저장/재시작, 실제 Carbon 충돌, frame 왕복, 14-field focus와 16-field select까지 통과했다. T-010은 다중 디스플레이·Spaces·실시간 만료·실제 호스트 앱 매트릭스가 남아 있고, T-011은 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification 전이라 각각 `in_progress`다. 실제 사용자 저장소 롤백·서명된 Data Protection Keychain·공개 서명/공증 DMG도 아직 구현하지 않았다.
+M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. T-010은 이 API에 연결되는 비활성 floating `NSPanel`, 다중 세션 foreground, 반고정 결정 카드, 안전 범위의 단축키 설정 UI·동적 label, 위험 확인과 PermissionRequest 알림을 구현했다. 실제 WindowServer 1차 qualification에서 비활성 포커스, Picker·저장/재시작, 실제 Carbon 충돌, frame 왕복, 14-field focus와 16-field select까지 통과했고 실제 연속 시계의 60초 reminder·120초 expiry와 늦은 UDS 입력 거부도 통과했다. T-012a는 앱·Codex·Plugin/MCP/Hook·daemon·프로젝트 범위를 변경 없이 검사하는 `blabee-coordinator doctor`와 순수 `doctor_status`를 구현했다. T-012b-1은 단일 실행 파일과 exact Contracts/Plugin을 담은 로컬 `Blabee.app` 조립, 정확한 앱 무인자 실행의 Pet 진입, entitlement 없는 ad-hoc Hardened Runtime 검증을 추가했다. T-012b-2는 exact 번들·Application Support 고정 경로를 사용하는 제품 `service`, strict 프로젝트 설정 ingress와 등록 전 정적 LaunchAgent 계약을 추가했다. T-010은 다중 디스플레이·Spaces·Pet 시각 만료·sleep·실제 호스트 앱 매트릭스, T-011은 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification, T-012는 실제 `SMAppService` 등록·설치 동의·signed Keychain·Developer ID·공증·DMG와 터미널 매트릭스가 남아 각각 `in_progress`다. 실제 사용자 저장소 롤백도 아직 구현하지 않았다.
 
 ## M0 및 M1 검증 결과
 
@@ -21,7 +21,10 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | T-007b-B2 Swift routing/time | 조건부 완료 | 세션별 pending 하나, 다중 세션 queue, 명시적 foreground/no-steal, exact binding selection, continuous clock reminder/expiry/timeout을 구현. Pet·형식 보정 토큰의 고정 120초 소비 권위와 transport 완료 시각도 외부 wall 입력 대신 연속 단조 시각으로 강제하며 restart ambiguity를 fail-closed한다. T-007b-B2 완료 당시 Swift package 전체 62/62와 제품 gate 통과 |
 | T-007b-C 같은 턴 반복 | 조건부 완료 | `0.149.0` 실제 Hook+M0에서 경계 1→2와 결정 두 사이클, Swift 제품 게이트에서 같은 lineage의 16개 이벤트 persist/replay를 각각 통과. 실제 Hook→Swift 운영 연결은 T-011 |
 | T-011 운영 어댑터와 Plugin | 구현·제품 결합 검증 조건부 완료 | `npm run test:t011` 23/23, Swift Operational 12/12(최종 소스 3회), Routing 16/16. 제품 Hook/MCP CLI와 Pet API용 UDS test client를 Keychain 없는 SQLite→Routing→Operational→UDS에 연결해 경계 1→2, staged promotion, full 16-field select 두 번, final Stop completion과 token 비저장을 통과. open/seal·selection·completion·scheduler의 부분 실패와 commit 뒤 응답 유실도 fault injection으로 검증. 수동 Hook 신뢰·로그인 Keychain 제품 daemon은 미검증 |
-| T-010 네이티브 macOS Pet | 실제 macOS 1차 qualification 조건부 완료 | Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2), Swift package XCTest 5/5 + Swift Testing 106/106 통과. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, `취소` 복원, 저장·재시작, 실제 Carbon 등록 충돌 진단, frame exact 왕복, 유효 카드의 14-field focus·16-field select를 확인했다. 발견한 resize 위치 점프는 lower-trailing anchor 보존으로 수정했다. 현재 operational path는 risk `info`·빈 evidence·unavailable checkpoint·rollback disabled만 생성하므로 고위험/상세/롤백은 fixture 안전 경로다. 다중 디스플레이 이동·분리, Spaces/전체 화면, 물리 전역 키·키보드 레이아웃, 실제 60/120초·sleep, Terminal/VS Code/Orca 복귀는 수동 검증 필요 |
+| T-010 네이티브 macOS Pet | 실제 macOS 1차·실시간 deadline qualification 조건부 완료 | Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2), Swift package XCTest 5/5 + Swift Testing 106/106 통과. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, `취소` 복원, 저장·재시작, 실제 Carbon 등록 충돌 진단, frame exact 왕복, 유효 카드의 14-field focus·16-field select를 확인했다. 발견한 resize 위치 점프는 lower-trailing anchor 보존으로 수정했다. 실제 연속 시계 reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 focus/select 거부와 최종 빈 routing 상태도 통과했다. 현재 operational path는 risk `info`·빈 evidence·unavailable checkpoint·rollback disabled만 생성하므로 고위험/상세/롤백은 fixture 안전 경로다. 다중 디스플레이 이동·분리, Spaces/전체 화면, 물리 전역 키·키보드 레이아웃, Pet 시각 만료·sleep, Terminal/VS Code/Orca 복귀는 수동 검증 필요 |
+| T-012a 읽기 전용 Doctor 기반 | 구현·자동 계약 검증 완료, 공개 배포 미승인 | `doctor_status`는 일반 operational 경로와 journal/time 변경을 우회한다. Doctor 18/18, Operational 15/15, T-011 23/23, v1 계약 114/114가 통과했다. Codex `0.149.0`, 앱/설치 Plugin/PATH coordinator/daemon이 없는 현재 로컬 환경에서는 예상대로 exit 1의 redacted JSON을 반환했다. 실제 signed app·Keychain·DMG·공증·Hook 신뢰·버전 allowlist·터미널 매트릭스와 전체 path TOCTOU/process-group hardening은 남음 |
+| T-012b-1 로컬 앱 번들 기반 | 로컬 조립·ad-hoc 자격 완료, 공개 배포 미승인 | `Blabee.app`에 고정 plist, 단일 release 실행 파일, exact Contracts/Plugin과 assembly manifest를 포함한다. 패키징 5/5, Swift Pet/Doctor/진입 55/55, T-011 23/23, 계약 114/114가 통과했다. 실제 번들은 `adhoc,runtime`과 deep/strict 검증을 통과했고 Info.plist 변조 후 서명 검증은 실패했다. Doctor의 app/runtime/embedded/plugin 검사는 통과했으며 미설치·미실행 항목 때문에 overall fail인 것은 예상된 결과다. `/Applications`, PATH, launchd, Keychain, Developer ID, 공증, DMG는 건드리지 않음 |
+| T-012b-2 제품 service·정적 LaunchAgent | 설치·등록 전 계약 자격 완료, 자동 시작 미승인 | `service`는 exact app/Resources/real Contracts와 Application Support 고정 경로만 사용하고 추가 인자·환경 경로 우회를 거부한다. strict `service.json`과 정적 LaunchAgent exact 네 키를 구현했다. Product 10/10, Swift Pet 65/65, 패키징 7/7, T-011 23/23, 계약 114/114, release/ad-hoc strict 서명과 plist 변조 거부가 통과했다. 실제 service, Keychain, SMAppService, launchctl, 설치는 실행하지 않음 |
 | 프로젝트 로컬 MCP 검색 | 완료 | 직접 MCP `-c` 주입 없이 임시 프로젝트 `.codex/config.toml`만으로 전체 왕복 통과 |
 | 설명 전용 음성 계약 | 완료 | 결정 제안·대기 0건, 파일 변경 없음, 마지막 메시지 `M0_EXPLAINED` |
 | 플러그인 구조 | 조건부 검증 완료 | 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 통과. 제공 Python validator는 PyYAML 부재로 실행 전 중단했고 사용자 Hook 신뢰 검토는 미실행 |
@@ -64,15 +67,15 @@ Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 �
 
 - 완료: T-001, T-002, T-003, T-005, T-006, T-007
 - M0 합성 픽스처 검증 완료: T-008. 실제 사용자 작업공간 연결은 아직 하지 않았다.
-- 진행 중: T-004, T-010, T-011. T-010은 실제 macOS 1차 qualification까지 통과했으며 환경·시간·실제 호스트 앱 매트릭스가 남았다. T-011은 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification이 남았다.
-- 대기: T-009, T-012~T-014.
+- 진행 중: T-004, T-010, T-011, T-012. T-010은 실제 macOS 1차와 실시간 deadline qualification까지 통과했으며 디스플레이·Space·sleep·물리 키·실제 호스트 앱 매트릭스가 남았다. T-011은 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification, T-012는 실제 LaunchAgent 등록/승인·signed Keychain·DMG·공증·버전 allowlist·터미널 매트릭스가 남았다.
+- 대기: T-009, T-013, T-014.
 
 ## 다음 작업
 
-1. T-010 qualification에서 남은 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, 실제 60/120초·sleep, Terminal·VS Code·Orca 호스트 복귀를 검증한다. 입력 초점·Picker·저장/재시작·Carbon 충돌·frame 왕복·격리 카드 focus/select는 통과했다.
+1. T-010 qualification에서 남은 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, Pet 시각 만료·sleep, Terminal·VS Code·Orca 호스트 복귀를 검증한다. 입력 초점·Picker·저장/재시작·Carbon 충돌·frame 왕복·격리 카드 focus/select와 실제 권위 상태 60/120초는 통과했다.
 2. T-004에서 PermissionRequest 알림의 앱 복귀 가능 범위를 실환경에서 확정한다. 현재 구현은 알림 증가 polling 시점의 frontmost 외부 앱으로 돌아가는 best-effort이며 Allow/Deny는 중계하지 않는다.
 3. T-011 실환경 gate에서 실제 사용자 Hook 신뢰 검토와 로그인 Keychain 제품 daemon 왕복을 수행한다. 비밀번호 prompt 가능성이 있으므로 사용자 동의가 필요한 실행으로 분리한다.
-4. T-012에서 Developer ID 서명·공증, signed wrapper의 Data Protection Keychain/access group·`LAContext`, PATH/launchd, 실제 `.app`/DMG, updater와 `blabee doctor`를 검증한다. 현재 읽기 전용 확인에서 유효한 codesign identity는 0개였고 공증은 측정하지 않았다.
+4. T-012b-2 다음으로 안전한 project 설정 writer/onboarding과 `SMAppService` 등록·해제·상태 UI 계약을 구현한다. 실제 등록과 로그인 Keychain 최초 실행은 사용자 동의를 받은 별도 실기기 gate로 수행한다. 그 뒤 signed Data Protection Keychain/access group·`LAContext`, Developer ID 서명·공증·DMG·updater, exact Codex allowlist, `/hooks` 신뢰와 Terminal/iTerm/VS Code/Orca 매트릭스를 순서대로 검증한다. 현재 ad-hoc 앱과 등록 전 정적 LaunchAgent만 자격을 통과했으며 자동 시작·공개 배포 identity·공증은 검증하지 않았다.
 5. T-008의 합성 복원 코드를 실제 제품에 연결하기 전에 저장소 전체 잠금과 TOCTOU, 같은 경로의 사람 동시 편집, 복구 스냅샷 재적용·실패 주입과 제외 범위의 fail-closed를 별도 릴리스 게이트로 검증한다.
 
 ## 알려진 위험과 경계

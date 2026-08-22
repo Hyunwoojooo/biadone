@@ -49,10 +49,44 @@ T-010 개발용 네이티브 Pet:
 blabee-coordinator pet --socket "/path/to/blabee.sock"
 ```
 
+T-012b-1 로컬 앱 조립:
+
+```sh
+node scripts/build-macos-app.mjs \
+  --binary "/absolute/path/to/release/blabee-coordinator" \
+  --output "/tmp/blabee-build/Blabee.app" \
+  --adhoc-sign
+```
+
+출력은 저장소 또는 시스템 임시 영역의 명시적 절대 경로만 허용한다. 기본은
+unsigned이며 `--adhoc-sign`은 entitlement 없는 로컬 Hardened Runtime 자격용이다.
+정확한 앱 bundle identity로 인자 없이 실행하면 Pet을 시작하지만 shell에서 직접
+실행하는 기존 CLI 동작은 유지한다. 이 명령은 `/Applications`, PATH, launchd,
+Keychain, Developer ID, 공증 또는 DMG를 변경하지 않는다.
+
+T-012b-2 제품 서비스 계약:
+
+```text
+Blabee.app/Contents/MacOS/blabee-coordinator service
+  -> Contents/Resources/Contracts/v1
+  -> ~/Library/Application Support/Blabee/config/service.json
+  -> storage/coordinator.sqlite3
+  -> storage/coordinator.key
+  -> runtime/blabee.sock
+```
+
+`service`는 LaunchAgent 전용 내부 모드이며 추가 인자를 모두 거부한다. 설정은
+`schema_version = "1.0"`과 절대 경로 배열 `enabled_projects`만 허용하고,
+설정 디렉터리 `0700`·파일 `0600`·현재 사용자 소유·non-symlink 조건을 요구한다.
+설정이 없으면 활성 프로젝트 0개이며 파일을 자동 생성하지 않는다. 앱에는
+`Contents/Library/LaunchAgents/com.biadone.blabee.coordinator.plist`가 정적으로
+포함되지만 아직 등록되지 않아 자동 시작하지 않는다. 실제 `service` 실행은 제품
+Keychain과 저장소를 사용할 수 있으므로 로컬 자격 명령으로 실행하지 않는다.
+
 Pet 모드는 이미 실행 중인 daemon의 UDS에 연결하며 데이터베이스·키·계약 경로를
-직접 열지 않는다. 현재 Swift Package 실행 파일은 개발/검증용 shell이다. 공개
-설정 UI와 사용자 변경 shortcut label은 T-010 후속이고, 실제 `.app` 번들, 자동
-시작, 서명·공증과 DMG는 T-012 범위다.
+직접 열지 않는다. 로컬 `.app` 조립, 제품 service 경로 해석과 ad-hoc 서명 자격은
+구현됐지만 실제 `SMAppService` 등록·로그인 수명주기, signed Keychain,
+Developer ID 서명·공증과 DMG는 T-012 후속 범위다.
 
 `--enabled-project`는 여러 번 지정할 수 있다. `--socket`을 생략하면
 `BLABEE_SOCKET`, 그마저 없으면 사용자 Application Support 아래 기본 소켓을

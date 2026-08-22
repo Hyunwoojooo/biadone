@@ -8,6 +8,7 @@ private let operationalMaximumMessageBytes = 1_048_576
 
 protocol CoordinatorOperationalHandling: Sendable {
     func handle(type: String, payload: Data) async throws -> Data
+    func doctorStatus(payload: Data) async throws -> Data
     func processTime() async throws -> [Data]
     func millisecondsUntilNextDeadline() async -> Int32?
 }
@@ -118,6 +119,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "emit_decision",
         "stop",
         "permission_request",
+        "doctor_status",
         "pet_snapshot",
         "get_state",
         "focus_interaction",
@@ -311,7 +313,12 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             // this request-local corpus still prevents an input secret echo.
             requestSecretCorpus.registerKnownSecrets(inJSONObject: payload)
             let payloadData = try StrictJSONTransport.data(forJSONObject: payload)
-            let resultData = try await application.handle(type: type, payload: payloadData)
+            let resultData: Data
+            if type == "doctor_status" {
+                resultData = try await application.doctorStatus(payload: payloadData)
+            } else {
+                resultData = try await application.handle(type: type, payload: payloadData)
+            }
             guard resultData.count <= operationalMaximumMessageBytes else {
                 throw CoordinatorError("operational_response_too_large")
             }
