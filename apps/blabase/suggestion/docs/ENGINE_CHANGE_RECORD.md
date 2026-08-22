@@ -8141,3 +8141,106 @@ bytes. It does not rewrite the parent record's historical facts, the frozen V0.1
 prior commit identity, and it does not claim that the proposed V0.2 runtime exists.
 
 <!-- engine-change-record-section:ECR-STAGE10-V0-1-RECORD-COUNT-QA-CORRECTION-2026-08-22:end -->
+
+---
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B1-IDENTITY-AND-QA-RECEIPT-2026-08-22:begin -->
+
+## External Identity and QA Receipt: ECR-STAGE10-2B1-IDENTITY-AND-QA-RECEIPT-2026-08-22
+
+- Date: 2026-08-22
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Parent records:
+  `ECR-STAGE10-V0-1-RECORD-COUNT-CONTRACT-ALIGNMENT-2026-08-22` and
+  `ECR-STAGE10-V0-1-RECORD-COUNT-QA-CORRECTION-2026-08-22`.
+- Status: External identity and QA evidence is bound to the exact parent correction commit and
+  proposal blob. This receipt does not freeze or accept the proposal, authorize Stage10-2B
+  implementation, activate GitHub or any provider capability, release anything, or produce an
+  `authoritative: true` result.
+
+### Bound immutable identities
+
+- Correction/package commit SHA: `ceb8085ecf4f1b87173800041d0f2919a66bf567`
+- Correction/package commit subject:
+  `fix(suggestion): align Stage10 lineage verification contract`
+- Exact proposal Git blob SHA: `0bdb0bc5d57d207ff1ff8b393d83a1d750eb7715`
+- Proposal status in the bound blob: `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`
+
+At commit time, the bound correction/package commit contained exactly this scoped Stage10 package:
+
+- `suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts`
+- `suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`
+- `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_2_CONTRACT.md`
+- `suggestion/docs/ENGINE_CHANGE_RECORD.md`
+
+This receipt itself is not contained in that parent commit. It belongs to a later documentation
+commit whose identity is intentionally not self-referenced here. If policy requires the receipt
+commit identity, it must be recorded or reported after that commit exists.
+
+The historical `TBD_UNCOMMITTED` and `TBD_AT_FREEZE` placeholders remain unchanged in their original
+records. For external identity binding, they are resolved by the exact correction commit SHA and
+proposal Git blob SHA recorded above. This resolution does not make the proposal frozen or accepted.
+
+### Current-byte automated evidence
+
+- `npm test`: Vitest 3.2.7; exit 0; 168/168 files and 1,593/1,593 tests passed.
+- The affected lineage test file contributed 48/48 passing tests within the full suite, with 102ms
+  file time.
+- Full-suite reported duration: 20.26s.
+- `npm run typecheck`: `tsc --noEmit`; exit 0.
+- `npm run lint`: ESLint; exit 0.
+- A standalone focused test was not rerun for the final bytes.
+- Build and architecture checks were not run, and no build or architecture PASS is claimed.
+
+These results are engineering validation evidence already recorded for the current bytes. They are
+not semantic-quality, A/B/C, provider-latency, token, cost, product, release, or authority metrics.
+
+### External QA chain
+
+1. Comprehensive exact-source QA reviewed the corrected implementation, test, contract, and ECR
+   bytes and found the V0.1 implementation/test closure complete. Its only remaining blocker was
+   stale proposal status text. It did not approve freeze.
+2. A status-only proposal edit corrected those statements without changing implementation, tests,
+   ECR evidence, or technical contract semantics.
+3. Fresh final document-only independent QA reviewed the final proposal blob and both Stage10 V0.1
+   ECR records and returned `PASS`, with no Critical, High, Medium, or Low findings. The prior
+   stale-status blocker was closed.
+4. Together, those reviews cover the parent commit's implementation/test bytes and the final proposal
+   blob. This receipt records that external chain; the proposal does not attest to itself.
+
+This receipt satisfies the external binding of technical validation and QA to the parent correction
+commit and proposal blob. It does not replace Colin's human decision.
+
+### Governance and remaining gates
+
+- The V0.2 proposal remains unfrozen, unaccepted, unimplemented, and non-authorizing.
+- Stage10-2B remains private and `authoritative: false`.
+- Stage10-2C alone may first activate authority or produce `authoritative: true`.
+- No GitHub or other provider capability is activated.
+- No implementation, product, production, release, or rollout authority is granted.
+- Colin must review and decide every Section 20.1 item.
+- Colin must explicitly approve or reject the external status transition and freeze.
+- No David gate, review package, receipt, artifact, or approval applies.
+
+### Privacy, retention, data, and execution boundary
+
+Privacy and retention are unchanged. This receipt contains no raw evidence, user data, provider
+data, conversation, secret, credential, private artifact, dataset, model, prompt, token record, or
+provider call. No source, test, proposal, plan, architecture, package, dependency, schema, public API,
+or runtime behavior is changed by this documentation-only receipt.
+
+No test, validation, build, architecture, provider, or Git command was run while preparing or
+appending this receipt.
+
+### Release and rollback decision
+
+- Release decision: Not released. The proposal remains
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`.
+- Receipt rollback: Revert or void this receipt only by Colin's explicit decision. Doing so removes
+  the identity and QA binding recorded here but does not revert the parent correction code.
+- Parent code rollback: Remains governed by the earlier Stage10 V0.1 Engine Change Records.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B1-IDENTITY-AND-QA-RECEIPT-2026-08-22:end -->
