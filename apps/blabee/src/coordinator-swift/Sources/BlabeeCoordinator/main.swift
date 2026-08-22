@@ -854,6 +854,8 @@ do {
     switch mode {
     case "daemon":
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
+    case "pet":
+        try runPet(arguments: Array(commandLine.dropFirst(2)))
     case "hook":
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":

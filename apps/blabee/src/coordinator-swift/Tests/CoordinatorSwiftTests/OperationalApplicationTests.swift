@@ -287,7 +287,9 @@ private func operationalWrapper(
 private func waitForOperationalInteraction(
     _ app: CoordinatorOperationalApplication,
     boundarySequence: Int64 = 1,
-    state requiredState: String? = nil
+    state requiredState: String? = nil,
+    sessionID: String? = nil,
+    focusWhenWaiting: Bool = true
 ) async throws -> [String: Any] {
     for _ in 0..<100 {
         let state = try operationalObject(await app.handle(type: "get_state", payload: operationalData([:])))
@@ -295,13 +297,38 @@ private func waitForOperationalInteraction(
            let interaction = interactions.first(where: {
                ExactJSONInteger.int64($0["boundary_sequence"], minimum: 1) == boundarySequence
                    && (requiredState == nil || $0["state"] as? String == requiredState)
+                   && (sessionID == nil || $0["session_id"] as? String == sessionID)
            })
         {
+            if focusWhenWaiting, interaction["state"] as? String == "waiting" {
+                _ = try await app.handle(
+                    type: "focus_interaction",
+                    payload: operationalData(operationalFocus(interaction))
+                )
+            }
             return interaction
         }
         await Task.yield()
     }
     throw CoordinatorError("test_interaction_missing")
+}
+
+private func operationalFocus(_ interaction: [String: Any]) throws -> [String: Any] {
+    var request: [String: Any] = [
+        "schema_version": "1.0",
+        "kind": "blabee_pet_focus_request",
+        "interaction_id": interaction["interaction_id"]!,
+        "packet_id": interaction["packet_id"]!,
+        "revision": interaction["revision"]!,
+    ]
+    for key in [
+        "project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
+        "episode_root_prompt_id", "episode_baseline_checkpoint_id", "decision_boundary_id",
+        "boundary_sequence",
+    ] {
+        request[key] = interaction[key]
+    }
+    return request
 }
 
 private func operationalSelection(
@@ -437,6 +464,167 @@ func operationalPacketSelectionAndCompletion() async throws {
     state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.continuations.values.first?.transport?.status == .completed)
     #expect(state.boundaries.values.first?.closed == true)
+}
+
+@Test("Operational Pet focus is explicit, exact, and required before selection")
+func operationalExplicitPetFocusContract() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "pet_focus")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "pet_focus")
+        ))
+    )
+    let stopTask = Task {
+        try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(ids: ids, active: false, message: "Pet focus contract")
+        )
+    }
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        focusWhenWaiting: false
+    )
+
+    #expect(interaction["cwd"] as? String == ids["cwd"])
+    #expect(interaction["sealed_at"] as? String == "2026-08-21T12:00:00Z")
+    #expect(interaction["expires_at"] as? String == "2026-08-21T12:02:00Z")
+    #expect((interaction["outcome"] as? [String: Any])?["status"] as? String == "completed")
+    #expect(interaction["reported_side_effects"] as? [[String: Any]] != nil)
+    #expect(ExactJSONInteger.int64(interaction["valid_after_event_sequence"], minimum: 1) != nil)
+    #expect((interaction["risk"] as? [String: Any])?["level"] as? String == "info")
+    #expect(interaction["evidence"] as? [[String: Any]] != nil)
+    #expect((interaction["checkpoint"] as? [String: Any])?["coverage"] as? String == "unavailable")
+    #expect(interaction["foreground"] as? Bool == false)
+    #expect(interaction["reminder_due"] as? Bool == false)
+    #expect(ExactJSONInteger.int64(interaction["milliseconds_until_expiry"], minimum: 0) == 120_000)
+
+    await expectOperationalError("foreground_interaction_required") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 3))
+        )
+    }
+
+    var mismatched = try operationalFocus(interaction)
+    mismatched["packet_id"] = "packet_tampered"
+    await expectOperationalError("focus_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(mismatched)
+        )
+    }
+
+    let focused = try operationalObject(
+        await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    )
+    #expect(focused["focused"] as? Bool == true)
+    let focusedSnapshot = try operationalObject(
+        await fixture.app.handle(type: "pet_snapshot", payload: operationalData([:]))
+    )
+    let focusedInteraction = try #require(
+        (focusedSnapshot["interactions"] as? [[String: Any]])?.first
+    )
+    #expect(focusedInteraction["foreground"] as? Bool == true)
+
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 3))
+    )
+    #expect(try operationalObject(await stopTask.value)["status"] as? String == "paused")
+}
+
+@Test("Operational new sessions never steal Pet foreground")
+func operationalPetForegroundDoesNotAutoSwitch() async throws {
+    let fixture = try operationalFixture()
+    let firstIDs = try await operationalBegin(fixture, suffix: "pet_first")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            firstIDs,
+            proposal: operationalProposal(firstIDs, suffix: "pet_first")
+        ))
+    )
+    let firstStop = Task {
+        try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(ids: firstIDs, active: false, message: "first Pet card")
+        )
+    }
+    let first = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        focusWhenWaiting: false
+    )
+    _ = try await fixture.app.handle(
+        type: "focus_interaction",
+        payload: operationalData(operationalFocus(first))
+    )
+
+    let secondIDs = try await operationalBegin(fixture, suffix: "pet_second")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            secondIDs,
+            proposal: operationalProposal(secondIDs, suffix: "pet_second")
+        ))
+    )
+    let secondStop = Task {
+        try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(ids: secondIDs, active: false, message: "second Pet card")
+        )
+    }
+    let second = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        sessionID: secondIDs["session_id"],
+        focusWhenWaiting: false
+    )
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "pet_snapshot", payload: operationalData([:]))
+    )
+    let interactions = try #require(snapshot["interactions"] as? [[String: Any]])
+    #expect(interactions.first(where: { $0["session_id"] as? String == firstIDs["session_id"] })?["foreground"] as? Bool == true)
+    #expect(interactions.first(where: { $0["session_id"] as? String == secondIDs["session_id"] })?["foreground"] as? Bool == false)
+
+    await expectOperationalError("foreground_interaction_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(second, slot: 3))
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "focus_interaction",
+        payload: operationalData(operationalFocus(second))
+    )
+    await expectOperationalError("foreground_interaction_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(first, slot: 3))
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(second, slot: 3))
+    )
+    #expect(try operationalObject(await secondStop.value)["status"] as? String == "paused")
+
+    _ = try await fixture.app.handle(
+        type: "focus_interaction",
+        payload: operationalData(operationalFocus(first))
+    )
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(first, slot: 3))
+    )
+    #expect(try operationalObject(await firstStop.value)["status"] as? String == "paused")
 }
 
 @Test("Operational initial activation resumes exact packet after seal append failure")
@@ -1194,11 +1382,26 @@ func operationalSchedulerTerminalTransitions() async throws {
             payload: operationalStop(ids: expiryIDs, active: false, message: "expiry waiting")
         )
     }
-    _ = try await waitForOperationalInteraction(expiryFixture.app, state: "waiting")
+    let expiryInteraction = try await waitForOperationalInteraction(
+        expiryFixture.app,
+        state: "waiting"
+    )
     expiryFixture.clock.advance(seconds: 120)
     _ = try await expiryFixture.app.processTime()
     #expect(try operationalObject(await expiryWait.value)["status"] as? String == "expired")
     #expect(try CoordinatorSemanticReplay.replay(expiryFixture.journal.load()).boundaries.values.first?.closed == true)
+    await expectOperationalError("interaction_not_waiting") {
+        _ = try await expiryFixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(expiryInteraction))
+        )
+    }
+    await expectOperationalError("interaction_not_waiting") {
+        _ = try await expiryFixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(expiryInteraction, slot: 3))
+        )
+    }
 
     let timeoutFixture = try operationalFixture()
     let timeoutIDs = try await operationalBegin(timeoutFixture, suffix: "timeout")

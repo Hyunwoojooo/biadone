@@ -1,7 +1,7 @@
 # Blabee MVP 구현 계획
 
-상태: M0·T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-011 운영 어댑터 구현·검증 진행 중
-업데이트: 2026-08-21
+상태: M0·T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 코드·headless 게이트 조건부 완료 및 실기기 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
+업데이트: 2026-08-22
 
 ## 마일스톤 0 — 연동 계약 검증 스파이크
 
@@ -17,7 +17,7 @@
 8. 의미 있는 대안이 없을 때 2번이 `disabled_reason`과 함께 비활성화되고 `action_id`나 실행 본문을 갖지 않으며 다른 의미로 재사용되지 않는지 검증한다.
 9. 60초 알림, 120초 패킷 만료, 자동 선택 없음, 재개 캡슐 저장, 만료 후 입력 거부를 검증한다.
 10. 로컬 코디네이터 연결을 2초로 제한하고, 데몬 장애나 연결 시간 초과가 발생하면 Blabee 자동 동작만 끈 채 일반 Codex를 계속 사용할 수 있는지 검증한다.
-11. `PermissionRequest`의 알림과 원래 Codex UI 열기를 검증한다. 허용/거부 왕복은 격리된 역량 측정만 수행하고 공개 v0.1 기능에는 연결하지 않는다.
+11. `PermissionRequest`의 알림과 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀를 검증한다. Hook 요청에는 원래 PID/창 identity가 없다는 한계를 표시하고, 허용/거부 왕복은 격리된 역량 측정만 수행하며 공개 v0.1 기능에는 연결하지 않는다.
 12. Swift 헬퍼, TypeScript/Node 헬퍼, 소형 독립형 바이너리를 동일한 제한 health fixture로 측정하고 시작 지연, 배포 크기, IPC, 재시작 복구, 서명·공증, 진단성과 메모리 사용량을 기록한다. 정식 JSON 파서가 없는 후보의 결과는 프로토콜 동등성 근거로 사용하지 않는다.
 
 완료 조건:
@@ -106,7 +106,7 @@
 - 과거 authentic DB snapshot, DB·키 손실, anchor 누락/손상, Keychain CAS 경쟁과 concurrent writer를 fail-closed했다. Keychain `errSecDecode`/`errSecInvalidKeychain`은 corrupt, 잠금·interaction 불가는 unavailable로 분류하고 test namespace cleanup은 명시적 gate와 `test-` account로 제한했다.
 - B1 제품 NDJSON은 `execute_command`만 노출한다. raw `append`는 `BLABEE_JOURNAL_TEST_HARNESS` compile flag로 만든 테스트 바이너리에만 존재한다. 생성 토큰은 허용된 effect에 stdout 1회만 나타나고 DB·WAL·SHM·stderr에는 기록하지 않으며, consume과 로그는 제출 토큰을 다시 출력하지 않는다.
 - Swift 식별자는 저장 시 NFC를 요구하고 참조 비교는 UTF-8 byte-exact로 수행한다. SQLite text bind/read는 명시적 UTF-8 byte length를 사용해 NUL 포함 ID를 보존한다. decimal/exponent 정수 표기는 Foundation 반올림을 막기 위해 ±2^53까지만 허용하고 일반 정수 표기는 Int64 전체 범위를 유지한다.
-- A/A2 기준선은 Swift unit 27/27, persistence Node 통합 40/40, 당시 통합 `npm test` 242/242였다. 진단 가림 회귀 추가 직전 전체 `npm test`는 247/247 통과했다. 추가 뒤 최신 실행은 248개 중 246개가 통과했고, 나머지 2개는 macOS Keychain `security` 조회가 각각 30초 동안 응답하지 않은 환경 timeout이다. 현재 집중 결과는 Swift package 62/62, T-007a 33/33, persistence 이전 독립 실행 40/40, M0 55/55다. 전 범위에서 발견한 Int64 초과 NDJSON 응답 상관관계도 안전한 request-ID 전용 복구로 수정했다. 현재 `SQLiteJournal.swift` SHA-256은 `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`이다.
+- A/A2 기준선은 Swift unit 27/27, persistence Node 통합 40/40, 당시 통합 `npm test` 242/242였다. 진단 가림 회귀 추가 직전 전체 `npm test`는 247/247 통과했다. 추가 뒤 최신 실행은 248개 중 246개가 통과했고, 나머지 2개는 macOS Keychain `security` 조회가 각각 30초 동안 응답하지 않은 환경 timeout이다. T-007b-B2 완료 당시 집중 결과는 Swift package 62/62, T-007a 33/33, persistence 이전 독립 실행 40/40, M0 55/55였다. 전 범위에서 발견한 Int64 초과 NDJSON 응답 상관관계도 안전한 request-ID 전용 복구로 수정했다. 현재 `SQLiteJournal.swift` SHA-256은 `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`이다.
 - T-007b-A/A2 판정은 제품 영속·freshness 커널 범위의 조건부 완료다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하며, 서명된 wrapper와 Data Protection Keychain/access group·`LAContext` 전환은 T-012에 남는다. 같은 UID 공격자의 Keychain 삭제·교체와 DB·키·anchor 동시 제거, exact batch가 없는 pending-source 운영 복구는 A2 밖이다.
 - T-007b-C는 실제 Codex CLI `0.149.0`+M0 fake coordinator의 두 사이클과 Swift 제품 coordinator의 16-event 반복 게이트를 각각 통과해 조건부 완료했고, T-007 전체는 `done`으로 판정한다. T-011은 고수준 Hook/MCP/Pet adapter, 단일 daemon/UDS ownership, full selection binding, Stop observation digest와 원문 continuation token 비노출을 구현했다. 실제 장시간 macOS sleep, 로그인 Keychain 제품 daemon과 수동 Hook 신뢰 검토는 패키징·실환경 게이트에 남는다. `pending + source DB`와 응답 유실 뒤 원문 토큰 재발급 금지는 안전하게 차단되지만 운영자 복구 UX가 필요하다.
 
@@ -160,7 +160,7 @@
 5. 1번과 2번에는 현재 패킷의 동적 제목을 표시하고, 3번은 보류, 4번은 롤백으로 고정한다. 대안이 없으면 2번을 비활성 상태로 표시한다.
 6. 전면 상호작용 ID, 프로젝트·세션·에피소드 ID, 패킷 ID, 리비전, 옵션 ID에만 단축키 입력을 전달하고 모호하거나 만료된 입력을 거부한다.
 7. 위험도가 `high` 또는 `critical`이면 1·2 전역 단축키를 비활성화하고 펼친 위험 확인을 거쳐 작업 지시를 보내도록 한다. 이 확인은 Codex 네이티브 승인을 대신하지 않는다.
-8. Codex 네이티브 요청은 Blabee 결정 카드와 구분되는 알림으로 표시하고, 공개 v0.1에서는 원래 Codex UI 열기만 제공한다. 원문·선택지 전체 미러링을 약속하지 않는다.
+8. Codex 네이티브 요청은 Blabee 결정 카드와 구분되는 알림으로 표시하고, 공개 v0.1에서는 polling 시점 frontmost 앱으로의 best-effort 복귀만 제공한다. 정확한 원래 창이나 원문·선택지 전체 미러링을 약속하지 않는다.
 9. 증거, 위험, 체크포인트, 원본 결과 상세 보기를 추가한다.
 10. 다중 모니터, Spaces, 전체 화면, 포커스, 단축키 충돌 테스트를 추가한다.
 
@@ -174,6 +174,17 @@
 - `high`·`critical` 위험 작업은 전역 숫자 단축키로 시작되지 않고, Pet 확인과 Codex 네이티브 승인이 별도로 유지된다.
 - 120초 만료 후 늦은 단축키가 새 턴이나 롤백을 시작하지 않는다.
 - 네이티브 요청 알림에서 허용/거부를 전송할 수 없다.
+
+### T-010 실행 결과 — 2026-08-22
+
+- `blabee-coordinator pet` 모드에 SwiftUI 기반 비활성 floating `NSPanel`을 추가했다. panel은 always-on-top, 모든 Space 참여, 전체 화면 보조 표시와 화면 visible frame 안쪽 위치 보정을 적용하며 표시할 때 앱을 활성화하지 않는다.
+- 코디네이터 snapshot을 엄격한 typed model로 읽고 routing 순서를 보존한 exact identity/binding join만 허용한다. 사용자가 카드를 명시적으로 전환할 때 14-field `focus_interaction`을 먼저 보내고, 선택할 때 16-field v1 request를 보내며 `select` 자체가 foreground를 바꾸지 않는다.
+- 슬롯 1·2는 패킷별 동적 작업, 3은 보류, 4는 롤백 자리로 표시한다. disabled 슬롯, 만료, stale revision, 모호한 routing, 중복 option/action ID와 불완전한 rollback checkpoint는 fail-closed한다. 한 interaction의 선택은 슬롯이 달라도 single-flight다.
+- `Option+1·2·3·4`와 `Option+Space`를 Carbon으로 동적 등록한다. 실제 활성 슬롯만 등록하고 오래된 registration ID는 무시하며, 충돌과 일반 등록 실패를 구분한다. `high`·`critical`의 1·2는 전역 숫자 단축키에서 제외하고 펼친 확인 UI를 거친다. 3번 보류는 계속 사용할 수 있다.
+- PermissionRequest는 새 요청 수만 알리고 Allow/Deny를 제공하지 않는다. Pet 선택 후 복귀할 호스트와 권한 알림에서 열 호스트를 분리해 기억하지만, 요청에 원래 PID/창 identity가 없어 권한 알림 증가를 polling한 시점의 frontmost 외부 앱으로만 best-effort 복귀한다.
+- 현재 operational 제안 생성은 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 고정한다. 따라서 `high`·`critical` 확인, 채워진 evidence/checkpoint 상세와 활성 롤백은 Pet fixture로 안전 동작을 검증한 경로이며 아직 실제 제안에서 end-to-end로 도달하지 않는다.
+- Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 96/96이 통과했다. `npm run test:t011` 23/23과 `npm run test:contracts` 114/114도 회귀 없이 통과했다.
+- 실제 WindowServer 입력 초점, 다중 디스플레이 이동·분리, Spaces/전체 화면, 실제 Carbon 충돌, 실제 60/120초, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. 설정 저장 seam은 있으나 공개 설정 UI와 변경된 chord label은 없어 T-010 후속으로 남기고, `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
 
 ## 마일스톤 4 — 패키징과 내부 사용
 

@@ -20,11 +20,20 @@ let package = Package(
         ),
         .executableTarget(
             name: "BlabeeCoordinator",
-            dependencies: ["CoordinatorSwift"]
+            dependencies: ["CoordinatorSwift"],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("SwiftUI"),
+            ]
         ),
         .testTarget(
             name: "CoordinatorSwiftTests",
             dependencies: ["CoordinatorSwift"]
+        ),
+        .testTarget(
+            name: "BlabeePetTests",
+            dependencies: ["BlabeeCoordinator"]
         ),
     ]
 )

@@ -324,6 +324,31 @@ function selection(interaction, sequence) {
   return request;
 }
 
+function focusRequest(interaction) {
+  const request = {
+    schema_version: "1.0",
+    kind: "blabee_pet_focus_request",
+    interaction_id: interaction.interaction_id,
+    packet_id: interaction.packet_id,
+    revision: interaction.revision,
+  };
+  for (const key of [
+    "project_id",
+    "session_id",
+    "source_turn_id",
+    "source_prompt_id",
+    "episode_id",
+    "episode_root_prompt_id",
+    "episode_baseline_checkpoint_id",
+    "decision_boundary_id",
+    "boundary_sequence",
+  ]) {
+    request[key] = interaction[key];
+  }
+  assert.equal(Object.keys(request).length, 14);
+  return request;
+}
+
 async function readStorageArtifacts(databasePath) {
   const values = [];
   for (const artifactPath of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
@@ -417,6 +442,12 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
     adapters.add(firstStop);
     const firstWaiting = await waitForInteraction(server.socketPath, 1);
     assert.equal(firstStop.child.exitCode, null);
+    const firstFocus = await udsRequest(
+      server.socketPath,
+      "focus_interaction",
+      focusRequest(firstWaiting.interaction),
+    );
+    assert.deepEqual(firstFocus.result, { focused: true });
     const firstSelection = await udsRequest(
       server.socketPath,
       "select",
@@ -466,6 +497,12 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
       ),
       false,
     );
+    const secondFocus = await udsRequest(
+      server.socketPath,
+      "focus_interaction",
+      focusRequest(secondWaiting.interaction),
+    );
+    assert.deepEqual(secondFocus.result, { focused: true });
     const secondSelection = await udsRequest(
       server.socketPath,
       "select",
@@ -512,12 +549,14 @@ test("real Hook, MCP, Pet, UDS, SQLite operational flow completes two boundaries
       firstMCP.result.stdout,
       firstMCP.result.stderr,
       JSON.stringify(firstWaiting.response),
+      JSON.stringify(firstFocus),
       JSON.stringify(firstSelection),
       firstBlock.stdout,
       firstBlock.stderr,
       secondMCP.result.stdout,
       secondMCP.result.stderr,
       JSON.stringify(secondWaiting.response),
+      JSON.stringify(secondFocus),
       JSON.stringify(secondSelection),
       secondBlock.stdout,
       secondBlock.stderr,

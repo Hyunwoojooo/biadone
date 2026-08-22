@@ -120,6 +120,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "permission_request",
         "pet_snapshot",
         "get_state",
+        "focus_interaction",
         "select",
     ]
 

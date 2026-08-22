@@ -30,11 +30,12 @@ Blabee는 별도 LLM API나 API key를 요구하지 않는다. Codex가 만든 �
 - Stop 대기·전달·후속 완료
 - PermissionRequest 알림 등록
 - Pet `get_state`/`pet_snapshot`
+- Pet `focus_interaction`
 - Pet `select`
 
 하나의 `blabee-coordinator daemon`이 UDS를 소유한다. 저수준 append, direct semantic selection과 token consume은 운영 UDS allowlist에 없다.
 
-Pet은 숫자만 보내지 않는다. v1 `blabee_selection_request`의 16개 필드를 모두 제출하며, coordinator는 현재 packet·revision·option과 9-field binding을 byte-exact로 확인한다.
+Pet은 14개 exact identity 필드로 현재 `waiting` 전면 카드를 먼저 명시적으로 설정하고, 이어서 v1 `blabee_selection_request`의 16개 필드를 모두 제출한다. coordinator는 현재 packet·revision·option과 9-field binding을 byte-exact로 확인하며 `select` 요청 자체로 전면 카드를 바꾸지 못하게 한다.
 
 반고정 슬롯은 다음과 같다.
 
@@ -52,11 +53,11 @@ SessionStart
 → UserPromptSubmit
 → MCP emit_decision #1
 → Stop(false) 대기
-→ Pet get_state + full 16-field select #1
+→ Pet get_state + 14-field focus + full 16-field select #1
 → Stop block으로 action #1 전달
 → 같은 turn에서 MCP emit_decision #2 staging
 → Stop(true): 경계 #1 transport 완료·close + 경계 #2 활성화·대기
-→ Pet get_state + full 16-field select #2
+→ Pet get_state + 14-field focus + full 16-field select #2
 → Stop block으로 action #2 전달
 → 마지막 Stop(true): 경계 #2 transport 완료·close
 ```
@@ -109,7 +110,7 @@ Swift 빌드는 통과했지만 기존 `kSecUseAuthenticationUIFail`의 macOS 11
 - 실제 사용자 Codex 설치에서 Hook 해시와 신뢰 화면을 사람이 검토하는 흐름
 - 로그인 Keychain을 사용하는 제품 daemon의 실제 사용자 환경 왕복
 - 장시간 macOS sleep/복귀와 daemon lifecycle. 현재 waiter·staged proposal·retry marker는 process-local이므로 daemon 재시작 중 완전 복원하지 않는다.
-- 네이티브 Pet UI: T-010
+- 네이티브 Pet은 T-010에서 코드·headless 안전 게이트까지 구현했다. 실제 WindowServer 입력 초점, 다중 디스플레이·Spaces, 실제 단축키 충돌과 호스트 앱 복귀 수동 qualification은 남아 있다.
 - PATH 설치, launchd 자동 시작, `blabee doctor`, Developer ID 서명·공증 DMG, Data Protection Keychain, 터미널 매트릭스: T-012
 - 실제 사용자 저장소 롤백: 현재 비활성
 
@@ -119,7 +120,7 @@ Swift 빌드는 통과했지만 기존 `kSecUseAuthenticationUIFail`의 macOS 11
 
 T-011의 코드와 Keychain 없는 실제 제품 구성요소 결합은 조건부 완료다. 다만 수동 Hook 신뢰와 로그인 Keychain 제품 daemon까지 확인하기 전에는 `AGENT_TASKS.md` 상태를 `in_progress`로 유지한다. 이는 실제 사용자 환경이나 공개 배포 승인이 아니다.
 
-현재 사용자가 추가로 결정할 제품 사항은 없다. 다음 구현 단계는 T-010 네이티브 Pet이며, 그 뒤 T-012 설치·서명·진단·터미널 qualification으로 이어진다.
+현재 사용자가 추가로 결정할 제품 사항은 없다. 다음 단계는 T-010의 실제 macOS 수동 qualification과 설정 UI 마무리이며, 그 뒤 T-012 설치·서명·진단·터미널 qualification으로 이어진다.
 
 ## 7. 코드 그래프 한계
 

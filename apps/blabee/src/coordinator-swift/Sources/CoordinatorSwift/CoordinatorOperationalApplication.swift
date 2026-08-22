@@ -153,6 +153,8 @@ public actor CoordinatorOperationalApplication {
             return try permissionRequest(payload)
         case "pet_snapshot", "get_state":
             return try stateSnapshot()
+        case "focus_interaction":
+            return try focusInteraction(payload)
         case "select":
             return try select(payload, generation: requestGeneration)
         default:
@@ -715,6 +717,52 @@ private extension CoordinatorOperationalApplication {
         }
     }
 
+    func focusInteraction(_ data: Data) throws -> Data {
+        let request = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            request,
+            required: [
+                "schema_version", "kind", "interaction_id", "packet_id", "revision",
+                "project_id", "session_id", "source_turn_id", "source_prompt_id",
+                "episode_id", "episode_root_prompt_id", "episode_baseline_checkpoint_id",
+                "decision_boundary_id", "boundary_sequence",
+            ]
+        )
+        try require(request["schema_version"] as? String == "1.0", "invalid_request")
+        try require(request["kind"] as? String == "blabee_pet_focus_request", "invalid_request")
+
+        let binding = try CoordinatorBinding(jsonObject: request)
+        guard let boundary = boundaries[binding.fullKey],
+              boundary.phase == .waiting,
+              waiters[binding.fullKey] != nil,
+              let packetData = boundary.packet,
+              let packet = try? StrictJSONTransport.object(from: packetData)
+        else { throw CoordinatorError("interaction_not_waiting") }
+
+        try byteExactRequire(
+            packet["interaction_id"] as? String,
+            try identifier(string(request, "interaction_id"), "interaction_id"),
+            "focus_binding_mismatch"
+        )
+        try byteExactRequire(
+            packet["packet_id"] as? String,
+            try identifier(string(request, "packet_id"), "packet_id"),
+            "focus_binding_mismatch"
+        )
+        guard let requestRevision = ExactJSONInteger.int64(request["revision"], minimum: 1),
+              let packetRevision = ExactJSONInteger.int64(packet["revision"], minimum: 1),
+              requestRevision == packetRevision
+        else { throw CoordinatorError("focus_binding_mismatch") }
+
+        var target = binding.jsonObject
+        target["expected_state"] = "pending"
+        target["interaction_id"] = packet["interaction_id"]
+        target["packet_id"] = packet["packet_id"]
+        target["revision"] = packet["revision"]
+        _ = try routing.setForeground(StrictJSONTransport.data(forJSONObject: target))
+        return try publicData(["focused": true])
+    }
+
     func select(_ data: Data, generation requestGeneration: UInt64) throws -> Data {
         let selection = try StrictJSONTransport.object(from: data)
         _ = try V1IngressValidator().validate(data, as: .selectionRequest)
@@ -761,13 +809,6 @@ private extension CoordinatorOperationalApplication {
         guard let slot = ExactJSONInteger.int64(choice["slot"], minimum: 1) else {
             throw CoordinatorError("decision_option_not_found")
         }
-
-        var target = boundary.binding.jsonObject
-        target["expected_state"] = "pending"
-        target["interaction_id"] = packet["interaction_id"]
-        target["packet_id"] = packet["packet_id"]
-        target["revision"] = packet["revision"]
-        _ = try routing.setForeground(StrictJSONTransport.data(forJSONObject: target))
 
         var request = boundary.binding.jsonObject
         request["schema_version"] = "1.0"
@@ -1094,9 +1135,22 @@ private extension CoordinatorOperationalApplication {
                 "episode_id": session.episode?.episodeID as Any? ?? NSNull(),
             ] as [String: Any]
         }
-        let interactionObjects = try boundaries.values.compactMap { boundary -> [String: Any]? in
-            guard [.sealed, .waiting].contains(boundary.phase), let packetData = boundary.packet else { return nil }
+        let routingPending = routingObject["pending"] as? [[String: Any]] ?? []
+        let interactionObjects = try routingPending.compactMap { pending -> [String: Any]? in
+            guard let routingBinding = try? CoordinatorBinding(jsonObject: pending),
+                  let boundary = boundaries[routingBinding.fullKey],
+                  [.sealed, .waiting].contains(boundary.phase),
+                  let packetData = boundary.packet
+            else { return nil }
             let packet = try StrictJSONTransport.object(from: packetData)
+            guard Self.byteExact(packet["interaction_id"] as? String, pending["interaction_id"] as? String),
+                  Self.byteExact(packet["packet_id"] as? String, pending["packet_id"] as? String),
+                  ExactJSONInteger.int64(packet["revision"], minimum: 1)
+                    == ExactJSONInteger.int64(pending["revision"], minimum: 1)
+            else { return nil }
+            guard let cwd = projects.values.first(where: {
+                Self.byteExact($0.projectID, boundary.binding.projectID)
+            })?.path else { return nil }
             var result: [String: Any] = [
                 "state": boundary.phase.rawValue,
                 "interaction_id": packet["interaction_id"]!,
@@ -1106,8 +1160,20 @@ private extension CoordinatorOperationalApplication {
                 "session_id": boundary.binding.sessionID,
                 "episode_id": boundary.binding.episodeID,
                 "boundary_sequence": boundary.binding.boundarySequence,
+                "cwd": cwd,
                 "summary": packet["summary"]!,
+                "outcome": boundary.proposalObject["outcome"]!,
+                "reported_side_effects": boundary.proposalObject["reported_side_effects"]!,
+                "sealed_at": packet["sealed_at"]!,
+                "expires_at": packet["expires_at"]!,
+                "valid_after_event_sequence": packet["valid_after_event_sequence"]!,
+                "risk": packet["risk"]!,
+                "evidence": packet["evidence"]!,
+                "checkpoint": packet["checkpoint"]!,
                 "choices": packet["choices"]!,
+                "foreground": pending["foreground"]!,
+                "reminder_due": pending["reminder_due"]!,
+                "milliseconds_until_expiry": pending["milliseconds_until_expiry"]!,
             ]
             result.merge(boundary.binding.jsonObject) { current, _ in current }
             return result

@@ -43,6 +43,17 @@ BLABEE_SOCKET="/path/to/blabee.sock" \
   blabee-coordinator mcp
 ```
 
+T-010 개발용 네이티브 Pet:
+
+```sh
+blabee-coordinator pet --socket "/path/to/blabee.sock"
+```
+
+Pet 모드는 이미 실행 중인 daemon의 UDS에 연결하며 데이터베이스·키·계약 경로를
+직접 열지 않는다. 현재 Swift Package 실행 파일은 개발/검증용 shell이다. 공개
+설정 UI와 사용자 변경 shortcut label은 T-010 후속이고, 실제 `.app` 번들, 자동
+시작, 서명·공증과 DMG는 T-012 범위다.
+
 `--enabled-project`는 여러 번 지정할 수 있다. `--socket`을 생략하면
 `BLABEE_SOCKET`, 그마저 없으면 사용자 Application Support 아래 기본 소켓을
 사용한다. Hook은 연결·입력·응답 실패를 모두 fail-open하고, MCP는 JSON-RPC로
@@ -56,12 +67,16 @@ daemon은 `CoordinatorOperationalApplication` 하나를 UDS owner에 연결하�
 
 - `enable_project`, `session_start`, `user_prompt_submit`
 - `emit_decision`, `stop`, `permission_request`
-- Pet용 `get_state`/`pet_snapshot`, `select`
+- Pet용 `get_state`/`pet_snapshot`, `focus_interaction`, `select`
 
-Pet 선택은 번호만 받지 않는다. `selection_request.schema.json`의 16개 필드를
-모두 검증하고 현재 봉인 패킷·revision·option·9-field binding과 byte-exact로
-일치할 때만 실행한다. 슬롯 1은 동적 권장 작업, 슬롯 2는 동적 대안 또는 비활성,
-슬롯 3은 보류다. 슬롯 4는 계약상의 rollback 자리이지만 현재 제품 빌드에서는
+Pet은 먼저 14개 identity 필드의 `blabee_pet_focus_request`로 대기 중인 전면
+카드를 명시적으로 선택한다. 그 다음 선택은 번호만 보내지 않고
+`selection_request.schema.json`의 16개 필드를 모두 제출한다. 코디네이터는 현재
+봉인 패킷·revision·option·9-field binding과 byte-exact로 일치하고, 그 카드가
+이미 전면으로 선택돼 있을 때만 실행한다. `select` 자체는 전면 카드를 바꾸지
+않으므로 전환 뒤 도착한 오래된 단축키가 다른 카드를 다시 선택해 실행할 수 없다.
+슬롯 1은 동적 권장 작업, 슬롯 2는 동적 대안 또는 비활성, 슬롯 3은 보류다.
+슬롯 4는 계약상의 rollback 자리이지만 현재 제품 빌드에서는
 `rollback_not_enabled_in_build`로 비활성이다.
 
 사람이 제출한 새 프롬프트에는 경계용 correlation token을 한 번 만들고 지정된

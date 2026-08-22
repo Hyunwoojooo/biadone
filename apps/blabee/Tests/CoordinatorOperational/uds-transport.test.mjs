@@ -675,6 +675,10 @@ test("UDS server enforces one owner, secure modes, and the high-level allowlist"
     assert.equal(stillAlive.ok, true);
     assert.equal(stillAlive.result.fixture, "ok");
 
+    const focusAccepted = await udsRequest(fixture.socketPath, "focus_interaction", {});
+    assert.equal(focusAccepted.ok, true);
+    assert.equal(focusAccepted.result.handled_type, "focus_interaction");
+
     const rejected = await udsRequest(fixture.socketPath, "execute_command", {
       command: { op: "unsafe_low_level" },
     });

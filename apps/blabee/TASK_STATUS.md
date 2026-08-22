@@ -1,10 +1,10 @@
 # Blabee 작업 현황
 
-업데이트: 2026-08-21
+업데이트: 2026-08-22
 
 ## 현재 단계
 
-M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. Keychain 없는 실제 SQLite/Swift 제품 구성요소를 제품 Hook/MCP CLI와 Pet API용 UDS test client로 연결한 같은-lineage 경계 1→2 왕복까지 통과했다. 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification이 남아 T-011은 `in_progress`로 유지한다. 네이티브 Pet·실제 사용자 저장소 롤백·서명된 Data Protection Keychain·공개 서명/공증 DMG도 아직 구현하지 않았다.
+M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. T-010은 이 API에 연결되는 비활성 floating `NSPanel`, 다중 세션 foreground, 반고정 결정 카드, 동적 전역 단축키, 위험 확인과 PermissionRequest 알림을 구현하고 headless 계약 검사를 통과했다. T-010은 실제 WindowServer·다중 디스플레이·Spaces·호스트 앱 복귀 수동 검증 전이라, T-011은 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification 전이라 각각 `in_progress`다. 실제 사용자 저장소 롤백·서명된 Data Protection Keychain·공개 서명/공증 DMG도 아직 구현하지 않았다.
 
 ## M0 및 M1 검증 결과
 
@@ -18,13 +18,14 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | T-007a 참조 코어 | 완료 | 순수 reducer/replay, CAS 선택 선점, sealed packet document·verification sidecar, prototype-key 안전 projection, command/replay 동등성, 같은 턴 lineage·패킷 의미 검증과 NFC 식별자 규칙 포함 33/33 통과. `InMemoryJournal`은 참조 전용 |
 | T-007b-A/A2 제품 영속 커널 | 조건부 완료 | A/A2 기준 Swift unit 27/27, Node persistence 통합 40/40 통과. SQLite/CAS/MAC/HMAC과 Keychain freshness를 제공하며 제품 호출은 B1 의미와 B2 routing/time 경계를 거쳐야 한다. 공개 dispatch는 T-011 운영 adapter 전까지 차단 |
 | T-007b-B1 Swift 의미 application | 조건부 완료 | 12개 이벤트와 11개 command, exact RFC3339 ns, exact/범위 제한 정수 transport, NFC 저장 ID와 byte-exact 참조, CAS/token/effect 경계, 제품 `execute_command`, raw append compile-time 차단을 구현. Swift 전체 45/45와 제품 gate 1/1 통과 |
-| T-007b-B2 Swift routing/time | 조건부 완료 | 세션별 pending 하나, 다중 세션 queue, 명시적 foreground/no-steal, exact binding selection, continuous clock reminder/expiry/timeout을 구현. Pet·형식 보정 토큰의 고정 120초 소비 권위와 transport 완료 시각도 외부 wall 입력 대신 연속 단조 시각으로 강제하며 restart ambiguity를 fail-closed한다. 최신 Swift package 전체 62/62와 제품 gate 통과 |
+| T-007b-B2 Swift routing/time | 조건부 완료 | 세션별 pending 하나, 다중 세션 queue, 명시적 foreground/no-steal, exact binding selection, continuous clock reminder/expiry/timeout을 구현. Pet·형식 보정 토큰의 고정 120초 소비 권위와 transport 완료 시각도 외부 wall 입력 대신 연속 단조 시각으로 강제하며 restart ambiguity를 fail-closed한다. T-007b-B2 완료 당시 Swift package 전체 62/62와 제품 gate 통과 |
 | T-007b-C 같은 턴 반복 | 조건부 완료 | `0.149.0` 실제 Hook+M0에서 경계 1→2와 결정 두 사이클, Swift 제품 게이트에서 같은 lineage의 16개 이벤트 persist/replay를 각각 통과. 실제 Hook→Swift 운영 연결은 T-011 |
 | T-011 운영 어댑터와 Plugin | 구현·제품 결합 검증 조건부 완료 | `npm run test:t011` 23/23, Swift Operational 12/12(최종 소스 3회), Routing 16/16. 제품 Hook/MCP CLI와 Pet API용 UDS test client를 Keychain 없는 SQLite→Routing→Operational→UDS에 연결해 경계 1→2, staged promotion, full 16-field select 두 번, final Stop completion과 token 비저장을 통과. open/seal·selection·completion·scheduler의 부분 실패와 commit 뒤 응답 유실도 fault injection으로 검증. 수동 Hook 신뢰·로그인 Keychain 제품 daemon은 미검증 |
+| T-010 네이티브 macOS Pet | 코드·headless 안전 게이트 조건부 완료 | Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2), Swift package XCTest 5/5 + Swift Testing 96/96 통과. 비활성 floating panel, 명시적 foreground/no-steal, exact focus/select binding, single-flight, high/critical 1·2 확인, 동적 Carbon 단축키와 오래된 입력 거부를 검증. 현재 operational path는 risk `info`·빈 evidence·unavailable checkpoint·rollback disabled만 생성하므로 고위험/상세/롤백은 fixture 안전 경로다. 실제 입력 초점·다중 디스플레이·Spaces/전체 화면·Carbon 충돌·60/120초·Terminal/VS Code/Orca 복귀는 수동 검증 필요 |
 | 프로젝트 로컬 MCP 검색 | 완료 | 직접 MCP `-c` 주입 없이 임시 프로젝트 `.codex/config.toml`만으로 전체 왕복 통과 |
 | 설명 전용 음성 계약 | 완료 | 결정 제안·대기 0건, 파일 변경 없음, 마지막 메시지 `M0_EXPLAINED` |
 | 플러그인 구조 | 조건부 검증 완료 | 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 통과. 제공 Python validator는 PyYAML 부재로 실행 전 중단했고 사용자 Hook 신뢰 검토는 미실행 |
-| PermissionRequest 제품 동작 | 부분 완료 | 알림 전용 계약은 테스트했으나 원래 Codex UI 열기와 실제 Pet UX는 미구현 |
+| PermissionRequest 제품 동작 | 부분 완료 | Pet은 새 요청 수를 알리고 Allow/Deny 없이 알림 증가를 polling한 시점의 frontmost 외부 앱으로 돌아가는 best-effort 코드와 회귀 검사를 갖췄다. 요청에 원래 PID/창 identity가 없어 정확한 Codex 창 복귀와 Terminal/VS Code/Orca 실환경 UX는 미검증 |
 
 실제 계약 픽스처에서 관찰한 순서는 다음과 같다.
 
@@ -53,7 +54,7 @@ Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 �
 3. 사람이 새 작업 프롬프트를 직접 제출할 때만 새 에피소드와 롤백 기준선을 만든다. Pet 연속 진행과 Hook 내부 재시도는 같은 에피소드에 남는다.
 4. 공개 v0.1 자동 롤백 후보는 깨끗한 작업 트리에서 시작하고 범위가 완전한 프롬프트 에피소드 하나다. ignored 파일, 하위 모듈, LFS, 저장소 밖 파일, 크기 초과, 동시 편집, 브랜치·HEAD 변경, 외부 부수 효과가 있으면 비활성화한다.
 5. 센티널은 격리된 M0 smoke test에만 사용한다. 운영 결정 제안 채널은 프로젝트 로컬 MCP `emit_decision`이다.
-6. 공개 v0.1의 네이티브 권한 요청은 Pet 알림과 원래 Codex UI 열기만 제공한다. Pet은 허용·거부를 대신 전송하지 않는다.
+6. 공개 v0.1의 네이티브 권한 요청은 Pet 알림과 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀만 제공한다. 요청에 원래 PID/창 identity가 없으며 Pet은 허용·거부를 대신 전송하지 않는다.
 7. 알파 기준은 Codex `0.148.0`이다. Hook/MCP 기능뿐 아니라 같은 턴 Stop 전이를 버전별 계약 테스트로 확인한 뒤 지원 허용 목록에 넣는다.
 8. 로컬 코디네이터 연결은 2초로 제한하고 실패하면 일반 Codex를 막지 않는다. 60초에 한 번 알리고 120초에 자동 선택 없이 만료하며 늦은 입력을 거부한다.
 9. 여러 세션의 패킷은 대기열에 둘 수 있지만 전역 단축키는 사용자가 명시적으로 선택한 전면 카드 하나에만 적용한다.
@@ -63,21 +64,21 @@ Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 �
 
 - 완료: T-001, T-002, T-003, T-005, T-006, T-007
 - M0 합성 픽스처 검증 완료: T-008. 실제 사용자 작업공간 연결은 아직 하지 않았다.
-- 진행 중: T-004, T-011. T-011의 코드와 Keychain 없는 제품 결합 gate는 조건부 완료했으며 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification이 남았다.
-- 대기: T-009, T-010, T-012~T-014.
+- 진행 중: T-004, T-010, T-011. T-010의 코드와 headless 안전 gate는 조건부 완료했으며 실제 macOS 창·단축키 매트릭스가 남았다. T-011은 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification이 남았다.
+- 대기: T-009, T-012~T-014.
 
 ## 다음 작업
 
-1. T-010에서 T-011의 `get_state`/full-selection UDS API에 연결하는 네이티브 macOS Pet을 구현한다.
-2. T-004에서 원래 Codex UI 열기와 PermissionRequest 알림 UX를 실제 Pet 통합으로 검증한다.
+1. T-010 qualification에서 설정 UI와 사용자 변경 단축키 label을 마무리하고, 실제 입력 초점, 다중 디스플레이 이동·분리, Spaces/전체 화면, Carbon 충돌, 60/120초, Terminal·VS Code·Orca 호스트 복귀를 검증한다.
+2. T-004에서 PermissionRequest 알림의 앱 복귀 가능 범위를 실환경에서 확정한다. 현재 구현은 알림 증가 polling 시점의 frontmost 외부 앱으로 돌아가는 best-effort이며 Allow/Deny는 중계하지 않는다.
 3. T-011 실환경 gate에서 실제 사용자 Hook 신뢰 검토와 로그인 Keychain 제품 daemon 왕복을 수행한다. 비밀번호 prompt 가능성이 있으므로 사용자 동의가 필요한 실행으로 분리한다.
-4. T-012에서 Developer ID 서명·공증, signed wrapper의 Data Protection Keychain/access group·`LAContext`, PATH/launchd, 실제 앱 DMG, updater와 `blabee doctor`를 검증한다. 현재 읽기 전용 확인에서 유효한 codesign identity는 0개였고 공증은 측정하지 않았다.
+4. T-012에서 Developer ID 서명·공증, signed wrapper의 Data Protection Keychain/access group·`LAContext`, PATH/launchd, 실제 `.app`/DMG, updater와 `blabee doctor`를 검증한다. 현재 읽기 전용 확인에서 유효한 codesign identity는 0개였고 공증은 측정하지 않았다.
 5. T-008의 합성 복원 코드를 실제 제품에 연결하기 전에 저장소 전체 잠금과 TOCTOU, 같은 경로의 사람 동시 편집, 복구 스냅샷 재적용·실패 주입과 제외 범위의 fail-closed를 별도 릴리스 게이트로 검증한다.
 
 ## 알려진 위험과 경계
 
 - `0.148.0`은 기존 한 사이클만, `0.149.0`은 격리된 두 사이클만 검증했다. 어느 쪽도 반복 제품 지원을 자동 승인하지 않으며 exact-version allowlist와 정기 호환성 테스트가 필요하다.
-- T-011은 실제 제품 Hook/MCP CLI와 Pet API용 UDS test client를 SQLite→Routing→Operational→UDS에 Keychain 없는 gate에서 연결해 두 경계까지 검증했다. 실제 사용자 Hook 신뢰와 로그인 Keychain daemon, 네이티브 Pet, 장시간 sleep/재시작은 아직 실환경에서 연결하지 않았다.
+- T-011은 실제 제품 Hook/MCP CLI와 Pet API용 UDS test client를 SQLite→Routing→Operational→UDS에 Keychain 없는 gate에서 연결해 두 경계까지 검증했다. T-010 네이티브 Pet 코드도 같은 UDS 계약에 연결했지만 실제 사용자 Hook 신뢰·로그인 Keychain daemon과 함께하는 end-to-end 수동 실행, 장시간 sleep/재시작은 아직 통과하지 않았다.
 - Stop 입력에는 경계 ID가 없으므로 T-011은 process-local HMAC observation, request generation, delivery digest와 phase gate로 동일 Stop 재전달·후속 active Stop을 구분한다. timeout으로 승격된 staged 경계에만 active Stop을 새 waiter로 한 번 허용한다. 이 상태는 daemon 재시작 시 복원하지 않고 기존 routing fail-closed 규칙을 따른다.
 - T-007b-A2는 Keychain checkpoint보다 오래되거나 같은 sequence에서 head가 다른 authentic DB, DB·키 손실과 anchor 누락을 fail-closed한다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 DB rollback을 구분할 수 없어 자동 취소하지 않으며, 정확히 같은 canonical batch가 없으면 운영자 복구가 필요하다. 기존 DB·키에 anchor가 없는 pre-A2 저장소는 자동 migration/adoption하지 않는다.
 - 현재 unsigned CLI는 Data Protection Keychain에서 `errSecMissingEntitlement`가 발생해 legacy login Keychain을 사용한다. 같은 UID 공격자가 Keychain item까지 삭제·교체하거나 DB·키·anchor를 동시에 제거해 최초 설치처럼 만드는 경우는 A2 밖이며, signed wrapper와 code-signing ACL/access group은 T-012에서 닫는다.

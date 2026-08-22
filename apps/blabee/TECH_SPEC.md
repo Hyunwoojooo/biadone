@@ -33,7 +33,7 @@ Codex 작업
 7. Pet은 `"1"` 같은 숫자 문자열만 보내지 않는다. `packet_id`, `revision`, `option_id`와 선택한 작업의 목표·제약·완료 기준 전체를 확인한다. Codex `0.148.0`의 Hook-first 경로에서는 이 내용을 새 사용자 프롬프트로 주입하지 않고, 대기 중인 `Stop`을 해제해 같은 턴의 연속 진행 지시로 전달한다. 이 지시는 현재 작업 에피소드에 귀속된다.
 8. 롤백은 `episode_root_prompt_id`에 해당하는 **직전 사람이 입력한 작업 프롬프트 직전**의 `episode_baseline_checkpoint_id`로 복원한다. 모델 프롬프트가 롤백 구현이 되어서는 안 된다.
 9. 공개 v0.1의 롤백 범위는 깨끗한 작업 트리에서 시작한 사람의 프롬프트 에피소드 한 개뿐이다. Pet의 1·2 연속 선택은 새 롤백 기준선을 만들지 않는다.
-10. 공개 v0.1에서 네이티브 권한 요청은 Pet 알림과 원래 Codex UI 열기만 지원한다. Pet이 허용/거부를 중계하지 않는다.
+10. 공개 v0.1에서 네이티브 권한 요청은 Pet 알림과 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀만 지원한다. Hook 요청에는 원래 PID/창 identity가 없으며 Pet이 허용/거부를 중계하지 않는다.
 11. Blabee MVP는 별도의 LLM API 키나 추론 서비스를 추가하지 않는다.
 12. 모든 영속 제품 데이터는 로컬 우선으로 저장한다.
 13. 알파 기준 Codex `0.148.0`을 고정하고, 공개 배포에서는 지원 버전 허용 목록, `blabee doctor`, 주간·신규 버전·릴리스 전 호환성 점검을 함께 운영한다.
@@ -47,7 +47,7 @@ Codex 작업
 |---|---|---|
 | `informational` | 이 아키텍처를 설명하거나, 모듈을 요약하거나, 질문에 답한다 | 반고정 결정 카드 없이 필요할 때만 조용한 완료 표시를 보여 준다 |
 | `blabee_decision` | 의미 있는 지점에서 작업이 완료, 부분 완료, 실패 또는 차단되었다 | 동적인 권장·대안 작업과 고정된 보류·롤백 슬롯으로 구성된 반고정 카드를 보여 준다 |
-| `native_request` | 권한 요청 또는 Codex가 제공한 질문과 선택지다 | Blabee 결정 카드로 재해석하지 않는다. 공개 Hook v0.1은 감지 가능한 요청의 알림과 원래 Codex UI 열기만 제공하며, 원문·선택지 전체 미러링은 관리형 app-server 단계로 둔다 |
+| `native_request` | 권한 요청 또는 Codex가 제공한 질문과 선택지다 | Blabee 결정 카드로 재해석하지 않는다. 공개 Hook v0.1은 감지 가능한 요청의 알림과 best-effort 앱 복귀만 제공하며, 원래 PID/창 identity와 원문·선택지 전체 미러링은 관리형 app-server 단계로 둔다 |
 
 분류가 불확실하면 `informational`을 안전한 기본값으로 사용한다. 일반 Codex 결과를 보여 주고 단일 키 동작은 실행하지 않는다.
 
@@ -87,7 +87,7 @@ Blabee는 Codex Plugin/Hook 레이어에서 통합되므로 어떤 터미널 호
 
 현재 `Plugin/blabee/`는 Codex Plugin v0.1.0의 Skill, `SessionStart`·`UserPromptSubmit`·`Stop`·`PermissionRequest` Hook과 로컬 MCP 설정을 소유한다. Skill은 완료·부분 완료·실패·차단처럼 다음 선택이 필요한 의미 있는 작업 경계에서만 `emit_decision`을 호출하며, 설명·구조·상태 확인·일반 질문과 Codex 네이티브 권한 요청은 평소 응답 경로에 남긴다. Pre/PostToolUse 근거 수집은 이 T-011 구현에 포함하지 않았다.
 
-`blabee-coordinator daemon`은 `CoordinatorOperationalApplication` 하나를 UDS에 연결한다. 외부 allowlist는 프로젝트 활성화, 세션 시작, 사람 프롬프트, 결정 제안, Stop, 권한 알림, Pet 상태 조회와 full selection으로 한정한다. Pet 선택은 숫자가 아니라 v1 `blabee_selection_request`의 16개 필드를 모두 받아 현재 packet·revision·option과 9-field binding을 byte-exact로 검증한다. 저수준 journal append, direct semantic selection과 token consume은 운영 UDS에서 호출할 수 없다.
+`blabee-coordinator daemon`은 `CoordinatorOperationalApplication` 하나를 UDS에 연결한다. 외부 allowlist는 프로젝트 활성화, 세션 시작, 사람 프롬프트, 결정 제안, Stop, 권한 알림, Pet 상태 조회, 명시적 전면 카드 선택과 full selection으로 한정한다. Pet은 먼저 14개 identity 필드의 `blabee_pet_focus_request`를 보내 현재 `waiting` 카드와 exact 일치하는 전면 대상을 설정한다. 이어지는 선택은 숫자가 아니라 v1 `blabee_selection_request`의 16개 필드를 모두 받아 현재 packet·revision·option과 9-field binding을 byte-exact로 검증하며, `select` 요청 자체는 전면 대상을 변경할 수 없다. 저수준 journal append, direct semantic selection과 token consume은 운영 UDS에서 호출할 수 없다.
 
 UDS runtime directory는 `0700`, socket과 lease는 `0600`이고 양방향 peer effective UID가 현재 사용자와 같아야 한다. 한 줄 요청은 1 MiB 미만, 동시 연결은 64개로 제한한다. 활성 socket은 회수하지 않고 같은 UID의 stale socket만 교체하며 종료 때 소유한 inode만 제거한다. socket 경로와 독립된 저장소 singleton은 정규화한 절대 DB 경로의 domain-separated SHA-256 identity로 `~/Library/Application Support/Blabee/runtime/authority/`에서 획득한다. 같은 DB·다른 socket의 두 번째 coordinator도 storage 초기화 전에 거부한다. 서로 다른 경로가 hard link 또는 특수 볼륨 alias로 같은 inode를 가리키는 경우는 현재 path identity가 합치지 못하는 잔여 위험이다.
 
@@ -128,7 +128,7 @@ Codex `0.148.0`에서 Pet의 1·2 선택은 새 `UserPromptSubmit`을 만들지 
 
 ### PermissionRequest
 
-공개 v0.1의 Hook은 네이티브 승인 요청을 별도 알림으로 보여 주고 원래 Codex 인터페이스를 여는 동작만 제공한다. 허용/거부 응답의 소유권은 원래 Codex UI에 남긴다. Hook 자체의 승인 중계 가능성은 격리된 계약 실험에서 측정할 수 있지만 공개 기능으로 노출하지 않는다.
+공개 v0.1의 Hook은 네이티브 승인 요청을 별도 알림으로 보여 주고 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀만 제공한다. Hook 요청에는 원래 PID/창 identity가 없으므로 정확한 창 복귀를 약속하지 않는다. 허용/거부 응답의 소유권은 원래 Codex UI에 남긴다. Hook 자체의 승인 중계 가능성은 격리된 계약 실험에서 측정할 수 있지만 공개 기능으로 노출하지 않는다.
 
 ### Stop
 
@@ -458,7 +458,7 @@ IDLE
   ▼
 WORKING
   ├─ 네이티브 권한 요청 ──────────────> NATIVE_REQUEST_NOTICE
-  │                                         └─ 원래 Codex UI에서 응답 ─> WORKING
+  │                                         └─ best-effort 앱 복귀 후 Codex UI에서 응답 ─> WORKING
   ├─ 일반 Stop, 제안 없음 ────────────> IDLE
   └─ Stop 시 유효한 제안 ─────────────> DECISION_READY
                                             ├─ 1 권장 작업 ─┐
@@ -576,7 +576,7 @@ Blabee Pet
 
 이 모드는 `requestUserInput`, 명령/파일/권한 승인, 턴 이벤트, 정확한 스레드 라우팅을 보존하고 중계할 수 있다. 이 모드를 사용하려면 `blabee codex` 또는 다른 관리형 실행 경로가 필요할 가능성이 높다. 서로 독립적으로 실행되는 임의의 TUI 프로세스에 수동으로 연결할 수 있다는 보장은 문서화되어 있지 않다.
 
-일반 `requestUserInput`과 권한 응답은 이 모드가 검증될 때까지 원래 Codex UI에 남겨 둔다. 공개 Hook MVP는 Pet 알림과 원래 UI 열기만 지원한다. Pet에서 허용/거부를 반환하는 기능은 관리형 모드 또는 별도 릴리스 게이트를 통과한 후에만 검토한다.
+일반 `requestUserInput`과 권한 응답은 이 모드가 검증될 때까지 원래 Codex UI에 남겨 둔다. 공개 Hook MVP는 Pet 알림과 polling 시점의 frontmost 외부 앱으로 돌아가는 best-effort 동작만 지원한다. Pet에서 허용/거부를 반환하는 기능은 관리형 모드 또는 별도 릴리스 게이트를 통과한 후에만 검토한다.
 
 ## 12. macOS 앱과 패키징
 
@@ -667,7 +667,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - 비활성 슬롯은 안정적인 `disabled_reason`을 표시하고 `action_id`는 `null`이며 실행 본문을 갖지 않는다.
 - `pet_action`은 same-turn Stop 전용으로 교차 바인딩과 중복 종료를 거부한다. `internal_format_repair` 제출 토큰은 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치를 거부하며 사람의 새 프롬프트로 오인하지 않는다. dispatch 후 deadline 초과는 작업 결과 `unknown`과 자동 재시도 금지로 처리한다.
 - 내부 형식 보정은 같은 결정 경계에서 최대 한 번만 시도하고, 다시 실패하면 일반 결과만 보여 주며 단일 키 실행을 끈다.
-- Codex 네이티브 선택지는 Blabee의 1·2·3·4로 재해석하지 않는다. 공개 Hook v0.1에서는 원래 Codex UI가 표시·응답을 소유하고 Pet은 감지 가능한 요청의 알림과 화면 열기만 제공한다.
+- Codex 네이티브 선택지는 Blabee의 1·2·3·4로 재해석하지 않는다. 공개 Hook v0.1에서는 원래 Codex UI가 표시·응답을 소유하고 Pet은 감지 가능한 요청의 알림과 best-effort 앱 복귀만 제공한다.
 - 보류는 다른 턴을 시작하지 않고 완전한 재개 캡슐을 저장한다.
 - 검증된 체크포인트가 없으면 롤백을 절대 활성화하지 않는다.
 - 공개 v0.1에서 사람이 에피소드를 시작한 프롬프트 입력 직전 작업 트리나 인덱스가 깨끗하지 않으면 롤백이 비활성화된다.
@@ -682,7 +682,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - 로컬 코디네이터 연결이 2초 안에 성립하지 않으면 Hook은 fail-open하고 어떤 자동 선택이나 롤백도 실행하지 않는다.
 - Keychain freshness checkpoint보다 오래되거나 같은 sequence/head가 다른 authentic DB, DB·키 loss, anchor 누락/손상에서는 event를 반환하거나 저장 파일을 자동 생성하지 않는다.
 - freshness `pending + target DB`는 전체 authenticated replay 뒤에만 finalize하고, `pending + source DB`는 정확히 같은 canonical batch 재시도 외에는 자동 취소·진행하지 않는다.
-- 공개 v0.1의 네이티브 권한 알림에서는 원래 Codex UI 열기만 가능하고 허용/거부는 전송되지 않는다.
+- 공개 v0.1의 네이티브 권한 알림에서는 polling 시점의 frontmost 외부 앱으로 best-effort 복귀할 수 있고 허용/거부는 전송되지 않는다.
 - 기본 CLI는 동일한 Plugin 경로를 통해 Terminal, iTerm, VS Code 터미널, Orca에서 동작한다.
 - 터미널에 다시 진입하지 않고 저위험 결정 루프를 연속 세 번 완료한다.
 - 별도의 Blabee LLM API 자격 증명이 필요하지 않다.
@@ -693,7 +693,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 
 1. 임시 최종 메시지 센티널은 M0의 격리된 1회성 실험에만 사용한다. 운영 결정 제안 채널은 번들 로컬 MCP 도구다.
 2. 체크포인트 한도는 파일당 16 MiB, 체크포인트당 128 MiB, 프로젝트당 1 GiB다. 종료된 에피소드부터 정리하고 활성·보류 기준선, 대기 패킷 참조, 최신 복구 스냅샷은 보호한다. 무시 파일, 하위 모듈, LFS, 저장소 밖 경로와 외부 부수 효과는 공개 v0.1 복원 범위에서 제외한다.
-3. 공개 v0.1의 네이티브 권한 요청은 알림과 원래 Codex UI 열기만 제공한다.
+3. 공개 v0.1의 네이티브 권한 요청은 알림과 best-effort 앱 복귀만 제공하며 정확한 원래 창 복귀를 약속하지 않는다.
 4. 알파는 Codex `0.148.0`에 고정한다. 공개 배포는 지원 버전 허용 목록과 `blabee doctor` 검사를 사용하고, 주간·새 Codex 버전 발견 시·Blabee 릴리스 전에 계약 검사를 실행한다.
 5. Stop 대기 중 60초에 한 번 알리고 120초에 패킷을 만료한다. 자동 선택은 하지 않으며 재개 캡슐을 저장하고 늦은 입력을 거부한다.
 6. 여러 Hook 세션의 패킷은 각각 만료 시간을 갖는 대기열에 보관하고, 전역 단축키는 명시적으로 선택된 전면 카드 하나에만 연결한다.
@@ -714,6 +714,6 @@ T-007a는 런타임 중립 JavaScript 참조 코어에서 순수 `decide`/`reduc
 
 T-007b-A는 Swift 저수준 제품 영속 커널에서 strict ingress 4개 타입과 manifest fixture 20개, SQLite WAL/FULL/FK, 프로세스 간 CAS, crash·SIGKILL·commit 후 replay, runtime event MAC chain/head anchor, packet/verification row-bound HMAC을 구현했다. T-007b-A2는 strict Keychain freshness state, immutable DB checkpoint, digest CAS, secure process lock, storage preflight/recheck와 rollback/loss/crash reconciliation을 추가했다. T-007b-B1은 Swift 의미 state/application과 제품 semantic 경계를 추가해 low-level append의 제품 노출을 차단했다. B2는 atomic same-session pending, multi-session queue, explicit foreground/no-steal, exact selection, routed Pet token consume, fixed-window format-repair claim과 continuous deadline scheduler를 추가하고 direct B1 selection/token-consume/scheduler command를 제품 API에서 차단했다. 진단 가림 회귀 추가 직전 Swift package 62/62, T-007a 33/33, persistence 40/40과 전체 `npm test` 247/247이 통과했다. 가림 회귀 추가 뒤 M0는 55/55가 통과했고 실제 Codex 두 사이클도 재통과했지만, 최신 전 범위 248개 중 2개는 macOS Keychain `security` 조회 환경 timeout으로 남았다.
 
-T-007b-C에서는 실제 Codex CLI `0.149.0`과 M0 fake coordinator의 격리 픽스처가 같은 session·turn·episode lineage로 `boundary_sequence` 1→2, 결정 두 사이클, `M0_CONTINUED_TWICE`를 통과했다. 별도 Swift 제품 게이트는 같은 lineage에서 각 경계의 선택·dispatch·consume·전송 종료·작업 결과·경계 종료를 포함한 16개 이벤트를 영속화하고 재시작 후 재생했다. T-011은 이 의미를 실제 제품 Hook/MCP CLI, Pet API용 UDS test client와 고수준 Swift application/UDS에 옮겼다. 네이티브 Pet UI 결합은 T-010이다.
+T-007b-C에서는 실제 Codex CLI `0.149.0`과 M0 fake coordinator의 격리 픽스처가 같은 session·turn·episode lineage로 `boundary_sequence` 1→2, 결정 두 사이클, `M0_CONTINUED_TWICE`를 통과했다. 별도 Swift 제품 게이트는 같은 lineage에서 각 경계의 선택·dispatch·consume·전송 종료·작업 결과·경계 종료를 포함한 16개 이벤트를 영속화하고 재시작 후 재생했다. T-011은 이 의미를 실제 제품 Hook/MCP CLI, Pet API용 UDS test client와 고수준 Swift application/UDS에 옮겼다. T-010은 같은 UDS에 SwiftUI/AppKit 네이티브 Pet을 연결하고 코드·headless 안전 게이트를 통과했다.
 
-따라서 실제 사용자 작업공간이나 공개 MVP 사용 승인은 아니다. T-011의 고수준 adapter·단일 daemon/UDS ownership·full selection·원문 continuation token 비노출은 구현됐지만 실제 사용자 Hook 신뢰와 로그인 Keychain 제품 daemon qualification이 남아 있다. 실제 장시간 macOS sleep 운영 검증, 운영 롤백 안전 게이트, 네이티브 Pet, Developer ID 서명·공증 패키징과 signed Data Protection Keychain도 후속 범위다. 같은 UID anchor 삭제·교체, DB·키·anchor 동시 제거와 exact batch가 없는 pending-source 복구도 현재 범위 밖이다.
+따라서 실제 사용자 작업공간이나 공개 MVP 사용 승인은 아니다. T-011의 고수준 adapter·단일 daemon/UDS ownership·full selection·원문 continuation token 비노출과 T-010 Pet 코드는 구현됐지만 실제 사용자 Hook 신뢰, 로그인 Keychain 제품 daemon, WindowServer·다중 디스플레이·Spaces·실제 단축키·호스트 복귀 qualification이 남아 있다. 실제 장시간 macOS sleep 운영 검증, 운영 롤백 안전 게이트, Developer ID 서명·공증 패키징과 signed Data Protection Keychain도 후속 범위다. 같은 UID anchor 삭제·교체, DB·키·anchor 동시 제거와 exact batch가 없는 pending-source 복구도 현재 범위 밖이다.

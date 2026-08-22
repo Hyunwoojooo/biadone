@@ -13,7 +13,7 @@
 | T-007 | 이벤트 저널, 리듀서, 세션 대기열, 원자적 선택 선점 구현 | T-005, T-006 | 높음 | 재시작, 오래된 이벤트, 이중 선택, 형식 보정 예약의 원자적 경계당 1회 소비, CSPRNG 토큰·fingerprint constant-time 검증, 같은 턴의 연속 결정 사이클, 전면 카드, 교차 세션 입력 테스트가 통과함 | done |
 | T-008 | 사람이 입력한 직전 프롬프트 단위 clean-worktree 체크포인트와 롤백 검증 | 없음 | 치명적 | 합성 임시 Git 픽스처에서 Pet 연속 진행까지 바이트·Git 실행 비트·인덱스 단위 복원하고, unsupported index/config/metadata와 hazard attestation 누락을 포함한 dirty/ignored/submodule/LFS/루트 밖/크기 초과/동시 편집/브랜치·HEAD 변경/외부 효과에서는 fail-closed하며, 복구 스냅샷 생성과 1 GiB 정리 정책을 검증함. 스냅샷 재적용·실패 주입과 실제 작업공간 연결은 별도 제품 작업임 | done |
 | T-009 | 진행 중인 기존 프로젝트의 단계적 도입 구현 | T-006, T-008 | 높음 | 도입 중 저장소를 변경하지 않고, 안전한 기준선이 없을 때는 1·2·3만 제공하며 롤백은 비활성화됨 | pending |
-| T-010 | 반고정 결정 카드를 갖춘 네이티브 macOS Pet 구현 | T-006, T-007 | 중간 | 동적 1·2, 고정 3·4, 다중 세션 전면 카드, 비활성 슬롯, 만료 상태를 정확히 표시하고 입력 초점·다중 디스플레이·오래된 단축키 테스트가 통과함 | pending |
+| T-010 | 반고정 결정 카드를 갖춘 네이티브 macOS Pet 구현 | T-006, T-007 | 중간 | 동적 1·2, 고정 3·4, 다중 세션 전면 카드, 비활성 슬롯, 만료 상태를 정확히 표시하고 입력 초점·다중 디스플레이·오래된 단축키 테스트가 통과함 | in_progress |
 | T-011 | 검증된 Skill, Hook, MCP 운영 어댑터 구현과 플러그인 패키징 | T-001~T-007 | 높음 | Hook·MCP·Pet을 Swift 제품 코디네이터에 연결하는 고수준 adapter와 단일 UDS owner를 구현하고, 센티널 없이 운영 왕복·설치·업데이트·제거·신뢰 검토 흐름을 재현할 수 있음 | in_progress |
 | T-012 | 서명 및 공증된 DMG, `blabee doctor`, 터미널 매트릭스 구현 | T-010, T-011 | 높음 | Codex 0.148.0/지원 allowlist, 앱·데몬·Plugin/MCP·Hook 신뢰·프로젝트 활성화 진단이 작동하고 Terminal, iTerm, VS Code 터미널, Orca에서 통과함 | pending |
 | T-013 | 3회 연속 내부 실사용과 안전성 통과 기준 실행 | T-007~T-012 | 치명적 | 3회 순환 완료, 검증된 롤백 실패 0건, 높음·치명적 작업의 전역 단축키 시작 및 네이티브 원클릭 승인 0건 | pending |
@@ -22,7 +22,7 @@
 ## M0 상태 해석
 
 - T-001~T-003은 실제 Codex CLI `0.148.0` 임시 프로젝트 계약 픽스처와 자동 테스트를 기준으로 완료했다.
-- T-004는 PermissionRequest 알림 전용·응답 비중계 계약만 확인했다. 원래 Codex UI 열기와 실제 Pet UX가 남아 있어 `in_progress`다.
+- T-004는 PermissionRequest 알림 전용·응답 비중계 계약과 Pet의 best-effort 앱 복귀 코드를 확인했다. 요청에 원래 PID/창 identity가 없어 알림 증가를 polling한 시점의 frontmost 외부 앱만 기억하므로 정확한 원래 Codex 창과 실환경 Pet UX 검증이 남아 `in_progress`다.
 - T-005는 Node·Swift의 공통 NDJSON 계약, `fsync`·강제 종료 replay·partial-tail 복구·지속 부하·단조 대기 probe·구조화 진단·ad-hoc 서명·측정용 DMG를 비교해 Swift 네이티브 헬퍼를 제품 런타임으로 선택했다. Node는 계약 참조, C는 health 전용 성능 기준선이다. 유효한 Developer ID identity는 0개였고 공증은 측정하지 않았으므로 공개 서명·공증 DMG는 T-012에 남는다.
 - T-006은 `Contracts/v1`, `Fixtures/v1`, `Tests/Contracts`의 런타임 독립 계약 범위에서 완료했다. 형식 보정의 durable 예약·claim 이벤트와 replay 규칙은 고정했지만 실제 이벤트 저널·원자적 선택·반복 Pet 루프를 구현했다는 뜻은 아니며 그 책임은 T-007에 남는다.
 - T-007a는 JavaScript ESM의 런타임 중립 참조 코어로 순수 `decide`/`reduce`/`replay`, CAS 선택 선점, 같은 턴 경계 1→2, 정확한 패킷·리비전·옵션 해석, CSPRNG 토큰과 constant-time fingerprint 검증을 구현했다.
@@ -33,6 +33,7 @@
 - T-007b-A/A2는 공개 운영 승인이 아니다. 기존 DB·키에 anchor가 없으면 과거 상태의 자동 신뢰를 막기 위해 migration/adoption하지 않고 차단한다. 현재 unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하며, 서명된 wrapper와 Data Protection Keychain/access group·`LAContext` 전환은 T-012에 남는다. 같은 UID 공격자가 Keychain까지 삭제·교체하거나 DB·키·anchor를 동시에 제거하는 경우는 A2만으로 구분하지 못한다.
 - T-007b-C는 조건부 완료다. 실제 Codex CLI `0.149.0`과 M0 fake coordinator의 격리 픽스처에서 같은 session·turn·episode lineage의 결정 두 번이 `boundary_sequence` 1→2로 진행됐고, 별도 Swift 제품 게이트는 같은 lineage의 경계 두 개를 16개 이벤트로 영속·재생했다. 두 시험을 합쳐 T-007의 반복 상태 계약은 완료로 판정한다. Hook·MCP·Pet을 Swift 제품 코디네이터에 직접 연결하는 고수준 adapter·UDS·플러그인 패키징은 T-011에 남는다.
 - T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 운영 application, Pet `get_state`/full-selection API와 단일 UDS owner를 구현했다. 실제 Codex CLI `0.149.0`의 격리된 플러그인 설치·업데이트·제거와, Keychain 없는 실제 SQLite/Swift 제품 구성요소를 통한 Hook→MCP→Stop→Pet 두 경계 1→2 결합 왕복이 통과했다. open/seal·selection·completion·scheduler의 pre/post-commit 부분 실패는 journal authority 재조정, retained monotonic anchor, token 비재발급과 exactly-once terminal 회귀로 고정했다. 로그인 Keychain을 사용하는 제품 daemon과 수동 Hook 신뢰 검토가 남아 있어 `in_progress`로 유지한다.
+- T-010은 SwiftUI 기반 비활성 floating `NSPanel`, 다중 세션 카드와 명시적 foreground, 반고정 1·2·3·4 표시, 만료·위험 확인, 동적 Carbon 단축키와 PermissionRequest 알림을 구현했다. Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)이 통과했지만 실제 WindowServer의 입력 초점·Spaces·다중 디스플레이·호스트 앱 복귀와 실시간 60/120초 검증이 남아 있어 `in_progress`로 유지한다. 권한 요청의 원래 PID/창 identity가 없어 polling 시점 frontmost 앱으로만 best-effort 복귀하는 한계와 설정 UI·앱 번들/서명/DMG는 후속 범위다. 현재 operational 제안은 risk `info`, 빈 evidence, unavailable checkpoint, rollback disabled만 생성하므로 고위험 확인·채워진 상세·활성 롤백은 fixture 안전 경로만 검증됐다.
 - T-008의 `done`은 운영체제 임시 디렉터리 아래 합성 Git 픽스처 범위다. 실제 사용자 프로젝트에서 롤백을 활성화했다는 뜻이 아니다.
 - Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 않는다. 공식 Stop Hook의 `reason`은 모델에는 새 사용자 프롬프트처럼 작동하는 continuation prompt이며, `0.149.0` 격리 픽스처에서는 별도의 사람이 제출한 `UserPromptSubmit` 없이 같은 session·turn lineage가 유지됐다. 이 동작은 exact-version 계약 테스트 대상이다.
 - T-003은 `0.148.0`의 한 결정 사이클 증거이고 T-007b-C는 `0.149.0`의 두 결정 사이클 증거다. `0.148.0` 반복 두 사이클과 `0.149.0` 제품 지원 승인은 아직 없으며, 제품 Hook→Swift 연결은 T-011에서 검증한다.
