@@ -2884,31 +2884,7 @@ function inspectRecordSetBindingForKernel(
 
   const diagnostics: AuthoritativeVerificationKernelDiagnosticInternalV0_1[] =
     [];
-  if (
-    receipt.commonSuggestionEvidenceRecordSetSha256 !==
-    verified.recordSet.commonSuggestionEvidenceRecordSetSha256
-  ) {
-    arrayPushValue(
-      diagnostics,
-      kernelDiagnostic(
-        "record_set_binding",
-        "RECORD_SET_BINDING_MISMATCH",
-        null,
-        "record_set_root_mismatch",
-      ),
-    );
-  }
-  if (receipt.asOf !== verified.recordSet.asOf) {
-    arrayPushValue(
-      diagnostics,
-      kernelDiagnostic(
-        "record_set_binding",
-        "RECORD_SET_BINDING_MISMATCH",
-        null,
-        "record_set_as_of_mismatch",
-      ),
-    );
-  }
+  let hasPerSourceRecordIdSetMismatch = false;
 
   const recordIdsBySource: string[][] = [];
   for (let index = 0; index < LINEAGE_SOURCES_V0_1.length; index += 1) {
@@ -2950,11 +2926,12 @@ function inspectRecordSetBindingForKernel(
     const binding = receipt.sourceBindings[sourceIndex]!;
     const recordIds = recordIdsBySource[sourceIndex]!;
     if (binding.recordCount !== recordIds.length) {
+      hasPerSourceRecordIdSetMismatch = true;
       arrayPushValue(
         diagnostics,
         kernelDiagnostic(
           "record_set_binding",
-          "RECORD_SET_BINDING_MISMATCH",
+          "RECORD_ID_SET_MISMATCH",
           source,
           "record_count_mismatch",
         ),
@@ -2964,6 +2941,7 @@ function inspectRecordSetBindingForKernel(
       binding.recordIdsSha256 !==
       hashRecordIdSetInternalV0_1(source, recordIds)
     ) {
+      hasPerSourceRecordIdSetMismatch = true;
       arrayPushValue(
         diagnostics,
         kernelDiagnostic(
@@ -2971,6 +2949,34 @@ function inspectRecordSetBindingForKernel(
           "RECORD_ID_SET_MISMATCH",
           source,
           "record_id_set_mismatch",
+        ),
+      );
+    }
+  }
+
+  if (!hasPerSourceRecordIdSetMismatch) {
+    if (
+      receipt.commonSuggestionEvidenceRecordSetSha256 !==
+      verified.recordSet.commonSuggestionEvidenceRecordSetSha256
+    ) {
+      arrayPushValue(
+        diagnostics,
+        kernelDiagnostic(
+          "record_set_binding",
+          "RECORD_SET_BINDING_MISMATCH",
+          null,
+          "record_set_root_mismatch",
+        ),
+      );
+    }
+    if (receipt.asOf !== verified.recordSet.asOf) {
+      arrayPushValue(
+        diagnostics,
+        kernelDiagnostic(
+          "record_set_binding",
+          "RECORD_SET_BINDING_MISMATCH",
+          null,
+          "record_set_as_of_mismatch",
         ),
       );
     }

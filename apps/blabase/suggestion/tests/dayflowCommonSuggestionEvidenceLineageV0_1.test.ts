@@ -2392,11 +2392,82 @@ describe("Stage10-2A authoritative verification kernel", () => {
     });
   });
 
-  it("uses frozen Stage 2 precedence while preserving bounded diagnostics", () => {
+  it("maps an isolated per-source record-count mismatch to the record-ID-set failure", () => {
     const recordSet = emptyKernelRecordSet();
-    const receipt = githubRequestedReceipt();
+    const receipt = bindReceiptToKernelRecordSet(
+      githubRequestedReceipt(),
+      recordSet,
+    );
+    receipt.sourceBindings[0]!.recordCount = 1;
+    rehash(receipt);
+
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      { github: Object.freeze({ fictionalBundle: true }) },
+      unavailableKernelRegistry(),
+      emptyKernelRuntimeSnapshot(),
+    );
+
+    expect(result).toEqual({
+      executed: false,
+      authoritative: false,
+      failedStage: "record_set_binding",
+      failureCode: "RECORD_ID_SET_MISMATCH",
+      diagnostics: [
+        {
+          stage: "record_set_binding",
+          failureCode: "RECORD_ID_SET_MISMATCH",
+          source: "github",
+          detail: "record_count_mismatch",
+        },
+      ],
+    });
+  });
+
+  it("suppresses a root mismatch when a per-source record-count mismatch applies", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      githubRequestedReceipt(),
+      recordSet,
+    );
     receipt.commonSuggestionEvidenceRecordSetSha256 = hash(997);
     receipt.sourceBindings[0]!.recordCount = 1;
+    rehash(receipt);
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      { github: Object.freeze({ fictionalBundle: true }) },
+      unavailableKernelRegistry(),
+      emptyKernelRuntimeSnapshot(),
+    );
+    expect(result).toEqual({
+      executed: false,
+      authoritative: false,
+      failedStage: "record_set_binding",
+      failureCode: "RECORD_ID_SET_MISMATCH",
+      diagnostics: [
+        {
+          stage: "record_set_binding",
+          failureCode: "RECORD_ID_SET_MISMATCH",
+          source: "github",
+          detail: "record_count_mismatch",
+        },
+      ],
+    });
+    expect(result.diagnostics).not.toContainEqual(
+      expect.objectContaining({ detail: "record_set_root_mismatch" }),
+    );
+    expect(Object.isFrozen(result.diagnostics)).toBe(true);
+  });
+
+  it("suppresses a root mismatch when a per-source record-ID-set mismatch applies", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      githubRequestedReceipt(),
+      recordSet,
+    );
+    receipt.commonSuggestionEvidenceRecordSetSha256 = hash(997);
     receipt.sourceBindings[0]!.recordIdsSha256 = hash(996);
     rehash(receipt);
     const result = executeAuthoritativeVerificationKernelInternalV0_1(
@@ -2406,22 +2477,22 @@ describe("Stage10-2A authoritative verification kernel", () => {
       unavailableKernelRegistry(),
       emptyKernelRuntimeSnapshot(),
     );
-    expect(result).toMatchObject({
+    expect(result).toEqual({
+      executed: false,
+      authoritative: false,
       failedStage: "record_set_binding",
-      failureCode: "RECORD_SET_BINDING_MISMATCH",
-    });
-    expect(result.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ detail: "record_set_root_mismatch" }),
-        expect.objectContaining({
-          source: "github",
-          detail: "record_count_mismatch",
-        }),
-        expect.objectContaining({
+      failureCode: "RECORD_ID_SET_MISMATCH",
+      diagnostics: [
+        {
+          stage: "record_set_binding",
+          failureCode: "RECORD_ID_SET_MISMATCH",
           source: "github",
           detail: "record_id_set_mismatch",
-        }),
-      ]),
+        },
+      ],
+    });
+    expect(result.diagnostics).not.toContainEqual(
+      expect.objectContaining({ detail: "record_set_root_mismatch" }),
     );
     expect(Object.isFrozen(result.diagnostics)).toBe(true);
   });

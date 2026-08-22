@@ -7895,3 +7895,249 @@ alter their validation and QA evidence, expand their authority boundary, or appr
 work.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2A-CODE-COMMIT-IDENTITY-2026-08-22:end -->
+
+---
+
+<!-- engine-change-record-section:ECR-STAGE10-V0-1-RECORD-COUNT-CONTRACT-ALIGNMENT-2026-08-22:begin -->
+
+## Engine Change Record: ECR-STAGE10-V0-1-RECORD-COUNT-CONTRACT-ALIGNMENT-2026-08-22
+
+- Date: 2026-08-22
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Status: V0.1 contract-alignment correction implemented and the recorded focused/full validation
+  passed. Independent exact code/test QA, the V0.2 contract's independent re-QA, correction commit
+  identity, and Colin's remaining review/freeze decisions are pending.
+- Classification: Behavior-changing bug correction that restores conformance with the already-frozen
+  V0.1 contract. This is not a new semantic rule and does not bump a contract, schema, verifier,
+  rule, or public API version. The exact correction commit identity, rather than a reused historical
+  identity, must bind the changed implementation bytes.
+- Goal: Correct the accepted private V0.1 kernel's one non-conformant per-source `recordCount`
+  disagreement branch so it emits the failure code required by the frozen contract, and prevent the
+  drift from recurring with one focused synthetic GitHub regression test.
+- Affected pipeline stages: Private/internal Stage10-2A `record_set_binding` failure classification
+  and its focused regression test only.
+- Behavior before: The frozen V0.1 contract assigned an authoritative per-source partition's
+  `recordCount` disagreement to `RECORD_ID_SET_MISMATCH`, but the accepted implementation emitted
+  `RECORD_SET_BINDING_MISMATCH` for only that count-mismatch branch.
+- Behavior after: The branch emits `RECORD_ID_SET_MISMATCH`. The focused GitHub test changes only
+  the receipt binding's `recordCount` from zero to one while the authoritative source partition is
+  empty and its canonical empty record-ID-set hash remains valid, then asserts the unchanged
+  `record_set_binding` stage, `executed: false`, `authoritative: false`, and the bounded diagnostic
+  detail `record_count_mismatch` under the corrected code.
+- Preserved behavior: Fixed source order; stage order and `record_set_binding` stage; frozen failure
+  precedence; public facade and exports; result flags and diagnostic structure; root, `asOf`, fixed
+  source presence, partition, same-ID record-content, and provenance behavior; and every branch
+  other than this isolated per-source count classification remain unchanged.
+- Versions before: Frozen Common Suggestion Evidence Lineage V0.1 contract and accepted private
+  Stage10-2A implementation at historical base commit
+  `8d868983cf85f5571abaa48d39765d29498eb04f`, with its historical ECR addendum commit
+  `7cea8e58e62c7986dd8fd453a81fb12bd0c08225`.
+- Versions after: The same frozen V0.1 contract and existing private/public version surfaces, with
+  the implementation aligned to that contract. No version bump applies because no frozen semantic
+  rule is added or revised. The changed bytes require the separate correction identity below.
+- Code commit: `TBD_UNCOMMITTED`. The two historical Stage10-2A SHAs above are base identities, not
+  identities for this correction. This placeholder must be replaced with the correction's full Git
+  commit SHA before the V0.2 contract can freeze.
+- Evaluation dataset version and SHA-256: Not applicable. No Golden, Regression, Rolling, Holdout,
+  or formal evaluation dataset was changed or executed; the added fixture is synthetic test data.
+- Candidate run ID: Not applicable. No model, provider, suggestion-generation, or evaluation run
+  occurred.
+- Comparison run ID: Not applicable. No comparable engine or suggestion outputs were generated.
+- Commands executed: The following evidence was produced on 2026-08-22 before this ECR task and is
+  recorded without rerunning it:
+  - `npm test -- tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`: exit 0; Vitest v3.2.7;
+    1/1 test file passed; 47/47 tests passed; 292ms reported total duration.
+  - `npm test`: exit 0; Vitest v3.2.7; 168/168 test files passed; 1,592/1,592 tests passed; 20.16s
+    reported total duration.
+  - `npm run typecheck`: `tsc --noEmit`; exit 0.
+  - `npm run lint`: ESLint command completed; exit 0.
+  No command, validation, or Git operation was run while appending this record.
+- Metrics changed: Not applicable. Test counts and durations are engineering validation evidence,
+  not semantic-quality, A/B/C, latency, token, cost, product, or release metrics. Provider latency
+  and token usage are not applicable because this deterministic branch invokes no provider.
+- Dependencies, data, and architecture: No dependency, schema version, public API, model, prompt,
+  ranking, configuration, guardrail, dataset, provider, module/import boundary, system boundary, or
+  architecture boundary changed. No production or evaluation data changed.
+- Regressions or accepted exceptions: No known regression is accepted. Exact code/test independent
+  QA remains pending. Independent re-QA of the corrected V0.2 proposal remains pending. Build and
+  architecture commands were not run because no module/import/system/architecture boundary changed;
+  build remains a later release/commit-readiness decision and no build or architecture PASS is
+  claimed. The correction commit identity, exact proposal freeze identity, and V0.2 freeze decision
+  remain pending.
+- Privacy or retention impact: None. No raw evidence, conversation, provider payload, user data,
+  secret, credential, private artifact, or live source material was added. The focused fixture is
+  fictional and synthetic. No collection, consent, persistence, retention, deletion, or private
+  artifact policy changed.
+- Compatibility: Private/internal implementation behavior only. The public facade, exports, input
+  and result schema, result flags, and diagnostic structure are unchanged. Only the failing
+  diagnostic code for the previously non-conformant per-source count-mismatch case changes from
+  `RECORD_SET_BINDING_MISMATCH` to `RECORD_ID_SET_MISMATCH`.
+- Release decision: Not released. This record documents accumulated implementation and validation
+  evidence but does not replace Colin's human decision, authorize V0.2 implementation, freeze the
+  V0.2 proposal, activate a source verifier, or grant public/production authority. V0.2 freeze is
+  blocked until `TBD_UNCOMMITTED` is replaced by the full correction commit SHA and the remaining
+  contract/QA/Colin gates pass.
+- Rollback method: In a separately approved change, restore only the prior single count-mismatch
+  branch and remove only the new focused regression test. That rollback deliberately restores known
+  drift from the frozen V0.1 contract and therefore requires an explicit Colin decision. No
+  destructive rollback or other action was performed by this ECR task.
+- Follow-up work: Complete independent exact code/test QA; complete independent V0.2 contract re-QA;
+  create and record the full correction commit SHA; bind an exact proposal identity; and present the
+  exact V0.2 freeze decision to Colin. Build remains a separate release/commit-readiness choice.
+
+### Relevant implementation, test, and contract paths
+
+- `suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts`
+- `suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`
+- `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_LINEAGE_V0_1_CONTRACT.md`
+- `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_2_CONTRACT.md`
+
+### Related V0.2 proposal boundary
+
+The corrected Common Suggestion Evidence Source Verification V0.2 document remains
+`FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`. It is not frozen, accepted, implemented, activated, or
+released and grants no implementation authorization. Its proposed text must not be described as
+implemented runtime behavior.
+
+Stage10-2B remains private and every success branch remains `authoritative: false`; Stage10-2C alone
+may first introduce an `authoritative: true` result or public authority path. The A/B/C same-engine
+invariant remains unchanged: all arms use the identical Blabase adapter, suggestion engine, model,
+prompt, configuration, ranking, guardrails, and output schema, with only the evidence set differing.
+Dayflow remains capture, storage, privacy, OCR, and preprocessing evidence only and cannot supply
+structured facts, suggestion-shaped semantics, final output, or engine-control signals.
+
+This additive record preserves the accepted Stage10-2A history and supersedes only any statement
+that the V0.1 per-source `recordCount` mismatch branch still conforms without the correction. It does
+not rewrite the frozen V0.1 contract or claim that the proposed V0.2 runtime exists.
+
+<!-- engine-change-record-section:ECR-STAGE10-V0-1-RECORD-COUNT-CONTRACT-ALIGNMENT-2026-08-22:end -->
+
+<!-- engine-change-record-section:ECR-STAGE10-V0-1-RECORD-COUNT-QA-CORRECTION-2026-08-22:begin -->
+
+## Engine Change Record Addendum: ECR-STAGE10-V0-1-RECORD-COUNT-QA-CORRECTION-2026-08-22
+
+- Date: 2026-08-22
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Parent record: `ECR-STAGE10-V0-1-RECORD-COUNT-CONTRACT-ALIGNMENT-2026-08-22`.
+  This addendum preserves that entry as historical evidence for its earlier bytes and records the
+  subsequent comprehensive-QA correction and current-byte validation.
+- Status: The comprehensive-QA defect is corrected and the recorded current-byte full-suite,
+  typecheck, and lint validation passed. A standalone focused command was not rerun for these exact
+  bytes. Independent re-QA of the corrected implementation, tests, and V0.2 proposal remains
+  pending, as do the correction commit identity and Colin's commit and freeze decisions.
+- Classification: Behavior-changing correction that aligns the implementation with the
+  already-frozen V0.1 failure-precedence predicate, plus a contract-only V0.2 type/status
+  correction. No contract, schema, verifier, rule, public API, or other semantic version bump is
+  introduced, and no new production authority is granted.
+- Goal: Make combined root or `asOf` disagreement plus per-source count or ID-set disagreement
+  resolve deterministically under the frozen V0.1 predicate, strengthen the regression assertions,
+  and correct the unfrozen V0.2 proposal's source-specific diagnostic typing and validation-history
+  statements without authorizing V0.2 runtime behavior.
+- Affected pipeline stages: Private/internal Stage10-2A `record_set_binding` diagnostic precedence
+  and focused synthetic tests; contract text and type/status statements in the unfrozen Stage10-2B
+  V0.2 proposal. No public or authoritative Stage10-2B path is affected.
+- Behavior before: When a root or `asOf` mismatch coexisted with a per-source `recordCount` or
+  record-ID-set mismatch, the implementation appended root diagnostics first. The resulting failure
+  was therefore `RECORD_SET_BINDING_MISMATCH`, contrary to the frozen V0.1 predicate that gives the
+  per-source count/ID-set mismatch the deterministic `RECORD_ID_SET_MISMATCH` outcome.
+- Behavior after: The implementation determines whether any per-source count or ID-set mismatch
+  exists before adding root or `asOf` diagnostics. When such a mismatch exists, root and `asOf`
+  diagnostics are suppressed and the result is deterministically `RECORD_ID_SET_MISMATCH`.
+- Test coverage after: The affected tests use exact result-shape assertions and separately cover a
+  combined root-plus-count mismatch and a combined root-plus-ID-set mismatch. They assert the
+  absence of root diagnostics and downstream Stage 3 fields as well as the required
+  `RECORD_ID_SET_MISMATCH` failure shape.
+- V0.2 proposal correction: The proposal structurally restricts `TIMEZONE_PROFILE_INVALID` to
+  `google_calendar` and distinguishes historical pre-QA-correction validation from current-byte
+  validation. This is proposal text only; V0.2 remains unimplemented, unfrozen, and non-authorizing.
+- Preserved behavior: The public facade, exports, input/result schema and versions, dependencies,
+  model, prompt, configuration, ranking, guardrails, A/B/C same-engine invariance, Dayflow
+  evidence-only boundary, privacy and retention behavior, and architecture, module, import, and
+  system boundaries are unchanged. Stage10-2B remains private and always returns
+  `authoritative: false`.
+- Versions before: Frozen Common Suggestion Evidence Lineage V0.1 contract with the earlier
+  count-classification correction described by the parent record; unfrozen Common Suggestion
+  Evidence Source Verification V0.2 proposal at
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`.
+- Versions after: The same frozen V0.1 contract and existing private/public version surfaces, with
+  implementation precedence aligned to the already-frozen predicate; the corrected V0.2 proposal
+  remains `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`, unfrozen, unimplemented, and non-authorizing.
+  No version bump applies because the runtime correction restores the existing frozen predicate and
+  the V0.2 edits correct proposal typing/status truth rather than freeze a new contract.
+- Code commit: `TBD_UNCOMMITTED`. No Git identity is inferred or invented for these bytes.
+- Exact V0.2 proposal identity: `TBD_AT_FREEZE`. No proposal hash or freeze identity is claimed.
+- Evaluation dataset version and SHA-256: Not applicable. No Golden, Regression, Rolling, Holdout,
+  or formal evaluation dataset changed or ran; the regression inputs are fictional synthetic tests.
+- Candidate run ID: Not applicable. No model, provider, suggestion-generation, or evaluation run
+  occurred.
+- Comparison run ID: Not applicable. No comparable engine or suggestion outputs were generated.
+- Commands executed: Parent-provided current-byte evidence from 2026-08-22 is recorded without
+  rerunning any command in this documentation substep. `npm test` completed with exit 0 under
+  Vitest v3.2.7: 168/168 test files and 1,593/1,593 tests passed; the
+  `tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts` file contributed 48/48 passing tests
+  with 102ms file time; reported total duration was 20.26s. `npm run typecheck` ran `tsc --noEmit`
+  and completed with exit 0. `npm run lint` completed ESLint with exit 0. A standalone focused test
+  command was not rerun for the current bytes. Build and architecture checks were not run, and no
+  build or architecture PASS is claimed. No validation command or Git operation was run while
+  appending this record.
+- Historical validation supersession: The parent record's focused 47/47 and full-suite
+  1,592/1,592 results remain truthful historical `PRE-QA-CORRECTION` evidence for the earlier bytes.
+  They are superseded by the 1,593-test current-byte result for current readiness and must not be
+  reused as validation of this correction.
+- Metrics changed: Not applicable. Test counts and durations are engineering validation evidence,
+  not semantic-quality, A/B/C, provider-latency, token, cost, product, or release metrics. No model
+  or provider ran, so model identity, token usage, latency, and cost metrics are not applicable.
+- Dependencies, data, and architecture: No production dependency, configuration, dataset, model,
+  prompt, ranking, guardrail, module/import boundary, system boundary, or architecture boundary
+  changed. Build and architecture checks were not run because this correction did not change those
+  boundaries; their status is unknown rather than passing.
+- Regressions or accepted exceptions: No known regression is accepted. The recorded validation
+  establishes the stated automated checks for the corrected bytes but does not replace independent
+  exact-byte re-QA or Colin's decisions. The absence of a standalone current-byte focused run is
+  explicitly recorded; the same file's 48 tests passed within the full suite. Commit identity,
+  exact proposal freeze identity, V0.2 freeze, and release authority remain unresolved.
+- Privacy or retention impact: None. Only fictional synthetic test inputs were involved. No raw
+  evidence, user or provider data, conversation, secret, credential, private artifact, or live
+  source material was added or exposed. Collection, consent, storage, retention, and deletion
+  behavior are unchanged.
+- Compatibility: The public facade and schema/version surfaces are unchanged. The private failure
+  selection now matches the existing frozen V0.1 predicate when per-source count/ID-set and
+  root/`asOf` mismatches coexist. No V0.2 proposal type is represented as current runtime behavior.
+- Release decision: Not released. The V0.2 proposal remains
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`, unfrozen, unimplemented, and non-authorizing. This
+  addendum does not authorize implementation, commit, freeze, activation, release, or production
+  authority. Stage10-2B remains `authoritative: false`; Colin's explicit decisions remain required.
+- Rollback method: Only with Colin's explicit decision, restore the prior diagnostic gating and
+  associated tests, and restore the prior V0.2 type/status text. Such a rollback would knowingly
+  reintroduce drift from the frozen V0.1 precedence predicate and invalid source scoping for
+  `TIMEZONE_PROFILE_INVALID`. No rollback or destructive action was performed here.
+- Follow-up work: Complete independent re-QA against these exact implementation, test, and proposal
+  bytes; create and record the full correction commit SHA; bind the exact proposal identity at
+  freeze; and present the separate commit and V0.2 freeze decisions to Colin. Build and architecture
+  checks remain unrun and may be required only by a later, separately approved release-readiness
+  scope.
+
+### Relevant implementation, test, proposal, and parent-record paths
+
+- `suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts`
+- `suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`
+- `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_2_CONTRACT.md`
+- `suggestion/docs/ENGINE_CHANGE_RECORD.md`
+
+The A/B/C invariant continues to require the identical Blabase adapter, suggestion engine, model,
+prompt, configuration, ranking, guardrails, and output schema in every arm, with only the evidence
+set differing. Dayflow remains capture, storage, privacy, OCR, and preprocessing evidence only and
+cannot supply structured facts, suggestion-shaped semantics, final output, or engine-control
+signals.
+
+This addendum supersedes the parent record only as evidence of readiness for the current corrected
+bytes. It does not rewrite the parent record's historical facts, the frozen V0.1 contract, or any
+prior commit identity, and it does not claim that the proposed V0.2 runtime exists.
+
+<!-- engine-change-record-section:ECR-STAGE10-V0-1-RECORD-COUNT-QA-CORRECTION-2026-08-22:end -->
