@@ -7858,3 +7858,40 @@ preceding READY record. It does not rewrite that record or grant production-auth
 deployment, source-verifier, A/B/C experiment, public-contract, or Git authority.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2A-COLIN-ACCEPTED-2026-08-22:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2A-CODE-COMMIT-IDENTITY-2026-08-22:begin -->
+
+## Commit Identity Addendum: ECR-STAGE10-2A-CODE-COMMIT-IDENTITY-2026-08-22
+
+- Date: 2026-08-22
+- Timezone: Asia/Seoul
+- Code commit SHA: `8d868983cf85f5571abaa48d39765d29498eb04f` (short reference
+  `8d86898`).
+- Commit subject: `feat(suggestion): add Stage10-2A lineage verification kernel`
+- Branch at commit time: `feat/common-lineage-v01-verifier`
+- Exact commit scope: The commit contained exactly the following four Stage10 files already
+  recorded by this Engine Change Record:
+  - `suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts`
+  - `suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`
+  - `suggestion/docs/DAYFLOW_SUGGESTION_ABLATION_PLAN.md`
+  - `suggestion/docs/ENGINE_CHANGE_RECORD.md`
+- Excluded worktree scope: `package-lock.json` and all unrelated dirty-worktree files were not
+  included in the implementation commit. This addendum does not claim that the worktree was clean.
+- Binding boundary: This commit identity binds only the previously accepted Stage10-2A
+  internal/private technical checkpoint and its recorded implementation, tests, plan, and Engine
+  Change Record.
+- Explicit exclusions: This identity grants no Stage10-2B or Stage10-2C completion, actual source
+  verifier, public authoritative-success or `authoritative: true` path, A/B/C execution or result,
+  release, deployment, push, or merge approval.
+- Acceptance authority: Colin's acceptance remains the prior recorded decision. This commit-identity
+  record does not create a second human approval gate. David has no reviewer, approver, receipt, or
+  artifact role.
+- Addendum commit identity: The Git SHA of the future documentation commit containing this addendum
+  is not yet known and is intentionally not claimed.
+
+This append-only addendum resolves and supersedes only the earlier pending or unrecorded Stage10-2A
+implementation commit identity. It does not rewrite the preceding READY or acceptance records,
+alter their validation and QA evidence, expand their authority boundary, or approve any excluded
+work.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2A-CODE-COMMIT-IDENTITY-2026-08-22:end -->
