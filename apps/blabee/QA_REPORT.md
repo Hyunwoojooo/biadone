@@ -1,6 +1,6 @@
 # Blabee M0, T-005, T-006, T-007, T-010 및 T-011 QA 보고서
 
-상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 코드·headless 안전 게이트 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인
+상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인
 검토일: 2026-08-22
 대상: `spikes/m0/`, `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서
 
@@ -28,11 +28,11 @@ T-007b-C는 같은 턴 반복 계약 범위에서 조건부 승인한다. 실제
 
 T-011은 코드와 Keychain 없는 실제 제품 구성요소 결합 범위에서 조건부 승인한다. Codex Plugin v0.1.0의 조건부 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet `get_state`/v1 full-selection, UDS·storage 단일 owner를 구현했다. 실제 제품 Hook/MCP CLI와 Pet API용 UDS test client를 test-only in-memory freshness를 사용하는 실제 SQLiteJournal→Routing→Operational→UDS에 연결해 같은 lineage의 경계 1→2, staged promotion, 선택 두 번, Stop block 두 번과 final completion을 센티널 없이 통과했다. 지정된 첫 UserPrompt context 외 correlation token 재노출, proposal free-text copy, 원문 continuation token의 DB/WAL/SHM·공개 응답 유출을 차단한다.
 
-T-010은 코드와 headless 안전 계약 범위에서 조건부 승인한다. 비활성 floating `NSPanel`, routing 순서와 exact binding을 보존하는 다중 세션 카드, 명시적 14-field focus 뒤 16-field selection, single-flight 선택, disabled·stale·expired·ambiguous 입력의 fail-closed, high/critical 1·2 확인, 동적 Carbon 단축키 등록과 오래된 registration 무효화를 구현했다. PermissionRequest는 새 요청만 알리고 Allow/Deny를 중계하지 않는다. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 외부 앱으로만 best-effort 복귀한다. Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 96/96이 통과했다.
+T-010은 실제 macOS 1차 qualification 범위에서 조건부 승인한다. 비활성 floating `NSPanel`, routing 순서와 exact binding을 보존하는 다중 세션 카드, 명시적 14-field focus 뒤 16-field selection, single-flight 선택, disabled·stale·expired·ambiguous 입력의 fail-closed, high/critical 1·2 확인을 구현했다. 단축키 설정은 Option을 포함한 제한된 picker만 제공하고 Option 단독 문자를 차단하며, 중복·미지원 조합을 저장 전에 거부한다. 활성 등록 중 하나라도 실패하면 후보 전체를 저장하지 않고 이전 설정과 binding을 복원하며, 카드 label도 실제 등록·충돌·실패·확인·비활성 상태를 반영한다. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, 취소와 저장/재시작, 실제 Carbon 충돌 진단, 유효 카드 focus/select를 확인했다. 독립 QA가 찾은 접기/펼치기 위치 점프와 화면 축소 뒤 정상 크기 미복원은 lower-trailing anchor 보존, intended-size 복원과 frame 회귀로 수정했다. PermissionRequest는 새 요청만 알리고 Allow/Deny를 중계하지 않는다. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 외부 앱으로만 best-effort 복귀한다. Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 통과했다.
 
 현재 operational proposal path는 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 생성한다. 따라서 high/critical 확인, 채워진 evidence/checkpoint와 활성 rollback UI는 fixture로 fail-closed 동작을 검증했지만 아직 실제 Hook→MCP→Pet 제안에서 end-to-end로 도달하지 않는다.
 
-이 승인은 공개 운영 또는 실제 사용자 Pet dispatch 승인이 아니다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 과거 DB 복원을 구분할 수 없어 자동 취소하지 않으며 exact canonical batch가 없으면 운영자 복구가 필요하다. commit 후 응답이 유실되면 권한 재발급을 금지하므로 continuation이 사용 불가능해질 수 있다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하고, 같은 UID 공격자가 Keychain까지 삭제·교체하거나 DB·키·anchor를 모두 제거하는 경우는 A2 경계 밖이다. 실제 사용자 Hook 신뢰, 로그인 Keychain 제품 daemon, Pet의 WindowServer·다중 디스플레이·Spaces·호스트 복귀 수동 매트릭스와 signed Data Protection Keychain은 아직 함께 검증하지 않았다.
+이 승인은 공개 운영 또는 실제 사용자 Pet dispatch 승인이 아니다. `pending + source DB`는 COMMIT 전 종료와 COMMIT 뒤 과거 DB 복원을 구분할 수 없어 자동 취소하지 않으며 exact canonical batch가 없으면 운영자 복구가 필요하다. commit 후 응답이 유실되면 권한 재발급을 금지하므로 continuation이 사용 불가능해질 수 있다. unsigned CLI는 entitlement 부재로 legacy login Keychain을 사용하고, 같은 UID 공격자가 Keychain까지 삭제·교체하거나 DB·키·anchor를 모두 제거하는 경우는 A2 경계 밖이다. 실제 사용자 Hook 신뢰, 로그인 Keychain 제품 daemon, Pet의 다중 디스플레이·Spaces·물리 전역 키·실시간 만료·실제 호스트 앱 매트릭스와 signed Data Protection Keychain은 아직 함께 검증하지 않았다.
 
 T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었다. T-007a QA에서 찾은 같은 턴 lineage, 전역 continuation ID·fingerprint, consume 시간·terminal 순서 불일치를 의미 검증기에 동기화했고 계약 검사는 114개로 늘었다. 낮음으로 보고된 중첩 미등록 스키마 탐지 공백도 completeness 검사를 재귀화해 닫았다.
 
@@ -58,9 +58,11 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - T-011 Swift Operational: 12/12 통과, 최종 동결 소스에서 3회 연속 재통과. full 16-field selection, pre-write secret copy 차단, staged active Stop, open/seal·selection·completion·scheduler의 pre/post-commit 응답 유실, retained monotonic anchor와 timeout promotion 회귀 포함
 - T-011 Swift Routing: 16/16 통과. open→seal journal 인접성, 모호한 선택의 exact authority 재조정·250 ms backoff·원문 token 비재발급, terminal notice exactly-once 회귀 포함
 - T-011 격리 Codex Plugin lifecycle: 실제 `0.149.0` install/cache-buster update/remove 통과. 제공 Python validator는 PyYAML 부재로 검증 전에 중단
-- T-010 Swift Pet: 25/25 통과. strict snapshot parsing, routing 순서와 bijective join, 명시적 focus/no-steal, stale·expiry·single-flight, 위험 확인, PermissionRequest 알림, 동적 단축키 충돌·교체·retired ID 회귀 포함
+- T-010 Swift Pet: 35/35 통과. strict snapshot parsing, routing 순서와 bijective join, 명시적 focus/no-steal, stale·expiry·single-flight, 위험 확인, PermissionRequest 알림, 안전 조합·draft·영속 설정, 실제 상태 label, 등록 실패 전체 rollback·복원 실패 진단, retired candidate ID와 lower-trailing frame 왕복 회귀 포함
 - T-010과 연동한 Swift Operational: 14/14, Routing 필터: 18/18(Routing 16 + Pet 2) 통과. `focus_interaction` exact 14-field binding과 foreground 없는 `select` 거부 포함
-- 최종 Swift package: XCTest 5/5 + Swift Testing 96/96 통과
+- T-010 실제 macOS 1차 qualification: 호스트 active/key/focus 유지와 `A→AB` 입력, Picker·취소, 격리 저장/재시작, 실제 Carbon 충돌, frame exact 왕복, 유효 카드 14-field focus·16-field select 통과
+- T-010 최신 독립 QA: lower-trailing resize·화면 복귀 크기 복원과 문서 경계를 재검토해 Critical/High/Medium/Low finding 없음, Pet 35/35와 `git diff --check` 재통과
+- 최종 Swift package: XCTest 5/5 + Swift Testing 106/106 통과
 - T-007b-A strict ingress: 영속 경계 4개 계약 타입, manifest fixture 20개 Ajv oracle parity 통과
 - 현재 production `SQLiteJournal.swift` SHA-256: `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`
 - `npm run test:contracts`: 114/114 통과
@@ -156,7 +158,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 
 1. **실제 저장소 동시성**: canonical repository identity 기준 전역 잠금, 기준선 이중 스냅샷, mutation 직전 재검증, 같은 경로 작성자 provenance가 필요하다. 현재 `projectId` 기반 임시 잠금과 `ownedPaths`만으로는 실제 편집기와의 경쟁을 증명하지 못한다.
 2. **복구 스냅샷 재적용**: 현재는 생성·보존만 검증했다. staged Git object의 독립 보존, index/manifest 해시, 원자적 저장, 실제 재적용, 삭제·reset·catalog 단계별 실패 주입을 통과해야 한다.
-3. **실사용 Hook→Swift→Pet qualification**: T-011은 Keychain 없는 실제 제품 구성요소에서 첫 action 중 다음 proposal staging, 후속 active Stop의 이전 경계 terminal 처리와 다음 경계 open/seal, 단일 UDS/storage owner와 원문 token 비노출을 하나의 두 경계 경로로 연결했고 T-010 Pet 코드는 UDS 계약에 연결했다. 공개 dispatch 전 실제 사용자 Hook 신뢰 검토, 로그인 Keychain 제품 daemon, sleep/재시작, WindowServer·다중 디스플레이·Spaces·호스트 앱 복귀를 한 실환경 경로에서 통과해야 한다.
+3. **실사용 Hook→Swift→Pet qualification**: T-011은 Keychain 없는 실제 제품 구성요소에서 첫 action 중 다음 proposal staging, 후속 active Stop의 이전 경계 terminal 처리와 다음 경계 open/seal, 단일 UDS/storage owner와 원문 token 비노출을 하나의 두 경계 경로로 연결했다. T-010은 격리된 실제 WindowServer에서 비활성 panel·Picker·Carbon 충돌·frame 왕복·focus/select를 통과했다. 공개 dispatch 전 실제 사용자 Hook 신뢰 검토, 로그인 Keychain 제품 daemon, sleep/재시작, 다중 디스플레이·Spaces·물리 전역 키·Terminal/VS Code/Orca 복귀를 한 실환경 경로에서 통과해야 한다.
 4. **배포 Keychain 격리**: unsigned CLI에서는 Data Protection Keychain이 `errSecMissingEntitlement(-34018)`로 거부되어 legacy login Keychain을 사용한다. 현재 UI 차단에는 deprecated `kSecUseAuthenticationUIFail` 경고도 남아 있다. T-012에서 signed wrapper, provisioning/access group, `LAContext`, code-signing ACL을 검증하고 deprecated API를 교체해야 한다. 같은 UID 공격자의 anchor 삭제·교체와 DB·키·anchor 동시 삭제는 현재 A2만으로 차단하지 못한다.
 
 ### Medium

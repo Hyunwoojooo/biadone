@@ -27,6 +27,16 @@ enum PetShortcutIntent: String, Codable, Sendable, CaseIterable, Hashable {
         default: nil
         }
     }
+
+    var displayName: String {
+        switch self {
+        case .toggle: "Pet 열기/닫기"
+        case .slot1: "1번 선택"
+        case .slot2: "2번 선택"
+        case .slot3: "3번 보류"
+        case .slot4: "4번 롤백"
+        }
+    }
 }
 
 struct PetShortcut: Codable, Sendable, Equatable, Hashable {
@@ -36,6 +46,143 @@ struct PetShortcut: Codable, Sendable, Equatable, Hashable {
     init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers
+    }
+}
+
+enum PetShortcutModifierPreset: String, CaseIterable, Identifiable, Sendable {
+    case option
+    case optionShift
+    case optionControl
+    case optionCommand
+    case optionControlShift
+    case optionCommandShift
+    case optionControlCommand
+
+    var id: String { rawValue }
+
+    var modifiers: UInt32 {
+        let option = UInt32(optionKey)
+        return switch self {
+        case .option: option
+        case .optionShift: option | UInt32(shiftKey)
+        case .optionControl: option | UInt32(controlKey)
+        case .optionCommand: option | UInt32(cmdKey)
+        case .optionControlShift: option | UInt32(controlKey) | UInt32(shiftKey)
+        case .optionCommandShift: option | UInt32(cmdKey) | UInt32(shiftKey)
+        case .optionControlCommand: option | UInt32(controlKey) | UInt32(cmdKey)
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .option: "⌥"
+        case .optionShift: "⌥⇧"
+        case .optionControl: "⌃⌥"
+        case .optionCommand: "⌥⌘"
+        case .optionControlShift: "⌃⌥⇧"
+        case .optionCommandShift: "⌥⇧⌘"
+        case .optionControlCommand: "⌃⌥⌘"
+        }
+    }
+
+    init?(modifiers: UInt32) {
+        guard let value = Self.allCases.first(where: { $0.modifiers == modifiers }) else {
+            return nil
+        }
+        self = value
+    }
+}
+
+struct PetShortcutKeyChoice: Identifiable, Sendable, Equatable, Hashable {
+    let keyCode: UInt32
+    let displayLabel: String
+
+    var id: UInt32 { keyCode }
+}
+
+enum PetShortcutConfigurationIssue: Sendable, Equatable {
+    case unsupported(PetShortcutIntent)
+    case duplicate(owner: PetShortcutIntent, duplicate: PetShortcutIntent)
+
+    var message: String {
+        switch self {
+        case .unsupported(let intent):
+            "\(intent.displayName)에 지원하지 않는 키 조합이 있습니다."
+        case .duplicate(let owner, let duplicate):
+            "\(owner.displayName)와 \(duplicate.displayName)에 같은 단축키를 사용할 수 없습니다."
+        }
+    }
+}
+
+enum PetShortcutCatalog {
+    static let modifierPresets = PetShortcutModifierPreset.allCases
+
+    private static let optionOnlyKeyCodes: Set<UInt32> = [
+        UInt32(kVK_Space),
+        UInt32(kVK_ANSI_0),
+        UInt32(kVK_ANSI_1),
+        UInt32(kVK_ANSI_2),
+        UInt32(kVK_ANSI_3),
+        UInt32(kVK_ANSI_4),
+        UInt32(kVK_ANSI_5),
+        UInt32(kVK_ANSI_6),
+        UInt32(kVK_ANSI_7),
+        UInt32(kVK_ANSI_8),
+        UInt32(kVK_ANSI_9),
+    ]
+
+    static let keys: [PetShortcutKeyChoice] = [
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_Space), displayLabel: "Space"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_1), displayLabel: "1"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_2), displayLabel: "2"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_3), displayLabel: "3"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_4), displayLabel: "4"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_5), displayLabel: "5"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_6), displayLabel: "6"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_7), displayLabel: "7"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_8), displayLabel: "8"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_9), displayLabel: "9"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_0), displayLabel: "0"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_A), displayLabel: "A"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_B), displayLabel: "B"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_C), displayLabel: "C"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_D), displayLabel: "D"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_E), displayLabel: "E"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_F), displayLabel: "F"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_G), displayLabel: "G"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_H), displayLabel: "H"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_I), displayLabel: "I"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_J), displayLabel: "J"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_K), displayLabel: "K"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_L), displayLabel: "L"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_M), displayLabel: "M"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_N), displayLabel: "N"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_O), displayLabel: "O"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_P), displayLabel: "P"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_Q), displayLabel: "Q"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_R), displayLabel: "R"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_S), displayLabel: "S"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_T), displayLabel: "T"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_U), displayLabel: "U"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_V), displayLabel: "V"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_W), displayLabel: "W"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_X), displayLabel: "X"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_Y), displayLabel: "Y"),
+        PetShortcutKeyChoice(keyCode: UInt32(kVK_ANSI_Z), displayLabel: "Z"),
+    ]
+
+    static func contains(_ shortcut: PetShortcut) -> Bool {
+        guard let modifier = PetShortcutModifierPreset(modifiers: shortcut.modifiers),
+              keys.contains(where: { $0.keyCode == shortcut.keyCode })
+        else { return false }
+        return modifier != .option || optionOnlyKeyCodes.contains(shortcut.keyCode)
+    }
+
+    static func displayLabel(for shortcut: PetShortcut) -> String {
+        guard let modifier = PetShortcutModifierPreset(modifiers: shortcut.modifiers),
+              let key = keys.first(where: { $0.keyCode == shortcut.keyCode })
+        else { return "지원되지 않음" }
+        return modifier.displayLabel + key.displayLabel
     }
 }
 
@@ -64,6 +211,31 @@ struct PetShortcutConfiguration: Codable, Sendable, Equatable {
         }
     }
 
+    mutating func setShortcut(_ shortcut: PetShortcut, for intent: PetShortcutIntent) {
+        switch intent {
+        case .toggle: toggle = shortcut
+        case .slot1: slot1 = shortcut
+        case .slot2: slot2 = shortcut
+        case .slot3: slot3 = shortcut
+        case .slot4: slot4 = shortcut
+        }
+    }
+
+    func validationIssue() -> PetShortcutConfigurationIssue? {
+        var owners: [PetShortcut: PetShortcutIntent] = [:]
+        for intent in PetShortcutIntent.allCases {
+            let shortcut = shortcut(for: intent)
+            guard PetShortcutCatalog.contains(shortcut) else {
+                return .unsupported(intent)
+            }
+            if let owner = owners[shortcut] {
+                return .duplicate(owner: owner, duplicate: intent)
+            }
+            owners[shortcut] = intent
+        }
+        return nil
+    }
+
 }
 
 protocol PetShortcutConfigurationStoring: Sendable {
@@ -85,11 +257,18 @@ final class PetUserDefaultsShortcutStore: PetShortcutConfigurationStoring, @unch
 
     func load() -> PetShortcutConfiguration? {
         guard let data = defaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(PetShortcutConfiguration.self, from: data)
+        guard let configuration = try? JSONDecoder().decode(
+            PetShortcutConfiguration.self,
+            from: data
+        ), configuration.validationIssue() == nil
+        else { return nil }
+        return configuration
     }
 
     func save(_ configuration: PetShortcutConfiguration) {
-        guard let data = try? JSONEncoder().encode(configuration) else { return }
+        guard configuration.validationIssue() == nil,
+              let data = try? JSONEncoder().encode(configuration)
+        else { return }
         defaults.set(data, forKey: key)
     }
 }
@@ -226,6 +405,49 @@ enum PetShortcutBindingStatus: Sendable, Equatable {
     case registrationFailure(status: OSStatus?)
 }
 
+struct PetShortcutApplyFailure: Sendable, Equatable {
+    let intent: PetShortcutIntent
+    let status: PetShortcutBindingStatus
+
+    var message: String {
+        let reason = switch status {
+        case .registered: "알 수 없는 등록 상태"
+        case .inactive: "등록되지 않음"
+        case .internalCollision: "설정 내부 충돌"
+        case .systemCollision: "macOS 단축키 충돌"
+        case .registrationFailure(let status):
+            if let status { "등록 실패 (\(status))" } else { "등록 실패" }
+        }
+        return "\(intent.displayName): \(reason)"
+    }
+}
+
+enum PetShortcutApplyResult: Sendable, Equatable {
+    case applied
+    case invalidConfiguration(PetShortcutConfigurationIssue)
+    case registrationRejected([PetShortcutApplyFailure])
+    case rollbackFailed(
+        candidateFailures: [PetShortcutApplyFailure],
+        rollbackFailures: [PetShortcutApplyFailure]
+    )
+
+    var errorMessage: String? {
+        switch self {
+        case .applied:
+            nil
+        case .invalidConfiguration(let issue):
+            issue.message
+        case .registrationRejected(let failures):
+            "새 단축키를 등록하지 못해 기존 설정으로 복원했습니다. "
+                + failures.map(\.message).joined(separator: ", ")
+        case .rollbackFailed(let candidateFailures, let rollbackFailures):
+            "새 단축키를 등록하지 못했고 기존 단축키도 완전히 복원하지 못했습니다. "
+                + "새 설정: " + candidateFailures.map(\.message).joined(separator: ", ")
+                + " / 복원: " + rollbackFailures.map(\.message).joined(separator: ", ")
+        }
+    }
+}
+
 @MainActor
 final class PetHotKeyRegistry {
     static let signature: UInt32 = 0x426C_6162 // "Blab"
@@ -239,7 +461,7 @@ final class PetHotKeyRegistry {
     private let backend: PetHotKeyBackend
     private let store: (any PetShortcutConfigurationStoring)?
     private let onIntent: @MainActor (PetShortcutIntent) -> Void
-    private var configuration: PetShortcutConfiguration
+    private(set) var configuration: PetShortcutConfiguration
     private var active: [PetShortcutIntent: ActiveBinding] = [:]
     private var intentByEventID: [UInt32: PetShortcutIntent] = [:]
     private var eligibleSlots: Set<Int> = []
@@ -265,10 +487,32 @@ final class PetHotKeyRegistry {
         reconcile(eligibleSlots: [])
     }
 
-    func updateConfiguration(_ configuration: PetShortcutConfiguration) {
+    @discardableResult
+    func updateConfiguration(_ configuration: PetShortcutConfiguration) -> PetShortcutApplyResult {
+        if let issue = configuration.validationIssue() {
+            return .invalidConfiguration(issue)
+        }
+
+        let previousConfiguration = self.configuration
         self.configuration = configuration
-        store?.save(configuration)
         reconcile(eligibleSlots: eligibleSlots)
+
+        let candidateFailures = activeRegistrationFailures()
+        guard !candidateFailures.isEmpty else {
+            store?.save(configuration)
+            return .applied
+        }
+
+        self.configuration = previousConfiguration
+        reconcile(eligibleSlots: eligibleSlots)
+        let rollbackFailures = activeRegistrationFailures()
+        if rollbackFailures.isEmpty {
+            return .registrationRejected(candidateFailures)
+        }
+        return .rollbackFailed(
+            candidateFailures: candidateFailures,
+            rollbackFailures: rollbackFailures
+        )
     }
 
     func reconcile(eligibleSlots: Set<Int>) {
@@ -352,6 +596,18 @@ final class PetHotKeyRegistry {
         guard let current = active.removeValue(forKey: intent) else { return }
         intentByEventID.removeValue(forKey: current.eventID)
         backend.unregister(current.reference)
+    }
+
+    private func activeRegistrationFailures() -> [PetShortcutApplyFailure] {
+        var intents: [PetShortcutIntent] = [.toggle]
+        intents.append(contentsOf: eligibleSlots.sorted().compactMap(PetShortcutIntent.slot))
+        return intents.compactMap { intent in
+            let status = statuses[intent] ?? .registrationFailure(status: nil)
+            guard case .registered = status else {
+                return PetShortcutApplyFailure(intent: intent, status: status)
+            }
+            return nil
+        }
     }
 
     private func receive(_ event: PetHotKeyEvent) {

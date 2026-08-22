@@ -4,7 +4,7 @@
 
 ## 현재 단계
 
-M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. T-010은 이 API에 연결되는 비활성 floating `NSPanel`, 다중 세션 foreground, 반고정 결정 카드, 동적 전역 단축키, 위험 확인과 PermissionRequest 알림을 구현하고 headless 계약 검사를 통과했다. T-010은 실제 WindowServer·다중 디스플레이·Spaces·호스트 앱 복귀 수동 검증 전이라, T-011은 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification 전이라 각각 `in_progress`다. 실제 사용자 저장소 롤백·서명된 Data Protection Keychain·공개 서명/공증 DMG도 아직 구현하지 않았다.
+M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런타임 선택, T-007a 참조 코어, T-007b-A/A2 Swift 영속·freshness 커널, T-007b-B1 의미 application, T-007b-B2 routing/time 계층과 T-007b-C 같은 턴 반복 게이트까지 구현했다. T-011은 Codex Plugin의 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet state/full-selection API, 단일 UDS/storage owner를 구현했다. T-010은 이 API에 연결되는 비활성 floating `NSPanel`, 다중 세션 foreground, 반고정 결정 카드, 안전 범위의 단축키 설정 UI·동적 label, 위험 확인과 PermissionRequest 알림을 구현했다. 실제 WindowServer 1차 qualification에서 비활성 포커스, Picker·저장/재시작, 실제 Carbon 충돌, frame 왕복, 14-field focus와 16-field select까지 통과했다. T-010은 다중 디스플레이·Spaces·실시간 만료·실제 호스트 앱 매트릭스가 남아 있고, T-011은 수동 Hook 신뢰와 로그인 Keychain 제품 daemon qualification 전이라 각각 `in_progress`다. 실제 사용자 저장소 롤백·서명된 Data Protection Keychain·공개 서명/공증 DMG도 아직 구현하지 않았다.
 
 ## M0 및 M1 검증 결과
 
@@ -21,7 +21,7 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | T-007b-B2 Swift routing/time | 조건부 완료 | 세션별 pending 하나, 다중 세션 queue, 명시적 foreground/no-steal, exact binding selection, continuous clock reminder/expiry/timeout을 구현. Pet·형식 보정 토큰의 고정 120초 소비 권위와 transport 완료 시각도 외부 wall 입력 대신 연속 단조 시각으로 강제하며 restart ambiguity를 fail-closed한다. T-007b-B2 완료 당시 Swift package 전체 62/62와 제품 gate 통과 |
 | T-007b-C 같은 턴 반복 | 조건부 완료 | `0.149.0` 실제 Hook+M0에서 경계 1→2와 결정 두 사이클, Swift 제품 게이트에서 같은 lineage의 16개 이벤트 persist/replay를 각각 통과. 실제 Hook→Swift 운영 연결은 T-011 |
 | T-011 운영 어댑터와 Plugin | 구현·제품 결합 검증 조건부 완료 | `npm run test:t011` 23/23, Swift Operational 12/12(최종 소스 3회), Routing 16/16. 제품 Hook/MCP CLI와 Pet API용 UDS test client를 Keychain 없는 SQLite→Routing→Operational→UDS에 연결해 경계 1→2, staged promotion, full 16-field select 두 번, final Stop completion과 token 비저장을 통과. open/seal·selection·completion·scheduler의 부분 실패와 commit 뒤 응답 유실도 fault injection으로 검증. 수동 Hook 신뢰·로그인 Keychain 제품 daemon은 미검증 |
-| T-010 네이티브 macOS Pet | 코드·headless 안전 게이트 조건부 완료 | Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2), Swift package XCTest 5/5 + Swift Testing 96/96 통과. 비활성 floating panel, 명시적 foreground/no-steal, exact focus/select binding, single-flight, high/critical 1·2 확인, 동적 Carbon 단축키와 오래된 입력 거부를 검증. 현재 operational path는 risk `info`·빈 evidence·unavailable checkpoint·rollback disabled만 생성하므로 고위험/상세/롤백은 fixture 안전 경로다. 실제 입력 초점·다중 디스플레이·Spaces/전체 화면·Carbon 충돌·60/120초·Terminal/VS Code/Orca 복귀는 수동 검증 필요 |
+| T-010 네이티브 macOS Pet | 실제 macOS 1차 qualification 조건부 완료 | Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2), Swift package XCTest 5/5 + Swift Testing 106/106 통과. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, `취소` 복원, 저장·재시작, 실제 Carbon 등록 충돌 진단, frame exact 왕복, 유효 카드의 14-field focus·16-field select를 확인했다. 발견한 resize 위치 점프는 lower-trailing anchor 보존으로 수정했다. 현재 operational path는 risk `info`·빈 evidence·unavailable checkpoint·rollback disabled만 생성하므로 고위험/상세/롤백은 fixture 안전 경로다. 다중 디스플레이 이동·분리, Spaces/전체 화면, 물리 전역 키·키보드 레이아웃, 실제 60/120초·sleep, Terminal/VS Code/Orca 복귀는 수동 검증 필요 |
 | 프로젝트 로컬 MCP 검색 | 완료 | 직접 MCP `-c` 주입 없이 임시 프로젝트 `.codex/config.toml`만으로 전체 왕복 통과 |
 | 설명 전용 음성 계약 | 완료 | 결정 제안·대기 0건, 파일 변경 없음, 마지막 메시지 `M0_EXPLAINED` |
 | 플러그인 구조 | 조건부 검증 완료 | 실제 Codex CLI `0.149.0`의 격리 install/cache-buster update/remove와 자체 package 계약 통과. 제공 Python validator는 PyYAML 부재로 실행 전 중단했고 사용자 Hook 신뢰 검토는 미실행 |
@@ -64,12 +64,12 @@ Blabee는 Pet 선택을 사람이 제출한 `UserPromptSubmit`으로 보내지 �
 
 - 완료: T-001, T-002, T-003, T-005, T-006, T-007
 - M0 합성 픽스처 검증 완료: T-008. 실제 사용자 작업공간 연결은 아직 하지 않았다.
-- 진행 중: T-004, T-010, T-011. T-010의 코드와 headless 안전 gate는 조건부 완료했으며 실제 macOS 창·단축키 매트릭스가 남았다. T-011은 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification이 남았다.
+- 진행 중: T-004, T-010, T-011. T-010은 실제 macOS 1차 qualification까지 통과했으며 환경·시간·실제 호스트 앱 매트릭스가 남았다. T-011은 수동 Hook 신뢰·로그인 Keychain 제품 daemon qualification이 남았다.
 - 대기: T-009, T-012~T-014.
 
 ## 다음 작업
 
-1. T-010 qualification에서 설정 UI와 사용자 변경 단축키 label을 마무리하고, 실제 입력 초점, 다중 디스플레이 이동·분리, Spaces/전체 화면, Carbon 충돌, 60/120초, Terminal·VS Code·Orca 호스트 복귀를 검증한다.
+1. T-010 qualification에서 남은 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, 실제 60/120초·sleep, Terminal·VS Code·Orca 호스트 복귀를 검증한다. 입력 초점·Picker·저장/재시작·Carbon 충돌·frame 왕복·격리 카드 focus/select는 통과했다.
 2. T-004에서 PermissionRequest 알림의 앱 복귀 가능 범위를 실환경에서 확정한다. 현재 구현은 알림 증가 polling 시점의 frontmost 외부 앱으로 돌아가는 best-effort이며 Allow/Deny는 중계하지 않는다.
 3. T-011 실환경 gate에서 실제 사용자 Hook 신뢰 검토와 로그인 Keychain 제품 daemon 왕복을 수행한다. 비밀번호 prompt 가능성이 있으므로 사용자 동의가 필요한 실행으로 분리한다.
 4. T-012에서 Developer ID 서명·공증, signed wrapper의 Data Protection Keychain/access group·`LAContext`, PATH/launchd, 실제 `.app`/DMG, updater와 `blabee doctor`를 검증한다. 현재 읽기 전용 확인에서 유효한 codesign identity는 0개였고 공증은 측정하지 않았다.

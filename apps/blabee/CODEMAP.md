@@ -4,7 +4,7 @@
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter와 T-010 SwiftUI/AppKit Pet을 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet은 코드·headless 안전 게이트까지 구현됐고 실제 macOS 수동 qualification은 진행 중이며 installer는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter와 T-010 SwiftUI/AppKit Pet을 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet은 코드·headless 안전 게이트와 실제 macOS 1차 qualification을 통과했고 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
@@ -182,10 +182,10 @@ src/coordinator-swift/
 │   │   ├── PetApplication.swift           # accessory NSApplication과 Pet 시작/종료
 │   │   ├── PetTransport.swift             # actor-owned 직렬 UDS client
 │   │   ├── PetModels.swift                # strict snapshot/focus/selection model
-│   │   ├── PetViewModel.swift             # foreground·selection·permission 상태
-│   │   ├── PetHotKeys.swift               # 동적 Carbon shortcut registry
+│   │   ├── PetViewModel.swift             # foreground·selection·permission·shortcut draft 상태
+│   │   ├── PetHotKeys.swift               # 안전 catalog·영속 설정·transactional Carbon registry
 │   │   ├── PetPanel.swift                 # 비활성 floating NSPanel과 화면 보정
-│   │   └── PetView.swift                  # 반고정 SwiftUI 결정 카드
+│   │   └── PetView.swift                  # 반고정 결정 카드와 shortcut picker UI
 │   └── CoordinatorSwift/
 │       ├── ContractPin.swift              # manifest와 schema hash 고정
 │       ├── CoordinatorError.swift

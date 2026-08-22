@@ -45,6 +45,22 @@ enum PetFrameClamp {
             to: visibleFrame
         )
     }
+
+    static func resizedLowerTrailingFrame(
+        from currentFrame: CGRect,
+        to size: CGSize,
+        in visibleFrame: CGRect
+    ) -> CGRect {
+        clamp(
+            CGRect(
+                x: currentFrame.maxX - size.width,
+                y: currentFrame.minY,
+                width: size.width,
+                height: size.height
+            ),
+            to: visibleFrame
+        )
+    }
 }
 
 struct PetDisplayGeometry: Sendable, Equatable {
@@ -159,21 +175,29 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         guard let display = preferredDisplay(stable: true) else { return }
         lastScreenID = display.id
         let size = expanded ? Self.expandedSize : Self.collapsedSize
-        let current = panel.frame
-        let proposed = CGRect(
-            x: current.maxX - size.width,
-            y: current.maxY - size.height,
-            width: size.width,
-            height: size.height
+        panel.setFrame(
+            PetFrameClamp.resizedLowerTrailingFrame(
+                from: panel.frame,
+                to: size,
+                in: display.visibleFrame
+            ),
+            display: true
         )
-        panel.setFrame(PetFrameClamp.clamp(proposed, to: display.visibleFrame), display: true)
         panel.orderFrontRegardless()
     }
 
     private func screenParametersChanged() {
         guard let display = preferredDisplay(stable: true) else { return }
         lastScreenID = display.id
-        panel.setFrame(PetFrameClamp.clamp(panel.frame, to: display.visibleFrame), display: true)
+        let intendedSize = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
+        panel.setFrame(
+            PetFrameClamp.resizedLowerTrailingFrame(
+                from: panel.frame,
+                to: intendedSize,
+                in: display.visibleFrame
+            ),
+            display: true
+        )
         panel.orderFrontRegardless()
     }
 

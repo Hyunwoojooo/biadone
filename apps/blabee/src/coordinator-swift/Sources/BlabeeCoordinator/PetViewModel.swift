@@ -81,6 +81,10 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var hasNewPermissionNotice = false
     @Published private(set) var lastTerminalPresentation: PetPresentationState?
     @Published private(set) var shortcutDiagnostic: String?
+    @Published private(set) var shortcutConfiguration = PetShortcutConfiguration.defaults
+    @Published private(set) var shortcutDraft = PetShortcutConfiguration.defaults
+    @Published private(set) var isEditingShortcuts = false
+    @Published private(set) var shortcutSettingsError: String?
 
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
@@ -152,7 +156,135 @@ final class PetViewModel: ObservableObject {
 
     func attachHotKeyRegistry(_ registry: PetHotKeyRegistry) {
         hotKeyRegistry = registry
+        shortcutConfiguration = registry.configuration
+        shortcutDraft = registry.configuration
+        shortcutSettingsError = nil
         updateHotKeyEligibility()
+    }
+
+    var canSaveShortcutSettings: Bool {
+        hotKeyRegistry != nil && shortcutDraft.validationIssue() == nil
+    }
+
+    func toggleShortcutSettings() {
+        if isEditingShortcuts {
+            cancelShortcutSettings()
+        } else {
+            beginShortcutSettings()
+        }
+    }
+
+    func beginShortcutSettings() {
+        shortcutDraft = shortcutConfiguration
+        shortcutSettingsError = nil
+        isEditingShortcuts = true
+        setExpanded(true)
+    }
+
+    func cancelShortcutSettings() {
+        shortcutDraft = shortcutConfiguration
+        shortcutSettingsError = nil
+        isEditingShortcuts = false
+    }
+
+    func restoreDefaultShortcutDraft() {
+        shortcutDraft = .defaults
+        refreshShortcutSettingsValidation()
+    }
+
+    func updateShortcutDraft(
+        intent: PetShortcutIntent,
+        keyCode: UInt32? = nil,
+        modifiers: UInt32? = nil
+    ) {
+        let current = shortcutDraft.shortcut(for: intent)
+        shortcutDraft.setShortcut(
+            PetShortcut(
+                keyCode: keyCode ?? current.keyCode,
+                modifiers: modifiers ?? current.modifiers
+            ),
+            for: intent
+        )
+        refreshShortcutSettingsValidation()
+    }
+
+    func saveShortcutSettings() {
+        guard let hotKeyRegistry else {
+            shortcutSettingsError = "단축키 등록기가 준비되지 않았습니다."
+            return
+        }
+        if let issue = shortcutDraft.validationIssue() {
+            shortcutSettingsError = issue.message
+            return
+        }
+        let result = hotKeyRegistry.updateConfiguration(shortcutDraft)
+        shortcutConfiguration = hotKeyRegistry.configuration
+        switch result {
+        case .applied:
+            shortcutDraft = hotKeyRegistry.configuration
+            shortcutSettingsError = nil
+            isEditingShortcuts = false
+        case .invalidConfiguration, .registrationRejected, .rollbackFailed:
+            shortcutSettingsError = result.errorMessage
+        }
+        refreshShortcutDiagnostic()
+    }
+
+    func shortcutLabel(for intent: PetShortcutIntent) -> String {
+        PetShortcutCatalog.displayLabel(for: shortcutConfiguration.shortcut(for: intent))
+    }
+
+    func actionShortcutLabel(interaction: PetInteraction, choice: PetChoice) -> String {
+        guard choice.enabled, interaction.isSelectionReady else { return "사용 불가" }
+        if requiresRiskConfirmation(interaction: interaction, slot: choice.slot) {
+            return "Pet 확인"
+        }
+        guard let intent = PetShortcutIntent.slot(choice.slot),
+              let status = hotKeyRegistry?.statuses[intent]
+        else { return "사용 불가" }
+        return switch status {
+        case .registered:
+            shortcutLabel(for: intent)
+        case .internalCollision, .systemCollision:
+            "충돌"
+        case .registrationFailure:
+            "등록 실패"
+        case .inactive:
+            "사용 불가"
+        }
+    }
+
+    func shortcutStatusDescription(for intent: PetShortcutIntent) -> String {
+        guard let status = hotKeyRegistry?.statuses[intent] else { return "등록기 준비 중" }
+        return switch status {
+        case .registered: "등록됨"
+        case .inactive:
+            intent == .toggle ? "비활성" : "현재 등록 대상 아님"
+        case .internalCollision: "설정 내부 충돌"
+        case .systemCollision: "macOS 단축키 충돌"
+        case .registrationFailure(let status):
+            if let status { "등록 실패 (\(status))" } else { "등록 실패" }
+        }
+    }
+
+    func shortcutDraftStatusDescription(for intent: PetShortcutIntent) -> String {
+        guard shortcutDraft.shortcut(for: intent) == shortcutConfiguration.shortcut(for: intent)
+        else { return "저장 전" }
+        return shortcutStatusDescription(for: intent)
+    }
+
+    func shortcutDraftStatusIsProblem(for intent: PetShortcutIntent) -> Bool {
+        guard shortcutDraft.shortcut(for: intent) == shortcutConfiguration.shortcut(for: intent)
+        else { return false }
+        return shortcutStatusIsProblem(for: intent)
+    }
+
+    func shortcutStatusIsProblem(for intent: PetShortcutIntent) -> Bool {
+        guard let status = hotKeyRegistry?.statuses[intent] else { return false }
+        return switch status {
+        case .internalCollision, .systemCollision, .registrationFailure: true
+        case .registered, .inactive: false
+        }
     }
 
     func startPolling(intervalNanoseconds: UInt64 = 500_000_000) {
@@ -180,6 +312,9 @@ final class PetViewModel: ObservableObject {
 
     func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
+        if !expanded, isEditingShortcuts {
+            cancelShortcutSettings()
+        }
         isExpanded = expanded
         onExpansionChanged?(expanded)
     }
@@ -489,6 +624,10 @@ final class PetViewModel: ObservableObject {
         } else {
             shortcutDiagnostic = nil
         }
+    }
+
+    private func refreshShortcutSettingsValidation() {
+        shortcutSettingsError = shortcutDraft.validationIssue()?.message
     }
 
     private func requiresRiskConfirmation(

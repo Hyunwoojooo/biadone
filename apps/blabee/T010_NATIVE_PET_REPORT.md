@@ -1,6 +1,6 @@
 # T-010 네이티브 macOS Pet 구현 보고서
 
-상태: 코드 및 headless 안전 게이트 조건부 완료, 실제 macOS 수동 검증 진행 중
+상태: 코드·headless 안전 게이트와 실제 macOS 1차 qualification 통과, 환경 매트릭스 진행 중
 작성일: 2026-08-22
 
 ## 결과
@@ -16,7 +16,8 @@ Pet을 Swift Package에 구현했다. 별도 LLM API나 터미널 키 입력 주
 - routing 순서를 유지하는 다중 세션 카드와 사용자 명시적 foreground 전환
 - 동적 1·2, 고정 3·4, disabled 대안, 만료·알림·작업 중·보류 상태
 - 위험·증거·체크포인트·결과 상세와 `high`·`critical` 1·2 확인 단계
-- `Option+1·2·3·4`, `Option+Space` Carbon 단축키의 동적 등록과 충돌 진단
+- 기본 `Option+1·2·3·4`, `Option+Space`와 제한된 안전 조합을 선택하는 설정 UI
+- Carbon 단축키의 동적 등록, 실제 상태 label, 충돌 진단과 실패 시 이전 binding 복원
 - PermissionRequest 알림 수 표시와 Allow/Deny 없는 best-effort 앱 복귀
 - `blabee-coordinator pet [--socket ABS]` 개발 실행 모드
 
@@ -31,6 +32,12 @@ Pet을 Swift Package에 구현했다. 별도 LLM API나 터미널 키 입력 주
 - 한 interaction의 선택은 슬롯이 달라도 single-flight로 제한한다.
 - 현재 유효한 슬롯만 전역 단축키로 등록한다. 폐기한 registration ID와 전환 전
   카드의 오래된 입력은 실행하지 않는다.
+- 모든 사용자 조합은 Option을 포함해야 한다. Option 단독은 숫자와 Space에만
+  허용하고, 미지원 조합과 전체 설정의 중복은 저장 전에 거부한다.
+- 설정은 draft에서 편집하며 취소·Pet 접기 시 폐기한다. 활성 단축키 변경 중 하나라도
+  macOS 등록에 실패하면 후보 전체를 저장하지 않고 기존 설정과 binding을 다시 등록한다.
+- 카드 label은 실제 등록 상태를 기준으로 chord, `Pet 확인`, `사용 불가`, `충돌`,
+  `등록 실패`를 구분한다. 편집 중인 chord에는 현재 binding 상태 대신 `저장 전`을 표시한다.
 - `high`·`critical`의 슬롯 1·2는 숫자 단축키로 시작하지 않는다. 슬롯 3 보류는
   네이티브 승인과 무관하므로 사용할 수 있다.
 - PermissionRequest는 요청 수만 알리며 허용·거부를 전송하지 않는다.
@@ -42,28 +49,54 @@ Pet을 Swift Package에 구현했다. 별도 LLM API나 터미널 키 입력 주
 
 | 검사 | 결과 |
 |---|---:|
-| Swift Pet 집중 테스트 | 25/25 통과 |
+| Swift Pet 집중 테스트 | 35/35 통과 |
 | Swift Operational 집중 테스트 | 14/14 통과 |
 | Swift Routing 필터 | 18/18 통과(Routing 16 + Pet 2) |
-| Swift package 전체 | XCTest 5/5 + Swift Testing 96/96 통과 |
+| Swift package 전체 | XCTest 5/5 + Swift Testing 106/106 통과 |
 | T-011 Node/Swift 결합 계약 | 23/23 통과 |
 | v1 계약 | 114/114 통과 |
 
 검증은 Xcode toolchain과 `/tmp` module/build cache를 사용했다. 기본 Command Line
 Tools 조합은 로컬 compiler/SDK 불일치와 sandbox cache 제약 때문에 manifest 전
-단계에서 실패했으며, 제품 소스 assertion 실패는 아니었다. 로그인 Keychain을
-사용하는 전체 제품 테스트는 비밀번호 대화상자를 피하기 위해 실행하지 않았다.
+단계에서 실패했으며, 제품 소스 assertion 실패는 아니었다. Swift package의 격리된
+Keychain unit test까지 통과했지만 로그인 Keychain을 사용하는 실제 제품 daemon은
+비밀번호 대화상자를 피하기 위해 실행하지 않았다.
+
+## 실제 macOS 1차 qualification
+
+제품 Keychain과 사용자 프로젝트를 사용하지 않고 `/tmp`의 격리 UDS fixture, 임시
+`.app` 번들 ID와 포커스 프로브로 실제 WindowServer 동작을 확인했다. 임시 앱과
+프로세스는 종료했고, 검증 중 만든 두 UserDefaults 도메인도 제거했다.
+
+- Pet 열기, 설정 버튼, Picker 조작 중 호스트 프로브가 `active=true`, `key=true`,
+  `focus=true`, `resigned=0`을 유지했다. 입력도 `A`에서 `AB`로 이어져 panel이
+  일반 타이핑의 포커스를 빼앗지 않음을 확인했다.
+- 보조키·키 Picker에서 `⌥⇧P`를 선택할 수 있었고 취소 뒤 `⌥Space`로 복원됐다.
+  별도 임시 번들에서는 저장 뒤 실제 Carbon 등록 상태가 `등록됨`으로 바뀌고,
+  프로세스 재시작 뒤에도 `⌥⇧P`가 다시 로드됐다.
+- 두 번째 격리 Pet이 같은 `⌥Space`를 등록하자 실제 Carbon 충돌이 발생했고,
+  화면과 진단에 각각 `macOS 단축키 충돌`, `macOS 단축키 등록 충돌: toggle`이
+  표시됐다.
+- 기존 `current.maxY` 기준 resize가 접기→펼치기→접기 뒤 Pet을 위로 이동시키는
+  결함을 발견했다. 오른쪽 아래 `maxX`·`minY` anchor를 보존하도록 수정하고 일반,
+  음수 좌표, 작은 화면과 화면 복귀 시 정상 크기 복원 회귀를 추가했다. 실제 WindowServer 좌표도
+  `92×92@(3328,1328) → 440×620@(2980,800) → 92×92@(3328,1328)`로 정확히
+  왕복했다.
+- 유효 카드 fixture에서 대기 카드 표시, 정확한 14-field focus, 동적 `⌥1`·`⌥2`,
+  고정 `⌥3`, disabled rollback을 확인했다. 권장 선택은 정확한 16-field request를
+  한 번만 보내고 Pet을 `작업 중`으로 전환했으며 호스트 포커스는 유지됐다.
 
 ## 남은 수동 게이트
 
-1. 일반 타이핑 중 입력 초점을 빼앗지 않는지 확인한다.
-2. 다중 디스플레이 이동·분리, Spaces, 전체 화면에서 panel 위치와 표시를 확인한다.
-3. 실제 Carbon 단축키 충돌과 키보드 레이아웃을 확인한다.
-4. 실제 60초 알림과 120초 만료, sleep/복귀 뒤 늦은 입력 거부를 확인한다.
-5. Terminal, VS Code, Orca에서 선택 후 호스트 복귀와 PermissionRequest 알림을 확인한다.
-6. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 앱으로
+1. 다중 디스플레이 이동·분리·재연결, Spaces, 전체 화면과 Stage Manager에서
+   panel 위치와 표시를 확인한다.
+2. 실제 물리 키로 전역 Carbon 전달을 확인하고 한국어·영문 등 키보드 레이아웃별
+   표시와 입력을 검증한다. 자동화 입력은 앱 대상이라 전역 단축키를 발생시키지 못했다.
+3. 실제 60초 알림과 120초 만료, 장시간 sleep/복귀 뒤 늦은 입력 거부를 확인한다.
+4. Terminal, VS Code, Orca 각각에서 선택 후 호스트 복귀와 PermissionRequest 알림을
+   확인한다.
+5. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 앱으로
    돌아가는 best-effort 동작의 제품 범위를 확정한다.
-7. 공개 설정 UI와 사용자가 바꾼 단축키 label을 구현·검증한다.
 
 ## T-012로 넘기는 범위
 
@@ -71,5 +104,5 @@ Tools 조합은 로컬 compiler/SDK 불일치와 sandbox cache 제약 때문에 
 - Developer ID 서명, 공증, DMG, updater, `blabee doctor`
 - signed Data Protection Keychain/access group과 실제 제품 daemon 통합
 
-따라서 T-010은 현재 `in_progress`다. 위 수동 macOS 매트릭스가 통과해야 `done`으로
-전환한다.
+따라서 T-010은 실제 macOS 1차 qualification까지 통과했지만 현재 `in_progress`다.
+남은 환경·시간·실제 호스트 매트릭스가 통과해야 `done`으로 전환한다.

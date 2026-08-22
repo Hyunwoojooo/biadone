@@ -1,6 +1,6 @@
 # Blabee MVP 구현 계획
 
-상태: M0·T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 코드·headless 게이트 조건부 완료 및 실기기 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
+상태: M0·T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 실제 macOS 1차 qualification 통과 및 환경 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
 업데이트: 2026-08-22
 
 ## 마일스톤 0 — 연동 계약 검증 스파이크
@@ -180,11 +180,12 @@
 - `blabee-coordinator pet` 모드에 SwiftUI 기반 비활성 floating `NSPanel`을 추가했다. panel은 always-on-top, 모든 Space 참여, 전체 화면 보조 표시와 화면 visible frame 안쪽 위치 보정을 적용하며 표시할 때 앱을 활성화하지 않는다.
 - 코디네이터 snapshot을 엄격한 typed model로 읽고 routing 순서를 보존한 exact identity/binding join만 허용한다. 사용자가 카드를 명시적으로 전환할 때 14-field `focus_interaction`을 먼저 보내고, 선택할 때 16-field v1 request를 보내며 `select` 자체가 foreground를 바꾸지 않는다.
 - 슬롯 1·2는 패킷별 동적 작업, 3은 보류, 4는 롤백 자리로 표시한다. disabled 슬롯, 만료, stale revision, 모호한 routing, 중복 option/action ID와 불완전한 rollback checkpoint는 fail-closed한다. 한 interaction의 선택은 슬롯이 달라도 single-flight다.
-- `Option+1·2·3·4`와 `Option+Space`를 Carbon으로 동적 등록한다. 실제 활성 슬롯만 등록하고 오래된 registration ID는 무시하며, 충돌과 일반 등록 실패를 구분한다. `high`·`critical`의 1·2는 전역 숫자 단축키에서 제외하고 펼친 확인 UI를 거친다. 3번 보류는 계속 사용할 수 있다.
+- 기본 `Option+1·2·3·4`와 `Option+Space`를 Carbon으로 동적 등록하고, 설정 화면에서 Option을 포함한 제한된 modifier·숫자·영문자·Space 조합만 선택하게 한다. Option 단독은 숫자와 Space로 제한하고 중복·미지원 조합은 저장 전에 거부한다. 활성 binding 변경 중 일부라도 등록에 실패하면 후보 전체를 폐기하고 이전 설정과 binding을 복원하며, 성공한 경우에만 UserDefaults에 저장한다. 카드에는 저장값이 아니라 실제 등록 상태를 기준으로 chord·`Pet 확인`·`사용 불가`·`충돌`·`등록 실패`를 표시한다. 실제 활성 슬롯만 등록하고 오래된 registration ID는 무시한다. `high`·`critical`의 1·2는 전역 숫자 단축키에서 제외하고 펼친 확인 UI를 거치며 3번 보류는 계속 사용할 수 있다.
 - PermissionRequest는 새 요청 수만 알리고 Allow/Deny를 제공하지 않는다. Pet 선택 후 복귀할 호스트와 권한 알림에서 열 호스트를 분리해 기억하지만, 요청에 원래 PID/창 identity가 없어 권한 알림 증가를 polling한 시점의 frontmost 외부 앱으로만 best-effort 복귀한다.
 - 현재 operational 제안 생성은 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 고정한다. 따라서 `high`·`critical` 확인, 채워진 evidence/checkpoint 상세와 활성 롤백은 Pet fixture로 안전 동작을 검증한 경로이며 아직 실제 제안에서 end-to-end로 도달하지 않는다.
-- Pet 25/25, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 96/96이 통과했다. `npm run test:t011` 23/23과 `npm run test:contracts` 114/114도 회귀 없이 통과했다.
-- 실제 WindowServer 입력 초점, 다중 디스플레이 이동·분리, Spaces/전체 화면, 실제 Carbon 충돌, 실제 60/120초, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. 설정 저장 seam은 있으나 공개 설정 UI와 변경된 chord label은 없어 T-010 후속으로 남기고, `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
+- Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 현재 소스에서 통과했다. `npm run test:t011` 23/23과 `npm run test:contracts` 114/114도 재통과했다.
+- `/tmp`의 격리 UDS·임시 번들·호스트 프로브로 실제 WindowServer 1차 qualification을 수행했다. Pet·설정·Picker 조작 중 호스트 active/key/focus와 입력 연속성을 유지했고, 취소 복원과 격리 저장/재시작, 실제 Carbon 충돌 label, 유효 카드의 exact 14-field focus·16-field select를 확인했다. 접기→펼치기→접기 위치 점프를 발견해 lower-trailing anchor 보존으로 수정했고 실제 frame이 `92×92@(3328,1328) → 440×620@(2980,800) → 92×92@(3328,1328)`로 왕복했다.
+- 다중 디스플레이 이동·분리·재연결, Spaces/전체 화면·Stage Manager, 물리 전역 키와 키보드 레이아웃, 실제 60/120초·sleep, Terminal·VS Code·Orca 호스트 복귀는 수동 검증으로 남는다. `.app`/Info.plist/entitlement/launchd/서명·공증·DMG는 T-012 책임이다. 따라서 T-010 상태는 `in_progress`다.
 
 ## 마일스톤 4 — 패키징과 내부 사용
 

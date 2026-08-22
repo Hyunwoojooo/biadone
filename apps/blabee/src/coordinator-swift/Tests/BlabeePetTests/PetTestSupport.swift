@@ -318,6 +318,7 @@ final class PetFakeHotKeyBackend: PetHotKeyBackend, @unchecked Sendable {
 
     private(set) var installCount = 0
     private(set) var registrations: [UInt32: Registration] = [:]
+    private(set) var registrationHistory: [Registration] = []
     private(set) var retiredEventIDs: [UInt32] = []
     var failingShortcuts: Set<PetShortcut> = []
     var registrationErrors: [PetShortcut: OSStatus] = [:]
@@ -341,11 +342,13 @@ final class PetFakeHotKeyBackend: PetHotKeyBackend, @unchecked Sendable {
         {
             throw PetHotKeyBackendError.registration(OSStatus(eventHotKeyExistsErr))
         }
-        registrations[event.id] = Registration(
+        let registration = Registration(
             event: event,
             shortcut: shortcut,
             exclusive: exclusive
         )
+        registrations[event.id] = registration
+        registrationHistory.append(registration)
         return PetFakeHotKeyReference(id: event.id)
     }
 

@@ -45,6 +45,9 @@ struct PetRootView: View {
     private var expandedBody: some View {
         VStack(spacing: 12) {
             header
+            if viewModel.isEditingShortcuts {
+                shortcutSettings
+            }
             if viewModel.hasNewPermissionNotice {
                 permissionNotice
             }
@@ -105,6 +108,14 @@ struct PetRootView: View {
                 }
             }
             Spacer()
+            Button(action: viewModel.toggleShortcutSettings) {
+                Image(systemName: viewModel.isEditingShortcuts ? "gearshape.fill" : "gearshape")
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                viewModel.isEditingShortcuts ? "단축키 설정 닫기" : "단축키 설정 열기"
+            )
             Button(action: viewModel.toggleExpanded) {
                 Image(systemName: "chevron.down")
                     .frame(width: 28, height: 28)
@@ -244,14 +255,14 @@ struct PetRootView: View {
 
             VStack(spacing: 8) {
                 ForEach(interaction.choices) { choice in
-                    let requiresPanelConfirmation =
-                        (choice.slot == 1 || choice.slot == 2)
-                        && interaction.risk.level.requiresPanelConfirmation
                     Button {
                         Task { await viewModel.requestPanelSelection(choice.slot) }
                     } label: {
                         HStack(spacing: 10) {
-                            Text(requiresPanelConfirmation ? "Pet 확인" : "⌥\(choice.slot)")
+                            Text(viewModel.actionShortcutLabel(
+                                interaction: interaction,
+                                choice: choice
+                            ))
                                 .font(.caption.monospaced().bold())
                                 .frame(minWidth: 28)
                             VStack(alignment: .leading, spacing: 2) {
@@ -296,6 +307,92 @@ struct PetRootView: View {
                 .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
             }
         }
+    }
+
+    private var shortcutSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("단축키 설정")
+                    .font(.headline)
+                Text("보조키 없는 입력을 가로채지 않도록 Option을 포함해야 하며, Option 단독은 숫자와 Space에만 사용할 수 있습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(PetShortcutIntent.allCases, id: \.self) { intent in
+                shortcutSettingRow(intent)
+            }
+
+            if let error = viewModel.shortcutSettingsError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Button("기본값 불러오기", action: viewModel.restoreDefaultShortcutDraft)
+                Spacer()
+                Button("취소", action: viewModel.cancelShortcutSettings)
+                Button("저장", action: viewModel.saveShortcutSettings)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!viewModel.canSaveShortcutSettings)
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func shortcutSettingRow(_ intent: PetShortcutIntent) -> some View {
+        let draft = viewModel.shortcutDraft.shortcut(for: intent)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(intent.displayName)
+                    .font(.callout.bold())
+                Spacer()
+                Text(PetShortcutCatalog.displayLabel(for: draft))
+                    .font(.caption.monospaced().bold())
+            }
+            HStack(spacing: 8) {
+                Picker(
+                    "보조키",
+                    selection: Binding(
+                        get: { viewModel.shortcutDraft.shortcut(for: intent).modifiers },
+                        set: { viewModel.updateShortcutDraft(intent: intent, modifiers: $0) }
+                    )
+                ) {
+                    ForEach(PetShortcutCatalog.modifierPresets) { preset in
+                        Text(preset.displayLabel).tag(preset.modifiers)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+
+                Picker(
+                    "키",
+                    selection: Binding(
+                        get: { viewModel.shortcutDraft.shortcut(for: intent).keyCode },
+                        set: { viewModel.updateShortcutDraft(intent: intent, keyCode: $0) }
+                    )
+                ) {
+                    ForEach(PetShortcutCatalog.keys) { key in
+                        Text(key.displayLabel).tag(key.keyCode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+
+                Spacer()
+                Text(viewModel.shortcutDraftStatusDescription(for: intent))
+                    .font(.caption2)
+                    .foregroundStyle(
+                        viewModel.shortcutDraftStatusIsProblem(for: intent)
+                            ? Color.orange
+                            : Color.secondary
+                    )
+            }
+        }
+        .padding(.vertical, 3)
     }
 
     private var emptyState: some View {
