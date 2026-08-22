@@ -5605,3 +5605,2068 @@ version constants. No persisted-state or schema migration is required.
 - **Follow-up work:** Rebuild/restart the clean packaged Launcher and manually compare a
   single captured web/Launcher Board at the same timestamp; retain the existing human
   privacy, accessibility, compatibility and release approvals.
+
+<!-- engine-change-record-section:ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17:begin -->
+## Engine Change Record — DFA-000 Dayflow ablation synthetic scope
+
+- **Record ID:** `ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17`
+- **Date:** 2026-08-17 KST
+- **Status:** Draft. The human-approved synthetic planning scope is recorded; implementation,
+  contract freeze, evaluation, live collection, cross-repository work, and release remain
+  unapproved or pending as stated below.
+- **Owner and approvals:** Documentation/architecture planning under human direction. The
+  user's explicit instruction in the 2026-08-17 task thread approves this bounded synthetic
+  scope and the pragmatic governance simplification. It is not `H-DFA-CONTRACT`,
+  `H-CROSS-REPO`, live-capture, pilot, E2, or release approval.
+- **Goal:** Plan and validate a local-only synthetic A0/A1/B/C suggestion ablation without
+  creating a parallel machine-approval framework. Preserve the paired B-versus-A1 causal
+  comparison, A0 compatibility anchor, independent screen-only C arm, immutable evaluation
+  lineage, privacy/retention controls, and later human contract/cross-repository gates.
+- **Affected pipeline stages:** DFA-000 documentation scope and DFA-001 planned LikeC4
+  validation; DFA-002 synthetic source schemas, fixtures, tests, and contract-freeze
+  preparation. No production Attention, Continuation, Work Board, Launcher, route, action,
+  store, capture, provider, evaluator, or release behavior changes in this record.
+- **Behavior before:** The draft plan introduced six raw-hashed scope manifests, synthetic
+  actor DAGs, custom tool/package-tree closures, command receipts, publishers, and chained
+  scope approvals. That machinery duplicated repository controls, created review overhead,
+  and implied authority that had not been earned by implementation or test evidence.
+- **Behavior after:** One human-approved Draft ECR bounds the work. DFA-001 uses the existing
+  planned LikeC4 sources, standard repository commands, captured command results, and an
+  independent QA review. DFA-002 may then add strict source schemas, synthetic fixtures, and
+  tests. A source-hash `ContractFreezeProposal` binds the reviewed diff, source/config/
+  fixture hashes, package-lock and relevant tool versions, and exact check results. A
+  separate human `H-DFA-CONTRACT` decision may approve that existing proposal; only then is
+  an immutable contract freeze published. DFA-003 still requires separate explicit
+  `H-CROSS-REPO` approval.
+- **Accepted rationale:** Repository-native commands, source hashes, lockfile/tool versions,
+  readable diffs, check results, and independent QA provide proportionate reproducibility
+  for a synthetic candidate. No claim is made that node_modules or the host is hermetic.
+  Removing the provisional manifest/actor/receipt framework reduces circular approval and
+  stale-hash risk without weakening the live-data, cross-repository, privacy, or release
+  gates.
+- **Exact allowed tracked paths:** Only the following tracked paths may change under
+  DFA-000–002. Any additional tracked path requires a new human-reviewed ECR scope decision.
+  - `suggestion/docs/DAYFLOW_SUGGESTION_ABLATION_PLAN.md`
+  - `suggestion/docs/DAYFLOW_SUGGESTION_ABLATION_RUNBOOK.md`
+  - `suggestion/docs/ENGINE_CHANGE_RECORD.md`
+  - `architecture/planned.c4`
+  - `architecture/views.c4` (planned views only)
+  - `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json`
+  - `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json`
+  - `suggestion/src/dayflowEvidence/contracts.ts`
+  - `suggestion/src/dayflowEvidence/extract.ts`
+  - `suggestion/src/dayflowEvidence/normalize.ts`
+  - `suggestion/src/evaluation/dayflowAblation/buildDataset.ts`
+  - `suggestion/src/evaluation/dayflowAblation/contracts.ts`
+  - `suggestion/src/evaluation/dayflowAblation/evaluate.ts`
+  - `suggestion/src/evaluation/dayflowAblation/run.ts`
+  - `suggestion/tests/dayflowAblationEvaluation.test.ts`
+  - `suggestion/tests/dayflowEvidenceContracts.test.ts`
+  - `suggestion/tests/dayflowEvidenceExtraction.test.ts`
+  - `suggestion/tools/run-dayflow-evidence-ablation.ts`
+- **Data and capability boundary:** DFA-000–002 are synthetic-only and local-only. Raw human
+  conversations, screenshots, actual Dayflow blobs, production data, credentials, and
+  secrets are forbidden. No Dayflow repository write/build/run, database/WAL/screenshot
+  read, macOS capture API, network, provider, telemetry, cloud storage, production store/
+  route/action, or production integration is authorized. The pinned Dayflow document/source
+  hashes remain read-only references. Private generated artifacts stay under ignored
+  `.local/` or `artifacts/architecture/` paths and never enter Git.
+- **Version tuple:** Planning contract `DFA-000 synthetic scope v1`; proposed export,
+  normalized evidence, checkpoint/run, review, dataset, deletion, aggregate, and state
+  schemas remain Draft until the DFA-002 source-hash proposal and human
+  `H-DFA-CONTRACT`. No runtime schema is frozen by this ECR.
+- **Code provenance:** Known base commit
+  `92b2ca94fc3e8347261ac6a85a627c8e6c915400`; `codeCommit: null`. The worktree contains
+  documentation/planned-architecture work and may be dirty. Exact source hashes are deferred
+  to the DFA-002 proposal rather than represented by a synthetic approval chain.
+- **Evaluation dataset and run IDs:** Deferred. No dataset, arm run, comparison run, review
+  result, metric, baseline, pilot, or release evidence is created or approved here.
+- **DFA-001 standard command evidence:** The required repository commands are
+  `npm run arch:model:format:check`, `npm run arch:sources:check`,
+  `npm run arch:model:check`, and `npm run arch:model:build`, executed from the Blabase
+  root against the reviewed planned-source diff. Record exact command text, start/end time,
+  exit status, relevant package-lock/tool versions, output location, and readable results.
+  Independent QA must confirm Dayflow remains absent from implemented `model.c4` and
+  dynamics and that changes are planned-only. These commands were not run by this cleanup.
+- **DFA-002 validation evidence:** Exact targeted Vitest commands for the three new test
+  files, `npm run typecheck`, `npm run lint`, and `npm run arch:deps:check` when imports
+  change must pass. Record exact commands/results and source/config/fixture hashes in the
+  proposal. A required failure or omission cannot be waived as passing.
+- **Metrics changed:** None. No conformance, quality, baseline, live, release, pilot, or E2
+  claim is made.
+- **Privacy and retention:** Synthetic fixtures use no real person or workspace data and are
+  Git-safe only after review. Private generated outputs use ignored local storage, data
+  minimization, bounded retention, deletion verification, and no cloud sync. Live consent,
+  encryption, retention, coverage, deletion, and lawful-basis approval remain mandatory
+  before any later live pilot and cannot be satisfied by this record.
+- **Current task status:** `DFA-000 completed`;
+  `DFA-001 implementation_validation_pending` because planned source and standard commands
+  exist but command evidence and independent QA are pending; `DFA-002 pending`.
+  DFA-003 and later implementation gates remain blocked by their documented dependencies.
+- **Release decision:** Planning scope accepted; no implementation, contract, live, pilot,
+  production, or release approval. DFA-002 cannot complete before the proposal →
+  independent human `H-DFA-CONTRACT` → immutable freeze sequence.
+- **Rollback method:** Stop the experiment, leave production paths unchanged, remove or
+  revert only the allowed planned/synthetic experiment paths, and discard ignored local
+  artifacts. Frozen datasets or approvals, once created, are never rewritten. No production
+  data migration is required.
+- **Follow-up work:** Complete DFA-001 standard command evidence and independent QA. Then
+  implement DFA-002 only within the exact tracked path list, publish the source-hash
+  ContractFreezeProposal with readable diff and check evidence, request human
+  `H-DFA-CONTRACT`, and freeze the approved contract before seeking H-CROSS-REPO.
+<!-- engine-change-record-section:ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17:end -->
+
+<!-- engine-change-record-section:ECR-DFA-001-PLANNED-LIKEC4-VALIDATION-2026-08-17:begin -->
+## Engine Change Record Addendum — DFA-001 planned LikeC4 validation
+
+- **Record ID:** `ECR-DFA-001-PLANNED-LIKEC4-VALIDATION-2026-08-17`
+- **Parent record:** `ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17`.
+  This additive section supersedes only that record's DFA-001 evidence/status statement; it
+  does not alter its scope, prohibitions, or approval boundaries.
+- **Date/status:** 2026-08-17 KST; Draft planning evidence, `DFA-001 completed`.
+- **Reviewed source hashes:** `architecture/planned.c4` raw SHA-256
+  `56b48e0049220e928398cbae636b46c89a7c9ba03141dc3044bcf186a1ecadfb`;
+  `architecture/views.c4` raw SHA-256
+  `f92c7e5ec197bc7145901feb3941fc18965c736cc83fbeb7c38d57e5e294b8f4`.
+- **Standard command evidence:** `npm run arch:model:format:check` PASS;
+  `npm run arch:sources:check` PASS with 49 links; `npm run arch:model:check` PASS with
+  5 files; `npm run arch:model:build` PASS. Build output is confined to the ignored
+  architecture artifact path.
+- **Semantic and independent review:** Semantic `rg` guard PASS with no Dayflow leakage
+  into implemented model, dynamics, or production paths. Independent QA PASS with no
+  Medium-or-higher findings.
+- **Dataset/run/metric impact:** No evaluation dataset or run ID was created. This is a
+  planning-only architecture closure with no runtime or engine behavior change; core
+  baseline is N/A and no conformance, quality, live, pilot, E2, or release claim is made.
+- **Privacy/release:** The parent record's synthetic-only, local-only, no-Dayflow-write,
+  no-network/provider/telemetry/production-integration constraints remain unchanged. The
+  build produced ignored review output only.
+- **Task transition:** `DFA-000 completed`; `DFA-001 completed`; `DFA-002 pending` and is the
+  next task. DFA-002 still requires strict source schemas, synthetic fixtures/tests, a
+  source-hash `ContractFreezeProposal`, independent human `H-DFA-CONTRACT`, and matching
+  immutable freeze before completion. DFA-003 remains blocked on separate
+  `H-CROSS-REPO` approval.
+- **Rollback:** Remove or revert only the planned LikeC4 additions and discard the ignored
+  architecture build artifact. No production state or data migration exists.
+<!-- engine-change-record-section:ECR-DFA-001-PLANNED-LIKEC4-VALIDATION-2026-08-17:end -->
+
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-2026-08-17:begin -->
+## Engine Change Record Addendum — DFA-002 contract candidate
+
+- **Record ID:** `ECR-DFA-002-CONTRACT-CANDIDATE-2026-08-17`.
+- **Parent records:** `ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17`
+  and `ECR-DFA-001-PLANNED-LIKEC4-VALIDATION-2026-08-17`. This additive section
+  supersedes only their DFA-002 implementation/validation status. It does not modify either
+  earlier record or broaden the approved synthetic tracked-path/safety scope.
+- **Date/status:** 2026-08-17 KST; closed machine status `DFA-002 pending`.
+  The implementation candidate is validated and proposal assembly is pending. Machine status
+  may become `in_review` only after proposal publication, readback, and human-review submission.
+  Contract-only implementation and automated validation are complete. DFA-002 is not
+  approved, frozen, executable, completed, live-enabled, production-enabled, or released;
+  `H-DFA-CONTRACT` remains pending.
+- **Goal:** Implement and independently review the strict synthetic Dayflow ablation contract
+  schemas, registry, deterministic fixtures/loaders, and fail-closed verification behavior
+  without connecting a runtime, store, CLI, screen source, live source, or production path.
+- **Affected pipeline stages:** Synthetic contract validation, duplicate-aware fixture loading,
+  artifact registry/hash domains, source-pin/proposal/decision/freeze validation, arm/run
+  serialization, request issuance integrity, checkpoint completion, retention attestations,
+  and fail-closed resolver boundaries. No production suggestion pipeline stage is connected.
+- **Behavior before:** DFA-002 was an acceptance sketch with no strict TypeScript candidate
+  implementation or contract-conformance fixture coverage.
+- **Behavior after:** The eight source/config/fixture/test files below form an independently
+  reviewed contract candidate. The candidate rejects missing, unresolved, stale, mismatched,
+  non-canonical, duplicate-key, cross-lineage, privacy-invalid, or unauthorized inputs. These
+  bytes remain non-normative until an exact proposal is approved by `H-DFA-CONTRACT` and the
+  matching immutable freeze is published and read back.
+
+### Reviewed DFA-002 source manifest
+
+SHA-256 values are over exact raw file bytes. Byte lengths are canonical decimal counts.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| fixture | `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json` | 24879 | `aa4958de3255785125bdc20c6982b10074c0242bfa67644498c87560339de951` |
+| config | `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json` | 8572 | `74136e46be65c8f59281358015b851d236e7f0b898c98ecdf09f297ecf323c01` |
+| source | `suggestion/src/dayflowEvidence/contracts.ts` | 74166 | `3fec68840edfe5be2bee39a16ba634f91d21e20915a40c2eaab38b9e542279e0` |
+| source | `suggestion/src/evaluation/dayflowAblation/buildDataset.ts` | 21256 | `28ecdc71e2a0d8b79806b0bc6994558c9f3218d184d8b172f092628d09ba5ab4` |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 251122 | `62ced4da6db62170be493b76d72f887ac502c2050c7540bff935aa45d3dafe59` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 173194 | `a28966f39fc008fb9eff1efc9251331baef26a8b79dda756289a40b333925169` |
+| test | `suggestion/tests/dayflowEvidenceContracts.test.ts` | 46972 | `b819e97f39e6883b58d03bd4ca1074931babf252fcdad9a0723cc186b53e148e` |
+| test | `suggestion/tests/dayflowEvidenceExtraction.test.ts` | 8816 | `92a31f1b9b805374f123a6a579a35053c63815941fb1a79bd48ba042731cde36` |
+
+### Non-exhaustive QA-relevant contract version/domain delta
+
+This table is not the artifact-registry inventory. The canonical complete 32-row inventory,
+including storage mode and detached hash field, is the frozen
+`DAYFLOW_ABLATION_ARTIFACT_REGISTRY` in
+[`contracts.ts`](../src/evaluation/dayflowAblation/contracts.ts); the Plan and Runbook contain
+its readable full projection.
+
+| Artifact | Schema version | Hash domain | Detached hash field |
+| --- | --- | --- | --- |
+| Contract proposal | `dayflow-dfa-contract-freeze-proposal-v0.1` | `blabase.dayflow-dfa.contract-freeze-proposal.v0.1` | `contractFreezeProposalSha256` |
+| Contract decision | `dayflow-dfa-contract-decision-v0.1` | `blabase.dayflow-dfa.contract-decision.v0.1` | `contractDecisionSha256` |
+| Contract freeze | `dayflow-dfa-contract-freeze-v0.1` | `blabase.dayflow-dfa.contract-freeze.v0.1` | `contractFreezeSha256` |
+| A0 arm input | `dayflow-ablation-arm-input-v0.4` | `blabase.dayflow-ablation.arm-input.a0.v0.4` | `armInputHash` |
+| A1 arm input | `dayflow-ablation-arm-input-v0.4` | `blabase.dayflow-ablation.arm-input.a1.v0.4` | `armInputHash` |
+| B arm input | `dayflow-ablation-arm-input-v0.4` | `blabase.dayflow-ablation.arm-input.b.v0.4` | `armInputHash` |
+| C arm input | `dayflow-ablation-arm-input-v0.4` | `blabase.dayflow-ablation.arm-input.c.v0.4` | `armInputHash` |
+| Arm run | `dayflow-ablation-run-v0.4` | `blabase.dayflow-ablation.run.v0.4` | `runSha256` |
+| Request-order manifest | `dayflow-ablation-request-order-manifest-v0.1` | `blabase.dayflow-ablation.request-order-manifest.v0.1` | `requestOrderManifestSha256` |
+| Request-issuance receipt | `dayflow-ablation-request-issuance-receipt-v0.1` | `blabase.dayflow-ablation.request-issuance-receipt.v0.1` | `requestIssuanceReceiptSha256` |
+| Pilot verification attestation | `dayflow-ablation-pilot-verification-attestation-v0.1` | `blabase.dayflow-ablation.pilot-verification-attestation.v0.1` | `pilotVerificationAttestationSha256` |
+| Evaluation checkpoint | `dayflow-ablation-checkpoint-v0.2` | `blabase.dayflow-ablation.checkpoint.v0.2` | `checkpointSha256` |
+| Checkpoint completion | `dayflow-ablation-checkpoint-completion-v0.1` | `blabase.dayflow-ablation.checkpoint-completion.v0.1` | `checkpointCompletionSha256` |
+
+- **Versions before/after:** The table above records the candidate source contract literals.
+  There is no new production engine/prompt/model/provider version. The deterministic
+  contract-only generation tuple uses literal provider/model/prompt/template `none`, empty
+  generation parameters, and `syntheticOnly: true`.
+- **Code provenance:** Known Blabase base
+  `92b2ca94fc3e8347261ac6a85a627c8e6c915400` and pinned Dayflow revision
+  `df3c367edb7d405a78d1ae76edffe4ba366f57d7`. No new commit or Dayflow repository write is
+  claimed by this record. The exact candidate files are bound by the manifest above.
+- **Commands/checks executed:** From `suggestion/`,
+  `./node_modules/.bin/vitest run tests/dayflowEvidenceContracts.test.ts tests/dayflowEvidenceExtraction.test.ts tests/dayflowAblationEvaluation.test.ts`
+  passed all 3 files and `66/66` tests; suggestion `npm run typecheck` passed; full
+  `npm run lint` passed. From the Blabase root, `npm run arch:deps:check` exited 0 with the
+  existing 12 boundary, 8 coupling, and 2 cycle warnings. No check failure was waived.
+- **Independent review:** Independent QA is Green with no Medium-or-higher finding. This is
+  review of the contract-only implementation and automated results, not human contract
+  approval.
+- **Evaluation dataset/version, run IDs, and metrics:** N/A. No Golden, Regression, Rolling,
+  or Holdout dataset changed; no candidate/comparison run exists; no quality, conformance,
+  pilot, E2, baseline, or release metric is claimed. A Golden baseline is N/A because this
+  candidate is contract-only and is not wired into production semantics.
+- **Privacy and retention:** Only synthetic fixtures were used. No raw human conversation,
+  screenshot, actual Dayflow blob, credential, secret, or production data was read, stored,
+  or emitted. The designed raw-artifact maximum retention is 24 hours; normalized metadata
+  follows the documented policy. An immutable pre-purge verification attestation contains
+  no raw blobs. After raw purge, verification resolves metadata, attestations, and deletion
+  receipts rather than deleted content. The attestation schema encodes `verifiedAt` but no
+  TTL/expiry/revocation/purge fields; DFA-007 must enforce private-metadata retention from
+  `verifiedAt` for audit need only, with a hard 30-day cap and the earliest applicable deletion,
+  consent-revocation, authority/contract-invalidation, or rollback trigger. It is excluded from
+  backup/export/telemetry and its purge is receipt-covered. These contracts grant no live
+  collection authority.
+- **Deferred fail-closed boundaries:** DFA-003's trusted external pin resolver and Dayflow
+  export boundary implementation are deferred; missing/untrusted pin content or export
+  resolution is rejected. DFA-007's authoritative current/historical-as-of resolver and
+  attestation lifecycle implementation are deferred. DFA-007 owns immutable create-no-overwrite
+  publication, currentness/revocation, private store/read/purge, retention/deletion receipts,
+  and corruption/rollback fail-closed tests; missing, stale, unresolved, or hash-mismatched
+  authority/attestation input is rejected. No live/runtime/production/store/CLI/screen
+  integration was added.
+- **Proposal and approval state:** No schema-valid artifact was emitted at
+  `suggestion/.local/evaluations/dayflow-ablation/contract-proposals/<proposalId>.json`.
+  The pending role assignments are proposer/working owner `colin`, owner reviewer `colin`, and
+  independent reviewer `david`; both people will review/confirm, but none of those acts is
+  recorded yet. The proposal schema has exactly one proposer and one distinct independent-QA
+  reviewer. The decision schema has exactly one approver distinct from the proposer, not a
+  2-of-2 vote. It does not require the independent-QA reviewer and decision approver to differ,
+  so `david` may fill both roles. `colin`'s owner confirmation is workflow prose rather than a
+  second decision field; with these assignments only `david` satisfies independence and may be
+  the future `approverPseudonym`. Immutable source-pin, command-result, readable-diff, and
+  `david`-attributed independent-QA receipts remain unassembled, so this record does not fabricate
+  them. The prose label "implementation candidate validated; proposal assembly pending"
+  describes the reviewed implementation candidate only; the closed machine status remains
+  `pending`. Existing technical QA evidence does not substitute for either assigned person's
+  pending review/confirmation. It is not a
+  `ContractFreezeProposal`, human decision, contract freeze, or executable study protocol.
+- **Release decision:** Do not execute or release. `H-DFA-CONTRACT` is pending. No decision
+  artifact or freeze exists, and DFA-002 is not complete. DFA-003 and DFA-007 implementations
+  remain deferred and fail closed; all downstream/live/production gates remain closed.
+- **Rollback:** Remove or revert only the eight DFA-002 candidate files within the approved
+  scope and this additive recordkeeping update. There is no production migration, stored live
+  data, provider state, or frozen dataset to roll back.
+- **Follow-up work:** Assemble the exact source-pin artifact, immutable command result bytes
+  with timestamps and hashes, readable diff receipt, independent QA receipt, tool-version
+  tuple, `colin`'s owner review/confirmation, and `david`'s independent review/confirmation. Then
+  publish/read back one schema-valid `ContractFreezeProposal` for the unchanged candidate with
+  `proposerPseudonym: colin` and `independentQaRef.reviewerPseudonym: david`. Only after that may
+  `david` record the schema's single `H-DFA-CONTRACT: approved | rejected` decision as
+  `approverPseudonym`; no decision exists yet. Only an approval of that exact proposal may be
+  bound into a matching immutable freeze; any byte/result change requires a new proposal and
+  human decision.
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-2026-08-17:end -->
+
+<!-- engine-change-record-section:ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18:begin -->
+## Engine Change Record Addendum — DFA-000 exact two-path scope amendment
+
+- **Record ID:** `ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18`.
+- **Parent record:** `ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17`.
+  This is an additive human-reviewed scope decision; it does not rewrite the parent record.
+- **Date/status and approver:** 2026-08-18 KST; `colin` explicitly approved exactly the two
+  tracked-path additions below for DFA-002 contract-only validation configuration:
+  - `suggestion/tsconfig.dayflow-dfa002.json`
+  - `suggestion/vitest.dayflow-dfa002.config.ts`
+- **Exact scope effect:** The parent record's 13 DFA-002 source/config/fixture/test/tool paths
+  become 15 only by those two additions. No other tracked path, runtime, store, CLI, screen,
+  live input, Dayflow write, provider/network call, production integration, contract approval,
+  freeze, pilot, E2, release or deployment authority is added.
+- **Rationale:** The two files provide a bounded DFA-002 TypeScript project and Vitest
+  configuration that exclude generated/private roots, avoid environment-file loading, and make
+  the authoritative scoped commands explicit and reproducible. They are candidate config bytes,
+  not an approval artifact or execution grant.
+- **Task/gate effect:** `DFA-000 completed` remains unchanged. `DFA-002` remains closed machine
+  status `pending`; this scope amendment is not `H-DFA-CONTRACT`, does not satisfy David's
+  authenticated review, and cannot create a proposal, decision or freeze.
+- **Privacy/data impact:** None. The amendment authorizes only two tracked configuration files
+  and preserves the synthetic-only, no-raw-human-data, no-secret, local-only boundary.
+- **Rollback:** Remove only these two config additions if the scoped DFA-002 command strategy is
+  abandoned. No production state, external repository state or user data requires migration.
+<!-- engine-change-record-section:ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18:end -->
+
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-V0.3-2026-08-18:begin -->
+## Engine Change Record Addendum — DFA-002 final v0.3 contract candidate
+
+- **Record ID:** `ECR-DFA-002-CONTRACT-CANDIDATE-V0.3-2026-08-18`.
+- **Parent records:** `ECR-DFA-002-CONTRACT-CANDIDATE-2026-08-17` and
+  `ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18`. This additive record
+  explicitly supersedes the older DFA-002 candidate's eight-file hashes, 32-row registry,
+  proposal/decision/freeze v0.1 tuple, 66/66 check result, evidence-assembly description and
+  rollback count wherever they conflict with this record. The older bytes and statements remain
+  historical evidence and were not rewritten. Parent safety and approval boundaries remain.
+- **Date/status:** 2026-08-18 KST; closed machine status `DFA-002 pending`. The final
+  contract-only implementation candidate, automated validation, compatibility checks and external
+  QA are complete; proposal assembly is pending. Status may become `in_review` only after a
+  schema-valid proposal is published, read back and submitted for H-DFA review. DFA-002 is not
+  approved, frozen, executable, completed, live-enabled, production-enabled or released.
+- **Goal and affected boundary:** Finalize strict synthetic source schemas, deterministic
+  fixtures/loaders, the 36-row registry, privacy-bounded proposal evidence contracts and
+  fail-closed resolver verification. No production suggestion stage, runtime, private-store
+  implementation, CLI, screen source, live source, provider or external mutation is connected.
+- **Behavior after:** The exact ten candidate files below are the current independently reviewed
+  source candidate. Proposal evidence is no longer an opaque prose reference: command receipt
+  v0.1, full-content readable diff v0.2, machine-evidence bundle v0.2 and authenticated human-
+  review receipt v0.2 are strict standalone artifacts resolved by proposal/decision/freeze v0.3.
+  These are source contracts only; no instance was emitted and the candidate remains
+  non-normative until the exact human-approved freeze chain completes.
+
+### Current DFA-002 ten-file manifest
+
+SHA-256 values are over exact raw file bytes. Byte lengths are canonical decimal counts.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| fixture | `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json` | 24879 | `aa4958de3255785125bdc20c6982b10074c0242bfa67644498c87560339de951` |
+| config | `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json` | 9469 | `5bfa4540d93743750a12c0e564852661db6e95d8248a12b1a7ef0044b1143691` |
+| source | `suggestion/src/dayflowEvidence/contracts.ts` | 74843 | `fcdea904dad60840d69fa0bf55bd2033fc31b829c045bbbbcb6575421a41afb3` |
+| source | `suggestion/src/evaluation/dayflowAblation/buildDataset.ts` | 21256 | `28ecdc71e2a0d8b79806b0bc6994558c9f3218d184d8b172f092628d09ba5ab4` |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 301021 | `33dd14115b140f7f21ea4c44a299fdcb2096557c7ffff21264a22159089bd299` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 235858 | `1d43477d9b2c1c274cf1132756203d3f49568a1a55471cc9342a0df5620500c9` |
+| test | `suggestion/tests/dayflowEvidenceContracts.test.ts` | 47886 | `9112df7720d952bad837a4d95daa007da904b18694715515c3fba16450bbe01d` |
+| test | `suggestion/tests/dayflowEvidenceExtraction.test.ts` | 8816 | `92a31f1b9b805374f123a6a579a35053c63815941fb1a79bd48ba042731cde36` |
+| config | `suggestion/tsconfig.dayflow-dfa002.json` | 671 | `61fb4436fb370febcb1f829f7d483430092228fd0d030c06828e8559ffba8693` |
+| config | `suggestion/vitest.dayflow-dfa002.config.ts` | 396 | `13a55619cdd259acf0199f4dceb74476aede2792bb6686309a5042b5cde893cc` |
+
+The distinct command-defining input inventory is the exact source constant: root
+`dependency-cruiser.config.mjs`, `dependency-cruiser.suggestion.config.mjs`, `package-lock.json`
+and `package.json`; plus `suggestion/eslint.config.mjs`, both suggestion package files,
+`suggestion/tsconfig.dayflow-dfa002.json`, `suggestion/tsconfig.json` and
+`suggestion/vitest.dayflow-dfa002.config.ts`. Candidate/input overlap must repeat identical byte
+metadata, and `unexpectedTrackedPaths` is exactly empty.
+
+### Current QA-relevant registry delta
+
+This is a non-exhaustive delta. The canonical complete 36-row inventory, storage modes and
+detached hash fields are `DAYFLOW_ABLATION_ARTIFACT_REGISTRY` in
+[`contracts.ts`](../src/evaluation/dayflowAblation/contracts.ts); the Plan and Runbook contain its
+readable full projection.
+
+| Artifact | Schema version | Hash domain | Detached hash field |
+| --- | --- | --- | --- |
+| Contract proposal | `dayflow-dfa-contract-freeze-proposal-v0.3` | `blabase.dayflow-dfa.contract-freeze-proposal.v0.3` | `contractFreezeProposalSha256` |
+| Contract decision | `dayflow-dfa-contract-decision-v0.3` | `blabase.dayflow-dfa.contract-decision.v0.3` | `contractDecisionSha256` |
+| Contract freeze | `dayflow-dfa-contract-freeze-v0.3` | `blabase.dayflow-dfa.contract-freeze.v0.3` | `contractFreezeSha256` |
+| DFA command receipt | `dayflow-dfa-command-receipt-v0.1` | `blabase.dayflow-dfa.command-receipt.v0.1` | `commandReceiptSha256` |
+| DFA readable diff | `dayflow-dfa-readable-diff-v0.2` | `blabase.dayflow-dfa.readable-diff.v0.2` | `readableDiffSha256` |
+| DFA machine evidence | `dayflow-dfa-machine-evidence-bundle-v0.2` | `blabase.dayflow-dfa.machine-evidence-bundle.v0.2` | `machineEvidenceBundleSha256` |
+| DFA human review | `dayflow-dfa-human-review-receipt-v0.2` | `blabase.dayflow-dfa.human-review-receipt.v0.2` | `humanReviewReceiptSha256` |
+
+- **Authoritative scoped commands:** `dfa002-depcruise` with dependency-cruiser 18.2.0 passed
+  over 6 modules/9 dependencies; `dfa002-eslint` with ESLint 9.39.5 passed explicitly;
+  `dfa002-tsc` with TypeScript 5.9.3 and `tsconfig.dayflow-dfa002.json` passed; and
+  `dfa002-vitest` with Vitest 3.2.7 and `vitest.dayflow-dfa002.config.ts` passed 3 files/73 tests.
+  These successful executions are current technical evidence, not fabricated v0.1 receipt
+  artifacts; proposal assembly must capture new exact timestamps, stdout/stderr metadata,
+  invocation/runtime facts and input-set hash in immutable receipts.
+- **Full compatibility checks:** Full suggestion typecheck PASS; full suggestion lint PASS; root
+  `arch:deps:check` exited 0 with 0 errors and existing warnings: repository 12, suggestion 8,
+  scripts 2. No required failure or omission was waived.
+- **External review:** External QA PASS. This verifies the final contract-only candidate and
+  automated evidence; it is not David's authenticated human-review receipt and is not
+  `H-DFA-CONTRACT` approval.
+- **Versions and reproducibility:** Known Blabase base
+  `92b2ca94fc3e8347261ac6a85a627c8e6c915400` and pinned Dayflow revision
+  `df3c367edb7d405a78d1ae76edffe4ba366f57d7` remain. The deterministic generation tuple uses
+  provider/model/prompt/template literal `none`, empty generation parameters and
+  `syntheticOnly: true`. There is no production engine/prompt/model/provider version change.
+- **Evaluation/baseline:** N/A. No Golden, Regression, Rolling or Holdout dataset changed; no
+  evaluation/comparison/pilot run ID or metric exists. A Golden baseline is N/A because the
+  candidate is contract-only and has no production semantic effect.
+- **Private evidence layout:** Future artifacts remain only under
+  `suggestion/.local/evaluations/dayflow-ablation/`: temporary `staging/<sessionId>/`, then
+  canonical `pins`, `command-receipts`, `readable-diffs`, `machine-evidence-bundles`,
+  `human-review-receipts` and `contract-proposals` paths plus operational `state`.
+  `contract-decisions` and `contract-freezes` are ineligible before their human gates.
+  Directories are `0700`, files `0600`; immutable publication is no-follow, no-clobber,
+  same-root atomic rename and byte/hash readback. No persistent unregistered evidence/report
+  subtree is allowed.
+- **Privacy and retention:** Only synthetic fixtures/source were used. No raw human
+  conversation, screenshot, Dayflow blob, production data, credential or secret was read or
+  emitted. Command receipt v0.1 persists raw-output length/hash, bounded sanitized text/hash and
+  redaction metadata, not unsanitized output bytes. Readable diff v0.2 holds bounded UTF-8
+  before/after source content and rejects private-secret material. Staging is reconciled within
+  one hour. A pending evidence chain is private metadata retained at most 30 days from
+  `sourcePinSet.createdAt`, with earlier abandonment/rejection/scope-revocation/rollback purge.
+  If an approved current freeze references it, the complete chain follows append-only
+  source/audit retention until terminal supersession/rollback, then is purged within 30 days.
+  Git, backup, export, telemetry and public-report inclusion are forbidden. Live raw artifacts
+  remain capped at 24 hours and normalized metadata follows the documented policy; none exists.
+- **Human roles and artifact state:** `colin` is working owner/proposer and owner reviewer;
+  `david` is the only schema-valid authenticated reviewer and future decision signer. Proposal
+  v0.3 requires an `independentHumanReviewReceiptRef` resolving through the trusted channel to
+  David's v0.2 receipt with `decision: confirmed`. Decision v0.3 has exactly one literal
+  `approverPseudonym: david` and repeats the same receipt ref. Colin's scope approval and owner
+  confirmation are not a second contract vote. No source-pin set, command receipt, readable
+  diff, machine bundle, David receipt, proposal, decision, approval or freeze was emitted.
+- **Deferred fail-closed boundaries:** DFA-003 still owns the trusted external Dayflow pin/export
+  implementation; DFA-007 still owns authoritative current/historical-as-of resolution,
+  immutable attestation storage/read/purge and deletion-receipt lifecycle. Missing, stale,
+  unresolved, corrupt or hash-mismatched authority fails closed. No live/runtime/production/
+  store/CLI/screen integration was added.
+- **Release decision:** Do not execute or release. `H-DFA-CONTRACT` is pending; DFA-002 remains
+  pending and DFA-003+ remain deferred/blocked by their documented gates.
+- **Rollback:** Revert only the exact ten current candidate files and these additive
+  recordkeeping changes within the approved scope. No production migration, live data, provider
+  state, dataset or frozen authority exists.
+- **Next human-gated evidence assembly:** After these final docs are stable, create/read back the
+  exact source-pin set, capture the four authoritative commands as new v0.1 receipts, publish/read
+  back the reconstructed full-content diff v0.2 and machine bundle v0.2, then obtain David's
+  authenticated `confirmed` human-review receipt v0.2. Only then may Colin publish/read back and
+  submit proposal v0.3. Machine status remains `pending` until that submission; David may then
+  record the single v0.3 `approved | rejected` decision. Only `approved` permits a byte-identical
+  36-row freeze v0.3. Any source/input/result/review byte change restarts this chain.
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-V0.3-2026-08-18:end -->
+
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-V0.4-REAL-BASE-2026-08-18:begin -->
+## Engine Change Record Addendum — DFA-002 corrected real-base v0.4 candidate
+
+- **Record ID:** `ECR-DFA-002-CONTRACT-CANDIDATE-V0.4-REAL-BASE-2026-08-18`.
+- **Parent records:** `ECR-DFA-002-CONTRACT-CANDIDATE-V0.3-2026-08-18` and
+  `ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18`. This additive correction
+  preserves both records unchanged. It supersedes the v0.3 record's current-candidate hashes,
+  73/73 result, v0.3 proposal/decision/freeze tuple, v0.2 diff/machine/human tuple, base-diff
+  interpretation, artifact-state statement and matching rollback/assembly instructions wherever
+  they conflict with this record.
+- **Date/status:** 2026-08-18 KST; closed machine status `DFA-002 pending`. The corrected
+  contract-only implementation candidate, automated checks, compatibility checks and external QA
+  passed. Proposal assembly remains pending. Status may become `in_review` only after a new
+  schema-valid proposal is published, read back and submitted for H-DFA review. DFA-002 is not
+  approved, frozen, executable, completed, live-enabled, production-enabled or released.
+- **Scope:** The exact 15-path DFA-000 allowlist remains unchanged, including only Colin's two
+  approved configuration-path additions. No broader tracked-path, runtime, store, CLI, screen,
+  live, Dayflow-write, provider/network, production, pilot, E2 or release authority is added.
+
+### Corrected current ten-file manifest
+
+SHA-256 values are over exact raw file bytes. Byte lengths are canonical decimal counts.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| fixture | `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json` | 24879 | `aa4958de3255785125bdc20c6982b10074c0242bfa67644498c87560339de951` |
+| config | `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json` | 9469 | `d1edd75b7749153a0f141bdbde970f819bbaedebadd62b93c26c2a4558e2513f` |
+| source | `suggestion/src/dayflowEvidence/contracts.ts` | 74843 | `ede9e8c92041d7f664dcd4f3715a705a93649073e4a044927dbd7e8ddd13a915` |
+| source | `suggestion/src/evaluation/dayflowAblation/buildDataset.ts` | 21256 | `28ecdc71e2a0d8b79806b0bc6994558c9f3218d184d8b172f092628d09ba5ab4` |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 300715 | `44ccf96590342fe849e2c66345857793d70db7406c1eb8bd778e42abd3e5836d` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 238331 | `e1d18d2551373398b0b1627700bf46fe748388e5005b46f0a2f9133ea271547f` |
+| test | `suggestion/tests/dayflowEvidenceContracts.test.ts` | 48840 | `3114f71398400d1c0dbd2fe3cc8acb8cfc320b7af7ecb49bc4f27a3945f3331a` |
+| test | `suggestion/tests/dayflowEvidenceExtraction.test.ts` | 8816 | `92a31f1b9b805374f123a6a579a35053c63815941fb1a79bd48ba042731cde36` |
+| config | `suggestion/tsconfig.dayflow-dfa002.json` | 671 | `61fb4436fb370febcb1f829f7d483430092228fd0d030c06828e8559ffba8693` |
+| config | `suggestion/vitest.dayflow-dfa002.config.ts` | 396 | `13a55619cdd259acf0199f4dceb74476aede2792bb6686309a5042b5cde893cc` |
+
+The exact command-defining input inventory remains the ten ordered paths in
+`DFA002_COMMAND_DEFINING_INPUTS`; overlap with candidate paths must repeat identical byte
+metadata and `unexpectedTrackedPaths` is exactly empty.
+
+### Real-base correction and current schema tuple
+
+- **Fixed base:** Blabase revision
+  `92b2ca94fc3e8347261ac6a85a627c8e6c915400` authoritatively contains none of the exact ten
+  candidate paths. `DFA002_BASE_ABSENT_SOURCE_PATHS` exactly equals the ordered candidate-path
+  inventory. A trusted base resolver must return `{ state: absent }` for every path; present,
+  missing/unparseable, throwing, wrong-revision or filesystem-inferred resolution fails closed.
+- **Only valid readable diff:** Readable diff v0.3 contains exactly ten sorted `add` operations,
+  each with `before: null` and full exact current UTF-8 `after` content. It contains zero
+  `modify` and zero `delete` operations. Colin's two-path scope amendment changes only which
+  tracked paths are authorized; it does not imply that only two paths are additions relative to
+  the fixed base.
+- **Registry:** The complete canonical inventory remains 36 standalone rows in
+  [`contracts.ts`](../src/evaluation/dayflowAblation/contracts.ts). The current changed rows are:
+
+| Artifact | Schema version | Hash domain | Detached hash field |
+| --- | --- | --- | --- |
+| Contract proposal | `dayflow-dfa-contract-freeze-proposal-v0.4` | `blabase.dayflow-dfa.contract-freeze-proposal.v0.4` | `contractFreezeProposalSha256` |
+| Contract decision | `dayflow-dfa-contract-decision-v0.4` | `blabase.dayflow-dfa.contract-decision.v0.4` | `contractDecisionSha256` |
+| Contract freeze | `dayflow-dfa-contract-freeze-v0.4` | `blabase.dayflow-dfa.contract-freeze.v0.4` | `contractFreezeSha256` |
+| DFA command receipt | `dayflow-dfa-command-receipt-v0.1` | `blabase.dayflow-dfa.command-receipt.v0.1` | `commandReceiptSha256` |
+| DFA readable diff | `dayflow-dfa-readable-diff-v0.3` | `blabase.dayflow-dfa.readable-diff.v0.3` | `readableDiffSha256` |
+| DFA machine evidence | `dayflow-dfa-machine-evidence-bundle-v0.3` | `blabase.dayflow-dfa.machine-evidence-bundle.v0.3` | `machineEvidenceBundleSha256` |
+| DFA human review | `dayflow-dfa-human-review-receipt-v0.3` | `blabase.dayflow-dfa.human-review-receipt.v0.3` | `humanReviewReceiptSha256` |
+
+### Validation, stale evidence and artifact state
+
+- **Authoritative scoped commands:** `dfa002-depcruise` with dependency-cruiser 18.2.0 passed
+  over 6 modules/9 dependencies; explicit `dfa002-eslint` with ESLint 9.39.5 passed;
+  `dfa002-tsc` with TypeScript 5.9.3 passed; and `dfa002-vitest` with Vitest 3.2.7 passed
+  3 files/75 tests. These current successful results are technical evidence, not newly emitted
+  immutable command-receipt instances.
+- **Full compatibility checks:** Full suggestion typecheck PASS; full suggestion lint PASS; root
+  `arch:deps:check` exited 0 with 0 errors and existing warnings: repository 12, suggestion 8,
+  scripts 2. No required failure or omission was waived.
+- **External review:** External QA PASS on the corrected real-base candidate. It is not David's
+  authenticated human-review receipt and is not H-DFA-CONTRACT approval.
+- **Stale/abandoned source pin:**
+  `dfa002.source-pin.936ddf31a62727536ff2b01e24f46695`, validation-input-set hash
+  `622f5525e5bf167b3f6b3b6046762b784af80fdde11ed2915322cf1426fe85f4`, source-pin
+  `createdAt: 2026-08-18T04:26:10.791Z`.
+- **Stale/abandoned command receipts:**
+  - `dfa002.receipt.dfa002-depcruise.4d7334bf80994292d38ed638a812ccfb`
+  - `dfa002.receipt.dfa002-eslint.c2d1862b99b5eae98e9b918cfd13de6f`
+  - `dfa002.receipt.dfa002-tsc.5062dce85b75e9b1e4e871236343d567`
+  - `dfa002.receipt.dfa002-vitest.b62241f69b04682e2bc3d4092e93f793`
+- **Authority rule:** Those five pre-correction private artifacts are stale and abandoned. They
+  never became proposal authority, must not be referenced or relabeled as current, and remain
+  pending safe purge/replacement. A replacement uses fresh no-clobber IDs and the current exact
+  validation-input set; immutable stale bytes are never edited in place.
+- **No downstream artifacts:** No readable diff v0.3, machine-evidence bundle v0.3, David
+  human-review receipt v0.3, proposal v0.4, decision v0.4, approval or freeze v0.4 exists. No
+  current replacement source pin or command receipt exists. The earlier ECR statement that no
+  source pin or receipt had been emitted is corrected only by this additive record.
+
+### Privacy, human gate, rollback and follow-up
+
+- **Privacy/retention:** The stale pin and receipts are private source/code governance metadata;
+  they contain no raw human conversation, screenshot or Dayflow blob and remain excluded from
+  Git, backup, export, telemetry and public reports. The abandonment trigger has fired. They stay
+  quarantined only through safe reconciliation/replacement and never beyond the pending-chain
+  maximum of 30 days from the stale source pin's `createdAt`; absent an earlier safe purge, the
+  absolute cap is `2026-09-17T04:26:10.791Z`. New artifacts use
+  `0700` directories, `0600` files, no-follow/no-clobber same-root atomic publication and
+  byte/hash readback. Live raw data remains capped at 24 hours; normalized metadata follows the
+  documented policy; neither exists here.
+- **Evaluation/baseline:** N/A. No Golden, Regression, Rolling or Holdout dataset changed; no
+  evaluation, comparison, pilot run or metric exists. The change is contract-only and has no
+  production semantic effect.
+- **Human roles:** `colin` remains working owner/proposer and owner reviewer. `david` remains the
+  only schema-valid authenticated independent reviewer and future decision signer. Proposal
+  v0.4 must bind David's `confirmed` v0.3 receipt; decision v0.4 has the single literal approver
+  `david` and binds that same receipt. This is not a 2-of-2 rule. No human confirmation or
+  approval exists.
+- **Deferred fail-closed boundaries:** DFA-003 still owns the trusted real-base/current-candidate
+  resolver implementation plus the external Dayflow pin/export boundary. DFA-007 still owns
+  authoritative current/historical-as-of authority resolution and immutable attestation
+  store/read/purge/deletion-receipt lifecycle. Missing, present-at-the-fixed-base, stale,
+  unresolved, corrupt or hash-mismatched authority fails closed. No live/runtime/production/
+  store/CLI/screen integration was added.
+- **Rollback:** Revert only the exact ten corrected candidate files and these additive
+  recordkeeping changes within the approved scope, and safely purge the five abandoned private
+  artifacts through the documented retention/reconciliation path. No production migration,
+  live data, provider state, dataset or frozen authority exists.
+- **Next human-gated evidence assembly:** After final docs stabilize, publish/read back a fresh
+  source pin for the corrected bytes and fixed base, run/capture the four authoritative commands
+  as fresh v0.1 receipts, reconstruct/publish/read back the exact ten-add diff v0.3 and machine
+  bundle v0.3, then obtain David's authenticated `confirmed` human-review receipt v0.3. Only then
+  may Colin publish/read back and submit proposal v0.4. Machine status remains `pending` until
+  submission; David may then record one v0.4 `approved | rejected` decision. Only `approved`
+  permits a byte-identical 36-row freeze v0.4. Any source/input/result/review byte change restarts
+  the chain.
+<!-- engine-change-record-section:ECR-DFA-002-CONTRACT-CANDIDATE-V0.4-REAL-BASE-2026-08-18:end -->
+
+<!-- engine-change-record-section:ECR-DFA-002A-LOCAL-GOVERNANCE-SCOPE-SEQUENCING-2026-08-18:begin -->
+## Engine Change Record Addendum — DFA-002A local governance scope and sequencing
+
+- **Record ID:** `ECR-DFA-002A-LOCAL-GOVERNANCE-SCOPE-SEQUENCING-2026-08-18`.
+- **Parent records:** `ECR-DFA-000-DAYFLOW-ABLATION-SYNTHETIC-SCOPE-2026-08-17`,
+  `ECR-DFA-000-TRACKED-PATH-AMENDMENT-DFA002-CONFIGS-2026-08-18`, and
+  `ECR-DFA-002-CONTRACT-CANDIDATE-V0.4-REAL-BASE-2026-08-18`. This is additive and does not
+  rewrite the earlier scope, evidence, hashes or historical artifact statements.
+- **Human decision:** Immediately after receiving the full bounded DFA-002A recommendation,
+  `colin` instructed `다음 작업 진행해`. In that context this is Colin's explicit approval of
+  exactly the package recorded below. It is implementation scope/sequencing approval only, not
+  H-DFA-CONTRACT, human review, proposal approval, decision, freeze, live or release authority.
+- **Date/status:** 2026-08-18 KST. Closed machine task `DFA-002` remains `pending`. Nested
+  work-package `DFA-002A` is `in_progress`, meaning its bounded implementation is authorized but
+  no completion, test, hash or publication result is claimed. DFA-002A is not a new value in the
+  closed `DFA-000..016` machine task enum.
+
+### Exact tracked scope and approved capabilities
+
+- **Tracked-path additions:** The prior 15 DFA-002 source/config/fixture/test/tool paths become
+  17 by adding exactly:
+  - `suggestion/src/evaluation/dayflowAblation/governanceAdapters.ts`
+  - `suggestion/tests/dayflowGovernanceAdapters.test.ts`
+- **Candidate/input effect:** Once implemented, the two paths become exact candidate entries,
+  expanding the next candidate validation set from 10 to 12. The command-defining input set
+  remains exactly 10. This decision records no bytes, byte lengths, hashes, diff operations,
+  tool output or test result for the new paths.
+- **Approved local Git capability:** Bounded read-only acquisition from the local Blabase Git
+  object database for fixed-revision governance verification. Network access, fetch, checkout,
+  index/worktree mutation, ref mutation and repository writes are outside scope.
+- **Approved private-read capability:** Hardened contained/no-follow reads of registered
+  governance artifacts below `suggestion/.local/evaluations/dayflow-ablation`. This does not
+  authorize arbitrary `.local` traversal or raw conversation, screenshot, Dayflow blob, secret
+  or credential access.
+- **Approved proposal-governance capability:** Proposal history resolution, current-head and
+  currentness validation, and compare-and-swap fencing for the DFA-002 proposal chain.
+- **Approved publisher capability:** Proposal-only hard-link atomic no-clobber publication with
+  destination-absent checks and byte/hash readback. It may publish only already schema-valid
+  proposal bytes; it cannot construct approval, decision or freeze authority.
+
+### Explicit exclusions and ownership
+
+- **Excluded:** Any Dayflow repository/source access, Dayflow runtime or Swift execution; human
+  signing, authentication or trusted-channel issuing; decision/freeze creation; live authority;
+  routes, CLI, production integration, provider/network calls, deployment or release.
+- **DFA-002A ownership before DFA-002 exit:** Local fixed-base/current-candidate acquisition,
+  hardened private governance reads, proposal history/currentness/CAS, and proposal-only
+  publication. This removes the prior gate cycle in which a local resolver needed for DFA-002
+  exit was deferred behind DFA-003.
+- **DFA-003 ownership unchanged:** External Dayflow repository pinning, cross-repository scope,
+  Swift exporter/capture-policy work and the Dayflow export boundary remain deferred until
+  DFA-002 plus strict H-CROSS-REPO.
+- **DFA-007 ownership unchanged:** Live/historical authority, revocation/currentness for live
+  governance, immutable pilot-attestation storage/read/purge, retention and deletion-receipt
+  lifecycle remain deferred and fail closed.
+
+### Evidence invalidation, sequencing and gates
+
+- **Stale machine evidence:** The machine-evidence bundle that was current immediately before
+  this two-file candidate expansion is now stale and abandoned for proposal use. Its exact
+  identity/hashes are not invented or inferred in this scope decision. It and any dependent
+  ten-candidate validation chain must not be submitted to David or referenced by a proposal.
+- **Required replacement:** After the two paths are implemented and independently validated,
+  regenerate a fresh exact 12-candidate/10-command-input source pin, four command receipts,
+  readable diff and machine-evidence bundle. Record exact bytes, hashes, tool versions, commands,
+  timestamps and results only from that future run.
+- **Human order:** David's authenticated review occurs only after the fresh 12/10 machine bundle
+  resolves and is read back unchanged. Colin may publish/submit a proposal only after David's
+  confirmed receipt exists. This scope decision creates neither artifact.
+- **Current artifact/authority state:** No DFA-002A implementation result, new source pin,
+  replacement receipt/diff/bundle, David receipt, proposal, H-DFA-CONTRACT decision, approval or
+  freeze is claimed or created by this record. DFA-002 remains pending and DFA-003+ remain gated.
+
+### Privacy, validation, rollback and follow-up
+
+- **Privacy/data impact:** Approved reads are local source/governance metadata only. Raw human
+  conversation, screen frames and Dayflow blobs remain forbidden. Private governance artifacts
+  stay under ignored `.local`, use the documented `0700`/`0600`, no-follow/no-clobber policy,
+  remain excluded from Git/backup/export/telemetry, and follow pending-chain abandonment/purge
+  retention. The stale bundle is never relabeled current.
+- **Evaluation/baseline:** N/A for this scope/sequencing decision. It changes no production
+  engine semantics, Golden/Regression/Rolling/Holdout dataset, evaluation run or metric.
+- **Validation not yet claimed:** No implementation tests, typecheck, lint, dependency check,
+  source hash, artifact publication or external QA result is recorded for DFA-002A. Its future
+  closure must report the exact two-file manifest, targeted adversarial tests, relevant full
+  compatibility checks and independent QA.
+- **Rollback:** Remove only the exact two new paths if created, revert this additive scope from
+  the active plan through a new human-reviewed decision, restore the preceding 15-path boundary,
+  and abandon/purge any private 12/10 evidence assembled from the removed bytes. Never mutate a
+  published immutable artifact, Git object, Dayflow repository, production state or human record.
+- **Next step:** Implement and validate only the exact two approved paths, then record their
+  exact bytes/results and regenerate the fresh 12/10 evidence chain. Stop before David review or
+  proposal publication if any capability escapes this record or any required check fails.
+<!-- engine-change-record-section:ECR-DFA-002A-LOCAL-GOVERNANCE-SCOPE-SEQUENCING-2026-08-18:end -->
+<!-- engine-change-record-section:ECR-DFA-002A-LOCAL-GOVERNANCE-IMPLEMENTED-2026-08-18:begin -->
+
+## Engine Change Record Addendum - DFA-002A local governance implemented
+
+- **Record ID:** `ECR-DFA-002A-LOCAL-GOVERNANCE-IMPLEMENTED-2026-08-18`.
+- **Parent records:** `ECR-DFA-002A-LOCAL-GOVERNANCE-SCOPE-SEQUENCING-2026-08-18` and
+  `ECR-DFA-002-CONTRACT-CANDIDATE-V0.4-REAL-BASE-2026-08-18`. This addendum supersedes only
+  those records' DFA-002A `in_progress`, ten-candidate current manifest, 75-test result and
+  no-implementation statements. Historical facts and approval boundaries remain preserved.
+- **Date/owner:** 2026-08-18 KST; `colin`.
+- **Status:** Nested work package `DFA-002A` is implemented, validated and `completed`.
+  Closed parent machine task `DFA-002` remains `pending`; it is not in review, approved, frozen,
+  executable, live-enabled, production-enabled or released.
+- **Approved scope used:** Only the previously approved local fixed-base/current-candidate
+  acquisition, hardened private governance reads, proposal history/currentness/CAS and
+  proposal-only publication capabilities were implemented. No scope approval was expanded.
+- **Versions:** The 36-row registry and wire contracts remain unchanged: command receipt v0.1;
+  readable diff, machine evidence and human review v0.3; proposal, decision and freeze v0.4.
+
+### Exact current 12-file candidate manifest
+
+SHA-256 values are over exact raw bytes. Byte lengths are canonical decimal counts.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| fixture | `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json` | 24879 | `aa4958de3255785125bdc20c6982b10074c0242bfa67644498c87560339de951` |
+| config | `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json` | 9469 | `d1edd75b7749153a0f141bdbde970f819bbaedebadd62b93c26c2a4558e2513f` |
+| source | `suggestion/src/dayflowEvidence/contracts.ts` | 74843 | `ede9e8c92041d7f664dcd4f3715a705a93649073e4a044927dbd7e8ddd13a915` |
+| source | `suggestion/src/evaluation/dayflowAblation/buildDataset.ts` | 21256 | `28ecdc71e2a0d8b79806b0bc6994558c9f3218d184d8b172f092628d09ba5ab4` |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 302923 | `d15e9d07590d8a1e54a321b6e15b00a3df0d7c420fe21e9ed9f2e0ff4446dc32` |
+| source | `suggestion/src/evaluation/dayflowAblation/governanceAdapters.ts` | 78699 | `1a3aa31a4118a28a4754a32f7053687d8e303efc4c48b903a7ec8e022cf88a7c` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 239147 | `0ceb6e8b1fccd22a1239c7ff144b095f59d44522429de2b36b151daa85897c0b` |
+| test | `suggestion/tests/dayflowEvidenceContracts.test.ts` | 48840 | `3114f71398400d1c0dbd2fe3cc8acb8cfc320b7af7ecb49bc4f27a3945f3331a` |
+| test | `suggestion/tests/dayflowEvidenceExtraction.test.ts` | 8816 | `92a31f1b9b805374f123a6a579a35053c63815941fb1a79bd48ba042731cde36` |
+| test | `suggestion/tests/dayflowGovernanceAdapters.test.ts` | 65607 | `c0276173b73eae6486b9d5a7fc33da6ba8fc39529d5758697b3ddd3f6b85455f` |
+| config | `suggestion/tsconfig.dayflow-dfa002.json` | 778 | `2d9a201cc97bdd59edf876b1ede97905c0cded640fa7b2be73f6cd7fe308dbf5` |
+| config | `suggestion/vitest.dayflow-dfa002.config.ts` | 445 | `d92a2bfc339fe5f9a6e32572955e9a699af407dced74ea01b01965ff1dea7049` |
+
+### Exact 10-file command-defining inventory
+
+| Repository-relative path | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `dependency-cruiser.config.mjs` | 4689 | `f56ac2f65590be043b278050091ff04e067f60de704b6f2d2a03cbb97fa0decc` |
+| `dependency-cruiser.suggestion.config.mjs` | 2297 | `4340eeea005e616d4fc16e044ff872e0e60b77e0577785fb32533b56e1f68e4b` |
+| `package-lock.json` | 445336 | `48436085530c5aa8ae3a46eecee8f7a2fe0ac84a090787e8e8fb1fc479f46530` |
+| `package.json` | 3157 | `8286786774f6ec457dc2651b961ba802ca129f39ef0659debcd7ce43c43ae148` |
+| `suggestion/eslint.config.mjs` | 360 | `9e8c0be86a5a4c7ed084578719065ad0d0fcfed51549a5f81b7228a93677fd42` |
+| `suggestion/package-lock.json` | 440695 | `5bcee5d14a7b4506d7a85c3cccc30979f8ab159edf75936066ec67ff013ffa5d` |
+| `suggestion/package.json` | 3146 | `d44d318026ec8d8313fe507780858195a5883590ccd92123494b6c3423416033` |
+| `suggestion/tsconfig.dayflow-dfa002.json` | 778 | `2d9a201cc97bdd59edf876b1ede97905c0cded640fa7b2be73f6cd7fe308dbf5` |
+| `suggestion/tsconfig.json` | 639 | `1967571749a826889ce18a315adbb9d99880dc3d96eb93eff3f8860d96d4cd81` |
+| `suggestion/vitest.dayflow-dfa002.config.ts` | 445 | `d92a2bfc339fe5f9a6e32572955e9a699af407dced74ea01b01965ff1dea7049` |
+
+The two inventories overlap only at `suggestion/tsconfig.dayflow-dfa002.json` and
+`suggestion/vitest.dayflow-dfa002.config.ts`; their byte metadata is identical. The union is
+therefore exactly 20 distinct paths. `unexpectedTrackedPaths` remains exactly empty.
+
+### Required 23-pin composition and circularity boundary
+
+The next source pin must contain the exact ordered 23 shapes exported by the contract:
+
+- 13 Blabase `authorized-output-baseline` file pins: `architecture/planned.c4`,
+  `architecture/views.c4`, this ECR, and the ten non-tool-config candidate source/fixture/test
+  paths represented in the 12-file table above.
+- 4 Blabase `immutable-input` pins: this Plan, this Runbook, `suggestion/package-lock.json`, and
+  the fixed Blabase repository revision `92b2ca94fc3e8347261ac6a85a627c8e6c915400`.
+- 6 Dayflow `immutable-input` pins: `Package.resolved`, `ScreenRecorder.swift`,
+  `StorageManager+Screenshots.swift`, `StorageManager.swift`,
+  `docs/BLABASE_DAYFLOW_DATA_ARCHITECTURE.md`, and repository revision
+  `df3c367edb7d405a78d1ae76edffe4ba366f57d7`.
+
+The current ECR, Plan and Runbook SHA-256 values are intentionally not recorded here: this
+addendum changes those bytes. They must be resolved from final readback into the next private
+source pin. No future source-pin ID, timestamp, aggregate hash or document hash is invented, so
+this record makes no circular current-hash claim.
+
+### Implemented behavior and fail-closed boundaries
+
+- Local Git resolution is fixed-revision, allowlisted and read-only with `GIT_NO_LAZY_FETCH=1`.
+  Only authoritative tree traversal proves absence; missing, corrupt, unresolved or promisor
+  objects, wrong revision and any fetch requirement fail closed.
+- Hardened candidate and machine-evidence resolution verifies physical containment, ownership,
+  mode, inode/link stability, registered path and exact canonical bytes rather than trusting a
+  path string or parsed value alone.
+- Prepublication validation coherently recaptures the whole candidate/input set, machine
+  evidence, proposal history/CAS head, canonical stored source-pin artifact, every referenced
+  local pin and external fact. Any drift invalidates the entire attempt; results from different
+  snapshots cannot be combined.
+- Proposal history is deterministic, rejects graph ambiguity and enforces compare-and-swap
+  currentness. The human-review channel remains an authenticated injected dependency; this code
+  does not issue, sign or impersonate David's receipt.
+- Proposal publication accepts only an already schema-valid, prepublication-verified proposal.
+  It retains directory/file descriptors and invokes fixed root-owned/non-writable
+  `/usr/bin/python3 -I -S` with a fixed environment and bounded execution to perform
+  descriptor-relative `linkat`/`unlinkat`. No-clobber publication, directory fsync and exact
+  byte/hash readback are mandatory.
+- Pre-link failure, `EEXIST`, proven creation and ambiguous termination are distinct outcomes.
+  Existing destination bytes are preserved. Ambiguous termination or unprovable rollback keeps
+  the staged inode and authenticated lock for manual reconciliation and blocks automatic retry.
+- The fixed `/usr/bin/python3` helper is an explicit host requirement and portability risk.
+  Absence or failed root-owner/non-writable validation fails closed; there is no weaker fallback.
+- No new production dependency, provider/network access, environment-secret behavior, Dayflow
+  repository/runtime integration, live authority, route, CLI, human issuer, decision/freeze
+  issuer, deployment or production wiring was added.
+
+### Commands and recorded validation
+
+All four authoritative commands ran from `suggestion/` under Node `22.23.2`.
+
+```text
+dfa002-depcruise: node ../node_modules/dependency-cruiser/bin/dependency-cruise.mjs --config ../dependency-cruiser.suggestion.config.mjs src/dayflowEvidence/contracts.ts src/evaluation/dayflowAblation/contracts.ts src/evaluation/dayflowAblation/buildDataset.ts src/evaluation/dayflowAblation/governanceAdapters.ts tests/dayflowEvidenceContracts.test.ts tests/dayflowEvidenceExtraction.test.ts tests/dayflowAblationEvaluation.test.ts tests/dayflowGovernanceAdapters.test.ts
+dfa002-eslint: node node_modules/eslint/bin/eslint.js src/dayflowEvidence/contracts.ts src/evaluation/dayflowAblation/contracts.ts src/evaluation/dayflowAblation/buildDataset.ts src/evaluation/dayflowAblation/governanceAdapters.ts tests/dayflowEvidenceContracts.test.ts tests/dayflowEvidenceExtraction.test.ts tests/dayflowAblationEvaluation.test.ts tests/dayflowGovernanceAdapters.test.ts vitest.dayflow-dfa002.config.ts
+dfa002-tsc: node node_modules/typescript/bin/tsc --noEmit --project tsconfig.dayflow-dfa002.json
+dfa002-vitest: node node_modules/vitest/vitest.mjs run --config vitest.dayflow-dfa002.config.ts tests/dayflowEvidenceContracts.test.ts tests/dayflowEvidenceExtraction.test.ts tests/dayflowAblationEvaluation.test.ts tests/dayflowGovernanceAdapters.test.ts
+```
+
+- `dfa002-depcruise`, dependency-cruiser `18.2.0`: PASS, 8 modules/14 dependencies/0 violations.
+- `dfa002-eslint`, ESLint `9.39.5`: PASS.
+- `dfa002-tsc`, TypeScript `5.9.3`: PASS.
+- `dfa002-vitest`, Vitest `3.2.7`: PASS, 4 files/93 tests.
+- Full suggestion typecheck: PASS.
+- Full suggestion lint: PASS.
+- Root `arch:deps:check`: exit 0; existing warnings repository 12, suggestion 8, scripts 2.
+- Independent current-head QA: Green; Medium-or-higher findings 0.
+
+These outputs are implementation validation evidence only. No current immutable command-receipt
+artifact was created by or for this record.
+
+### Stale private chain and current authority state
+
+The exact earlier ten-candidate seven-artifact chain is stale and abandoned because the approved
+candidate closure and source/test bytes changed:
+
+| Kind | Immutable artifact ID | Recorded raw/detached SHA-256 where available |
+| --- | --- | --- |
+| source pin | `dfa002.source-pin.83f77827fe7a36588b809aec2dc91e64` | `e568ae0b1ff24d37c9ab2d374b8ba05b75847ab8e6590e93ab860a0499900d31` / `fde5ba47d6863b8953542894909574601406b28a029979f00ce2e693cbcd5e3b` |
+| command receipt | `dfa002.receipt.dfa002-depcruise.2fe93b1de563018664e8df21700fa585` | not relabeled current |
+| command receipt | `dfa002.receipt.dfa002-eslint.7da5b371671a9b3bb76a390dfa2e8406` | not relabeled current |
+| command receipt | `dfa002.receipt.dfa002-tsc.6b58d0e183f8b7b3c8aa06772f517f87` | not relabeled current |
+| command receipt | `dfa002.receipt.dfa002-vitest.8d396978564ff2f9e02cbeddf7531d43` | not relabeled current |
+| readable diff | `dfa002.readable-diff.9a7cd02648b4716472c13ccbd603bf1c` | `437f8531fbe0f95c3e64a6e438338cfbbb753464a69d5015c540cc364fbe8e9d` / `92f004b24105fd7fe4d6c3e6a23f8894c21fde01e538ecf792280ed03abbf345` |
+| machine bundle | `dfa002.machine-evidence.def902c5f6527ce4205e710d42b41f49` | `81b1ab75b723d1d8070d97d0175116d4f333879d38797d006d2b300cb4caf6c1` / `f444987190a16aa0f5479b8d181ce8a65a9b5c9f5614484b71ead90267d40112` |
+
+Those immutable private bytes remain untouched and excluded from Git, backup, export, telemetry
+and public reports. They are pending safe reconciliation/purge and may never be edited,
+relabelled current or submitted to David. No current 12-candidate source pin, command receipt,
+readable diff, machine bundle, authenticated David receipt, proposal, decision, approval or
+freeze exists.
+
+### Evaluation, privacy, rollback and next gate
+
+- **Evaluation/baseline:** N/A. This is governance-only local infrastructure; no production
+  semantic behavior, Golden/Regression/Rolling/Holdout dataset, evaluation run or metric changed.
+- **Privacy/retention:** Only local source and governance metadata is handled. Raw conversation,
+  screenshot, Dayflow blob, credential and secret access remains forbidden. Private artifacts
+  remain under ignored `.local` with the existing restrictive ownership/mode and retention rules.
+- **Rollback:** Revert only the DFA-002A changes in `contracts.ts`, `governanceAdapters.ts`,
+  `dayflowAblationEvaluation.test.ts`, `dayflowGovernanceAdapters.test.ts`, the dedicated tsconfig
+  and Vitest config, plus this additive documentation through a new recorded decision. Reconcile
+  private staged/locked state before removal; never mutate an immutable published artifact.
+- **Next gate:** After final documentation readback, safely purge the exact stale chain, assemble
+  and read back a fresh 12/10 source pin plus four receipts, a 12-add readable diff v0.3 and
+  machine bundle v0.3. Then obtain David's authenticated confirmed receipt. Only then may Colin
+  publish/read back and submit proposal v0.4. David remains the only future decision signer; only
+  `approved` permits freeze. Colin's existing implementation-scope approval is unchanged and is
+  not H-DFA-CONTRACT.
+
+<!-- engine-change-record-section:ECR-DFA-002A-LOCAL-GOVERNANCE-IMPLEMENTED-2026-08-18:end -->
+<!-- engine-change-record-section:ECR-DFA-002A-EXTERNAL-QA-HOLD-2026-08-18:begin -->
+
+## Engine Change Record Addendum - DFA-002A external-QA HOLD
+
+- **Record ID:** `ECR-DFA-002A-EXTERNAL-QA-HOLD-2026-08-18`.
+- **Superseded claims:** This addendum supersedes only the preceding DFA-002A implementation
+  record's `completed`, `validated`, independent current-head QA Green and Medium-or-higher zero
+  claims. It does not erase the recorded implementation bytes, manifests or executed-check facts.
+- **Corrected status:** Nested `DFA-002A` is `in_progress` / `HOLD` pending remediation and a new
+  independent current-head QA result. Parent `DFA-002` remains `pending` and is not approved,
+  frozen, executable, live-enabled, production-enabled or released.
+- **Latest external QA authority:** The latest external independent review supersedes the earlier
+  Green verdict and reports the following three unresolved boundaries:
+  1. Post-final-capture/pre-link and post-link whole-set TOCTOU remains open.
+  2. `draftEcrRef` is not resolved and verified during prepublication.
+  3. Cleanup has stat/unlink link-count ambiguity, so an unlink outcome can be unprovable.
+- **Evidence interpretation:** The four authoritative commands, 4 files/93 passing tests,
+  dependency result, scoped/full typecheck and lint, and architecture dependency result remain
+  technical evidence for the recorded bytes. They are not completion, human-review, proposal,
+  approval, decision, freeze or release authority and do not waive these findings.
+- **Required remediation gate:** Correct all three boundaries, update affected source/test bytes
+  and manifests only after those changes exist, rerun the relevant validation, and obtain a new
+  independent current-head QA verdict. Until then, do not assemble fresh evidence, request David
+  review, publish a proposal or advance DFA-002.
+- **Private artifact state:** The earlier ten-candidate seven-artifact chain remains stale and
+  abandoned, byte-for-byte untouched and pending safe purge. No current source pin, receipt,
+  diff, machine bundle, David receipt, proposal, decision or freeze exists.
+- **Evaluation/baseline:** Still N/A. This status correction changes no dataset, production
+  semantic behavior, evaluation run or metric.
+
+<!-- engine-change-record-section:ECR-DFA-002A-EXTERNAL-QA-HOLD-2026-08-18:end -->
+<!-- engine-change-record-section:ECR-DFA-002A-FINAL-EXTERNAL-QA-PASS-2026-08-18:begin -->
+
+## Engine Change Record Addendum - DFA-002A final external-QA PASS
+
+- **Record ID:** `ECR-DFA-002A-FINAL-EXTERNAL-QA-PASS-2026-08-18`.
+- **Supersession:** This addendum supersedes the status and open-findings claims in
+  `ECR-DFA-002A-EXTERNAL-QA-HOLD-2026-08-18`. It also supersedes the four changed-file byte/hash
+  rows and 93-test count in the earlier implementation record. All other historical facts,
+  scope boundaries and unchanged manifest rows remain preserved.
+- **Final DFA-002A status:** Nested `DFA-002A` is `completed` / `validated`. Latest external
+  independent current-head QA is PASS with zero Medium-or-higher findings. Parent `DFA-002`
+  remains `pending`; no approval, freeze, execution, live, production or release authority is
+  created.
+
+### Exact remediated file bytes
+
+SHA-256 values are over exact current raw bytes. These four rows replace their corresponding rows
+in the prior 12-file manifest.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 305493 | `10039e0363fda8279a6b99d81a9fc95beda5ff07aca201c57cd79dcf669fd319` |
+| source | `suggestion/src/evaluation/dayflowAblation/governanceAdapters.ts` | 92887 | `033b24f9f929f60e21d0505e8990fcee9c25798cf2271721c096dd5baf04c1eb` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 245747 | `a97d21f80c13a74b6bbc4e321b7c39a288bc4b2b83ba092a27080a6fb926cfa1` |
+| test | `suggestion/tests/dayflowGovernanceAdapters.test.ts` | 87075 | `f2d502275338c80b1e88a52846a9022a712d9588fc97b2e655331a8b96e09801` |
+
+The other eight candidate rows retain exactly the byte lengths and SHA-256 values recorded in
+`ECR-DFA-002A-LOCAL-GOVERNANCE-IMPLEMENTED-2026-08-18`. The exact 10-file command-defining
+inventory is also unchanged. Candidate/input closure therefore remains 12/10 with 20 distinct
+paths, and the required source-pin shape remains 23.
+
+### HOLD finding closure
+
+1. **Prepublication ECR resolution:** `draftEcrRef` is now resolved through a global fatal
+   UTF-8 strict ECR marker parser. Invalid UTF-8, malformed/global marker ambiguity, missing
+   target, duplicate target or content mismatch fails the whole attempt closed.
+2. **Bounded helper seam:** The descriptor helper boundary is explicit and bounded, retains the
+   established fixed-environment/execution limits, and has hostile/failure-path coverage.
+3. **Whole-set and unlink safety:** Commit/post-link recapture and fencing plus the prior unlink
+   cleanup fixes close the post-final-capture/pre/post-link TOCTOU and stat/unlink link-count
+   ambiguity. Ambiguous outcomes still require manual reconciliation and never become success.
+
+### Final validation interpretation
+
+- `dfa002-depcruise`: PASS, dependency-cruiser `18.2.0`, 8 modules/14 dependencies/0 violations.
+- `dfa002-eslint`: PASS, ESLint `9.39.5`.
+- `dfa002-tsc`: PASS, TypeScript `5.9.3`.
+- `dfa002-vitest`: PASS, Vitest `3.2.7`, 4 files/103 tests.
+- Full suggestion typecheck: PASS.
+- Full suggestion lint: PASS.
+- Root `arch:deps:check`: exit 0; existing warnings repository 12, suggestion 8, scripts 2.
+- Latest independent current-head QA: PASS; Medium-or-higher findings 0.
+
+These are technical completion facts for DFA-002A only. They are not David's review,
+H-DFA-CONTRACT, proposal approval, decision, freeze or release authority.
+
+### Artifact state, circularity and next gate
+
+- The exact earlier ten-candidate seven-artifact private chain remains stale/abandoned,
+  byte-for-byte untouched and pending safe purge. It cannot be relabeled or submitted.
+- No fresh 12-candidate source pin, command receipt, readable diff, machine bundle, authenticated
+  David receipt, proposal, decision, approval or freeze exists.
+- Current Plan, Runbook and ECR hashes are intentionally not claimed because this addendum changes
+  those bytes. The next source pin must resolve their final readback bytes and all other ordered
+  pins; no earlier document hash may be reused.
+- After final documentation readback, follow the existing order: safely purge/reconcile the stale
+  chain, assemble and read back fresh 12/10 machine evidence, obtain David's authenticated review,
+  then publish/read back Colin's proposal. Parent `DFA-002` remains pending throughout until its
+  documented human decision and freeze gates are actually satisfied.
+- Evaluation/baseline remains N/A: no dataset, production semantic behavior, evaluation run or
+  metric changed.
+
+<!-- engine-change-record-section:ECR-DFA-002A-FINAL-EXTERNAL-QA-PASS-2026-08-18:end -->
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-ONLY-GOVERNANCE-SIMPLIFICATION-2026-08-19:begin -->
+
+## Engine Change Record Addendum - DFA Colin-only governance simplification
+
+- **Record ID:** `ECR-DFA-COLIN-ONLY-GOVERNANCE-SIMPLIFICATION-2026-08-19`.
+- **Date/owner/approver:** 2026-08-19 KST; `colin`.
+- **Human decision:** Colin clarified that he is the developer, experiment reviewer and final
+  decision authority. David has no required workflow role and will only see results informally if
+  Colin chooses. No David-specific artifact, authenticated receipt, review package, approval or
+  decision is required.
+- **Goal:** Replace the active David-bound DFA contract-governance workflow with the smallest
+  reproducible Colin-owned A/B/C experiment workflow. Preserve historical records without using
+  them as current execution authority.
+- **Affected stages:** DFA planning/runbook governance and future experiment record assembly only.
+  Production Attention, Continuation, Work Board, Launcher, action, monitoring, Dayflow capture,
+  Golden/Regression/Rolling/Holdout datasets and release behavior are unchanged.
+- **Behavior before:** Active Plan/Runbook text required an authenticated David human-review
+  receipt, Colin proposal, David H-DFA-CONTRACT decision and immutable freeze. The associated
+  source/test contracts include trusted human/decision channels and a complex evidence publisher.
+- **Behavior after:** Colin alone freezes the experiment protocol/config/input, reviews blinded
+  A/B/C outputs and records the final decision. The minimum evidence set is exactly:
+  `experiment-manifest.json`, `run-results.json`, `comparison-report.md`, and
+  `colin-decision.md`. Technical QA remains evidence, not decision authority.
+- **Supersession:** This record supersedes every active instruction that requires David as
+  reviewer, receipt issuer, signer or H-DFA-CONTRACT approver. Earlier ECR sections remain
+  immutable historical evidence. Generic blind output review, technical QA, privacy review and
+  later production/live safety approvals are not removed merely because their schemas contain a
+  reviewer or approver field.
+- **Implementation status:** Documentation authority is updated. Source and tests still contain
+  the superseded human-review/proposal/decision/freeze contracts; removing or reducing them is a
+  separate bounded Task. Until that Task completes, do not execute the regeneration/publisher or
+  claim DFA-002 completion.
+- **Versions:** No engine, dataset, public API, evaluation wire or production version changes in
+  this documentation-only checkpoint.
+- **Commands/checks:** No tests, typecheck, lint, build, Git command or private artifact operation
+  was run. This checkpoint intentionally changes documentation only.
+- **Evaluation/baseline:** N/A. No semantic output, input, filtering, ordering, interpretation,
+  dataset or metric changed.
+- **Privacy/retention:** The new workflow minimizes private governance data and removes unnecessary
+  David-specific artifacts. Raw inputs/results remain ignored under `.local/`; committed documents
+  contain only safe summaries. Existing stale private artifacts are retained unchanged for now.
+- **Integrity policy:** SHA-256, exact version/command/input identifiers, restrictive local file
+  modes and immutable/no-clobber writes are sufficient for Colin's inspection and reproducibility.
+  A David-specific HMAC/receipt chain is not required.
+- **Release decision:** No release, live collection, cross-repository write, production enablement
+  or default-on decision is granted.
+- **Rollback:** Preserve this additive record. A future reversal requires a new explicit Colin
+  decision; do not rewrite historical ECR sections or silently revive the David-bound chain.
+- **Follow-up work:** First simplify the source/test governance contracts. Then define and generate
+  the four minimal Colin artifacts. Only after their successful readback may Colin separately
+  decide whether to delete the exact stale seven-artifact chain.
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-ONLY-GOVERNANCE-SIMPLIFICATION-2026-08-19:end -->
+<!-- engine-change-record-section:ECR-DFA-COLIN-S3-2B-COMPLETE-REMOVAL-2026-08-19:begin -->
+
+## Engine Change Record Addendum - DFA Colin-only S3.2b complete removal
+
+- **Record ID:** `ECR-DFA-COLIN-S3-2B-COMPLETE-REMOVAL-2026-08-19`.
+- **Date/owner/decision authority:** 2026-08-19 KST; `colin`.
+- **Status:** S1, S2, S3.1, S3.2a, S3.2b, S4 documentation alignment, and the separately approved
+  S5 broader compatibility validation are complete. DFA experiment execution, live collection,
+  production enablement, and release remain not started or unauthorized.
+- **Decision:** Apply the complete-removal option. Retain no compatibility union, remove every
+  active source-pin-set literal/contract and all orphan machine-evidence packages, and retain the
+  existing private seven-file stale chain unchanged.
+
+### Behavior and contract change
+
+- Active authority now resolves through experiment-manifest v0.2.
+- Source provenance is embedded in that manifest and is not a registered standalone artifact.
+- Study protocol, evaluation execution freeze, and live collection freeze are v0.3 only.
+- Artifact-layout config and registry hash domain are v0.2.
+- Synthetic config/cases and fixture-generator/synthetic-cases hash domains are v0.2; the
+  evidence-vector domain remains v0.1.
+- The standalone `run-results` v0.1 contract was added. It binds terminal arm-run refs and exact
+  protocol/manifest/freeze lineage without copying status, output, metrics, or private content.
+- The registered standalone artifact inventory is exactly 30 classes.
+- The following classes were removed with no compatibility union: `source-pin-set`,
+  `dfa-command-receipt`, `dfa-readable-diff`, `dfa-machine-evidence-bundle`,
+  `dfa-human-review-receipt`, `contract-freeze-proposal`, `dfa-contract-decision`, and
+  `contract-freeze`.
+
+### Files changed by S3.2b
+
+- `suggestion/src/evaluation/dayflowAblation/contracts.ts`
+- `suggestion/src/dayflowEvidence/contracts.ts`
+- `suggestion/src/evaluation/dayflowAblation/buildDataset.ts`
+- `suggestion/tests/dayflowAblationEvaluation.test.ts`
+- `suggestion/tests/dayflowEvidenceContracts.test.ts`
+- `suggestion/tests/dayflowEvidenceExtraction.test.ts`
+- `suggestion/tsconfig.dayflow-dfa002.json`
+- removed `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.1.json`
+- removed `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.1.json`
+- added `suggestion/eval/synthetic/dayflowEvidenceAblationConfig.v0.2.json`
+- added `suggestion/eval/synthetic/dayflowEvidenceAblationCases.v0.2.json`
+
+### Deterministic fixture hashes
+
+- fixture-generator config: `17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e`
+- export manifests: `9119fe0f10f987ea12fd814a8e074687107d8edb339fdc1325f9ecb82cdd37a9`,
+  `7ee15e1147aa427723d88bcb9f7739457094aac4ff9adbf2f4bd55416e45b3a4`,
+  `a21db1b131f929137261bb549ef2d7ef7ef7fe88b1c1e9b703c15e3490a8a232`
+- evidence vectors: `0c3ecf4758edbc82be52e1f5522d3ccc4731add8c93f8f352550b1f628a13dff`,
+  `b574e1689f7b190fa34ef0112a346eb5f88dd312045ff123d11548bcbb3f9639`,
+  `9801991b632aa08a4b596fb8418ad6bba93c62ffdf17bd849e9f274c9d400bf1`
+- matched A1/B arm inputs: `8646b50b582b4a4385714009792345bcb3f00c0c366e4eb8a3f8c5d1b9164f9d`,
+  `7199dcd68b7c4308295794b4ed1b5b9c716f59ef10a489037a09ef157f87d02e`
+- cases: `76dac78901f410caa001dc04621b3bbaf1d2ff69e98308557649588aa1a4f27f`
+
+### Validation
+
+- First focused run: 3 files, 67 passed and 1 failed because a test-only expected config ID still
+  named v0.1.
+- Mechanical correction: changed that single expected ID to
+  `synthetic.dayflow.dfa002.config.v0.2`.
+- Final focused Vitest: 3 files, 68 tests PASS.
+- Scoped TypeScript: PASS.
+- Scoped ESLint: PASS.
+- Full Vitest: 162 files, 1,412 tests PASS.
+- Full TypeScript: PASS.
+- Full ESLint: PASS.
+- Next.js production build: PASS.
+- Architecture dependency checks: PASS with zero errors and the existing warning counts of 12
+  repository, 8 suggestion, and 2 script warnings.
+- The production build reported standard loading of `.env.local`. No value was inspected or
+  printed. This non-hermetic build is compatibility evidence only, not DFA experiment evidence.
+- No Git command, private-artifact inspection/mutation, provider/network call, or live-data
+  operation was performed.
+
+### Evaluation, privacy, compatibility, and rollback
+
+- **Evaluation/baseline:** No production engine selection, filtering, ranking, UI interpretation,
+  Golden/Regression/Rolling/Holdout dataset, model invocation, or metric changed. A production
+  baseline rerun is not applicable to this contract/governance-only migration.
+- **Privacy/retention:** No raw conversation, screenshot, credential, environment secret, live
+  Dayflow data, or private evaluation payload was read or written. The existing private seven-file
+  stale chain remains untouched and excluded from Git.
+- **Compatibility:** Deliberately breaking within the not-yet-executed DFA contract surface. Old,
+  mixed, and unknown serialized versions fail closed; no migration union exists.
+- **Rollback:** Restore the removed contracts and v0.1 fixtures only through a new explicit Colin
+  decision and successor ECR. Do not silently revive historical David authority or relabel the
+  private stale chain.
+- **Human approval needed next:** The broader validation gate is complete. Colin must separately
+  approve the next experiment implementation/execution task. Later deletion of the private
+  seven-file chain and any live experiment/capture task each require their own explicit decision.
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-S3-2B-COMPLETE-REMOVAL-2026-08-19:end -->
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-S6-SYNTHETIC-DRY-RUN-COMPLETED-2026-08-19:begin -->
+
+## Engine Change Record Addendum - DFA Colin-only S6 synthetic dry-run completed
+
+- **Record ID:** `ECR-DFA-COLIN-S6-SYNTHETIC-DRY-RUN-COMPLETED-2026-08-19`.
+- **Date/owner/decision authority:** 2026-08-19 KST; `colin`.
+- **Status:** S6.1 design map, S6.2a deterministic packaging, S6.2b two-stage artifact
+  construction, S6.3 generic no-clobber publication/readback, and S6.4 additive documentation are
+  complete and focused-green.
+- **Decision:** Retain private storage as generic transport outside experiment provenance and keep
+  the executable dry-run boundary Colin-only, synthetic, deterministic, and fail-closed.
+
+### Implemented APIs and artifacts
+
+The active S6 APIs are `buildDayflowAblationSyntheticDryRunPackage`,
+`verifyDayflowAblationSyntheticDryRunDecisionBinding`,
+`parseDayflowAblationSyntheticDryRunPackage`,
+`buildDayflowAblationSyntheticExperimentManifest`,
+`buildDayflowAblationSyntheticRunResults`,
+`publishPrivateEvaluationArtifactSetNoClobber`, and
+`verifyPrivateEvaluationArtifactSetReadback`.
+
+The package contains exactly `experiment-manifest.json`, `run-results.json`,
+`comparison-report.md`, and `colin-decision.md`. Both Markdown formats are deterministic internal
+formats and are not registry classes. The standalone registry remains exactly 30. S6 changes no
+schema, serialized version, dependency, public API, or production behavior.
+
+Stage A derives the current experiment manifest v0.2 and typed ref from explicit current v0.2
+config/cases bytes, exact source/provenance byte snapshots and facts, explicit tool facts, and an
+explicit creation timestamp. Caller-supplied aggregate or detached hashes are not trusted. Stage B
+requires the full sealed manifest, study protocol v0.3, evaluation execution freeze v0.3, and
+terminal run v0.4 artifacts. It parses and verifies detached hashes and the complete
+manifest-to-protocol-to-freeze-to-run lineage before sealing run-results v0.1; bare refs are
+insufficient.
+
+Package construction is pure and deterministic with no clock, random, filesystem, environment,
+process, network, or provider capability. JSON uses canonical JCS UTF-8 plus one LF. Markdown uses
+deterministic LF-only rendering. Timestamps and the Colin decision are explicit caller inputs. The
+decision binds the comparison report's raw SHA-256 and byte length. The comparison states
+`metricsStatus: not-computed`, and both human-readable outputs state that this is synthetic
+contract packaging, unresolved real execution, and not a real experiment approval.
+
+The generic private transport accepts only an explicit root and safe path components. It copies
+and preflights all bytes, creates the unique run directory at mode `0700`, creates files at mode
+`0600` with no-clobber/no-follow semantics, fsyncs, and verifies exact bytes, length, raw SHA-256,
+ownership, type, link count, inode, and path stability. It returns only relative metadata. It does
+not list, clean up, overwrite, resume, repair, infer an environment root, or access the existing
+private seven. Mid-write partial state is preserved, the label remains unusable, and retry requires
+a new label.
+
+### Validation evidence
+
+- S6.2a final: Vitest 1 file / 47 tests PASS; scoped TypeScript PASS; ESLint PASS.
+- S6.2b final: Vitest 1 file / 51 tests PASS; scoped TypeScript PASS; ESLint PASS.
+- S6.3 final: Vitest 2 files / 62 tests PASS; full TypeScript PASS; ESLint PASS.
+- Intermediate failures were confined to tests or TypeScript fixture/tuple typing and were
+  corrected without semantic or serialized-byte changes.
+
+No broader full-suite result is claimed by this S6 record. No real `.local` artifact, actual Colin
+decision, A/B/C metric, live capture, provider/network/environment read, Git operation, production
+behavior, dataset run, or baseline run occurred. The existing private seven were untouched and
+uninspected.
+
+### Evaluation, privacy, rollback, and next gate
+
+- **Evaluation/baseline:** N/A. S6 changes evaluation tooling, deterministic serialization, and
+  private storage transport only; it does not change engine output, datasets, metrics, or
+  production selection/interpretation.
+- **Privacy/retention:** Publication is explicit and no-clobber. Partial sets are retained rather
+  than silently repaired or deleted. Existing private immutable data is outside the transport
+  operation and remains untouched.
+- **Next Colin gate:** Real synthetic publication requires a new `runLabel`, explicit Colin
+  decision input, and full sealed lineage artifacts. Deleting the private seven and starting live
+  Dayflow are separate decisions and are not authorized here.
+- **Rollback:** Remove only the S6 source/test additions through a successor record. Never rewrite
+  this or earlier historical records, and never mutate historical/private immutable data as part
+  of rollback.
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-S6-SYNTHETIC-DRY-RUN-COMPLETED-2026-08-19:end -->
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-E1-DETERMINISTIC-ARM-RUNNER-COMPLETED-2026-08-20:begin -->
+
+## Engine Change Record Addendum - DFA E1 deterministic arm runner completed
+
+- **Record ID:** `ECR-DFA-COLIN-E1-DETERMINISTIC-ARM-RUNNER-COMPLETED-2026-08-20`.
+- **Date/owner/decision authority:** 2026-08-20 KST; `colin`.
+- **Status:** E1.1 renderer/run policy, E1.2 pure deterministic A1/B/C implementation and
+  integration, and E1.3 scoped validation/recordkeeping are complete. Scoped E1 is green.
+- **Decision:** Adopt the deterministic local renderer and arm-run builder as the E1 engineering
+  boundary. A0 remains outside the runner. Do not add provider, retry, I/O, publication, or live
+  behavior.
+- **Supersession:** This additive record supersedes active stale wording that requires provider
+  execution, David review or approval, a David-bound contract freeze, an unimplemented
+  run-results contract, or E1 creation of an evaluation execution freeze. Historical records are
+  preserved. Existing evaluation execution freeze v0.3 is caller-resolved lineage, not an artifact
+  created by E1, and David has no E1 role.
+- **Affected stages:** Synthetic DFA evaluation rendering, deterministic arm-run serialization,
+  resolved-execution test integration, and source/provenance/command closure only. Production
+  Attention, Continuation, Work Board, Launcher, Dayflow capture, datasets, release, and product
+  behavior remain unchanged.
+- **Behavior before:** A1/B/C semantic rendering and truthful deterministic v0.4 arm-run creation
+  were not implemented as a closed local E1 path.
+- **Behavior after:** Strict verified inputs produce deterministic display-only A1/B/C semantic
+  results and exactly one sealed terminal arm-run attempt. A1/B causality binds full receipts;
+  C remains screen-only; A0 is rejected.
+
+### Versions and compatibility
+
+| Component | Frozen identity |
+| --- | --- |
+| deterministic runner | `dayflow-e1-deterministic-arm-runner-v0.1` |
+| shared A1/B renderer | `dayflow-e1-ab-renderer-v0.1` |
+| C renderer | `dayflow-e1-c-renderer-v0.1` |
+| screen eligibility | `dayflow-e1-screen-eligibility-v0.1` |
+| public-text guard | `dayflow-e1-public-text-guard-v0.1` |
+| display presentation | `dayflow-e1-display-only-presentation-v0.1` |
+| request preimage | `dayflow-e1-deterministic-request-v0.1` |
+| request hash domain | `blabase.dayflow-e1.deterministic-request.v0.1` |
+
+Existing arm input/run v0.4, semantic output v0.1, issuance receipt v0.1, and evaluation execution
+freeze v0.3 contracts are reused. There is no schema, registry, config, cases, public API,
+production dependency, or production version bump. Closure is 11 source entries, 22 provenance
+pin shapes, four commands, and 30 registered artifact classes.
+
+### Behavior, evidence, and deterministic accounting
+
+A1 verifies a sealed Active Attention result and expected hash, preserves top-then-alternatives
+order, emits title/explanation-derived public text only, and omits unsafe/overlong candidates.
+B starts with those exact semantics and uses only the single-space template
+`{A1 summary} 화면 맥락: {normalized screen summary} (화면 표시는 완료·검증 근거가 아닙니다.)`.
+Only fully verified `RECENT_FOCUS` or `VISIBLE_TASK_INTENT` claims at >= 8000 basis points are
+eligible. Invalid/unavailable/rejected/failure/valid-empty/low-confidence/no-context/unsafe input,
+and expiry at `asOf >= expiresAt`, preserve exact A1 object/bytes/hash with sorted diagnostics.
+
+C requires verified, non-conflicted eligible lineage for every title and summary, preserves item
+order, and fails the whole output closed on one invalid item. Valid-empty yields `no_suggestion`;
+invalid, rejected, expired, unavailable, and failure states yield one typed failure. Its blind
+projection strips machine claim IDs.
+
+The builder strictly reparses arm inputs, A1/B receipts, semantic outputs, and exact JCS+LF bytes;
+verifies detached hashes and lineage; and derives the request SHA-256 internally over the entire
+sealed input plus runner/renderer identity. Successful/no-output response SHA-256 is over the raw
+semantic bytes. Attempts have explicit timestamps, derived latency, zero input/output tokens,
+zero cost, no retry, and no provider generation ID. C failure has exactly one failure code and no
+semantic/output/response. Renderer exceptions propagate rather than fabricating failed runs.
+
+Verification status is fail-closed. Claim confidence is recorded by the normalized evidence and
+must meet the 8000-basis-point threshold; conflicted paths are ineligible. B fallback and C failure
+codes retain sorted typed diagnostics. No actual evidence capture, model response, experiment run,
+latency observation, token consumption, cost, conflict correction, or metric was produced.
+
+### Exact validated file identities
+
+SHA-256 values are over the exact validated raw bytes before this documentation-only append.
+
+| Role | Repository-relative path | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| source | `suggestion/src/evaluation/dayflowAblation/runGeneration.ts` | 33122 | `301e5134d18391d1c5485722ceac50a75c96f7c70d327f7cadda571bdcc12d08` |
+| source | `suggestion/src/evaluation/dayflowAblation/contracts.ts` | 242781 | `77bd9b5bf33f5c25f69450630d4d20ca01bba95929781f8170331715c3c473cd` |
+| config | `suggestion/tsconfig.dayflow-dfa002.json` | 726 | `09a27ed04b2530f0887e9978dc3a3edb379e85ae141e87a2f9619776e25821cb` |
+| test | `suggestion/tests/dayflowAblationEvaluation.test.ts` | 230514 | `7b07b741f4cd35d5f871cdd485ba5e400e79b412deb1a75f99863f737b2706c0` |
+
+### Validation evidence and limitation
+
+- Scoped dependency-cruiser: PASS; 115 modules, 443 dependencies, zero errors, eight existing
+  warnings.
+- Scoped ESLint: PASS.
+- Scoped TypeScript: PASS.
+- Scoped Vitest: PASS; 3 files / 90 tests.
+- Full TypeScript: PASS.
+- Full lint: PASS.
+- Architecture checks: zero errors; existing warnings repository 12, suggestion 8, scripts 2.
+- Full Vitest: 161/162 files and 1,437/1,438 tests completed. The sole failure was the existing
+  5-second injected-clock timeout in `continuationEvaluation`, outside E1.
+- Isolated `continuationEvaluation`: PASS; 1 file / 22 tests.
+
+The full Vitest invocation is not claimed as PASS. The scoped E1 matrix is green, and the isolated
+continuation result records the unrelated timeout limitation without converting it into E1
+evidence.
+
+### Evaluation, privacy, release, and rollback
+
+- **Dataset/run/metrics/baseline:** N/A. No Golden, Regression, Rolling, Holdout, or production
+  dataset changed; no actual dataset ID, run ID, comparison metric, baseline, or run-results
+  artifact exists from E1.
+- **Privacy/retention:** No raw OCR/normalized value, private identifier/ref/path/URL/hash,
+  credential, Active action/target/source internals, `.local` data, or existing private artifact
+  was read, written, published, or retained by this work.
+- **Capability boundary:** No filesystem, environment, process, clock, random, network, provider,
+  publication, live collection, private-store, or production operation is present. No artifact was
+  created.
+- **Git identity:** Not inspected. No Git operation was performed.
+- **Release decision:** None. E1 does not authorize provider execution, real Dayflow capture,
+  publication, live use, production behavior, or release.
+- **Rollback:** Through a successor record, remove `runGeneration.ts`, its direct runner/renderer
+  tests, and the related source-entry, provenance-pin, command-argv, and scoped-tsconfig closure
+  additions. Never rewrite this historical record or mutate private immutable data.
+- **Next Colin decision:** Decide whether to start `E2-IO`, limited to the Dayflow
+  exporter/importer engineering checkpoint. This is explicitly not authorization for the earlier
+  Plan Stage E2 candidate discovery or any execution/publication/live task.
+
+<!-- engine-change-record-section:ECR-DFA-COLIN-E1-DETERMINISTIC-ARM-RUNNER-COMPLETED-2026-08-20:end -->
+
+
+---
+
+## Engine Change Record: ECR-E2-IO-2A-SYNTHETIC-BUNDLE-IMPORT-2026-08-20
+
+- Date: 2026-08-20
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Complete the fail-closed synthetic Dayflow evidence-bundle transport
+  importer and closed validation harness without live or semantic authority.
+- Affected pipeline stages: Offline evaluation transport ingestion only;
+  strict JSON, completion/manifest binding, exact object-set and digest
+  validation, resource bounds, and replay descriptor creation.
+- Behavior before: E2-IO.2A was not recorded as closed by focused validation and
+  independent QA.
+- Behavior after: Fatal/canonical JSON, completion/manifest binding, unordered
+  exact entry bijection, 256-object/10-MiB-object/256-MiB-aggregate pre-copy
+  limits, and a frozen primitive hash/count replay descriptor are implemented.
+- Versions before: Not applicable; there was no shipped E2-IO.2A importer.
+- Versions after: completion schema
+  `dayflow-screen-evidence-bundle-completion-v0.1`; completion hash domain
+  `blabase.dayflow-screen-evidence-bundle-completion.v0.1`; import schema
+  `dayflow-screen-evidence-bundle-import-v0.1`; replay hash domain
+  `blabase.dayflow-screen-evidence-bundle-replay.v0.1`.
+- Code commit: Not recorded. Git identity was not inspected. The file manifest
+  below records the exact implementation identity.
+- Evaluation dataset version and SHA-256: Not applicable; synthetic in-memory
+  fixtures only, with no frozen dataset change.
+- Candidate run ID: Not applicable.
+- Comparison run ID: Not applicable.
+- Commands executed: From `suggestion/`,
+  `node node_modules/typescript/bin/tsc -p tsconfig.dayflow-e2io.json --noEmit`;
+  `node node_modules/eslint/bin/eslint.js src/evaluation/dayflowAblation/importEvidenceBundle.ts src/evaluation/dayflowAblation/strictDuplicateAwareJson.ts tests/dayflowEvidenceBundleImport.test.ts vitest.dayflow-e2io.config.ts`;
+  `node node_modules/vitest/vitest.mjs run --config vitest.dayflow-e2io.config.ts`.
+  From root: `npm run arch:deps:check`.
+- Metrics changed: Not applicable. The 1-file, 10/10-test result is regression
+  evidence, not a product-quality metric.
+- Validation: Node `v22.23.2`; TypeScript `5.9.3` PASS; ESLint `9.39.5` PASS;
+  Vitest `3.2.7` PASS; dependency-cruiser `18.2.0` PASS with 0 errors,
+  pre-existing warnings repository 12/suggestion 8/scripts 2, and coverage 17
+  entries/4 sentinel edges.
+- Independent QA: Read-only PASS with no Critical/High/Medium finding; QA did
+  not rerun tests.
+- Regressions or accepted exceptions: No Medium-or-higher regression. Low
+  residuals are SOI/EOI-only JPEG framing, chronology relying on canonical UTC,
+  and missing exact-limit success/deep-JSON performance tests. The initial
+  one-TypeScript/one-test HOLD is superseded diagnostic history after a narrow
+  test-only correction and final 10/10 PASS.
+- Privacy or retention impact: None. Synthetic in-memory only; no actual
+  Dayflow/private conversation, `.local`, filesystem, network, environment,
+  provider, production/publication, raw retention, or manual inspection.
+- Model, provider, prompt, token, latency, confidence, evidence, conflict, and
+  semantic metrics: Not applicable; no model or semantic execution occurred.
+- Baseline decision: Targeted regression recorded. Production baseline is N/A
+  because transport-only evaluation tooling does not change semantic output,
+  selection, normalization, or production behavior.
+- Release decision: E2-IO.2A is complete only for synthetic transport. No
+  production release or E2-IO.2B/2.3/2.4, live, retention, exporter, normalized
+  evidence, E1 B/C, provider, or publication authority is granted.
+- Rollback method: A separately reviewed successor may remove only the five
+  E2-IO.2A files below. No migration or data cleanup exists.
+- Follow-up work: E2-IO.2B is recommended but not authorized; it requires a
+  separate Colin decision.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| `suggestion/src/evaluation/dayflowAblation/importEvidenceBundle.ts` | `fcd904c09364b61a35b8573edf5fc7980d7c01b52eecfca8a7664beb144dac1e` | 15404 |
+| `suggestion/src/evaluation/dayflowAblation/strictDuplicateAwareJson.ts` | `2f52948634b22d4eea0ba767ca7e39c9483449f0907a9e5c435d947a8a58532a` | 5355 |
+| `suggestion/tests/dayflowEvidenceBundleImport.test.ts` | `d69e1f652eb36ba2ecaa58a1d4db2a9b532096614a56ddee959a5dcf35bc72bd` | 27354 |
+| `suggestion/tsconfig.dayflow-e2io.json` | `a6dce1582de1b5abdad74e7d25f32d5e229138bfc8f14a00b79d2a3ddb56bc65` | 487 |
+| `suggestion/vitest.dayflow-e2io.config.ts` | `88d698f44b1502bcb8ccab546bbe7f60532b3ea95a5c305bdb053b96be2dbea4` | 291 |
+
+This record is additive and does not erase earlier plan, author-test, or QA
+history.
+
+
+---
+
+<!-- engine-change-record-section:ECR-E2-ROLE-1-SAME-BLABASE-ENGINE-2026-08-20:begin -->
+
+## Engine Change Record: ECR-E2-ROLE-1-SAME-BLABASE-ENGINE-2026-08-20
+
+- Date: 2026-08-20
+- Owner, human reviewer, and decision authority: Colin
+- Required David role, receipt, artifact, or approval: none
+- Goal: Correct the active Dayflow/Blabase role authority before further E2 implementation.
+- Affected stages: Documentation authority for Dayflow preprocessing, evidence adaptation, and
+  A/B/C suggestion generation.
+- Behavior before: Current E1 authority permitted B to append a Dayflow semantic summary after A1
+  rendering and permitted C to return Dayflow suggestion-shaped semanticOutput through a separate
+  renderer and screen_only_generation path.
+- Behavior after: Dayflow is limited to capture, storage, OCR, privacy filtering, and neutral
+  preprocessing. A/B/C must use one Blabase suggestion-engine entry point with identical model,
+  prompt, configuration, ranking, guardrails, validation, post-processing, and output schema. Only
+  the evidence set may differ.
+- Arm definition: A uses structured evidence; B uses the exact A evidence plus Dayflow
+  preprocessed evidence; C uses Dayflow preprocessed evidence only. A0 may remain an external
+  compatibility reference.
+- Supersession: The earlier E1 renderer implementation and validation records remain immutable
+  historical evidence, but their B overlay, separate C renderer, suggestion-shaped normalized
+  evidence, and generated results are not authorized for successor comparison, metrics, or freeze.
+  Conflicting E2-IO.2B candidate text is superseded before implementation.
+- Preserved work: E2-IO.2A transport integrity, manifest/hash/size and replay validation,
+  provenance, consent, privacy, retention, deletion, and SQLite/WAL isolation remain valid.
+- Versions changed: none. A future evidence-only contract requires a new version and must not
+  rewrite historical contracts, fixtures, or hashes.
+- Code, schema, fixture, dataset, model, prompt, configuration, or production behavior changed:
+  none.
+- Tests and checks: none executed; this was a documentation-only authority correction following a
+  read-only code and document audit.
+- Dataset, run IDs, metrics, latency, tokens, and baseline: not applicable. No evaluation or model
+  run occurred, and semantic behavior did not change in this task.
+- Privacy and retention impact: none. No private artifact, raw OCR, live capture, filesystem
+  evidence bundle, environment, provider, network, or production data was accessed or changed.
+- Release decision: none.
+- Rollback: Add a successor record and remove only these four additive authority sections. Never
+  rewrite historical E1 or E2-IO.2A records.
+- Next Colin gate: decide whether to start E2-SCHEMA-1, limited to the new neutral
+  Dayflow-preprocessed-evidence contract. That decision does not authorize engine implementation,
+  fixture migration, validation, live capture, publication, or cleanup.
+
+<!-- engine-change-record-section:ECR-E2-ROLE-1-SAME-BLABASE-ENGINE-2026-08-20:end -->
+
+
+---
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2A-PURE-CORE-COMPLETED-2026-08-20:begin -->
+
+## Engine Change Record: ECR-E2-SCHEMA-2A-PURE-CORE-COMPLETED-2026-08-20
+
+- Date: 2026-08-20
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Implement and close the strict synthetic-only neutral Dayflow preprocessed-evidence pure
+  core before any bundle adapter or suggestion-engine integration.
+- Affected pipeline stages: Isolated evaluation evidence schema validation, sealing,
+  canonicalization, detached hashing, parsing, resource enforcement, and immutable result creation
+  only.
+- Behavior before: The reviewed neutral evidence contract existed, but there was no dedicated
+  pure-core schema, sealer, serializer, parser, or synthetic validation closure.
+- Behavior after: Strict synthetic neutral OCR evidence can be sealed to and parsed from JCS plus
+  one LF with a domain-separated detached hash, exact E2-IO.2A transport fields, closed privacy and
+  provenance shapes, resource limits, strict duplicate handling, and deeply frozen results.
+  Suggestion-shaped fields and the legacy normalized-evidence shape fail closed.
+- Versions before: Not applicable; this is a new sibling contract with no compatibility union.
+- Versions after: schema `dayflow-preprocessed-evidence-v0.1`; verifier
+  `dayflow-preprocessed-evidence-verifier-v0.1`; detached-hash domain
+  `blabase.dayflow-preprocessed-evidence.v0.1`; bound transport import schema
+  `dayflow-screen-evidence-bundle-import-v0.1`.
+- Code commit: Not recorded. Git identity was not inspected. The exact file identities below bind
+  the implementation validated before this documentation-only append.
+- Evaluation dataset version and SHA-256: Not applicable. Only fictional synthetic fixtures were
+  used; no frozen dataset changed.
+- Candidate run ID: Not applicable; no engine or model run occurred.
+- Comparison run ID: Not applicable; no engine or model comparison occurred.
+- Commands executed: Dedicated schema Vitest config; dedicated schema TypeScript config; targeted
+  schema ESLint; E2 importer regression; DFA regression; full suggestion TypeScript; full
+  suggestion lint; and root architecture dependency check. Exact command argv was not captured in
+  this documentation checkpoint, so this record does not fabricate it.
+- Metrics changed: Not applicable. The 29/29 focused result and five-file/129-test compatibility
+  result are engineering regression evidence, not product suggestion-quality metrics.
+- Regressions or accepted exceptions: Final focused and compatibility checks passed. Independent
+  read-only QA passed for final F2a, F2b.1, and F2c.1 with no Medium-or-higher finding in each
+  scope. Remaining Low risks are suffix-based numeric-scanner allocation bounded by 512 KiB and
+  optional hostile `byteOffset`/`constructor`, exact-subview, and grammar-parity tests.
+- Privacy or retention impact: None. The contract is synthetic-only. No real screenshot, OCR,
+  conversation, `.local`, private artifact, filesystem bundle, live input, or production data was
+  created or inspected by implementation or validation.
+- Release decision: `E2-SCHEMA-2A` is implemented, validated, and automated-QA-reviewed only for
+  the isolated synthetic pure core. This is not production release, live-data authorization, or a
+  human approval inferred from automated QA.
+- Rollback method: Add a successor record and remove only the four implementation files listed
+  below. No dataset migration, private-data cleanup, or historical-record rewrite is required.
+- Follow-up work: `E2-SCHEMA-2B` importer adapter, owned bundle snapshot, and fresh bundle
+  re-verification remain pending and not authorized. The common evidence adapter, same Blabase
+  engine run generation, live data, and A/B/C execution also remain pending and require separate
+  Colin decisions.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| `suggestion/src/dayflowEvidence/preprocessedEvidenceV0_1.ts` | `b7e375e56f1bdee1c7b6ce1a7565165e768f95029728b332a1ced501d71b1e98` | 35330 |
+| `suggestion/tests/dayflowPreprocessedEvidenceV0_1.test.ts` | `67bb0151f6d62f6e649db4094a1d564cc546169b6488bafd91c113f3c95a1b8e` | 21006 |
+| `suggestion/tsconfig.dayflow-e2schema.json` | `06da2615887e5d0fb843a6fac742fda5c8a0adffa17a38738efc964e1a5ddadc` | 423 |
+| `suggestion/vitest.dayflow-e2schema.config.ts` | `6b2e62ad985510ccbd18fb890acb1fdbdeff0902372c597ad4401a69e1d8f449` | 295 |
+
+### Validation and applicability
+
+- Focused: dedicated Vitest PASS 29/29; dedicated TypeScript PASS; targeted ESLint PASS.
+- Compatibility: E2 importer PASS 10/10; DFA regression PASS 90/90; five files and 129 tests total;
+  full suggestion TypeScript PASS; full suggestion lint PASS.
+- Architecture dependency: PASS with zero errors. Existing warnings remain repository 12,
+  suggestion 8, and scripts 2.
+- Baseline/Golden: N/A. This isolated unconnected core changes no runtime engine input, output,
+  filtering, ordering, ranking, model, prompt, or configuration.
+- Component boundary: Dayflow remains capture, storage, OCR, privacy filtering, and neutral
+  preprocessing only. A/B/C still require one future Blabase suggestion-engine path with the same
+  model, prompt, configuration, ranking, guardrails, validation, post-processing, and output schema.
+
+This record is additive and does not erase the E2-SCHEMA-1 contract-review history, E2-IO.2A
+transport record, E1 diagnostic history, or the E2-ROLE-1 authority correction.
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2A-PURE-CORE-COMPLETED-2026-08-20:end -->
+
+
+---
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2B-1-OWNED-SNAPSHOT-COMPLETED-2026-08-21:begin -->
+
+## Engine Change Record: ECR-E2-SCHEMA-2B-1-OWNED-SNAPSHOT-COMPLETED-2026-08-21
+
+- Date: 2026-08-21
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Establish an owned, bounded, synthetic-only snapshot before parsing or resolving neutral
+  Dayflow evidence against its source bundle.
+- Affected pipeline stages: Evaluation-only input projection, bundle/candidate byte ownership,
+  E2-IO.2A transport reimport, and exact imported-descriptor binding.
+- Behavior before: E2-SCHEMA-2A could strictly seal and parse candidate evidence bytes, but no
+  capability-free boundary atomically owned caller candidate bytes, bundle entries, and the
+  expected seven-field transport descriptor before later verification.
+- Behavior after: Version `dayflow-preprocessed-evidence-verification-snapshot-v0.1` projects a
+  bounded exact enumerable data shape, rejects proxies/accessors/unsafe typed arrays, validates
+  path/control/count structure and caps, copies all accepted bytes to fixed owned storage, returns
+  fresh copies, immediately reimports the bundle, and compares all seven descriptor fields. The
+  opaque handle retains state only through a private `WeakMap`.
+- Versions before: No owned verification snapshot version existed.
+- Versions after: `dayflow-preprocessed-evidence-verification-snapshot-v0.1`. Existing
+  `dayflow-preprocessed-evidence-v0.1`,
+  `dayflow-preprocessed-evidence-verifier-v0.1`, and
+  `dayflow-screen-evidence-bundle-import-v0.1` APIs and meanings are unchanged.
+- Code commit: Not recorded. Git identity was not inspected. Exact validated file identities are
+  recorded below.
+- Evaluation dataset version and SHA-256: Not applicable. Synthetic fixtures only; no frozen
+  dataset changed.
+- Candidate run ID: Not applicable; no suggestion engine or model ran.
+- Comparison run ID: Not applicable; no suggestion comparison ran.
+- Commands executed: From `suggestion/`,
+  `./node_modules/.bin/vitest run --config vitest.dayflow-e2schema-resolved.config.ts`;
+  `./node_modules/.bin/vitest run --config vitest.dayflow-e2schema.config.ts`;
+  `./node_modules/.bin/vitest run --config vitest.dayflow-e2io.config.ts`;
+  `./node_modules/.bin/vitest run --config vitest.dayflow-dfa002.config.ts`;
+  `npm run typecheck`; `npm run lint`. From the Blabase root,
+  `npm run arch:deps:check`. The dedicated snapshot TypeScript and targeted ESLint checks also
+  passed; their argv was not supplied to this documentation checkpoint and is not fabricated here.
+- Metrics changed: Not applicable. Snapshot 21/21 and compatibility six-file/150-test outcomes are
+  regression evidence, not product suggestion-quality metrics.
+- Regressions or accepted exceptions: F1, F2a, F2a.1, F2b, F3, R1, and F3.1 are closed. Final
+  read-only QA3 passed with no High or Medium finding. Residual Low test gaps are exact 259-entry
+  and 257-object issue cases, exact 256-MiB success, explicit cloned/proxied-handle cases, and
+  runtime-dependent resizable/growable branches.
+- Privacy or retention impact: None. Synthetic-only and ephemeral; no real screenshot, OCR,
+  conversation, `.local`, private artifact, live data, filesystem bundle, or production data was
+  created, inspected, or persisted.
+- Release decision: E2-SCHEMA-2B-1 is implemented, validated, and automated-QA-reviewed only as an
+  isolated evaluation snapshot. This is not human approval inferred from QA, production release,
+  or authorization for E2-SCHEMA-2B-2 or engine execution.
+- Rollback method: Add a successor record and remove only the four 2B-1 files below. No dataset
+  migration, private-data cleanup, or historical-record rewrite is required.
+- Follow-up work: E2-SCHEMA-2B-2 staged candidate parsing and resolved evidence verification is
+  pending, not authorized, and incomplete. Common-engine adaptation, run generation, live data,
+  and A/B/C execution remain pending and require separate Colin decisions.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| `suggestion/src/evaluation/dayflowAblation/preprocessedEvidenceVerificationSnapshotV0_1.ts` | `209e14d71c851dd58a15e7adb20477c9f27d299ee2ac00552bb7a4b83e52fda2` | 23899 |
+| `suggestion/tests/dayflowPreprocessedEvidenceBundleVerificationV0_1.test.ts` | `6e24714f4456d8cce96d62f557f4f091d6e9eb466561c037d8b15d44ad41139c` | 42116 |
+| `suggestion/tsconfig.dayflow-e2schema-resolved.json` | `40b38c1858e19e14d530cd30de6870e5ecd779e459193a66eb80046432b74104` | 663 |
+| `suggestion/vitest.dayflow-e2schema-resolved.config.ts` | `216a7878c3a9033dd92448eac261c139872632488ba7688c72d047cfebbf7168` | 326 |
+
+### Validation and applicability
+
+- Focused: dedicated snapshot Vitest PASS 21/21; dedicated TypeScript PASS; targeted ESLint PASS.
+- Compatibility: snapshot 21 + schema 29 + importer 10 + DFA 90, PASS across six test files and
+  150 tests.
+- Full suggestion: `npm run typecheck` PASS; `npm run lint` PASS.
+- Architecture dependencies: PASS with zero errors and valid 17-entry/4-sentinel-edge coverage;
+  existing warnings remain repository 12, suggestion 8, scripts 2.
+- Golden/baseline: N/A. This unconnected evaluation snapshot changes no runtime engine input,
+  output, filtering, ordering, ranking, model, prompt, or configuration.
+- LikeC4: N/A for this unconnected evaluation-only capability. Dependency closure was checked.
+- Semantic boundary: No candidate semantic parse, resolved evidence verifier, title, summary,
+  `semanticOutput`, rank, caveat, availability, engine adapter, runtime path, or live path exists in
+  this checkpoint. Dayflow remains neutral capture/storage/OCR/privacy preprocessing only.
+
+This additive record preserves E2-IO.2A and E2-SCHEMA-2A implementation identities and all earlier
+historical records.
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2B-1-OWNED-SNAPSHOT-COMPLETED-2026-08-21:end -->
+
+
+---
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2B-2A-STAGED-INSPECTION-COMPLETED-2026-08-21:begin -->
+
+## Engine Change Record: ECR-E2-SCHEMA-2B-2A-STAGED-INSPECTION-COMPLETED-2026-08-21
+
+- Date: 2026-08-21
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Add an internal fail-closed structural inspection stage without changing the existing
+  public Dayflow evidence-core contract or prematurely deciding manifest-backed issues.
+- Affected pipeline stages: Internal evaluation-only candidate structural parsing, detached root
+  hash check, intrinsic issue classification, and future resolved-owner routing.
+- Behavior before: The public parser either accepted the full schema or returned one core failure;
+  later verification had no internal way to retain a structurally valid candidate while separating
+  intrinsic failures from predicates that require the owned manifest and artifact set.
+- Behavior after: Internal
+  `inspectCanonicalDayflowPreprocessedEvidenceV0_1ForResolvedVerification` applies byte/JSON/caps/
+  canonical, structural, root-hash, and collection stages in order. Rejection exposes only status
+  and one core code. Structural acceptance returns a deeply frozen candidate and sorted unique
+  intrinsic-code and resolved-owner arrays. Unclassified full-semantic invalidity fails closed as
+  `SCHEMA_INVALID`.
+- Versions before: `dayflow-preprocessed-evidence-v0.1` and
+  `dayflow-preprocessed-evidence-verifier-v0.1`.
+- Versions after: Unchanged. Public parser/sealer/serializer behavior, issue codes, canonical
+  bytes, and hash domain `blabase.dayflow-preprocessed-evidence.v0.1` are preserved. No new public
+  or product version is introduced.
+- Code commit: Not recorded. No commit or other Git operation was performed. Exact validated file
+  identities are recorded below.
+- Evaluation dataset version and SHA-256: Not applicable. Synthetic fixtures only; no Golden or
+  other frozen dataset changed.
+- Candidate run ID: Not applicable; no engine/model run or baseline occurred.
+- Comparison run ID: Not applicable; no comparison run occurred.
+- Commands executed: Focused dedicated schema Vitest, dedicated TypeScript, and scoped ESLint;
+  compatibility through the existing snapshot, schema, importer, and DFA Vitest configurations;
+  from `suggestion/`, `npm run typecheck` and `npm run lint`; from the Blabase root,
+  `npm run arch:deps:check`. This documentation-only checkpoint did not rerun them.
+- Metrics changed: Not applicable. Focused 39/39 and compatibility six-file/160-test results are
+  engineering regression evidence, not suggestion-quality metrics.
+- Regressions or accepted exceptions: Initial valid sealing failed until the root detached hash
+  was excluded from the collector preimage. QA HOLD removed duplicate public refinement. A silent
+  full-schema-invalid path was closed with the resolved-owner ledger and fallback. Fixture path,
+  ordinal, and truthfulness findings were corrected. Current read-only QA-R2 passed with no finding
+  and no Medium-or-higher issue. Optional Low test gaps are owner-helper intrinsic defaults,
+  combined all-three-owner ordering, direct public Zod path/message ordering, and redaction-nine.
+- Privacy or retention impact: None. Synthetic-only tests; no raw live screenshot, OCR, private
+  data, artifact, or log was created, inspected, persisted, or added to retention. Rejected output
+  remains redacted, and retention policy is unchanged.
+- Release decision: E2-SCHEMA-2B-2A is implemented and validated only as an internal unconnected
+  evaluation layer. QA-R2 is automated technical evidence, not human approval. No live, product,
+  model, provider, or production release is authorized.
+- Rollback method: Through a successor record, revert the three implementation/test deltas below
+  together. Leave E2-IO.2A and E2-SCHEMA-2B-1 intact. No private artifact or data cleanup exists.
+- Follow-up work: E2-SCHEMA-2B-2B capture-only ordering plus transport/manifest/resolved
+  verification remains pending, not authorized, and unimplemented. Common-engine adaptation, run
+  generation, live A/B/C, and production work also remain pending.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| `suggestion/src/dayflowEvidence/preprocessedEvidenceV0_1.ts` | `a9ffcd6743301af2070b8df83424c95b004cd484d3d3b561d1cef47a8d7c5683` | 47698 |
+| `suggestion/src/dayflowEvidence/contracts.ts` | `d03ce566686f3dd47498f7fe048af8f360049b61c89ffc3eb556f36ae605c0f7` | 74234 |
+| `suggestion/tests/dayflowPreprocessedEvidenceV0_1.test.ts` | `cb4388f21e4a276c3b240a95276038abe2dedb7770122cc53c8da2dfcd75cb2b` | 35416 |
+
+### Intrinsic and resolved ownership closure
+
+The seven intrinsic codes are exactly `CAPTURE_WINDOW_MISMATCH`, `CHRONOLOGY_INVALID`,
+`PREPROCESSING_PROVENANCE_INVALID`, `OCR_TEXT_INVALID`, `OCR_TEXT_HASH_MISMATCH`,
+`PRIVACY_METADATA_INVALID`, and `RESOURCE_COUNT_MISMATCH`.
+
+The three future resolved owners are exactly `COVERAGE`, `SOURCE_ARTIFACT_BINDING`, and
+`SOURCE_ARTIFACT_SET`. They are neither final issue codes nor acceptance. E2-SCHEMA-2B-2B must
+resolve them against capture-only owned inputs, transport, manifest, and artifacts.
+
+### Validation and applicability
+
+- Focused: Vitest 39/39 PASS; dedicated TypeScript PASS; scoped ESLint PASS.
+- Compatibility: snapshot 21 + schema 39 + importer 10 + DFA 90, six files and 160 tests PASS.
+- Full suggestion: typecheck PASS in 3.72 seconds; lint PASS in 10.47 seconds.
+- Architecture dependencies: PASS in 6.47 seconds with zero errors and valid 17-entry/
+  4-sentinel-edge coverage; existing warnings repository 12, suggestion 8, scripts 2.
+- Baseline/Golden: N/A, and no baseline run is claimed. No prompt, model, ranking, output,
+  generation, dataset, live authority, or runtime engine behavior is connected.
+- LikeC4: No implemented boundary or module connection changed, so no model update is needed.
+- Suggestion boundary: OCR data may contain observed suggestion-like words, but suggestion-shaped
+  fields remain rejected. Dayflow owns no title, summary, `semanticOutput`, ranking, caveat,
+  availability, next action, or output path.
+
+This additive record preserves all prior E2-IO.2A, E2-SCHEMA-2A, and E2-SCHEMA-2B-1 records.
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2B-2A-STAGED-INSPECTION-COMPLETED-2026-08-21:end -->
+
+## Engine Change Record: ECR-E2-SCHEMA-2B-STAGE1-9-DIRECT-VERIFIER-COMPLETED-2026-08-21
+
+- Date: 2026-08-21
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Close the neutral Dayflow evidence verification seam through Stage 9 behind one raw
+  three-argument direct-module facade without connecting suggestion generation.
+- Affected pipeline stages: Capture-only bounded projection, existing canonical core inspection,
+  single-pass detailed bundle import, Stage 7 transport binding, Stage 8 manifest/origin/phase/
+  protocol prerequisites, Stage 9 capture-window/coverage/source/intrinsic resolution, and final
+  redacted result mapping.
+- Behavior before: B1 snapshot ownership and B2-2A structural inspection existed, but current
+  authority still left capture-only ordering, resolved manifest checks, Stage 9 resolution, and the
+  final three-argument facade unimplemented.
+- Behavior after: `verifyDayflowPreprocessedEvidenceV0_1(candidateBytes, originalBundle,
+  expectedImportedBundleDescriptor)` captures without import, runs the existing core, performs one
+  detailed import over an owned copy, applies Stage 7, Stage 8, and Stage 9 in order, and returns
+  only frozen neutral success evidence or a non-empty public issue-code array.
+- Versions before: Existing `dayflow-preprocessed-evidence-v0.1`,
+  `dayflow-preprocessed-evidence-verifier-v0.1`,
+  `dayflow-screen-evidence-bundle-import-v0.1`, and
+  `dayflow-preprocessed-evidence-verification-snapshot-v0.1` contracts.
+- Versions after: Existing public versions remain compatible. The new Stage 1-9 API is
+  direct-module-only and has no barrel, product, release, or freeze version.
+- Code commit: Not recorded. No Git operation was performed. Current scoped raw byte identities are
+  recorded below.
+- Evaluation dataset version and SHA-256: Not applicable. Synthetic tests only; no Golden,
+  Regression, Rolling, Holdout, or other frozen dataset changed.
+- Candidate run ID: Not applicable; no LLM, suggestion engine, or model run occurred.
+- Comparison run ID: Not applicable; no A/B/C or model comparison occurred.
+- Commands executed: Latest focused verifier closure, four-file integration closure, full
+  suggestion typecheck, full suggestion lint, and root architecture dependency checking were
+  executed before this documentation checkpoint. Exact argv was not supplied to this checkpoint
+  and is not fabricated. This documentation task reran none of them.
+- Metrics changed: Not applicable. Focused 2-file/42-test and integration 4-file/93-test results
+  are engineering regression evidence, not suggestion-quality metrics. Earlier focused 29/36
+  counts are superseded evidence.
+- Regressions or accepted exceptions: B1 projection, B2-1 prerequisites, B2-2A resolution, and
+  B2-2B facade are implemented, focused-validated, and independently QA-reviewed with PASS.
+  Current-head B2-2A and B2-2B QA reported no Medium-or-higher finding. Known Low test gaps are
+  facade post-call mutation, malformed-descriptor versus valid-mismatch contrast, exact importer
+  call-count spy, hostile direct `WeakMap.get`/`Reflect.apply`, full-schema fallback,
+  field-table coverage, and whole-repository barrel-negative coverage. Static control flow contains
+  one detailed-import path; no exact call-count spy is claimed.
+- Privacy or retention impact: None. Success returns only validated neutral evidence; failure
+  returns only issue codes. No result contains the original bundle, JPEG bytes, filesystem path,
+  private snapshot state, mutable caller reference, or underlying exception. No live/user data,
+  environment value, private artifact, log, or persistence/retention operation occurred.
+- Release decision: Stage 1-9 implementation, focused validation, integration validation, and agent
+  QA are complete only as an unconnected evaluation seam. This is not human approval inferred from
+  QA, release, or freeze. Colin selected documentation instead of the full Vitest unit suite; that
+  suite is deferred and must pass before any release/freeze decision.
+- Rollback method: Add a successor record and revert only the final-verifier, detailed-import,
+  capture-only, test, and dedicated-config additions. Preserve the existing public E2-IO.2A
+  importer, E2-SCHEMA-2A core, and E2-SCHEMA-2B-1 snapshot APIs. Delete only files introduced
+  exclusively for this verifier. No private data or artifact cleanup exists.
+- Follow-up work: Stage 10, common Blabase engine adaptation and generation, A/B/C execution,
+  live/API/persistence, provider, barrel/product exposure, production, release, and freeze remain
+  pending and require separate Colin decisions. The same-engine A/B/C direction remains mandatory.
+
+### Current scoped raw byte identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| `suggestion/src/evaluation/dayflowAblation/verifyPreprocessedEvidenceBundleV0_1.ts` | `18f501dc8968754b6394d956444ce26c8db1eccc1a5ac890aa50b20af603bb5b` | 19495 |
+| `suggestion/tests/verifyPreprocessedEvidenceBundleV0_1.test.ts` | `123241df821e3322c2e72f1c9fe88d878df11e65a002cfc62176643ecaa35880` | 39399 |
+| `suggestion/src/evaluation/dayflowAblation/importEvidenceBundle.ts` | `dfcd27b368fa715465666375eba461006291cbaa82f9a2a8ce7709e679a240c4` | 18158 |
+| `suggestion/tests/dayflowEvidenceBundleImport.test.ts` | `6cda94a2643b249cb4e5338f8bf103dd25b8834f39f200089f6f9fcf30d4321d` | 33035 |
+| `suggestion/src/evaluation/dayflowAblation/preprocessedEvidenceVerificationSnapshotV0_1.ts` | `f479f3991020bdc5b2cf8f88629d503c427b148f39408a3f434f20ba9b44eb36` | 25717 |
+| `suggestion/tests/dayflowPreprocessedEvidenceBundleVerificationV0_1.test.ts` | `5ae6cdd77289787f6f8224fbd66589ed480f926e0d40407129b9169ead21638e` | 44855 |
+| `suggestion/tsconfig.dayflow-e2schema-resolved.json` | `7be141dd6d827b87783ce3bf25f686990bcbf63598c2dbfd8be992f9e9765bc0` | 799 |
+| `suggestion/vitest.dayflow-e2schema-resolved.config.ts` | `e17f961b3bb4a8e62c94228b6e0c96290ee6b0b504cfae832743055db03e532d` | 386 |
+
+### Validation and applicability
+
+- Focused: PASS, two files and 42 tests.
+- Integration: PASS, four files and 93 tests: core 39 + importer 12 + snapshot/final 42.
+- Full suggestion: typecheck PASS; lint PASS.
+- Architecture dependencies: PASS, exit zero, no new Dayflow violation, valid 17-entry/
+  4-sentinel-edge coverage; existing warnings repository 12, suggestion 8, scripts 2.
+- Independent QA: B2-2A current-head PASS and B2-2B current-head PASS, with no Medium-or-higher
+  finding.
+- Full Vitest unit suite: Deferred by Colin's documentation choice and required before release or
+  freeze.
+- Baseline/Golden: N/A. No prompt, model, ranking, suggestion output, dataset, or runtime engine
+  connection changed.
+- LikeC4: No update. No implemented system boundary, container, or runtime flow changed; the planned
+  engine connection is still absent.
+- Semantic boundary: Dayflow remains capture, storage, OCR, privacy filtering, and neutral
+  preprocessing only. No suggestion title, summary, `semanticOutput`, ranking, caveat,
+  availability, next action, or output-path field was added.
+
+This additive record preserves all E2-IO.2A, E2-SCHEMA-2A, B1, B2-1, and B2-2A history while
+superseding only their active statements that Stage 1-9 final verification or B2-2B remained
+unimplemented.
+
+<!-- engine-change-record-section:ECR-E2-SCHEMA-2B-STAGE1-9-DIRECT-VERIFIER-COMPLETED-2026-08-21:end -->
+
+## Validation Addendum: E2-FULL-UNIT-PASSED-2026-08-21
+
+This append-only addendum preserves the preceding Engine Change Record verbatim and supersedes only
+its deferred full Vitest unit-suite gate.
+
+- Date: 2026-08-21
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Scope: Full Vitest unit-suite validation for the already implemented E2-SCHEMA-2B Stage 1-9
+  direct verifier.
+- Command and working directory: `npm test` from `suggestion/`.
+- Result: Exit 0; 166 files and 1,531 tests PASS; no failures.
+- Timing: Vitest 20.05 seconds; elapsed approximately 20.26 seconds.
+- Relationship to prior evidence: Focused two-file/42-test and integration four-file/93-test
+  results remain separate and are neither replaced nor summed.
+- Documentation action: No source, test, or configuration edit and no validation rerun occurred in
+  this documentation checkpoint.
+- Dataset and metrics: No baseline, Golden, dataset, LLM, model, prompt, ranking, suggestion-output,
+  or A/B/C metric changed.
+- Privacy and retention: No live/user data, environment value, private artifact, raw bundle, JPEG,
+  path, log, persistence, or retention operation occurred.
+- Release decision: The previously deferred full-unit gate is now complete. This is not release or
+  freeze approval and does not authorize Stage 10, common-engine adaptation/generation, A/B/C
+  execution, live/API/persistence, provider, product, or production work.
+- Follow-up: All remaining Stage 10 and product/runtime work requires separate Colin decisions.
+  Neutral Dayflow processing, no David gate, and the same future Blabase engine for A/B/C remain
+  unchanged.
+
+<!-- engine-change-record-addendum:E2-FULL-UNIT-PASSED-2026-08-21:end -->
+
+---
+
+<!-- engine-change-record-section:ECR-STAGE10-1A-1-COMMON-EVIDENCE-RECORD-SET-COMPLETED-2026-08-21:begin -->
+
+## Engine Change Record: ECR-STAGE10-1A-1-COMMON-EVIDENCE-RECORD-SET-COMPLETED-2026-08-21
+
+- Date: 2026-08-21
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Goal: Add a deterministic, source-neutral, sealed evidence record set for future same-engine
+  A/B/C evaluation without connecting suggestion generation.
+- Affected pipeline stages: Evaluation-only evidence projection, record/fact identity derivation,
+  duplicate and collision handling, deterministic byte-budget selection, canonical sealing,
+  sealed-artifact verification, and serialization.
+- Behavior before: Stage 1-9 could verify neutral Dayflow preprocessed evidence, but there was no
+  shared source-neutral record-set contract for structured and Dayflow evidence. Historical E1
+  A/B/C generation remains non-authoritative and uncorrected for execution.
+- Behavior after: buildAndSealCommonSuggestionEvidenceRecordSetV0_1 accepts bounded structured and
+  Dayflow build records, strips private build identities, derives typed record/fact identities,
+  deduplicates, detects global collisions before selection, applies deterministic partition
+  budgets, and returns a deeply frozen sealed artifact. A hardened structural facade, authoritative
+  sealed-artifact verifier, and strict JCS-plus-LF serializer share private internal validation.
+- Versions before: No Stage10 common evidence record-set version.
+- Versions after: Schema blabase-common-suggestion-evidence-record-set-v0.1; budget
+  common-suggestion-evidence-budget-v0.1; detached-hash domain
+  blabase.common-suggestion-evidence-record-set.v0.1.
+- Code commit: Not recorded. No Git operation was performed. Current scoped raw byte identities are
+  recorded below.
+- Evaluation dataset version and SHA-256: Not applicable. Synthetic fictional fixtures only; no
+  Golden, Regression, Rolling, Holdout, or other frozen dataset changed.
+- Candidate run ID: Not applicable; no suggestion engine, LLM, model, or provider run occurred.
+- Comparison run ID: Not applicable; no A/B/C comparison run occurred.
+- Commands executed: From suggestion/, npm test with the focused test path, npm run typecheck,
+  npm run lint, and npm test. Earlier intermediate focused runs are superseded by the final focused
+  13/13 result. This documentation checkpoint reran none of them.
+- Metrics changed: Not applicable. Focused 13/13 and full 167-file/1,544-test PASS results are
+  engineering regression evidence, not suggestion-quality metrics.
+- Regressions or accepted exceptions: An import-time Zod min ordering defect and hostile intrinsic
+  dependency reads were corrected during focused validation. Initial independent QA requested four
+  Medium fixes: hardened public structural projection, private exported-child-schema isolation,
+  checkable truncation/cap invariants, and record-ID grammar. All four were implemented and final
+  independent QA returned PASS with no Critical, High, Medium, or blocking Low finding.
+  Non-blocking test opportunities remain for stronger shared/oversized-input causal fixtures,
+  forced global fact-ID collision, and a dedicated simultaneous record/fact collision precedence
+  case.
+- Privacy or retention impact: None. No live screenshot, OCR payload, user data, private artifact,
+  credential, environment value, log, persistence, deletion, or retention operation occurred.
+  Build-only source identities are absent from sealed output.
+- Release decision: Stage10-1A.1 implementation, automated validation, and independent technical QA
+  are complete only as an unconnected evaluation contract. This is not a production, product,
+  provider, API, release, freeze, or A/B/C execution approval. Agent QA is technical evidence and
+  does not replace Colin's decision authority.
+- Rollback method: Add a successor record, remove the new common-evidence source and focused test,
+  and revert only the module-intrinsic capture deltas in canonicalHash.ts and contracts.ts.
+  Preserve all Stage 1-9 and E2-IO/E2-SCHEMA history. No private-data cleanup exists.
+- Follow-up work: Stage10-1A.2 source-specific coverage/provenance, Stage10-2 structured adapter,
+  Stage10-3 Dayflow composition, common prompt/output/verifier/ranking/generator work, offline
+  runner, A/B/C execution, and all live/product work remain pending and require separate Colin
+  decisions.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceV0_1.ts | a58df3c469cc1fb37d4f871cb5ae549cc0e4c42e77e16c0352577d3f0ed4be5b | 57586 |
+| suggestion/tests/dayflowCommonSuggestionEvidenceV0_1.test.ts | e8461c3ee160b186b5ae8c487b2f034738139bb88c2322396cd35ade185d8eb8 | 31716 |
+| suggestion/src/crossSource/canonicalHash.ts | e921724412876f2956b5a4eef8ba4f4320072c821eba318b0dd865766aca033a | 1647 |
+| suggestion/src/dayflowEvidence/contracts.ts | 5480dc170a8ecf22ed8555aaddec337a35c09c55074fdf9d805e7b5e4eef8b7c | 74896 |
+
+### Frozen contract and limits
+
+- Record kinds: github_work_item, github_deadline, github_activity, codex_overview,
+  calendar_constraint, notion_resource, and dayflow_frame.
+- Sources: github, codex, google_calendar, notion, and dayflow.
+- Authorities: primary_task_fact, structured_supporting_context, and screen_observation.
+- Record-ID grammar: ^evidence_record_[0-9a-f]{32}$.
+- Structured input/byte limits: 2,048 records and 49,152 UTF-8 bytes.
+- Dayflow input/byte limits: 256 records and 65,536 UTF-8 bytes.
+- Envelope reserve and total: 8,192 and 122,880 UTF-8 bytes.
+- Error decision order is staged rather than one global precedence: top-level shape preflight,
+  input record caps, record schema and identity derivation, cross-partition record collision,
+  cross-partition fact collision, then post-selection budget invariants. Within the collision
+  stage, RECORD_ID_COLLISION precedes FACT_ID_COLLISION.
+- Serialization: strict validated JCS followed by exactly one LF.
+- Dayflow semantic boundary: OCR/privacy-filtered observation facts only. No title, summary,
+  semanticOutput, ranking, caveat, availability, next action, or final output path.
+
+### Validation and applicability
+
+- Focused: 13/13 PASS.
+- Full Suggestion: typecheck PASS; lint PASS; 167 test files and 1,544 tests PASS.
+- Independent final QA: PASS; all four initial Medium findings closed.
+- Baseline/Golden: N/A. No evaluation dataset, prompt, model, ranking, generation, or output changed.
+- LikeC4: No update. The new module is unconnected and changes no implemented architecture boundary
+  or runtime flow.
+- Verifier limitation: It validates only invariants reconstructable from the sealed artifact. It
+  does not claim to reconstruct omitted record IDs or their original preimage.
+
+This additive record preserves all prior E2-IO, E2-SCHEMA, Stage 1-9, and full-unit addendum history.
+It supersedes only statements that Stage10-1A.1 or the common source-neutral record-set contract
+remains unimplemented.
+
+<!-- engine-change-record-section:ECR-STAGE10-1A-1-COMMON-EVIDENCE-RECORD-SET-COMPLETED-2026-08-21:end -->
+
+---
+
+<!-- engine-change-record-section:ECR-STAGE10-1A-2B-LINEAGE-STRUCTURAL-ORCHESTRATION-READY-2026-08-22:begin -->
+
+## Engine Change Record: ECR-STAGE10-1A-2B-LINEAGE-STRUCTURAL-ORCHESTRATION-READY-2026-08-22
+
+- Date: 2026-08-22
+- Owner: Colin
+- Human reviewer and decision authority: Colin
+- Required David review, receipt, artifact, or approval: none
+- Status: Implementation, focused validation, full regression, and bounded technical QA PASS.
+  Colin checkpoint acceptance remains pending.
+- Goal: Implement the frozen v0.1 lineage receipt and private source-attestation structural and
+  orchestration boundary without activating source authority or suggestion generation.
+- Frozen prerequisite: `COMMON_SUGGESTION_EVIDENCE_LINEAGE_V0_1_CONTRACT.md`, commit `e1415ad`.
+- Affected pipeline stages: Evaluation-only lineage structural parsing, intrinsic receipt
+  inspection, source-verification planning, private source-attestation parsing, private scope-token
+  and HMAC preimage handling, deterministic failure selection, and shared JCS/domain hashing.
+- Behavior before: Stage10-1A.1 supplied a source-neutral sealed suggestion payload, and the frozen
+  lineage contract existed as documentation, but no receipt/attestation structural runtime or
+  source-verification planner implemented it.
+- Behavior after: The public surface can structurally parse, intrinsically inspect, and plan exact
+  v0.1 lineage verification. Source attestation remains private. A requested source whose private
+  bundle passes bundle preflight reaches `SOURCE_VERIFIER_UNAVAILABLE`; missing, malformed, extra,
+  proxy/accessor, or non-requested bundles fail earlier with `INPUT_INVALID` or
+  `SOURCE_BINDING_INVALID`. No authoritative receipt success can be built, verified, or serialized.
+  The shared JCS/domain helper is stable under post-import intrinsic mutation while preserving exact
+  canonical bytes and domain framing.
+- Versions before: No implemented Stage10 lineage receipt or source-attestation runtime version.
+- Versions after: Receipt schema `blabase-common-suggestion-evidence-lineage-receipt-v0.1`; receipt
+  domain `blabase.common-suggestion-evidence-lineage-receipt.v0.1`; source-attestation schema
+  `blabase-common-suggestion-source-collection-attestation-v0.1`; source-attestation domain
+  `blabase.common-suggestion-source-collection-attestation.v0.1`; record-ID-set domain
+  `blabase.common-suggestion-evidence-lineage-record-ids.v0.1`; private HMAC domain
+  `blabase.lineage.private-scope.v0.1`; token canonicalization
+  `blabase-scope-token-canonicalization-v0.1`; timezone profile
+  `blabase-tzdb-profile-2026c-v1`.
+- Code commit: Not recorded. Implementation is on branch `feat/common-lineage-v01-verifier`; no
+  implementation commit was created by this checkpoint.
+- Evaluation dataset version and SHA-256: Not applicable. Fictional synthetic fixtures only; no
+  Golden, Regression, Rolling, Holdout, or production dataset changed.
+- Candidate run ID: Not applicable. No model, LLM, provider, suggestion, or A/B/C run occurred.
+- Comparison run ID: Not applicable. No comparable suggestion outputs were generated.
+- Commands executed: From `suggestion/`, focused `npx vitest run` commands for the lineage and
+  Dayflow contract tests, followed by full `npx vitest run`. From the application root,
+  `npm run typecheck` and focused `npx eslint` over the five affected source/test files. Intermediate
+  failing runs were diagnostic and are superseded by the final results below.
+- Metrics changed: Not applicable. Test counts are engineering regression evidence, not suggestion
+  quality, product, or release metrics.
+- Privacy or retention impact: None. No live screenshot, OCR payload, connector response, user data,
+  private artifact, key, credential, environment value, log, persistence, deletion, or retention
+  operation was used. HMAC keys and registry snapshots remain runtime-private interfaces only.
+- Architecture impact: No implemented boundary, container, external integration, or runtime flow
+  was connected. No LikeC4 source change is required. Architecture commands were not rerun and no
+  architecture PASS is claimed.
+- Baseline applicability: N/A. Suggestion engine input/output, dataset, prompt, model, ranking,
+  filtering, ordering, guardrail, and result resolution are unchanged.
+- Release decision: This checkpoint is evaluation-only and non-authoritative. It does not approve
+  source verifiers, live collection, engine connection, A/B/C execution, API, persistence, provider,
+  product, release, or production use. Automated QA is technical evidence and does not replace
+  Colin's acceptance.
+- Rollback method: Through a successor record, remove the three lineage source/test files and revert
+  the bounded shared JCS/test hardening only if explicitly included. Preserve Stage10-1A.1 and all
+  E2/E1 records. No data migration or private cleanup exists.
+- Follow-up work: Colin checkpoint acceptance; then separately decide Stage10-2 authoritative
+  source verifiers and private registry/key/profile implementations. Stage10-3 composition, the
+  common suggestion engine, offline A/B/C execution, and all live/product work remain unauthorized.
+
+### Public and private authority boundary
+
+Public runtime exports are limited to:
+
+- `commonSuggestionEvidenceLineageReceiptStructuralSchemaV0_1`.
+- `inspectCommonSuggestionEvidenceLineageReceiptIntrinsicV0_1`.
+- `planCommonSuggestionEvidenceLineageSourceVerificationV0_1`.
+
+No public `buildAndSealCommonSuggestionEvidenceLineageReceiptV0_1`,
+`verifyCommonSuggestionEvidenceLineageReceiptV0_1`, or
+`serializeCommonSuggestionEvidenceLineageReceiptV0_1` API exists. The receipt remains a sidecar and
+is never engine/model input. The private attestation requires ordered operation statuses, coverage
+consistency, unavailable `completedAt === null`, detached-hash binding, and sanitized failures, but
+does not establish upstream truth without a future source verifier.
+
+### Exact implementation identity
+
+| File | SHA-256 | Bytes |
+| --- | --- | ---: |
+| suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.ts | 68b1902360dfe9c2dc0e15338322f0d57769b970c7d7c50e1613debd14c35d3d | 2,637 |
+| suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts | affed7355a450f5ef8786ef6731839ab08ea9bc5d0d0d950a0ee43700204a94b | 85,052 |
+| suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts | 322770ca9f2591c472f5baff4e5ec8217ab94693f5ecf9c2f679f36db4b7ae43 | 70,219 |
+| suggestion/src/dayflowEvidence/contracts.ts | 0888c71a796dec77b81f09a02a552c5a5e26e9626d0d0032f6abd00e97ec1ce5 | 77,195 |
+| suggestion/tests/dayflowEvidenceContracts.test.ts | 2b242ae5d40fe0608b7b3a554e3d3656d90b05257f1178829940ae25884ae72a | 52,389 |
+
+### Validation and QA evidence
+
+- Stage10 focused Vitest: 24/24 PASS.
+- Shared Dayflow contract Vitest: 20/20 PASS.
+- Full application TypeScript typecheck: PASS.
+- Focused ESLint for the five affected files: PASS.
+- Full Suggestion Vitest: 168 files and 1,569 tests PASS, no failures.
+- Final bounded technical QA: PASS with no Critical, High, Medium, or Low finding in scope.
+- Full application lint, build, architecture commands, Golden baseline, and suggestion-quality
+  evaluation were not run and are not claimed.
+
+Confirmed validation and QA findings included Zod v3 union compatibility, mutable intrinsic use in
+the lineage runtime, mutable shared JCS operations, missing attestation operation statuses, and an
+invalid unavailable timestamp union. All confirmed findings were corrected, regression-tested, and
+independently re-reviewed as closed. Nonblocking opportunities remain for positive private
+attestation fixtures across every source/mode and exact attestation serialized-byte boundaries.
+
+This additive record preserves Stage10-1A.1 and all E2/E1 history. It supersedes only active
+statements that Stage10-1A.2 structural orchestration remains wholly unimplemented or unvalidated.
+
+<!-- engine-change-record-section:ECR-STAGE10-1A-2B-LINEAGE-STRUCTURAL-ORCHESTRATION-READY-2026-08-22:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-1A-2B-COLIN-ACCEPTED-2026-08-22:begin -->
+
+## Acceptance Addendum: ECR-STAGE10-1A-2B-COLIN-ACCEPTED-2026-08-22
+
+- Date: 2026-08-22
+- Decision authority: Colin
+- Decision: Accept and close the Stage10-1A.2b lineage structural-orchestration checkpoint.
+- Accepted evidence: The exact implementation identities and limits in the preceding READY record;
+  Stage10 focused 24/24 PASS; shared Dayflow contracts 20/20 PASS; full application typecheck PASS;
+  focused five-file ESLint PASS; full Suggestion 168 files/1,569 tests PASS; bounded code QA PASS;
+  and documentation QA PASS.
+- Scope: Evaluation-only structural and orchestration closure. No authoritative receipt success,
+  source verifier, suggestion-engine connection, A/B/C execution, API, persistence, provider,
+  release, product, or production authority is granted.
+- Human roles: Colin is the sole human reviewer and decision authority. David has no required role,
+  receipt, artifact, or approval.
+- Commands and code changes: None for this acceptance addendum. Prior evidence is referenced without
+  rerunning it.
+- Next gate: Stage10-2 remains pending and requires a separate Colin decision.
+
+This addendum supersedes only the pending-Colin-acceptance status in the preceding READY record. It
+does not rewrite that record, its hashes, its validation evidence, its privacy boundary, or its
+rollback instructions.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-1A-2B-COLIN-ACCEPTED-2026-08-22:end -->
