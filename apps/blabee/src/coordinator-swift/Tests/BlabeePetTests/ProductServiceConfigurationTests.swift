@@ -1,4 +1,5 @@
 import CoordinatorSwift
+import BlabeeProductSupport
 import Darwin
 import Foundation
 import Testing
@@ -25,6 +26,10 @@ private struct ProductServiceFixture {
 
     var configDirectory: URL {
         applicationSupport.appendingPathComponent("Blabee/config", isDirectory: true)
+    }
+
+    var productDirectory: URL {
+        applicationSupport.appendingPathComponent("Blabee", isDirectory: true)
     }
 
     var configFile: URL {
@@ -65,6 +70,10 @@ private struct ProductServiceFixture {
         try FileManager.default.createDirectory(
             at: configDirectory,
             withIntermediateDirectories: true
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: productDirectory.path
         )
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
@@ -111,6 +120,10 @@ func productServiceDerivesFixedPathsWithoutConfig() throws {
     try FileManager.default.createDirectory(
         at: fixture.configDirectory,
         withIntermediateDirectories: true
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: fixture.productDirectory.path
     )
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o700],
@@ -277,6 +290,10 @@ func productServiceRejectsSymlinkSpecialAndOversizedConfig() throws {
     )
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o700],
+        ofItemAtPath: fixture.productDirectory.path
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
         ofItemAtPath: fixture.configDirectory.path
     )
     let outside = fixture.root.appendingPathComponent("outside.json")
@@ -316,12 +333,58 @@ func productServiceRejectsSymlinkedConfigDirectory() throws {
     try FileManager.default.createDirectory(at: external, withIntermediateDirectories: false)
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o700],
+        ofItemAtPath: fixture.productDirectory.path
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
         ofItemAtPath: external.path
     )
     try FileManager.default.createSymbolicLink(
         at: fixture.configDirectory,
         withDestinationURL: external
     )
+    #expect(productServiceErrorCode {
+        try ProductServiceBootstrap.resolve(environment: fixture.environment())
+    } == "product_service_config_unsafe")
+}
+
+@Test("product service refuses a symlinked Blabee ancestor on restart")
+func productServiceRejectsSymlinkedProductDirectory() throws {
+    let fixture = try ProductServiceFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    try FileManager.default.createDirectory(
+        at: fixture.applicationSupport,
+        withIntermediateDirectories: true
+    )
+    let externalProduct = fixture.root.appendingPathComponent(
+        "external-Blabee",
+        isDirectory: true
+    )
+    let externalConfig = externalProduct.appendingPathComponent("config", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: externalConfig,
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: externalProduct.path
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: externalConfig.path
+    )
+    let externalConfigFile = externalConfig.appendingPathComponent("service.json")
+    try Data(#"{"schema_version":"1.0","enabled_projects":[]}"#.utf8)
+        .write(to: externalConfigFile)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: externalConfigFile.path
+    )
+    try FileManager.default.createSymbolicLink(
+        at: fixture.productDirectory,
+        withDestinationURL: externalProduct
+    )
+
     #expect(productServiceErrorCode {
         try ProductServiceBootstrap.resolve(environment: fixture.environment())
     } == "product_service_config_unsafe")

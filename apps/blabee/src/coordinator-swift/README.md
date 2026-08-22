@@ -78,14 +78,51 @@ Blabee.app/Contents/MacOS/blabee-coordinator service
 `service`는 LaunchAgent 전용 내부 모드이며 추가 인자를 모두 거부한다. 설정은
 `schema_version = "1.0"`과 절대 경로 배열 `enabled_projects`만 허용하고,
 설정 디렉터리 `0700`·파일 `0600`·현재 사용자 소유·non-symlink 조건을 요구한다.
-설정이 없으면 활성 프로젝트 0개이며 파일을 자동 생성하지 않는다. 앱에는
+설정이 없으면 service reader는 활성 프로젝트 0개로 해석하며 읽기 과정에서 파일을
+자동 생성하지 않는다. 앱에는
 `Contents/Library/LaunchAgents/com.biadone.blabee.coordinator.plist`가 정적으로
 포함되지만 아직 등록되지 않아 자동 시작하지 않는다. 실제 `service` 실행은 제품
 Keychain과 저장소를 사용할 수 있으므로 로컬 자격 명령으로 실행하지 않는다.
 
+T-012b-3a 프로젝트 설정 명령:
+
+```sh
+Blabee.app/Contents/MacOS/blabee-coordinator \
+  project-settings enable --project "/absolute/project/path"
+
+Blabee.app/Contents/MacOS/blabee-coordinator \
+  project-settings disable --project "/absolute/project/path"
+```
+
+이 명령은 exact 앱 identity와 고정 Application Support 경로를 통과한 경우에만
+동작한다. enable은 프로젝트 경로의 모든 구성요소를 descriptor로 순회해 symlink를
+거부하고, disable은 이미 삭제된 프로젝트의 stale entry도 제거할 수 있다. 설정은
+current-user `0700` directory와 `0600` single-link file, process mutex+`flock`,
+strict locked read-modify-write, same-directory temporary file의 full write와 file
+`fsync`, atomic `renameat`, directory `fsync` 순서로 갱신한다.
+
+T-012b-3b Pet 온보딩:
+
+- exact 제품 앱의 Pet 설정 화면에서 `notRegistered`, `enabled`,
+  `requiresApproval`, `notFound`, unknown 서비스 상태를 표시한다.
+- 앱 시작·poll·snapshot·설정 화면 열기는 읽기 전용이다. 등록·해제·System Settings
+  열기와 프로젝트 추가·제거는 각 명시적 버튼에서만 수행한다.
+- 변경은 single-flight이며 성공·실패 뒤 실제 상태와 설정을 다시 읽는다. 설정 읽기
+  실패에서는 프로젝트 추가·제거를, `notFound`/unknown 상태에서는 모든 mutation을
+  fail-closed한다.
+- configured project와 현재 daemon의 active snapshot을 분리한다. 설정 변경은
+  service를 자동 재시작하지 않으며 다음 재시작부터 적용된다.
+- raw `pet --socket`에는 변경 불가 adapter를 사용해 기존 개발 Pet 시작을 보존한다.
+
+온보딩 집중 테스트는 fake adapter와 fake folder chooser만 사용한다. 실제
+`SMAppService.register()`, `service`, `NSOpenPanel`, System Settings, 사용자
+Application Support 또는 제품 primary Keychain은 호출·변경하지 않는다. 전체 Swift
+회귀에는 격리된 임의 test-only Keychain account를 사용 후 정리하는 integration
+test가 포함된다.
+
 Pet 모드는 이미 실행 중인 daemon의 UDS에 연결하며 데이터베이스·키·계약 경로를
 직접 열지 않는다. 로컬 `.app` 조립, 제품 service 경로 해석과 ad-hoc 서명 자격은
-구현됐지만 실제 `SMAppService` 등록·로그인 수명주기, signed Keychain,
+구현됐지만 실제 `SMAppService` 등록·승인·로그인 수명주기, signed Keychain,
 Developer ID 서명·공증과 DMG는 T-012 후속 범위다.
 
 `--enabled-project`는 여러 번 지정할 수 있다. `--socket`을 생략하면

@@ -91,9 +91,19 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     private func startProductionPet() throws {
         let transport = try PetUnixDomainSocketTransport(socketPath: arguments.socketPath)
         let opener = PetWorkspaceApplicationOpener()
+        let onboardingAdapter: any PetOnboardingAdapting
+        do {
+            onboardingAdapter = try PetLiveOnboardingAdapter()
+        } catch {
+            onboardingAdapter = PetUnavailableOnboardingAdapter(
+                reason: "제품 앱 온보딩 환경을 확인할 수 없습니다: \(error)"
+            )
+        }
         let viewModel = PetViewModel(
             transport: transport,
-            externalApplicationOpener: opener
+            externalApplicationOpener: opener,
+            onboardingAdapter: onboardingAdapter,
+            projectFolderChooser: PetOpenPanelProjectFolderChooser()
         )
         let store = PetUserDefaultsShortcutStore()
         let backend = CarbonPetHotKeyBackend()

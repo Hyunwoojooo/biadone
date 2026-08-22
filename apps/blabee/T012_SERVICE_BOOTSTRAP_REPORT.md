@@ -38,7 +38,9 @@ Blabee.app/Contents/MacOS/blabee-coordinator service
 }
 ```
 
-- 설정 디렉터리 또는 파일이 없으면 활성 프로젝트 0개로 해석하며 자동 생성하지 않는다.
+- service reader는 설정 디렉터리 또는 파일이 없으면 활성 프로젝트 0개로 해석하며
+  읽기 과정에서 자동 생성하지 않는다. T-012b-3a의 명시적 `project-settings`
+  명령만 안전한 writer 경로에서 필요 디렉터리와 파일을 생성한다.
 - 설정 디렉터리는 현재 사용자 소유의 실제 디렉터리와 mode `0700`이어야 한다.
 - 설정 파일은 현재 사용자 소유의 실제 일반 파일과 mode `0600`이어야 한다.
 - 파일은 directory descriptor 기준 `openat`, `O_NONBLOCK`, `O_NOFOLLOW`,
@@ -50,8 +52,13 @@ Blabee.app/Contents/MacOS/blabee-coordinator service
 - 파일이 존재하지만 손상됐거나 권한이 안전하지 않으면 조용히 무시하지 않고
   `product_service_config_invalid` 또는 `product_service_config_unsafe`로 시작을 막는다.
 
-현재 이 설정을 쓰는 제품 UI·원자 updater는 아직 없다. 런타임의 동적
-`enable_project`도 재시작 뒤 영속된다고 주장하지 않는다.
+T-012b-3a에서 exact 앱 전용 `project-settings enable|disable --project`와 원자
+writer를 추가했다. Application Support 전체 ancestor와 프로젝트 경로를 descriptor로
+순회하고 mutex+`flock`, strict locked read-modify-write, 같은 디렉터리 임시 파일,
+file/directory `fsync`와 `renameat`을 사용한다. 상세 계약은
+`T012_PROJECT_SETTINGS_REPORT.md`에 있다. T-012b-3b에서 이 writer를 호출하는 Pet
+온보딩 UI와 `SMAppService` 수명주기 adapter 코드 계약을 연결했다. 실제 등록과
+service 재시작은 수행하지 않았다.
 
 ## 정적 LaunchAgent 계약
 
@@ -85,21 +92,26 @@ plist는 `Label`, `BundleProgram`, `ProgramArguments`, `RunAtLoad` 네 키만 �
   hash·size·mode 포함: 통과
 - 서명 후 LaunchAgent `RunAtLoad` 변조: codesign이 sealed resource 변경으로 거부
 - 번들 내부 Doctor 읽기 전용 검사: app/runtime/embedded coordinator/Plugin layout 통과
+- T-012b-3a writer 12/12, 독립 fresh reader+writer 23/23, Swift Pet 78/78,
+  전체 Swift Testing 150/150+XCTest 5/5 통과
+- T-012b-3b onboarding fake adapter 10/10, Swift Pet 88/88, 전체 Swift Testing
+  160/160+XCTest 5/5 통과
 
-실제 `service`는 실행하지 않았다. 따라서 사용자 Application Support, 제품 Keychain,
-socket 또는 daemon 상태를 만들거나 바꾸지 않았다. `SMAppService`, `launchctl`,
-`/Applications`, PATH, shell 설정도 변경하지 않았다.
+실제 `service`는 실행하지 않았다. 따라서 사용자 Application Support, 제품 primary
+Keychain, socket 또는 daemon 상태를 만들거나 바꾸지 않았다. `SMAppService`,
+`launchctl`, `/Applications`, PATH, shell 설정도 변경하지 않았다. 전체 Swift 회귀의
+격리된 임의 test-only Keychain account는 사용 후 정리했다.
 
 ## 남은 경계
 
 - 실제 `SMAppService` 등록·해제와 System Settings 승인 상태
 - 로그인·로그아웃, crash, sleep, 앱 이동·업데이트 시 수명주기
 - `KeepAlive` 또는 on-demand socket activation 정책
-- 설정을 안전하게 쓰는 onboarding/UI와 안정적인 project identity
+- signed 앱의 실제 Pet 버튼으로 `SMAppService` 등록·해제·승인 상태 전이 검증
 - signed Data Protection Keychain/access group과 prompt 동작
 - Developer ID, 공증, Gatekeeper, DMG, updater, 터미널 매트릭스
-- Application Support 상위 경로 전체의 descriptor 단위 traversal과 같은 UID의
-  동시 파일 변경에 대한 더 강한 hardening
+- Contracts 리소스 상위 경로 traversal과 같은 UID의 비협조 writer에 대한 더 강한
+  경계. Application Support와 설정 경로 ancestor traversal은 T-012b-3a에서 닫음
 
 실제 등록과 제품 Keychain을 처음 실행하는 단계는 시스템 상태를 바꾸거나 암호
 요청을 띄울 수 있으므로 별도의 사용자 동의를 받은 뒤 수행한다.

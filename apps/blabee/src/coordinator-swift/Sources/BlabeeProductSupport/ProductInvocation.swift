@@ -1,13 +1,27 @@
 import Foundation
 
-struct ProductInvocationEnvironment: Equatable {
-    let bundleIdentifier: String?
-    let bundleName: String?
-    let bundleExecutable: String?
-    let bundleURL: URL?
-    let executableURL: URL?
+package struct ProductInvocationEnvironment: Equatable {
+    package let bundleIdentifier: String?
+    package let bundleName: String?
+    package let bundleExecutable: String?
+    package let bundleURL: URL?
+    package let executableURL: URL?
 
-    static func live(bundle: Bundle = .main) -> ProductInvocationEnvironment {
+    package init(
+        bundleIdentifier: String?,
+        bundleName: String?,
+        bundleExecutable: String?,
+        bundleURL: URL?,
+        executableURL: URL?
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.bundleName = bundleName
+        self.bundleExecutable = bundleExecutable
+        self.bundleURL = bundleURL
+        self.executableURL = executableURL
+    }
+
+    package static func live(bundle: Bundle = .main) -> ProductInvocationEnvironment {
         ProductInvocationEnvironment(
             bundleIdentifier: bundle.bundleIdentifier,
             bundleName: bundle.object(forInfoDictionaryKey: "CFBundleName") as? String,
@@ -18,8 +32,8 @@ struct ProductInvocationEnvironment: Equatable {
     }
 }
 
-enum ProductInvocationResolver {
-    static func mode(
+package enum ProductInvocationResolver {
+    package static func mode(
         commandLineArguments: [String],
         environment: ProductInvocationEnvironment
     ) -> String? {
@@ -43,7 +57,7 @@ enum ProductInvocationResolver {
         }
     }
 
-    static func isExpectedAppBundle(
+    package static func isExpectedAppBundle(
         _ environment: ProductInvocationEnvironment
     ) -> Bool {
         guard environment.bundleIdentifier == "com.biadone.blabee",

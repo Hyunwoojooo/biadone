@@ -85,9 +85,17 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var shortcutDraft = PetShortcutConfiguration.defaults
     @Published private(set) var isEditingShortcuts = false
     @Published private(set) var shortcutSettingsError: String?
+    @Published private(set) var isShowingOnboarding = false
+    @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
+    @Published private(set) var configuredProjectPaths: [String] = []
+    @Published private(set) var configuredProjectPathsAreAuthoritative = false
+    @Published private(set) var onboardingError: String?
+    @Published private(set) var isOnboardingOperationInFlight = false
 
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
+    private let onboardingAdapter: any PetOnboardingAdapting
+    private let projectFolderChooser: any PetProjectFolderChoosing
     private let selectionIDGenerator: @Sendable () -> String
     private let processIdentifier: pid_t
     private var selectionReturnApplication: PetExternalApplicationReference?
@@ -105,6 +113,8 @@ final class PetViewModel: ObservableObject {
     init(
         transport: any PetCoordinatorTransport,
         externalApplicationOpener: any PetExternalApplicationOpening,
+        onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
+        projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         selectionIDGenerator: @escaping @Sendable () -> String = {
             "selection_" + UUID().uuidString.lowercased()
@@ -112,6 +122,8 @@ final class PetViewModel: ObservableObject {
     ) {
         self.transport = transport
         self.externalApplicationOpener = externalApplicationOpener
+        self.onboardingAdapter = onboardingAdapter
+        self.projectFolderChooser = projectFolderChooser
         self.processIdentifier = processIdentifier
         self.selectionIDGenerator = selectionIDGenerator
         selectionReturnApplication = externalApplicationOpener
@@ -154,6 +166,41 @@ final class PetViewModel: ObservableObject {
             && focusedInteraction.choice(slot: 4)?.enabled == true
     }
 
+    var activeProjectPaths: Set<String> {
+        Set(snapshot?.projects.filter(\.enabled).map(\.cwd) ?? [])
+    }
+
+    var activeOnlyProjectPaths: [String] {
+        guard configuredProjectPathsAreAuthoritative else { return [] }
+        return activeProjectPaths
+            .subtracting(configuredProjectPaths)
+            .sorted()
+    }
+
+    var canRegisterOnboardingService: Bool {
+        onboardingServiceState == .notRegistered && !isOnboardingOperationInFlight
+    }
+
+    var canUnregisterOnboardingService: Bool {
+        (onboardingServiceState == .enabled
+            || onboardingServiceState == .requiresApproval)
+            && !isOnboardingOperationInFlight
+    }
+
+    var canOpenOnboardingSystemSettings: Bool {
+        onboardingServiceState == .requiresApproval && !isOnboardingOperationInFlight
+    }
+
+    var canMutateOnboardingProjects: Bool {
+        guard configuredProjectPathsAreAuthoritative else { return false }
+        return switch onboardingServiceState {
+        case .notRegistered, .enabled, .requiresApproval:
+            !isOnboardingOperationInFlight
+        case .notFound, .unknown:
+            false
+        }
+    }
+
     func attachHotKeyRegistry(_ registry: PetHotKeyRegistry) {
         hotKeyRegistry = registry
         shortcutConfiguration = registry.configuration
@@ -175,6 +222,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func beginShortcutSettings() {
+        isShowingOnboarding = false
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
         isEditingShortcuts = true
@@ -185,6 +233,102 @@ final class PetViewModel: ObservableObject {
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
         isEditingShortcuts = false
+    }
+
+    func toggleOnboarding() async {
+        if isShowingOnboarding {
+            isShowingOnboarding = false
+        } else {
+            await beginOnboarding()
+        }
+    }
+
+    func beginOnboarding() async {
+        cancelShortcutSettings()
+        isShowingOnboarding = true
+        setExpanded(true)
+        await refreshOnboarding()
+    }
+
+    func closeOnboarding() {
+        isShowingOnboarding = false
+    }
+
+    func refreshOnboarding() async {
+        guard !isOnboardingOperationInFlight else { return }
+        isOnboardingOperationInFlight = true
+        reloadOnboardingState()
+        isOnboardingOperationInFlight = false
+    }
+
+    func registerOnboardingService() async {
+        guard canRegisterOnboardingService else { return }
+        isOnboardingOperationInFlight = true
+        let operationError: String?
+        do {
+            try onboardingAdapter.registerService()
+            operationError = nil
+        } catch {
+            operationError = String(describing: error)
+        }
+        reloadOnboardingState(operationError: operationError)
+        isOnboardingOperationInFlight = false
+    }
+
+    func unregisterOnboardingService() async {
+        guard canUnregisterOnboardingService else { return }
+        isOnboardingOperationInFlight = true
+        let operationError: String?
+        do {
+            try await onboardingAdapter.unregisterService()
+            operationError = nil
+        } catch {
+            operationError = String(describing: error)
+        }
+        reloadOnboardingState(operationError: operationError)
+        isOnboardingOperationInFlight = false
+    }
+
+    func openOnboardingSystemSettings() async {
+        guard canOpenOnboardingSystemSettings else { return }
+        isOnboardingOperationInFlight = true
+        onboardingAdapter.openSystemSettingsLoginItems()
+        reloadOnboardingState()
+        isOnboardingOperationInFlight = false
+    }
+
+    func chooseAndEnableProject() async {
+        guard canMutateOnboardingProjects else { return }
+        isOnboardingOperationInFlight = true
+        guard let projectURL = projectFolderChooser.chooseProjectFolder() else {
+            isOnboardingOperationInFlight = false
+            return
+        }
+        let operationError: String?
+        do {
+            try onboardingAdapter.enableProject(at: projectURL.standardizedFileURL.path)
+            operationError = nil
+        } catch {
+            operationError = String(describing: error)
+        }
+        reloadOnboardingState(operationError: operationError)
+        isOnboardingOperationInFlight = false
+    }
+
+    func disableConfiguredProject(_ path: String) async {
+        guard canMutateOnboardingProjects,
+              configuredProjectPaths.contains(path)
+        else { return }
+        isOnboardingOperationInFlight = true
+        let operationError: String?
+        do {
+            try onboardingAdapter.disableProject(at: path)
+            operationError = nil
+        } catch {
+            operationError = String(describing: error)
+        }
+        reloadOnboardingState(operationError: operationError)
+        isOnboardingOperationInFlight = false
     }
 
     func restoreDefaultShortcutDraft() {
@@ -314,6 +458,9 @@ final class PetViewModel: ObservableObject {
         guard isExpanded != expanded else { return }
         if !expanded, isEditingShortcuts {
             cancelShortcutSettings()
+        }
+        if !expanded {
+            closeOnboarding()
         }
         isExpanded = expanded
         onExpansionChanged?(expanded)
@@ -628,6 +775,24 @@ final class PetViewModel: ObservableObject {
 
     private func refreshShortcutSettingsValidation() {
         shortcutSettingsError = shortcutDraft.validationIssue()?.message
+    }
+
+    private func reloadOnboardingState(operationError: String? = nil) {
+        onboardingServiceState = onboardingAdapter.serviceRegistrationState()
+        do {
+            configuredProjectPaths = try onboardingAdapter.configuredProjectPaths()
+            configuredProjectPathsAreAuthoritative = true
+            onboardingError = operationError
+        } catch {
+            configuredProjectPaths = []
+            configuredProjectPathsAreAuthoritative = false
+            let refreshError = String(describing: error)
+            if let operationError {
+                onboardingError = operationError + "\n상태 새로고침 실패: " + refreshError
+            } else {
+                onboardingError = refreshError
+            }
+        }
     }
 
     private func requiresRiskConfirmation(

@@ -45,40 +45,47 @@ struct PetRootView: View {
     private var expandedBody: some View {
         VStack(spacing: 12) {
             header
-            if viewModel.isEditingShortcuts {
-                shortcutSettings
-            }
-            if viewModel.hasNewPermissionNotice {
-                permissionNotice
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    interactionPicker
-                    if let interaction = viewModel.focusedInteraction {
-                        interactionDetail(interaction)
-                    } else if viewModel.snapshotInteractions.isEmpty {
-                        emptyState
-                    } else {
-                        Text("카드를 눌러 전면 결정을 명시적으로 선택하세요.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 10)
-                    }
+            if viewModel.isShowingOnboarding {
+                ScrollView {
+                    onboardingSettings
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let error = viewModel.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
+            } else if viewModel.isEditingShortcuts {
+                ScrollView {
+                    shortcutSettings
+                }
+            } else {
+                if viewModel.hasNewPermissionNotice {
+                    permissionNotice
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        interactionPicker
+                        if let interaction = viewModel.focusedInteraction {
+                            interactionDetail(interaction)
+                        } else if viewModel.snapshotInteractions.isEmpty {
+                            emptyState
+                        } else {
+                            Text("카드를 눌러 전면 결정을 명시적으로 선택하세요.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 10)
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let diagnostic = viewModel.shortcutDiagnostic {
-                Text(diagnostic)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let error = viewModel.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let diagnostic = viewModel.shortcutDiagnostic {
+                    Text(diagnostic)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .padding(18)
@@ -108,6 +115,16 @@ struct PetRootView: View {
                 }
             }
             Spacer()
+            Button {
+                Task { await viewModel.toggleOnboarding() }
+            } label: {
+                Image(systemName: viewModel.isShowingOnboarding ? "shippingbox.fill" : "shippingbox")
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                viewModel.isShowingOnboarding ? "프로젝트 설정 닫기" : "프로젝트 설정 열기"
+            )
             Button(action: viewModel.toggleShortcutSettings) {
                 Image(systemName: viewModel.isEditingShortcuts ? "gearshape.fill" : "gearshape")
                     .frame(width: 28, height: 28)
@@ -341,6 +358,161 @@ struct PetRootView: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var onboardingSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("프로젝트 설정")
+                        .font(.headline)
+                    Text("Codex 프로젝트 관찰 범위와 백그라운드 서비스 등록을 관리합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if viewModel.isOnboardingOperationInFlight {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("백그라운드 서비스")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Text(viewModel.onboardingServiceState.displayTitle)
+                    .font(.callout.bold())
+                Text(viewModel.onboardingServiceState.displayDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                onboardingServiceActions
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    Text("관찰할 프로젝트")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("폴더 추가") {
+                        Task { await viewModel.chooseAndEnableProject() }
+                    }
+                    .disabled(!viewModel.canMutateOnboardingProjects)
+                }
+
+                if !viewModel.configuredProjectPathsAreAuthoritative {
+                    Text("프로젝트 설정을 확인할 수 없습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if viewModel.configuredProjectPaths.isEmpty {
+                    Text("설정된 프로젝트가 없습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(viewModel.configuredProjectPaths, id: \.self) { path in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(path)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                    Text(viewModel.activeProjectPaths.contains(path)
+                                         ? "현재 서비스 스냅샷에서 활성"
+                                         : "설정됨 · 현재 스냅샷에는 아직 없음")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                Button("제거") {
+                                    Task { await viewModel.disableConfiguredProject(path) }
+                                }
+                                .disabled(!viewModel.canMutateOnboardingProjects)
+                            }
+                        }
+                        .padding(9)
+                        .background(
+                            Color.primary.opacity(0.04),
+                            in: RoundedRectangle(cornerRadius: 9)
+                        )
+                    }
+                }
+
+                ForEach(viewModel.activeOnlyProjectPaths, id: \.self) { path in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(path)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        Text("현재 서비스에서만 활성 · 재시작 후 비활성")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.orange.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 9)
+                    )
+                }
+
+                Text("프로젝트 설정 변경은 서비스를 재시작한 후 적용됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+
+            if let error = viewModel.onboardingError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var onboardingServiceActions: some View {
+        HStack(spacing: 8) {
+            switch viewModel.onboardingServiceState {
+            case .notRegistered:
+                Button("서비스 등록") {
+                    Task { await viewModel.registerOnboardingService() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!viewModel.canRegisterOnboardingService)
+            case .enabled:
+                Button("서비스 등록 해제") {
+                    Task { await viewModel.unregisterOnboardingService() }
+                }
+                .disabled(!viewModel.canUnregisterOnboardingService)
+            case .requiresApproval:
+                Button("시스템 설정 열기") {
+                    Task { await viewModel.openOnboardingSystemSettings() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!viewModel.canOpenOnboardingSystemSettings)
+                Button("등록 해제") {
+                    Task { await viewModel.unregisterOnboardingService() }
+                }
+                .disabled(!viewModel.canUnregisterOnboardingService)
+            case .notFound, .unknown:
+                Text("이 상태에서는 등록 정보를 변경할 수 없습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("새로고침") {
+                Task { await viewModel.refreshOnboarding() }
+            }
+            .disabled(viewModel.isOnboardingOperationInFlight)
+        }
     }
 
     private func shortcutSettingRow(_ intent: PetShortcutIntent) -> some View {

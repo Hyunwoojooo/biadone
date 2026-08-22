@@ -1,6 +1,6 @@
 # Blabee M0, T-005, T-006, T-007, T-010, T-011 및 T-012 QA 보고서
 
-상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-2 설치·등록 전 service/LaunchAgent 계약 조건부 승인
+상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인
 검토일: 2026-08-22
 대상: `spikes/m0/`, `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서
 
@@ -40,9 +40,17 @@ T-012b-1 독립 QA가 처음 보고한 임의 절대 출력 허용과 최종 dir
 
 T-012b-2 제품 service 부트스트랩은 설치·등록 전 계약 범위에서 조건부 승인한다. `service`는 추가 인자와 환경 기반 path override를 거부하고 exact app/executable/Resources/real Contracts 및 Application Support 고정 경로만 typed daemon configuration으로 전달한다. 기존 개발용 `daemon` parser 의미는 유지하고 제품 경로에는 Keychain 시험 namespace 환경을 전달하지 않는다. 설정 ingress는 missing을 빈 프로젝트로 처리하되 존재하는 config directory/file에는 current-user owner, exact `0700`/`0600`, real directory/regular file, `openat`·`O_NONBLOCK`·`O_NOFOLLOW`·bounded read, strict JSON·exact keys·version·path limits와 normalization duplicate 거부를 적용한다.
 
-번들 LaunchAgent는 `Contents/Library/LaunchAgents`의 정적 plist이며 exact `Label`·`BundleProgram`·`ProgramArguments`·`RunAtLoad`만 허용한다. plist는 manifest와 app seal에 포함되고 서명 후 변조가 탐지된다. 실제 수명주기 검증 전에 재시작 루프를 만들지 않도록 `KeepAlive`는 제외했다. 이 승인은 `SMAppService` 등록, 사용자 승인, 로그인/crash 복구, 제품 Keychain, Developer ID 또는 공개 자동 시작 승인이 아니다. Application Support 상위 ancestor 전체를 directory descriptor로 순회하지 않고 같은 UID의 동일 inode 동시 내용 변경을 완전히 차단하지 못하는 점은 잔여 hardening 경계다.
+번들 LaunchAgent는 `Contents/Library/LaunchAgents`의 정적 plist이며 exact `Label`·`BundleProgram`·`ProgramArguments`·`RunAtLoad`만 허용한다. plist는 manifest와 app seal에 포함되고 서명 후 변조가 탐지된다. 실제 수명주기 검증 전에 재시작 루프를 만들지 않도록 `KeepAlive`는 제외했다. 이 승인은 `SMAppService` 등록, 사용자 승인, 로그인/crash 복구, 제품 Keychain, Developer ID 또는 공개 자동 시작 승인이 아니다. T-012b-2 시점에 남았던 Application Support ancestor traversal은 아래 T-012b-3a에서 닫았다.
 
-T-012b-2 독립 최종 QA는 `service.json`이 FIFO이면 regular-file `fstat` 전에 blocking `openat`에서 멈출 수 있는 Medium finding 1건을 보고했다. 파일 open에 `O_NONBLOCK`을 추가하고 mode `0600` FIFO가 즉시 `product_service_config_unsafe`로 거부되는 회귀를 추가해 닫았다. 재검토는 차단 finding 없이 통과했다. 같은 크기의 same-inode 동시 변경과 Contracts 상위 ancestor 전체의 descriptor traversal 부재는 Low 잔여 위험으로 유지한다.
+T-012b-2 독립 최종 QA는 `service.json`이 FIFO이면 regular-file `fstat` 전에 blocking `openat`에서 멈출 수 있는 Medium finding 1건을 보고했다. 파일 open에 `O_NONBLOCK`을 추가하고 mode `0600` FIFO가 즉시 `product_service_config_unsafe`로 거부되는 회귀를 추가해 닫았다. 재검토는 차단 finding 없이 통과했다. Contracts 상위 ancestor 전체의 descriptor traversal 부재는 별도 Low 잔여 위험으로 유지한다.
+
+T-012b-3a 프로젝트 설정 writer는 설치·등록 전 로컬 설정 변경 계약 범위에서 조건부 승인한다. exact 앱 전용 `project-settings enable|disable --project`만 허용하고, Application Support와 프로젝트 경로를 루트부터 descriptor로 순회한다. current-user `0700` directory·`0600` single-link regular file, process mutex와 persistent `flock`, 잠금 안 strict read-modify-write, same-directory temp full write→file `fsync`→`renameat`→directory `fsync`를 적용했다. service restart reader도 같은 ancestor symlink 경계를 사용한다. enable은 전체 프로젝트 구성요소의 symlink를 거부하고 disable은 삭제된 stale path를 제거할 수 있다.
+
+독립 QA 과정에서 multithreaded test의 fork-without-exec, restrictive umask 아래 잘못된 mode, helper 위치 탐색, Application Support ancestor symlink, lock 교체, 같은 프로세스·별도 프로세스의 실제 overlap, rename 후 durability 재시도를 보강했다. fresh reader+writer 23/23, Pet 78/78, 전체 Swift Testing 150/150+XCTest 5/5와 release product build가 통과했고 최종 재검토에서 open blocking/high/medium finding은 0개다. `flock`의 advisory same-UID 경계, SIGKILL 뒤 unique temporary file 잔존, partial-write/EINTR의 syscall 주입 부재, helper wait timeout 부재와 최초 lock 생성 동시성 전용 회귀 부재는 Low 잔여 위험이다. 테스트 helper는 release 산출물에 포함되지 않는다.
+
+T-012b-3b Pet 온보딩은 UI와 fake adapter 코드 계약 범위에서 조건부 승인한다. 앱 시작·poll·snapshot·설정 화면 열기는 상태와 설정만 읽고, 등록·해제·System Settings 열기·프로젝트 변경은 대응하는 명시적 버튼에서만 실행한다. 모든 변경은 `@MainActor` single-flight로 직렬화하고 성공·실패 뒤 상태와 설정을 다시 읽는다. `notFound`와 알 수 없는 상태에서는 모든 mutation을, 비권위 설정에서는 프로젝트 추가·제거를 fail-closed한다. configured 프로젝트와 현재 daemon active snapshot을 별도로 보존하며 자동 service 재시작은 하지 않는다.
+
+독립 QA가 처음 보고한 config read 실패 뒤 stale configured 목록과 변경 허용, config 제거 뒤 active-only 경로 소실 두 Medium finding은 목록 clear·권위 flag·변경 차단과 snapshot 기반 active-only 보존으로 닫았다. 이어 unregister 오류 뒤 reread와 서로 다른 변경 action의 in-flight 차단 회귀도 보강했다. Onboarding 10/10, Pet 88/88, 전체 Swift Testing 160/160+XCTest 5/5, T-011 23/23, 패키징 7/7, 계약 114/114와 release/ad-hoc strict 검증이 통과했다. 온보딩 집중 테스트는 fake만 사용했고 실제 `SMAppService`, `service`, `NSOpenPanel`, System Settings, 사용자 Application Support 또는 제품 primary Keychain은 호출·변경하지 않았다. 전체 Swift 회귀가 사용한 격리된 임의 test-only Keychain account는 종료 전에 정리했다. 이 사실관계를 문서에 반영한 뒤 최종 독립 QA에서 열린 Critical/High/Medium/Low finding은 없다.
 
 현재 operational proposal path는 risk `info`, 빈 evidence, checkpoint `unavailable`, rollback disabled를 생성한다. 따라서 high/critical 확인, 채워진 evidence/checkpoint와 활성 rollback UI는 fixture로 fail-closed 동작을 검증했지만 아직 실제 Hook→MCP→Pet 제안에서 end-to-end로 도달하지 않는다.
 
@@ -85,7 +93,11 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - T-012b-2 Product service: 집중 10/10, Swift Pet 전체 65/65 통과. exact bundle/Contracts, 추가 인자, missing/invalid/unsafe/symlink/FIFO/oversize config와 deterministic project path를 포함
 - T-012b-2 패키징: 7/7 통과. LaunchAgent exact 위치·네 키·type·service argv·mode·manifest, key/type drift, ad-hoc seal과 서명 후 plist 변조 거부를 포함
 - T-012b-2 회귀: T-011 23/23, v1 계약 114/114, release build 통과. 실제 임시 앱 codesign deep/strict와 bundled Doctor의 read-only app/runtime/embedded/plugin 검사 통과
-- 최종 Swift package: XCTest 5/5 + Swift Testing 106/106 통과
+- T-012b-3a writer 집중: 12/12, 독립 fresh reader+writer 23/23, Swift Pet 전체 78/78 통과. restrictive umask, unsafe ancestor, symlink·hard-link·lock 교체, 64 KiB, rename 전후 실패, 멱등 durability 재시도와 실제 same/cross-process overlap을 포함
+- T-012b-3a 제품 회귀: release `blabee-coordinator` build와 패키징 7/7 통과. test helper는 release 제품 출력에 포함되지 않고 raw release binary의 설정 명령은 exact app identity gate에서 거부됨
+- T-012b-3b 온보딩 집중: fake adapter 10/10, Pet 전체 88/88 통과. 모든 상태, passive read-only 진입, explicit register/unregister, error reread, duplicate/cross-action single-flight, chooser 취소, 설정 read failure, active-only 재시작 경계를 포함
+- T-012b-3b 제품 회귀: T-011 23/23, 패키징 7/7, 계약 114/114, release build와 임시 ad-hoc 앱 deep/strict codesign 검증 통과. 앱·서비스는 실행하지 않음
+- 최종 Swift package: XCTest 5/5 + Swift Testing 160/160 통과
 - T-007b-A strict ingress: 영속 경계 4개 계약 타입, manifest fixture 20개 Ajv oracle parity 통과
 - 현재 production `SQLiteJournal.swift` SHA-256: `399c0715678a3e6cd0863481d91f512a6a3f7965320d1ed09863baadacb0dae8`
 - `npm run test:contracts`: 114/114 통과

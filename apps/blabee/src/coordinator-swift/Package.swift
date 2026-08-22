@@ -18,14 +18,24 @@ let package = Package(
                 .linkedFramework("Security"),
             ]
         ),
+        .target(
+            name: "BlabeeProductSupport",
+            dependencies: ["CoordinatorSwift"]
+        ),
         .executableTarget(
             name: "BlabeeCoordinator",
-            dependencies: ["CoordinatorSwift"],
+            dependencies: ["CoordinatorSwift", "BlabeeProductSupport"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("ServiceManagement"),
                 .linkedFramework("SwiftUI"),
             ]
+        ),
+        .executableTarget(
+            name: "BlabeeSettingsTestHelper",
+            dependencies: ["BlabeeProductSupport", "CoordinatorSwift"],
+            path: "Tests/BlabeeSettingsTestHelper"
         ),
         .testTarget(
             name: "CoordinatorSwiftTests",
@@ -33,7 +43,9 @@ let package = Package(
         ),
         .testTarget(
             name: "BlabeePetTests",
-            dependencies: ["BlabeeCoordinator"]
+            dependencies: [
+                "BlabeeCoordinator", "BlabeeProductSupport", "BlabeeSettingsTestHelper",
+            ]
         ),
     ]
 )

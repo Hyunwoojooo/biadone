@@ -1,10 +1,10 @@
 # Blabee 코드맵
 
-상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin + T-012a 읽기 전용 Doctor + T-012b-1 로컬 앱 번들 + T-012b-2 제품 service 부트스트랩과 정적 LaunchAgent 계약. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator·Pet·Doctor, `Plugin/blabee/`는 Codex 진입점이며 `Packaging/macos`와 `scripts/build-macos-app.mjs`는 설치 전 앱 조립 경계다. `spikes/`는 자격·타당성 증거다.
+상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin + T-012a 읽기 전용 Doctor + T-012b-1 로컬 앱 번들 + T-012b-2 제품 service 부트스트랩과 정적 LaunchAgent 계약 + T-012b-3a 안전한 프로젝트 설정 writer + T-012b-3b Pet 온보딩 UI·서비스 수명주기 어댑터 계약. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator·Pet·Doctor, `Plugin/blabee/`는 Codex 진입점이며 `Packaging/macos`와 `scripts/build-macos-app.mjs`는 설치 전 앱 조립 경계다. `spikes/`는 자격·타당성 증거다.
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter, T-010 SwiftUI/AppKit Pet과 T-012a `DoctorApplication.swift`를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet과 read-only Doctor 기반은 자동 안전 게이트를 통과했지만 실제 앱·서명·DMG와 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter, T-010 SwiftUI/AppKit Pet, T-012a `DoctorApplication.swift`와 T-012b-3b 온보딩 경계를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet·read-only Doctor·온보딩 fake adapter 안전 게이트는 통과했지만 실제 자동 시작 등록, Developer ID 서명·공증·DMG와 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
@@ -174,7 +174,7 @@ src/coordinator-swift/
 ├── README.md
 ├── Sources/
 │   ├── BlabeeCoordinator/
-│   │   ├── main.swift                     # legacy/daemon/hook/mcp/pet mode와 제품 조립
+│   │   ├── main.swift                     # legacy/daemon/hook/mcp/pet/service/project-settings 조립
 │   │   ├── OperationalCLI.swift           # 공식 Hook output과 MCP emit_decision
 │   │   ├── UnixDomainSocketTransport.swift # single owner, peer UID, allowlist
 │   │   ├── FixtureTransportHandler.swift  # test-harness 전용 transport 격리기
@@ -182,10 +182,15 @@ src/coordinator-swift/
 │   │   ├── PetApplication.swift           # accessory NSApplication과 Pet 시작/종료
 │   │   ├── PetTransport.swift             # actor-owned 직렬 UDS client
 │   │   ├── PetModels.swift                # strict snapshot/focus/selection model
+│   │   ├── PetOnboarding.swift            # SMAppService·프로젝트 설정 adapter 경계
 │   │   ├── PetViewModel.swift             # foreground·selection·permission·shortcut draft 상태
 │   │   ├── PetHotKeys.swift               # 안전 catalog·영속 설정·transactional Carbon registry
 │   │   ├── PetPanel.swift                 # 비활성 floating NSPanel과 화면 보정
 │   │   └── PetView.swift                  # 반고정 결정 카드와 shortcut picker UI
+│   ├── BlabeeProductSupport/
+│   │   ├── ProductInvocation.swift        # exact 앱 전용 제품 명령 identity gate
+│   │   ├── ProductServiceConfiguration.swift # 고정 경로와 secure restart reader
+│   │   └── ProductServiceSettingsWriter.swift # 잠금·원자 교체 프로젝트 설정 writer
 │   └── CoordinatorSwift/
 │       ├── ContractPin.swift              # manifest와 schema hash 고정
 │       ├── CoordinatorError.swift
@@ -213,10 +218,16 @@ src/coordinator-swift/
     │   ├── SemanticApplicationTests.swift
     │   ├── RoutingApplicationTests.swift
     │   └── OperationalApplicationTests.swift  # focus/full selection, Stop/staging/timeout
+    ├── BlabeeSettingsTestHelper/
+    │   └── main.swift                     # cross-process writer 시험 전용, 제품 미포함
     └── BlabeePetTests/
         ├── PetBehaviorTests.swift          # foreground·single-flight·permission UX
         ├── PetModelTests.swift             # strict snapshot/binding parser
         ├── PetPlatformPolicyTests.swift    # panel/hotkey/launch policy
+        ├── ProductInvocationTests.swift    # 제품 명령 exact argv·bundle gate
+        ├── ProductServiceConfigurationTests.swift # secure reader와 고정 경로
+        ├── ProductServiceSettingsWriterTests.swift # atomicity·failure·concurrency
+        ├── PetOnboardingTests.swift        # fake 상태·명시적 변경·configured/active 계약
         └── PetTestSupport.swift
 
 Tests/CoordinatorPersistence/
@@ -405,6 +416,64 @@ Keychain 시험 namespace 환경을 전달하지 않는다. `service`는 추가 
 `ServiceManagement` 호출도 없다. 실제 로그인 수명주기 전에는 crash loop 위험을
 줄이기 위해 `KeepAlive`를 넣지 않는다. 따라서 현재 코드맵은 자동 시작 가능성을
 위한 번들 구조를 보여줄 뿐 자동 시작·복구가 검증됐다는 뜻은 아니다.
+
+## T-012b-3a 프로젝트 설정 writer 경로
+
+```text
+Blabee.app/Contents/MacOS/blabee-coordinator
+  project-settings enable|disable --project ABSOLUTE_PATH
+          │
+          ▼
+ProductInvocationResolver exact 앱·argv gate
+  ├─ Application Support 전체 ancestor descriptor 순회
+  ├─ enable 프로젝트 전체 구성요소 O_NOFOLLOW 순회
+  └─ process mutex + .service.json.lock flock
+       └─ strict locked read-modify-write
+            └─ same-directory temp full write
+                 → file fsync → renameat → directory fsync
+                      └─ service 재시작도 같은 secure reader 사용
+```
+
+writer는 current-user `0700` directory와 `0600` single-link regular file만
+허용하고, 손상된 기존 설정을 덮어 고치지 않는다. enable은 실제 디렉터리와 모든
+ancestor symlink를 검사하며 disable은 삭제된 프로젝트의 stale entry를 제거할 수
+있다. `ProductServiceSettingsWriter`는 `BlabeeProductSupport` library target에 있어
+제품 실행 파일과 테스트가 같은 계약을 사용한다. cross-process helper는 테스트
+target일 뿐 release `blabee-coordinator` 제품에 포함되지 않는다.
+
+이 경로는 로컬 설정 변경 seam을 구현하고 T-012b-3b의 Pet 온보딩 adapter가 이를
+호출한다. 실제 자동 시작·Keychain 실행은 아직 검증하지 않았다.
+
+## T-012b-3b Pet 온보딩과 서비스 상태 경로
+
+```text
+Pet의 명시적 온보딩 버튼
+        │
+        ▼
+PetViewModel @MainActor single-flight
+        │
+        ▼
+PetOnboardingAdapting
+  ├─ passive status/config read
+  ├─ explicit register/unregister/open System Settings
+  └─ explicit folder choice → ProductServiceSettingsWriter
+
+configured projects ─┐
+                     ├─ Pet에서 별도 표시 → service 재시작 뒤 수렴
+active snapshot ─────┘
+```
+
+`PetApplication`은 exact 제품 앱이면 `SMAppService.agent(plistName:)`를 사용하는 live
+adapter를 주입하고, raw 개발 Pet처럼 제품 identity가 없으면 변경 불가 adapter로
+내려가 Pet 자체 시작은 보존한다. 앱 시작·poll·snapshot·설정 화면 열기는 상태와
+설정을 읽기만 한다. 등록·해제·System Settings·프로젝트 변경은 명시적 버튼에서만
+호출하고 모든 변경 뒤 실제 상태를 다시 읽는다. 설정 읽기 실패는 stale 목록을
+지우고 프로젝트 변경을 막는다.
+
+현재 service snapshot에만 남아 있는 프로젝트도 UI에서 유지한다. 이는 설정 writer가
+service를 자동 재시작하지 않는다는 사실을 숨기지 않기 위한 경계다. 이 경로는 fake
+adapter 코드 계약까지 자격을 통과했으며 실제 `SMAppService` 등록, 승인 상태 전이,
+로그인 service와 Keychain은 사용자 동의가 필요한 T-012b-3c 실기기 gate다.
 
 ## 운영 런타임 흐름
 

@@ -223,6 +223,23 @@ T-012b-2 실행 결과:
 - Product service 10/10, Swift Pet 전체 65/65, 패키징 7/7, T-011 23/23, v1 계약 114/114가 통과했다. 실제 release 앱의 ad-hoc deep/strict 서명과 LaunchAgent 변조 거부도 통과했다.
 - 이 단계는 설치·등록 전 계약 자격이다. 실제 `service`, Keychain, `SMAppService.register()`, launchctl, `/Applications`, Developer ID, 공증 또는 DMG는 실행·변경하지 않았다.
 
+T-012b-3a 실행 결과:
+
+- exact `Blabee.app`에서만 동작하는 `project-settings enable|disable --project ABSOLUTE_PATH`를 추가했다. raw binary·lookalike bundle, loose argument와 환경·CWD 기반 설정 경로 우회는 설정 변경 전에 거부한다.
+- Application Support와 `Blabee/config`를 descriptor로 순회해 current-user secure directory만 사용하고, 설정은 process mutex와 persistent `0600` `flock` 아래에서 strict read-modify-write한다. same-directory temporary file을 완전히 쓰고 file `fsync` 뒤 `renameat`, directory `fsync`로 게시한다. 멱등 재시도도 directory sync 전에는 성공하지 않는다.
+- enable 프로젝트 경로는 `/tmp`·`/var` system alias를 고정한 뒤 루트부터 모든 구성요소를 `O_NOFOLLOW`로 열어 ancestor/final symlink를 거부한다. disable은 삭제된 stale path를 제거할 수 있다. service reader도 Application Support→`Blabee`→`config`를 같은 read-only descriptor 경계로 열며 누락만 빈 설정으로 처리한다.
+- writer 12/12, 독립 fresh reader+writer 23/23, Swift Pet 78/78, 전체 Swift package XCTest 5/5+Swift Testing 150/150, release product build와 패키징 7/7이 통과했다. 같은 프로세스와 별도 프로세스의 실제 overlap, restrictive umask, lock name 교체, 64 KiB 보존, rename 전후 실패와 durability 재시도를 포함한다.
+- 이 단계는 설정 writer와 최소 CLI seam의 로컬 자격이다. 당시 남았던 Pet 온보딩 UI와 `SMAppService` 상태·등록·해제 코드 계약은 T-012b-3b에서 연결했고, 실제 등록/승인, service·Keychain 실행, 설치·공개 배포는 계속 후속 단계다.
+
+T-012b-3b 실행 결과:
+
+- Pet 설정 화면에 서비스 상태와 프로젝트 온보딩을 연결했다. `notRegistered`·`enabled`·`requiresApproval`·`notFound`·unknown을 별도 상태로 표시하고, unknown/notFound에서는 변경 동작을 fail-closed한다.
+- 앱 시작·poll·snapshot 갱신·설정 화면 열기는 상태와 설정만 읽는다. 등록·해제·System Settings 열기·프로젝트 enable/disable은 각 명시적 사용자 버튼에서만 호출하며, 자동 등록·낙관적 상태 변경·자동 service 재시작은 하지 않는다.
+- 모든 변경은 single-flight로 직렬화하고 성공·실패 뒤 실제 상태와 설정을 다시 읽는다. 설정 읽기가 실패하면 기존 목록을 지우고 비권위 상태로 표시해 프로젝트 변경을 막는다.
+- 저장된 `configured projects`와 현재 daemon snapshot의 `active projects`를 구분한다. 설정에서 제거했지만 아직 실행 중인 프로젝트도 `현재 서비스에서만 활성`로 유지하며, 변경은 다음 service 재시작부터 적용된다고 안내한다.
+- fake adapter 집중 10/10, Pet 88/88, 전체 Swift package XCTest 5/5+Swift Testing 160/160, T-011 23/23, 패키징 7/7, v1 계약 114/114, release build와 임시 ad-hoc 앱 deep/strict 서명 검증이 통과했다. 온보딩 집중 테스트는 fake만 사용했고 실제 `SMAppService`, `service`, `NSOpenPanel`, System Settings, 사용자 Application Support 또는 제품 primary Keychain은 호출·변경하지 않았다. 전체 Swift 회귀가 사용한 격리된 임의 test-only Keychain account는 종료 전에 정리했다.
+- 이 단계는 UI와 수명주기 어댑터의 코드 계약 자격이다. signed app에서 실제 등록·승인·해제와 로그인/재부팅 수명주기를 검증하는 T-012b-3c는 시스템 상태 변경 전 사용자 동의를 받는 별도 실기기 gate다.
+
 완료 조건:
 
 - 터미널에 다시 입력하지 않고 저위험 루프 세 번을 연속으로 성공한다.

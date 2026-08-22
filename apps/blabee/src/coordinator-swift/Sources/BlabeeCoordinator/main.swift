@@ -1,4 +1,5 @@
 import CoordinatorSwift
+import BlabeeProductSupport
 import Darwin
 import Foundation
 
@@ -675,6 +676,14 @@ private func runProductService(arguments: [String]) throws {
     try runDaemon(configuration: DaemonRuntimeConfiguration(configuration))
 }
 
+private func runProductProjectSettings(arguments: [String]) throws {
+    let result = try ProductProjectSettingsCommand.run(
+        arguments: arguments,
+        environment: try ProductServiceEnvironment.live()
+    )
+    try FileHandle.standardOutput.write(contentsOf: result.outputData())
+}
+
 private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) throws {
     try ContractPin.verify(contractsDirectory: arguments.contracts)
     let authorityLease = try CoordinatorAuthorityLease(databaseURL: arguments.database)
@@ -899,6 +908,8 @@ do {
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
     case "service":
         try runProductService(arguments: Array(commandLine.dropFirst(2)))
+    case "project-settings":
+        try runProductProjectSettings(arguments: Array(commandLine.dropFirst(2)))
     case "pet":
         try runPet(arguments: Array(commandLine.dropFirst(2)))
     case "doctor":
