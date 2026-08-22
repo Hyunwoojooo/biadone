@@ -7,6 +7,12 @@ import {
   domainSeparatedSha256,
   jcsCanonicalize,
 } from "../../dayflowEvidence/contracts";
+import {
+  COMMON_SUGGESTION_EVIDENCE_RECORD_SET_HASH_DOMAIN_V0_1,
+  commonSuggestionEvidenceRecordSetStructuralSchemaV0_1,
+  verifyCommonSuggestionEvidenceRecordSetV0_1,
+  type CommonSuggestionEvidenceRecordSetV0_1,
+} from "./commonSuggestionEvidenceV0_1";
 
 export const RECEIPT_SCHEMA_VERSION_V0_1 =
   "blabase-common-suggestion-evidence-lineage-receipt-v0.1" as const;
@@ -278,6 +284,10 @@ function stringReplaceAll(
     search,
     replacement,
   ]);
+}
+
+function stringCharCodeAt(value: string, index: number): number {
+  return applyIntrinsic<number>(intrinsicStringCharCodeAt, value, [index]);
 }
 
 function arrayEvery<T>(
@@ -2661,4 +2671,821 @@ export function planSourceVerificationInternalV0_1(
     },
     requiredSourceVerifications: [],
   });
+}
+
+export const AUTHORITATIVE_VERIFICATION_KERNEL_VERSION_V0_1 =
+  "blabase-common-suggestion-evidence-authoritative-verification-kernel-v0.1" as const;
+
+export type SourceVerifierRegistryEntryInternalV0_1 = Readonly<{
+  source: LineageSourceV0_1;
+  status: "unavailable";
+}>;
+
+export type SourceVerifierRegistrySnapshotInternalV0_1 = Readonly<{
+  kernelVersion: typeof AUTHORITATIVE_VERIFICATION_KERNEL_VERSION_V0_1;
+  entries: readonly SourceVerifierRegistryEntryInternalV0_1[];
+}>;
+
+export type AuthoritativeVerificationKernelDiagnosticDetailV0_1 =
+  | "receipt_invalid"
+  | "record_set_invalid"
+  | "record_set_hash_invalid"
+  | "record_set_root_mismatch"
+  | "record_set_as_of_mismatch"
+  | "record_count_mismatch"
+  | "record_id_set_mismatch"
+  | "source_bundle_invalid"
+  | "registry_snapshot_invalid"
+  | "runtime_snapshot_invalid"
+  | "source_verifier_unavailable";
+
+export type AuthoritativeVerificationKernelDiagnosticInternalV0_1 =
+  Readonly<{
+    stage: LineageVerificationStageV0_1;
+    failureCode: LineageFailureCodeV0_1;
+    source: LineageSourceV0_1 | null;
+    detail: AuthoritativeVerificationKernelDiagnosticDetailV0_1;
+  }>;
+
+export type ExecuteAuthoritativeVerificationKernelInternalResultV0_1 =
+  | Readonly<{
+      executed: false;
+      authoritative: false;
+      failedStage: LineageVerificationStageV0_1;
+      failureCode: LineageFailureCodeV0_1;
+      diagnostics: readonly AuthoritativeVerificationKernelDiagnosticInternalV0_1[];
+      requiredSourceVerifications?: readonly RequiredSourceVerificationPlanEntryV0_1[];
+    }>
+  | Readonly<{
+      executed: true;
+      authoritative: false;
+      failureCode: null;
+      stageOrder: readonly [
+        "intrinsic_receipt",
+        "record_set_binding",
+        "source_attestation",
+      ];
+      stageStatus: Readonly<{
+        intrinsicReceipt: "verified";
+        recordSetBinding: "verified";
+        sourceAttestation: "not_required";
+      }>;
+      diagnostics: readonly [];
+      requiredSourceVerifications: readonly [];
+    }>;
+
+const kernelArrayIsArray = Array.isArray;
+const KernelSet = Set;
+const kernelSetAdd = Set.prototype.add;
+const KERNEL_MISSING_DATA_PROPERTY = freezeObject({});
+const KERNEL_MAXIMUM_RUNTIME_ARRAY_LENGTH_V0_1 = 1_024;
+
+function kernelDataProperty(
+  input: object,
+  key: string,
+): unknown | typeof KERNEL_MISSING_DATA_PROPERTY {
+  const descriptor = applyIntrinsic<PropertyDescriptor | undefined>(
+    intrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [input, key],
+  );
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    descriptor.enumerable !== true
+  ) {
+    return KERNEL_MISSING_DATA_PROPERTY;
+  }
+  return descriptor.value;
+}
+
+function kernelDiagnostic(
+  stage: LineageVerificationStageV0_1,
+  failureCode: LineageFailureCodeV0_1,
+  source: LineageSourceV0_1 | null,
+  detail: AuthoritativeVerificationKernelDiagnosticDetailV0_1,
+): AuthoritativeVerificationKernelDiagnosticInternalV0_1 {
+  return freezeObject({ stage, failureCode, source, detail });
+}
+
+function kernelFailure(
+  stage: LineageVerificationStageV0_1,
+  diagnostics: readonly AuthoritativeVerificationKernelDiagnosticInternalV0_1[],
+  requiredSourceVerifications?: readonly RequiredSourceVerificationPlanEntryV0_1[],
+): ExecuteAuthoritativeVerificationKernelInternalResultV0_1 {
+  const candidates = new KernelSet<LineageFailureCodeV0_1>();
+  for (let index = 0; index < diagnostics.length; index += 1) {
+    applyIntrinsic<Set<LineageFailureCodeV0_1>>(
+      kernelSetAdd,
+      candidates,
+      [diagnostics[index]!.failureCode],
+    );
+  }
+  const failureCode =
+    selectLineageFailureCodeInternalV0_1(stage, candidates) ?? "INPUT_INVALID";
+  return deepFreezeLineageInternalV0_1({
+    executed: false,
+    authoritative: false,
+    failedStage: stage,
+    failureCode,
+    diagnostics: arraySlice(diagnostics, 0),
+    ...(requiredSourceVerifications === undefined
+      ? {}
+      : {
+          requiredSourceVerifications: arraySlice(
+            requiredSourceVerifications,
+            0,
+          ),
+        }),
+  });
+}
+
+function recordSetHashPreimage(
+  value: CommonSuggestionEvidenceRecordSetV0_1,
+): Omit<
+  CommonSuggestionEvidenceRecordSetV0_1,
+  "commonSuggestionEvidenceRecordSetSha256"
+> {
+  return {
+    schemaVersion: value.schemaVersion,
+    asOf: value.asOf,
+    records: value.records,
+    truncation: value.truncation,
+  };
+}
+
+function inspectRecordSetBindingForKernel(
+  receipt: CommonSuggestionEvidenceLineageReceiptV0_1,
+  recordSetInput: unknown,
+):
+  | Readonly<{
+      ok: true;
+      recordSet: CommonSuggestionEvidenceRecordSetV0_1;
+    }>
+  | Readonly<{
+      ok: false;
+      diagnostics: readonly AuthoritativeVerificationKernelDiagnosticInternalV0_1[];
+    }> {
+  const structural =
+    commonSuggestionEvidenceRecordSetStructuralSchemaV0_1.safeParse(
+      recordSetInput,
+    );
+  if (!structural.success) {
+    return deepFreezeLineageInternalV0_1({
+      ok: false,
+      diagnostics: [
+        kernelDiagnostic(
+          "record_set_binding",
+          "INPUT_INVALID",
+          null,
+          "record_set_invalid",
+        ),
+      ],
+    });
+  }
+
+  const expectedRecordSetHash = domainSeparatedSha256(
+    COMMON_SUGGESTION_EVIDENCE_RECORD_SET_HASH_DOMAIN_V0_1,
+    recordSetHashPreimage(structural.data),
+  );
+  if (
+    expectedRecordSetHash !==
+    structural.data.commonSuggestionEvidenceRecordSetSha256
+  ) {
+    return deepFreezeLineageInternalV0_1({
+      ok: false,
+      diagnostics: [
+        kernelDiagnostic(
+          "record_set_binding",
+          "HASH_MISMATCH",
+          null,
+          "record_set_hash_invalid",
+        ),
+      ],
+    });
+  }
+
+  const verified = verifyCommonSuggestionEvidenceRecordSetV0_1(
+    structural.data,
+  );
+  if (!verified.valid) {
+    return deepFreezeLineageInternalV0_1({
+      ok: false,
+      diagnostics: [
+        kernelDiagnostic(
+          "record_set_binding",
+          "INPUT_INVALID",
+          null,
+          "record_set_invalid",
+        ),
+      ],
+    });
+  }
+
+  const diagnostics: AuthoritativeVerificationKernelDiagnosticInternalV0_1[] =
+    [];
+  if (
+    receipt.commonSuggestionEvidenceRecordSetSha256 !==
+    verified.recordSet.commonSuggestionEvidenceRecordSetSha256
+  ) {
+    arrayPushValue(
+      diagnostics,
+      kernelDiagnostic(
+        "record_set_binding",
+        "RECORD_SET_BINDING_MISMATCH",
+        null,
+        "record_set_root_mismatch",
+      ),
+    );
+  }
+  if (receipt.asOf !== verified.recordSet.asOf) {
+    arrayPushValue(
+      diagnostics,
+      kernelDiagnostic(
+        "record_set_binding",
+        "RECORD_SET_BINDING_MISMATCH",
+        null,
+        "record_set_as_of_mismatch",
+      ),
+    );
+  }
+
+  const recordIdsBySource: string[][] = [];
+  for (let index = 0; index < LINEAGE_SOURCES_V0_1.length; index += 1) {
+    arrayPushValue(recordIdsBySource, []);
+  }
+  const partitions = [
+    verified.recordSet.records.structured,
+    verified.recordSet.records.dayflow,
+  ] as const;
+  for (let partitionIndex = 0; partitionIndex < partitions.length; partitionIndex += 1) {
+    const partition = partitions[partitionIndex]!;
+    for (let recordIndex = 0; recordIndex < partition.length; recordIndex += 1) {
+      const record = partition[recordIndex]!;
+      let sourceIndex = -1;
+      for (let index = 0; index < LINEAGE_SOURCES_V0_1.length; index += 1) {
+        if (LINEAGE_SOURCES_V0_1[index] === record.source) {
+          sourceIndex = index;
+          break;
+        }
+      }
+      if (sourceIndex < 0) {
+        arrayPushValue(
+          diagnostics,
+          kernelDiagnostic(
+            "record_set_binding",
+            "INPUT_INVALID",
+            null,
+            "record_set_invalid",
+          ),
+        );
+      } else {
+        arrayPushValue(recordIdsBySource[sourceIndex]!, record.recordId);
+      }
+    }
+  }
+
+  for (let sourceIndex = 0; sourceIndex < LINEAGE_SOURCES_V0_1.length; sourceIndex += 1) {
+    const source = LINEAGE_SOURCES_V0_1[sourceIndex]!;
+    const binding = receipt.sourceBindings[sourceIndex]!;
+    const recordIds = recordIdsBySource[sourceIndex]!;
+    if (binding.recordCount !== recordIds.length) {
+      arrayPushValue(
+        diagnostics,
+        kernelDiagnostic(
+          "record_set_binding",
+          "RECORD_SET_BINDING_MISMATCH",
+          source,
+          "record_count_mismatch",
+        ),
+      );
+    }
+    if (
+      binding.recordIdsSha256 !==
+      hashRecordIdSetInternalV0_1(source, recordIds)
+    ) {
+      arrayPushValue(
+        diagnostics,
+        kernelDiagnostic(
+          "record_set_binding",
+          "RECORD_ID_SET_MISMATCH",
+          source,
+          "record_id_set_mismatch",
+        ),
+      );
+    }
+  }
+
+  return diagnostics.length === 0
+    ? deepFreezeLineageInternalV0_1({
+        ok: true,
+        recordSet: verified.recordSet,
+      })
+    : deepFreezeLineageInternalV0_1({ ok: false, diagnostics });
+}
+
+function isUnavailableSourceVerifierRegistrySnapshotForKernel(
+  value: unknown,
+): value is SourceVerifierRegistrySnapshotInternalV0_1 {
+  try {
+    if (
+      !isOpaqueOrdinaryObject(value) ||
+      !objectIsFrozen(value) ||
+      !hasExactKernelDataProperties(value, ["kernelVersion", "entries"])
+    ) {
+      return false;
+    }
+    const kernelVersion = kernelDataProperty(value, "kernelVersion");
+    const entries = kernelDataProperty(value, "entries");
+    if (
+      kernelVersion !== AUTHORITATIVE_VERIFICATION_KERNEL_VERSION_V0_1 ||
+      !kernelArrayIsArray(entries) ||
+      entries.length !== LINEAGE_SOURCES_V0_1.length ||
+      !isFrozenDenseKernelArray(entries, LINEAGE_SOURCES_V0_1.length)
+    ) {
+      return false;
+    }
+    for (let index = 0; index < LINEAGE_SOURCES_V0_1.length; index += 1) {
+      const entry = kernelDataProperty(entries, String(index));
+      if (
+        entry === KERNEL_MISSING_DATA_PROPERTY ||
+        !isOpaqueOrdinaryObject(entry) ||
+        !objectIsFrozen(entry) ||
+        !hasExactKernelDataProperties(entry, ["source", "status"]) ||
+        kernelDataProperty(entry, "source") !== LINEAGE_SOURCES_V0_1[index] ||
+        kernelDataProperty(entry, "status") !== "unavailable"
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasExactKernelDataProperties(
+  value: object,
+  expectedKeys: readonly string[],
+): boolean {
+  const keys = reflectOwnKeys(value);
+  if (keys.length !== expectedKeys.length) return false;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    if (typeof key !== "string" || !arrayIncludes(expectedKeys, key)) {
+      return false;
+    }
+    if (kernelDataProperty(value, key) === KERNEL_MISSING_DATA_PROPERTY) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isFrozenDenseKernelArray(
+  value: unknown,
+  maximumLength = KERNEL_MAXIMUM_RUNTIME_ARRAY_LENGTH_V0_1,
+): value is readonly unknown[] {
+  if (!kernelArrayIsArray(value)) return false;
+  const length = value.length;
+  if (
+    !applyIntrinsic<boolean>(intrinsicNumberIsSafeInteger, Number, [length]) ||
+    length < 0 ||
+    length > maximumLength ||
+    !objectIsFrozen(value)
+  ) {
+    return false;
+  }
+  const keys = reflectOwnKeys(value);
+  if (keys.length !== length + 1 || !arrayIncludes(keys, "length")) {
+    return false;
+  }
+  for (let index = 0; index < length; index += 1) {
+    if (
+      !arrayIncludes(keys, String(index)) ||
+      kernelDataProperty(value, String(index)) === KERNEL_MISSING_DATA_PROPERTY
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isCanonicalKernelTimestamp(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length !== 24 ||
+    value[4] !== "-" ||
+    value[7] !== "-" ||
+    value[10] !== "T" ||
+    value[13] !== ":" ||
+    value[16] !== ":" ||
+    value[19] !== "." ||
+    value[23] !== "Z"
+  ) {
+    return false;
+  }
+  const digitIndexes = [
+    0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 22,
+  ] as const;
+  for (let index = 0; index < digitIndexes.length; index += 1) {
+    const code = stringCharCodeAt(value, digitIndexes[index]!);
+    if (code < 48 || code > 57) return false;
+  }
+  const numberAt = (first: number, second: number): number =>
+    (stringCharCodeAt(value, first) - 48) * 10 +
+    stringCharCodeAt(value, second) -
+    48;
+  const year =
+    (stringCharCodeAt(value, 0) - 48) * 1000 +
+    (stringCharCodeAt(value, 1) - 48) * 100 +
+    (stringCharCodeAt(value, 2) - 48) * 10 +
+    stringCharCodeAt(value, 3) -
+    48;
+  const month = numberAt(5, 6);
+  const day = numberAt(8, 9);
+  const hour = numberAt(11, 12);
+  const minute = numberAt(14, 15);
+  const second = numberAt(17, 18);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const maximumDay =
+    month === 2
+      ? leapYear
+        ? 29
+        : 28
+      : month === 4 || month === 6 || month === 9 || month === 11
+        ? 30
+        : 31;
+  return (
+    year !== 0 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= maximumDay &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59
+  );
+}
+
+function isNullableCanonicalKernelTimestamp(value: unknown): boolean {
+  return value === null || isCanonicalKernelTimestamp(value);
+}
+
+function isKernelSha256(value: unknown): value is string {
+  if (typeof value !== "string" || value.length !== 64) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = stringCharCodeAt(value, index);
+    if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isPrivateContextRegistrationBoundaryForKernel(
+  value: unknown,
+): value is PrivateContextRegistrationInternalV0_1 {
+  if (
+    !isOpaqueOrdinaryObject(value) ||
+    !objectIsFrozen(value) ||
+    !hasExactKernelDataProperties(value, [
+      "issuedAt",
+      "expiresAt",
+      "revokedAt",
+      "contextId",
+      "frozenEvaluationCaseId",
+      "authorizedComparisonScope",
+      "privacyScopeHmacKeyVersion",
+    ])
+  ) {
+    return false;
+  }
+  const authorizedComparisonScope = kernelDataProperty(
+    value,
+    "authorizedComparisonScope",
+  );
+  if (!isFrozenDenseKernelArray(authorizedComparisonScope)) return false;
+  for (let index = 0; index < authorizedComparisonScope.length; index += 1) {
+    if (
+      typeof kernelDataProperty(authorizedComparisonScope, String(index)) !==
+      "string"
+    ) {
+      return false;
+    }
+  }
+  return (
+    isCanonicalKernelTimestamp(kernelDataProperty(value, "issuedAt")) &&
+    isCanonicalKernelTimestamp(kernelDataProperty(value, "expiresAt")) &&
+    isNullableCanonicalKernelTimestamp(kernelDataProperty(value, "revokedAt")) &&
+    typeof kernelDataProperty(value, "contextId") === "string" &&
+    typeof kernelDataProperty(value, "frozenEvaluationCaseId") === "string" &&
+    typeof kernelDataProperty(value, "privacyScopeHmacKeyVersion") === "string"
+  );
+}
+
+function isPrivateKeyLifecycleRecordBoundaryForKernel(
+  value: unknown,
+): value is PrivateKeyLifecycleRecordInternalV0_1 {
+  return (
+    isOpaqueOrdinaryObject(value) &&
+    objectIsFrozen(value) &&
+    hasExactKernelDataProperties(value, [
+      "issuedAt",
+      "expiresAt",
+      "revokedAt",
+      "keyVersion",
+      "deletedAt",
+    ]) &&
+    isCanonicalKernelTimestamp(kernelDataProperty(value, "issuedAt")) &&
+    isCanonicalKernelTimestamp(kernelDataProperty(value, "expiresAt")) &&
+    isNullableCanonicalKernelTimestamp(kernelDataProperty(value, "revokedAt")) &&
+    typeof kernelDataProperty(value, "keyVersion") === "string" &&
+    isNullableCanonicalKernelTimestamp(kernelDataProperty(value, "deletedAt"))
+  );
+}
+
+function isRestrictedHmacHandleBoundaryForKernel(
+  value: unknown,
+): value is RestrictedPrivateScopeHmacHandleInternalV0_1 {
+  if (
+    !isOpaqueOrdinaryObject(value) ||
+    !objectIsFrozen(value) ||
+    !hasExactKernelDataProperties(value, ["keyVersion", "computeHmacSha256"])
+  ) {
+    return false;
+  }
+  const computeHmacSha256 = kernelDataProperty(value, "computeHmacSha256");
+  return (
+    typeof kernelDataProperty(value, "keyVersion") === "string" &&
+    typeof computeHmacSha256 === "function" &&
+    objectIsFrozen(computeHmacSha256)
+  );
+}
+
+function isTimezoneProfileBoundaryForKernel(
+  value: unknown,
+): value is FrozenTimezoneProfileSnapshotInternalV0_1 {
+  if (
+    !isOpaqueOrdinaryObject(value) ||
+    !objectIsFrozen(value) ||
+    !hasExactKernelDataProperties(value, [
+      "releaseVersion",
+      "releaseSha512",
+      "profileVersion",
+      "profileSha256",
+      "canonicalZones",
+      "aliases",
+    ]) ||
+    kernelDataProperty(value, "releaseVersion") !== TIMEZONE_RELEASE_VERSION_V0_1 ||
+    kernelDataProperty(value, "releaseSha512") !== TIMEZONE_RELEASE_SHA512_V0_1 ||
+    kernelDataProperty(value, "profileVersion") !== TIMEZONE_PROFILE_VERSION_V0_1 ||
+    !isKernelSha256(kernelDataProperty(value, "profileSha256"))
+  ) {
+    return false;
+  }
+  const canonicalZones = kernelDataProperty(value, "canonicalZones");
+  const aliases = kernelDataProperty(value, "aliases");
+  if (
+    !isFrozenDenseKernelArray(canonicalZones) ||
+    !isFrozenDenseKernelArray(aliases)
+  ) {
+    return false;
+  }
+  for (let index = 0; index < canonicalZones.length; index += 1) {
+    if (typeof kernelDataProperty(canonicalZones, String(index)) !== "string") {
+      return false;
+    }
+  }
+  for (let index = 0; index < aliases.length; index += 1) {
+    const alias = kernelDataProperty(aliases, String(index));
+    if (
+      alias === KERNEL_MISSING_DATA_PROPERTY ||
+      !isOpaqueOrdinaryObject(alias) ||
+      !objectIsFrozen(alias) ||
+      !hasExactKernelDataProperties(alias, ["alias", "canonicalTarget"]) ||
+      typeof kernelDataProperty(alias, "alias") !== "string" ||
+      typeof kernelDataProperty(alias, "canonicalTarget") !== "string"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isRuntimePrivateVerificationSnapshotBoundaryForKernel(
+  value: unknown,
+): value is RuntimePrivateVerificationSnapshotInternalV0_1 {
+  try {
+    if (
+      !isOpaqueOrdinaryObject(value) ||
+      !objectIsFrozen(value) ||
+      !hasExactKernelDataProperties(value, [
+        "verificationStartedAt",
+        "contextRegistrations",
+        "keyLifecycleRecords",
+        "restrictedHmacHandles",
+        "timezoneProfile",
+      ]) ||
+      !isCanonicalKernelTimestamp(
+        kernelDataProperty(value, "verificationStartedAt"),
+      )
+    ) {
+      return false;
+    }
+    const contextRegistrations = kernelDataProperty(
+      value,
+      "contextRegistrations",
+    );
+    const keyLifecycleRecords = kernelDataProperty(value, "keyLifecycleRecords");
+    const restrictedHmacHandles = kernelDataProperty(
+      value,
+      "restrictedHmacHandles",
+    );
+    const timezoneProfile = kernelDataProperty(value, "timezoneProfile");
+    if (
+      !isFrozenDenseKernelArray(contextRegistrations) ||
+      !isFrozenDenseKernelArray(keyLifecycleRecords) ||
+      !isFrozenDenseKernelArray(restrictedHmacHandles)
+    ) {
+      return false;
+    }
+    for (let index = 0; index < contextRegistrations.length; index += 1) {
+      if (
+        !isPrivateContextRegistrationBoundaryForKernel(
+          kernelDataProperty(contextRegistrations, String(index)),
+        )
+      ) {
+        return false;
+      }
+    }
+    for (let index = 0; index < keyLifecycleRecords.length; index += 1) {
+      if (
+        !isPrivateKeyLifecycleRecordBoundaryForKernel(
+          kernelDataProperty(keyLifecycleRecords, String(index)),
+        )
+      ) {
+        return false;
+      }
+    }
+    for (let index = 0; index < restrictedHmacHandles.length; index += 1) {
+      if (
+        !isRestrictedHmacHandleBoundaryForKernel(
+          kernelDataProperty(restrictedHmacHandles, String(index)),
+        )
+      ) {
+        return false;
+      }
+    }
+    return (
+      timezoneProfile === null ||
+      isTimezoneProfileBoundaryForKernel(timezoneProfile)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function executeAuthoritativeVerificationKernelInternalV0_1(
+  receiptInput: unknown,
+  recordSetInput: unknown,
+  sourceVerificationBundles: unknown,
+  sourceVerifierRegistrySnapshot: unknown,
+  runtimePrivateSnapshot: unknown,
+): ExecuteAuthoritativeVerificationKernelInternalResultV0_1 {
+  const intrinsic = inspectReceiptIntrinsicInternalV0_1(receiptInput);
+  if (!intrinsic.inspected) {
+    return kernelFailure("intrinsic_receipt", [
+      kernelDiagnostic(
+        "intrinsic_receipt",
+        intrinsic.failureCode,
+        null,
+        "receipt_invalid",
+      ),
+    ]);
+  }
+
+  let recordSetBinding: ReturnType<typeof inspectRecordSetBindingForKernel>;
+  try {
+    recordSetBinding = inspectRecordSetBindingForKernel(
+      intrinsic.receipt,
+      recordSetInput,
+    );
+  } catch {
+    return kernelFailure("record_set_binding", [
+      kernelDiagnostic(
+        "record_set_binding",
+        "INPUT_INVALID",
+        null,
+        "record_set_invalid",
+      ),
+    ]);
+  }
+  if (!recordSetBinding.ok) {
+    return kernelFailure(
+      "record_set_binding",
+      recordSetBinding.diagnostics,
+    );
+  }
+
+  let bundleInspection: ReturnType<typeof inspectBundlePresence>;
+  try {
+    bundleInspection = inspectBundlePresence(
+      intrinsic.receipt,
+      sourceVerificationBundles,
+    );
+  } catch {
+    return kernelFailure("source_attestation", [
+      kernelDiagnostic(
+        "source_attestation",
+        "INPUT_INVALID",
+        null,
+        "source_bundle_invalid",
+      ),
+    ]);
+  }
+  if (!bundleInspection.ok) {
+    return kernelFailure("source_attestation", [
+      kernelDiagnostic(
+        "source_attestation",
+        bundleInspection.failureCode,
+        null,
+        "source_bundle_invalid",
+      ),
+    ]);
+  }
+  const diagnostics: AuthoritativeVerificationKernelDiagnosticInternalV0_1[] =
+    [];
+  if (
+    !isUnavailableSourceVerifierRegistrySnapshotForKernel(
+      sourceVerifierRegistrySnapshot,
+    )
+  ) {
+    arrayPushValue(
+      diagnostics,
+      kernelDiagnostic(
+        "source_attestation",
+        "INPUT_INVALID",
+        null,
+        "registry_snapshot_invalid",
+      ),
+    );
+  }
+  if (
+    !isRuntimePrivateVerificationSnapshotBoundaryForKernel(
+      runtimePrivateSnapshot,
+    )
+  ) {
+    arrayPushValue(
+      diagnostics,
+      kernelDiagnostic(
+        "source_attestation",
+        "INPUT_INVALID",
+        null,
+        "runtime_snapshot_invalid",
+      ),
+    );
+  }
+  if (bundleInspection.requirements.length === 0) {
+    return diagnostics.length > 0
+      ? kernelFailure("source_attestation", diagnostics)
+      : deepFreezeLineageInternalV0_1({
+          executed: true,
+          authoritative: false,
+          failureCode: null,
+          stageOrder: [
+            "intrinsic_receipt",
+            "record_set_binding",
+            "source_attestation",
+          ],
+          stageStatus: {
+            intrinsicReceipt: "verified",
+            recordSetBinding: "verified",
+            sourceAttestation: "not_required",
+          },
+          diagnostics: [],
+          requiredSourceVerifications: [],
+        });
+  }
+  for (
+    let index = 0;
+    index < bundleInspection.requirements.length;
+    index += 1
+  ) {
+    const requirement = bundleInspection.requirements[index]!;
+    arrayPushValue(
+      diagnostics,
+      kernelDiagnostic(
+        "source_attestation",
+        "SOURCE_VERIFIER_UNAVAILABLE",
+        requirement.source,
+        "source_verifier_unavailable",
+      ),
+    );
+  }
+  return kernelFailure(
+    "source_attestation",
+    diagnostics,
+    bundleInspection.requirements,
+  );
 }

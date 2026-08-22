@@ -13,6 +13,7 @@ import {
   SCOPE_TOKEN_CANONICALIZATION_VERSION_V0_1,
   buildPrivateScopeHmacPreimageInternalV0_1,
   computePrivateScopeHmacSha256InternalV0_1,
+  executeAuthoritativeVerificationKernelInternalV0_1,
   hashLineageReceiptInternalV0_1,
   hashRecordIdSetInternalV0_1,
   hashSourceAttestationInternalV0_1,
@@ -21,6 +22,10 @@ import {
   type CommonSuggestionEvidenceLineageReceiptV0_1,
   type SourceCollectionAttestationInternalV0_1,
 } from "../src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal";
+import {
+  buildAndSealCommonSuggestionEvidenceRecordSetV0_1,
+  type CommonSuggestionEvidenceRecordSetV0_1,
+} from "../src/evaluation/dayflowAblation/commonSuggestionEvidenceV0_1";
 import {
   commonSuggestionEvidenceLineageReceiptStructuralSchemaV0_1,
   inspectCommonSuggestionEvidenceLineageReceiptIntrinsicV0_1,
@@ -94,6 +99,44 @@ function allNotRequestedReceipt(): CommonSuggestionEvidenceLineageReceiptV0_1 {
     sourceCollectionPlan: SOURCES.map(notRequestedPlan),
     sourceBindings: SOURCES.map(notRequestedBinding),
     commonSuggestionEvidenceLineageReceiptSha256: hash(0),
+  });
+}
+
+function emptyKernelRecordSet(): CommonSuggestionEvidenceRecordSetV0_1 {
+  const result = buildAndSealCommonSuggestionEvidenceRecordSetV0_1({
+    asOf: AS_OF,
+    availableRecords: { structured: [], dayflow: [] },
+  });
+  if (!result.valid) throw new Error(result.issueCodes[0]);
+  return result.recordSet;
+}
+
+function bindReceiptToKernelRecordSet(
+  receipt: CommonSuggestionEvidenceLineageReceiptV0_1,
+  recordSet: CommonSuggestionEvidenceRecordSetV0_1,
+): CommonSuggestionEvidenceLineageReceiptV0_1 {
+  receipt.commonSuggestionEvidenceRecordSetSha256 =
+    recordSet.commonSuggestionEvidenceRecordSetSha256;
+  return rehash(receipt);
+}
+
+function unavailableKernelRegistry() {
+  return Object.freeze({
+    kernelVersion:
+      "blabase-common-suggestion-evidence-authoritative-verification-kernel-v0.1" as const,
+    entries: Object.freeze(
+      SOURCES.map((source) => Object.freeze({ source, status: "unavailable" as const })),
+    ),
+  });
+}
+
+function emptyKernelRuntimeSnapshot() {
+  return Object.freeze({
+    verificationStartedAt: AS_OF,
+    contextRegistrations: Object.freeze([]),
+    keyLifecycleRecords: Object.freeze([]),
+    restrictedHmacHandles: Object.freeze([]),
+    timezoneProfile: null,
   });
 }
 
@@ -1989,5 +2032,683 @@ describe("Common Suggestion Evidence Lineage Receipt v0.1", () => {
         new Set([...candidates].reverse()),
       ),
     ).toBe("SOURCE_VERIFIER_UNAVAILABLE");
+  });
+});
+
+describe("Stage10-2A authoritative verification kernel", () => {
+  it("executes the frozen three-stage order without granting authority for an empty plan", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      {},
+      unavailableKernelRegistry(),
+      emptyKernelRuntimeSnapshot(),
+    );
+    expect(result).toEqual({
+      executed: true,
+      authoritative: false,
+      failureCode: null,
+      stageOrder: [
+        "intrinsic_receipt",
+        "record_set_binding",
+        "source_attestation",
+      ],
+      stageStatus: {
+        intrinsicReceipt: "verified",
+        recordSetBinding: "verified",
+        sourceAttestation: "not_required",
+      },
+      diagnostics: [],
+      requiredSourceVerifications: [],
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    if (!result.executed) throw new Error("Expected fictional empty-plan execution");
+    expect(Object.isFrozen(result.stageOrder)).toBe(true);
+    expect(Object.isFrozen(result.stageStatus)).toBe(true);
+  });
+
+  it.each([
+    ["missing registry", null, emptyKernelRuntimeSnapshot(), "registry_snapshot_invalid"],
+    [
+      "malformed registry",
+      Object.freeze({
+        kernelVersion:
+          "blabase-common-suggestion-evidence-authoritative-verification-kernel-v0.1",
+        entries: Object.freeze([]),
+      }),
+      emptyKernelRuntimeSnapshot(),
+      "registry_snapshot_invalid",
+    ],
+    ["missing runtime", unavailableKernelRegistry(), null, "runtime_snapshot_invalid"],
+    [
+      "malformed runtime",
+      unavailableKernelRegistry(),
+      Object.freeze({
+        ...emptyKernelRuntimeSnapshot(),
+        verificationStartedAt: "2026-08-21T12:00:00+00:00",
+      }),
+      "runtime_snapshot_invalid",
+    ],
+  ] as const)("fails closed for an empty plan with a %s boundary", (_name, registry, runtime, detail) => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      {},
+      registry,
+      runtime,
+    );
+    expect(result).toMatchObject({
+      executed: false,
+      authoritative: false,
+      failedStage: "source_attestation",
+      failureCode: "INPUT_INVALID",
+    });
+    expect(result.diagnostics).toContainEqual({
+      stage: "source_attestation",
+      failureCode: "INPUT_INVALID",
+      source: null,
+      detail,
+    });
+  });
+
+  it("rejects malformed and shallow-frozen members across the runtime snapshot", () => {
+    const shallowRegistration = {
+      issuedAt: COLLECTED_AT,
+      expiresAt: AS_OF,
+      revokedAt: null,
+      contextId: "fictional_context",
+      frozenEvaluationCaseId: "fictional_case",
+      authorizedComparisonScope: Object.freeze(["fictional_scope"]),
+      privacyScopeHmacKeyVersion: "fictional_key_v0.1",
+    };
+    const base = emptyKernelRuntimeSnapshot();
+    const malformedSnapshots = [
+      Object.freeze({
+        ...base,
+        verificationStartedAt: "2026-02-30T12:00:00.000Z",
+      }),
+      Object.freeze({
+        ...base,
+        contextRegistrations: Object.freeze([shallowRegistration]),
+      }),
+      Object.freeze({
+        ...base,
+        keyLifecycleRecords: Object.freeze([Object.freeze({})]),
+      }),
+      Object.freeze({
+        ...base,
+        restrictedHmacHandles: Object.freeze([Object.freeze({})]),
+      }),
+      Object.freeze({
+        ...base,
+        timezoneProfile: Object.freeze({}),
+      }),
+    ];
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    for (const runtimeSnapshot of malformedSnapshots) {
+      const result = executeAuthoritativeVerificationKernelInternalV0_1(
+        receipt,
+        recordSet,
+        {},
+        unavailableKernelRegistry(),
+        runtimeSnapshot,
+      );
+      expect(result).toMatchObject({
+        executed: false,
+        authoritative: false,
+        failedStage: "source_attestation",
+        failureCode: "INPUT_INVALID",
+      });
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ detail: "runtime_snapshot_invalid" }),
+      );
+    }
+  });
+
+  it("uses module-load Set and Array intrinsics after hostile global mutation", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const registry = unavailableKernelRegistry();
+    const runtime = emptyKernelRuntimeSnapshot();
+    const originalSetDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Set")!;
+    const originalSetAddDescriptor = Object.getOwnPropertyDescriptor(
+      Set.prototype,
+      "add",
+    )!;
+    const originalArrayIsArrayDescriptor = Object.getOwnPropertyDescriptor(
+      Array,
+      "isArray",
+    )!;
+    const originalSet = Set;
+    const originalSetAdd = Set.prototype.add;
+    const originalArrayIsArray = Array.isArray;
+    let result: ReturnType<
+      typeof executeAuthoritativeVerificationKernelInternalV0_1
+    > | null = null;
+    let escaped: unknown;
+    try {
+      Object.defineProperty(globalThis, "Set", {
+        ...originalSetDescriptor,
+        value: class HostilePostImportSet {
+          constructor() {
+            throw new Error("fictional-global-set");
+          }
+        },
+      });
+      Object.defineProperty(originalSet.prototype, "add", {
+        ...originalSetAddDescriptor,
+        value(this: Set<unknown>, value: unknown) {
+          if (value === "INPUT_INVALID") {
+            throw new Error("fictional-set-add");
+          }
+          return Reflect.apply(originalSetAdd, this, [value]);
+        },
+      });
+      Object.defineProperty(Array, "isArray", {
+        ...originalArrayIsArrayDescriptor,
+        value(value: unknown) {
+          if (value === registry.entries || value === runtime.contextRegistrations) {
+            throw new Error("fictional-array-is-array");
+          }
+          return originalArrayIsArray(value);
+        },
+      });
+      try {
+        result = executeAuthoritativeVerificationKernelInternalV0_1(
+          receipt,
+          recordSet,
+          {},
+          null,
+          runtime,
+        );
+      } catch (error) {
+        escaped = error;
+      }
+    } finally {
+      Object.defineProperty(globalThis, "Set", originalSetDescriptor);
+      Object.defineProperty(originalSet.prototype, "add", originalSetAddDescriptor);
+      Object.defineProperty(Array, "isArray", originalArrayIsArrayDescriptor);
+    }
+    expect(escaped).toBeUndefined();
+    expect(result).toMatchObject({
+      executed: false,
+      failedStage: "source_attestation",
+      failureCode: "INPUT_INVALID",
+    });
+  });
+
+  it("rejects hostile nested boundary proxies without leaking private values", () => {
+    const privateMarker = "fictional-private-runtime-marker";
+    const hostile = new Proxy(Object.freeze({ privateMarker }), {
+      get() {
+        throw new Error(privateMarker);
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error(privateMarker);
+      },
+      getPrototypeOf() {
+        throw new Error(privateMarker);
+      },
+      ownKeys() {
+        throw new Error(privateMarker);
+      },
+    });
+    const validRegistry = unavailableKernelRegistry();
+    const registry = Object.freeze({
+      ...validRegistry,
+      entries: Object.freeze([hostile, ...validRegistry.entries.slice(1)]),
+    });
+    const runtime = Object.freeze({
+      ...emptyKernelRuntimeSnapshot(),
+      contextRegistrations: Object.freeze([hostile]),
+    });
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    let result: ReturnType<
+      typeof executeAuthoritativeVerificationKernelInternalV0_1
+    > | null = null;
+    expect(() => {
+      result = executeAuthoritativeVerificationKernelInternalV0_1(
+        receipt,
+        recordSet,
+        {},
+        registry,
+        runtime,
+      );
+    }).not.toThrow();
+    expect(result).toMatchObject({
+      executed: false,
+      authoritative: false,
+      failedStage: "source_attestation",
+      failureCode: "INPUT_INVALID",
+      diagnostics: [
+        expect.objectContaining({ detail: "registry_snapshot_invalid" }),
+        expect.objectContaining({ detail: "runtime_snapshot_invalid" }),
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain(privateMarker);
+    expect(result).not.toHaveProperty("receipt");
+    expect(result).not.toHaveProperty("sourceVerificationBundles");
+    expect(result).not.toHaveProperty("runtimePrivateSnapshot");
+    const completedResult = result as ReturnType<
+      typeof executeAuthoritativeVerificationKernelInternalV0_1
+    > | null;
+    if (completedResult === null) {
+      throw new Error("expected hostile boundary inspection to return a result");
+    }
+    expect(Object.isFrozen(completedResult)).toBe(true);
+    expect(Object.isFrozen(completedResult.diagnostics)).toBe(true);
+    for (const diagnostic of completedResult.diagnostics) {
+      expect(Object.isFrozen(diagnostic)).toBe(true);
+    }
+  });
+
+  it("short-circuits after an intrinsic failure without reading later-stage inputs", () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("fictional-private-later-stage-value");
+        },
+        ownKeys() {
+          throw new Error("fictional-private-later-stage-value");
+        },
+      },
+    );
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      null,
+      hostile,
+      hostile,
+      hostile,
+      hostile,
+    );
+    expect(result).toMatchObject({
+      executed: false,
+      authoritative: false,
+      failedStage: "intrinsic_receipt",
+      failureCode: "SOURCE_BINDING_INVALID",
+    });
+    expect(JSON.stringify(result)).not.toContain("later-stage-value");
+  });
+
+  it("distinguishes record-set self-hash failure from receipt binding failure", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const badSelfHash = {
+      ...recordSet,
+      commonSuggestionEvidenceRecordSetSha256: hash(999),
+    };
+    expect(
+      executeAuthoritativeVerificationKernelInternalV0_1(
+        receipt,
+        badSelfHash,
+        {},
+        unavailableKernelRegistry(),
+        emptyKernelRuntimeSnapshot(),
+      ),
+    ).toMatchObject({
+      failedStage: "record_set_binding",
+      failureCode: "HASH_MISMATCH",
+    });
+
+    const wrongRootReceipt = rehash({
+      ...receipt,
+      commonSuggestionEvidenceRecordSetSha256: hash(998),
+    });
+    expect(
+      executeAuthoritativeVerificationKernelInternalV0_1(
+        wrongRootReceipt,
+        recordSet,
+        {},
+        unavailableKernelRegistry(),
+        emptyKernelRuntimeSnapshot(),
+      ),
+    ).toMatchObject({
+      failedStage: "record_set_binding",
+      failureCode: "RECORD_SET_BINDING_MISMATCH",
+    });
+  });
+
+  it("uses frozen Stage 2 precedence while preserving bounded diagnostics", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = githubRequestedReceipt();
+    receipt.commonSuggestionEvidenceRecordSetSha256 = hash(997);
+    receipt.sourceBindings[0]!.recordCount = 1;
+    receipt.sourceBindings[0]!.recordIdsSha256 = hash(996);
+    rehash(receipt);
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      { github: Object.freeze({ fictionalBundle: true }) },
+      unavailableKernelRegistry(),
+      emptyKernelRuntimeSnapshot(),
+    );
+    expect(result).toMatchObject({
+      failedStage: "record_set_binding",
+      failureCode: "RECORD_SET_BINDING_MISMATCH",
+    });
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ detail: "record_set_root_mismatch" }),
+        expect.objectContaining({
+          source: "github",
+          detail: "record_count_mismatch",
+        }),
+        expect.objectContaining({
+          source: "github",
+          detail: "record_id_set_mismatch",
+        }),
+      ]),
+    );
+    expect(Object.isFrozen(result.diagnostics)).toBe(true);
+  });
+
+  it("uses the module-load charCodeAt intrinsic for timestamp and SHA-256 validation", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      String.prototype,
+      "charCodeAt",
+    )!;
+    const originalCharCodeAt = String.prototype.charCodeAt;
+    const validTimestampFacade = "2024-02-29T00:00:00.000Z";
+    const validHashFacade = "a".repeat(64);
+    const [timestampResult, hashResult] = (() => {
+      try {
+        Object.defineProperty(String.prototype, "charCodeAt", {
+          ...originalDescriptor,
+          value(this: string, index: number) {
+            const receiver = String(this);
+            const facade =
+              receiver.length === 64 ? validHashFacade : validTimestampFacade;
+            return Reflect.apply(originalCharCodeAt, facade, [index]);
+          },
+        });
+        const invalidTimestampRuntime = Object.freeze({
+          ...emptyKernelRuntimeSnapshot(),
+          verificationStartedAt: "aaaa-02-29T00:00:00.000Z",
+        });
+        const invalidHashRuntime = Object.freeze({
+          ...emptyKernelRuntimeSnapshot(),
+          timezoneProfile: Object.freeze({
+            releaseVersion: "2026c",
+            releaseSha512:
+              "e0b4b7044b66fbc27bc21d13d18063abcdf78ab58d5ba5fd64bd1a88d86e9d495f45add4d8e65bb6c40249f9c94ca29b72c8ebba8d0e4c468f2965ac77932ef0",
+            profileVersion: "blabase-tzdb-profile-2026c-v1",
+            profileSha256: "g".repeat(64),
+            canonicalZones: Object.freeze([]),
+            aliases: Object.freeze([]),
+          }),
+        });
+        return [
+          executeAuthoritativeVerificationKernelInternalV0_1(
+            receipt,
+            recordSet,
+            {},
+            unavailableKernelRegistry(),
+            invalidTimestampRuntime,
+          ),
+          executeAuthoritativeVerificationKernelInternalV0_1(
+            receipt,
+            recordSet,
+            {},
+            unavailableKernelRegistry(),
+            invalidHashRuntime,
+          ),
+        ] as const;
+      } finally {
+        Object.defineProperty(
+          String.prototype,
+          "charCodeAt",
+          originalDescriptor,
+        );
+      }
+    })();
+    for (const result of [timestampResult, hashResult]) {
+      expect(result).toMatchObject({
+        executed: false,
+        authoritative: false,
+        failedStage: "source_attestation",
+        failureCode: "INPUT_INVALID",
+      });
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ detail: "runtime_snapshot_invalid" }),
+      );
+    }
+  });
+
+  it.each([
+    ["year zero", "0000-01-01T00:00:00.000Z", false],
+    ["valid leap date", "2024-02-29T00:00:00.000Z", true],
+    ["invalid leap date", "2023-02-29T00:00:00.000Z", false],
+  ] as const)("applies the canonical timestamp rule for %s", (_name, timestamp, valid) => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      {},
+      unavailableKernelRegistry(),
+      Object.freeze({
+        ...emptyKernelRuntimeSnapshot(),
+        verificationStartedAt: timestamp,
+      }),
+    );
+    if (valid) {
+      expect(result).toMatchObject({
+        executed: true,
+        authoritative: false,
+        failureCode: null,
+      });
+    } else {
+      expect(result).toMatchObject({
+        executed: false,
+        authoritative: false,
+        failedStage: "source_attestation",
+        failureCode: "INPUT_INVALID",
+      });
+    }
+  });
+
+  it("rejects a non-fixed registry length before enumerating its entries", () => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    const shortEntries = Object.freeze(
+      unavailableKernelRegistry().entries.slice(0, 4),
+    );
+    let entryOwnKeysCalls = 0;
+    const instrumentedEntries = new Proxy(shortEntries, {
+      ownKeys() {
+        entryOwnKeysCalls += 1;
+        throw new Error("fictional-registry-entry-enumeration");
+      },
+    });
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      {},
+      Object.freeze({
+        kernelVersion:
+          "blabase-common-suggestion-evidence-authoritative-verification-kernel-v0.1" as const,
+        entries: instrumentedEntries,
+      }),
+      emptyKernelRuntimeSnapshot(),
+    );
+    expect(entryOwnKeysCalls).toBe(0);
+    expect(result).toMatchObject({
+      executed: false,
+      authoritative: false,
+      failedStage: "source_attestation",
+      failureCode: "INPUT_INVALID",
+    });
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ detail: "registry_snapshot_invalid" }),
+    );
+  });
+
+  it("rejects oversized runtime contract arrays before dense enumeration", () => {
+    const oversized = Object.freeze(
+      Array.from({ length: 1_025 }, () => null),
+    );
+    const base = emptyKernelRuntimeSnapshot();
+    const timezoneProfile = Object.freeze({
+      releaseVersion: "2026c",
+      releaseSha512:
+        "e0b4b7044b66fbc27bc21d13d18063abcdf78ab58d5ba5fd64bd1a88d86e9d495f45add4d8e65bb6c40249f9c94ca29b72c8ebba8d0e4c468f2965ac77932ef0",
+      profileVersion: "blabase-tzdb-profile-2026c-v1",
+      profileSha256: hash(94),
+      canonicalZones: Object.freeze([]),
+      aliases: Object.freeze([]),
+    });
+    const oversizedRegistration = Object.freeze({
+      issuedAt: COLLECTED_AT,
+      expiresAt: AS_OF,
+      revokedAt: null,
+      contextId: "fictional_context",
+      frozenEvaluationCaseId: "fictional_case",
+      authorizedComparisonScope: oversized,
+      privacyScopeHmacKeyVersion: "fictional_key_v0.1",
+    });
+    const snapshots = [
+      [
+        "contextRegistrations",
+        Object.freeze({ ...base, contextRegistrations: oversized }),
+      ],
+      [
+        "keyLifecycleRecords",
+        Object.freeze({ ...base, keyLifecycleRecords: oversized }),
+      ],
+      [
+        "restrictedHmacHandles",
+        Object.freeze({ ...base, restrictedHmacHandles: oversized }),
+      ],
+      [
+        "authorizedComparisonScope",
+        Object.freeze({
+          ...base,
+          contextRegistrations: Object.freeze([oversizedRegistration]),
+        }),
+      ],
+      [
+        "timezoneProfile.canonicalZones",
+        Object.freeze({
+          ...base,
+          timezoneProfile: Object.freeze({
+            ...timezoneProfile,
+            canonicalZones: oversized,
+          }),
+        }),
+      ],
+      [
+        "timezoneProfile.aliases",
+        Object.freeze({
+          ...base,
+          timezoneProfile: Object.freeze({
+            ...timezoneProfile,
+            aliases: oversized,
+          }),
+        }),
+      ],
+    ] as const;
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      allNotRequestedReceipt(),
+      recordSet,
+    );
+    for (const [_name, runtimeSnapshot] of snapshots) {
+      const result = executeAuthoritativeVerificationKernelInternalV0_1(
+        receipt,
+        recordSet,
+        {},
+        unavailableKernelRegistry(),
+        runtimeSnapshot,
+      );
+      expect(result).toMatchObject({
+        executed: false,
+        authoritative: false,
+        failedStage: "source_attestation",
+        failureCode: "INPUT_INVALID",
+      });
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ detail: "runtime_snapshot_invalid" }),
+      );
+    }
+  });
+
+  it.each([
+    ["github", FROZEN_MODE_CASES[0]],
+    ["codex", FROZEN_MODE_CASES[2]],
+    ["google_calendar", FROZEN_MODE_CASES[3]],
+    ["notion", FROZEN_MODE_CASES[4]],
+    ["dayflow", FROZEN_MODE_CASES[6]],
+  ] as const)("fails closed at the unavailable %s verifier boundary", (source, modeCase) => {
+    const recordSet = emptyKernelRecordSet();
+    const receipt = bindReceiptToKernelRecordSet(
+      frozenModeReceipt(modeCase),
+      recordSet,
+    );
+    const result = executeAuthoritativeVerificationKernelInternalV0_1(
+      receipt,
+      recordSet,
+      Object.freeze({ [source]: Object.freeze({ fictionalBundle: true }) }),
+      unavailableKernelRegistry(),
+      emptyKernelRuntimeSnapshot(),
+    );
+    expect(result).toMatchObject({
+      executed: false,
+      authoritative: false,
+      failedStage: "source_attestation",
+      failureCode: "SOURCE_VERIFIER_UNAVAILABLE",
+    });
+    expect(result.diagnostics).toContainEqual({
+      stage: "source_attestation",
+      failureCode: "SOURCE_VERIFIER_UNAVAILABLE",
+      source,
+      detail: "source_verifier_unavailable",
+    });
+    expect("receipt" in result).toBe(false);
+    expect(Object.isFrozen(result.diagnostics)).toBe(true);
+    for (const diagnostic of result.diagnostics) {
+      expect(Object.isFrozen(diagnostic)).toBe(true);
+    }
+    if (!result.executed && result.requiredSourceVerifications !== undefined) {
+      expect(Object.isFrozen(result.requiredSourceVerifications)).toBe(true);
+      for (const requirement of result.requiredSourceVerifications) {
+        expect(Object.isFrozen(requirement)).toBe(true);
+        expect(Object.isFrozen(requirement.requiredOperations)).toBe(true);
+      }
+    }
   });
 });

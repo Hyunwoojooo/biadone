@@ -3017,3 +3017,160 @@ sidecars, Stage10-3 composition, common-engine generation, offline A/B/C executi
 live/product work remain pending and require separate Colin decisions.
 
 <!-- dayflow-plan-section:STAGE10-1A-2B-COLIN-ACCEPTED-2026-08-22:end -->
+---
+
+<!-- dayflow-plan-section:STAGE10-2A-INTERNAL-AUTHORITATIVE-VERIFICATION-KERNEL-READY-2026-08-22:begin -->
+
+## 2026-08-22 current authority: Stage10-2A internal authoritative-verification kernel ready
+
+- Date and timezone: 2026-08-22, Asia/Seoul.
+- Working owner and sole human reviewer: Colin.
+- Required David role, review artifact, receipt, or approval gate: none.
+- Status: Implementation, automated validation, and independent scoped QA PASS. Colin's final human
+  acceptance remains pending.
+- Git status for this checkpoint: The implementation and this documentation task are not recorded as
+  a new commit by this checkpoint.
+
+This additive checkpoint supersedes only earlier active statements that the Stage10-2A internal
+authoritative-verification kernel scaffold is wholly pending or unimplemented. It does not complete
+or authorize Stage10-2B actual source verifiers, Stage10-2C authoritative success, common suggestion
+generation, A/B/C execution, or product and production work.
+
+### Implemented scope and frozen authority boundary
+
+Stage10-2A is an internal/private verification-kernel scaffold only. It uses the fixed source union
+GitHub, Codex, Google Calendar, Notion, and Dayflow, and the frozen stage order:
+
+```text
+intrinsic_receipt -> record_set_binding -> source_attestation
+```
+
+The kernel returns one deterministic primary failure and bounded internal diagnostics. Its source
+verifier registry and runtime snapshot are injected immutable boundaries. Missing or malformed
+registry, runtime, snapshot, or verifier inputs fail closed. A valid empty verification plan can
+complete only after those boundaries are validated, and its result remains `executed: true` and
+`authoritative: false`.
+
+No actual source verifier exists in Stage10-2A. There is no `authoritative: true` result and no
+authoritative-success variant. The existing public facade, planner signature, planner behavior, and
+exports are unchanged.
+
+### Stage behavior
+
+1. `intrinsic_receipt` reuses the existing intrinsic receipt inspector and short-circuits on its
+   frozen failure.
+2. `record_set_binding` performs structural parsing, detached record-set self-hash verification,
+   reuse of the existing public authoritative record-set verifier, and receipt binding for root
+   hash, `asOf`, source-record count, and source record-ID-set hash. Existing frozen failure
+   precedence is preserved.
+3. `source_attestation` performs bundle-presence inspection, validates the unavailable-only fixed
+   registry, and validates the complete runtime snapshot shape and deep-freeze boundary. Any
+   requested source reaches `SOURCE_VERIFIER_UNAVAILABLE` because Stage10-2A intentionally provides
+   no actual source verifier.
+
+### Final hardening state
+
+- Hostile getters, proxies, and Stage 3 exceptions are converted to deterministic fail-closed
+  results rather than escaping the kernel.
+- Module-load-safe references are used for `Set`, `Set.prototype.add`, `Array.isArray`, and
+  `String.prototype.charCodeAt`.
+- Canonical timestamps reject year `0000` and use Gregorian leap-year semantics.
+- Registry length must be exactly five before key enumeration.
+- Runtime and timezone contract arrays are bounded to 1,024 entries before enumeration; excess
+  input fails with `INPUT_INVALID`.
+- Receipt, bundle, and private runtime payloads are not returned. Returned results are deeply frozen.
+
+### Validation and independent QA evidence
+
+- Focused Stage10-2A Vitest: 46/46 PASS.
+- Suggestion TypeScript typecheck: PASS.
+- Full Suggestion suite in the current dirty worktree: 168 files and 1,591 tests PASS. This is not a
+  clean committed-snapshot result.
+- Changed implementation file:
+  `suggestion/src/evaluation/dayflowAblation/commonSuggestionEvidenceLineageV0_1.internal.ts`.
+- Changed test file: `suggestion/tests/dayflowCommonSuggestionEvidenceLineageV0_1.test.ts`.
+- Targeted lint for those two files: PASS.
+- Full `npm run arch:check`: PASS. Its dependency check reported 0 errors, 12 repository warnings,
+  8 suggestion warnings, and 2 scripts warnings; JS/MJS dependency coverage was valid at 17 entries
+  and 4 sentinel edges. LikeC4 local source links were valid at 49. AppMap safety configuration was
+  valid with 9 exclusions, 3 instrumented paths, and dev trace fail-closed. All 5 LikeC4 files passed
+  the format check, and the LikeC4 model was valid across 5 files.
+- The first sandboxed `npm run build` stopped before compilation with the environment-only error
+  `listen EPERM: operation not permitted 127.0.0.1` while Next.js attempted lockfile patching. This
+  was an environment execution failure, not a code or build failure. The authoritative
+  sandbox-exempt rerun passed with Next.js 15.5.20: optimized production compilation, linting and
+  type-validity checking, static page generation 9/9, build-trace collection, and page-optimization
+  finalization all passed.
+- The successful build warned that the lockfile was missing SWC dependencies, reported patching it,
+  and recommended running `npm install`. The subsequent approved inspection found the current
+  `package-lock.json` diff at 1,578 additions and 21 deletions against HEAD. It is broad dependency-
+  lock work including `appmap-node` 2.26.1, `dependency-cruiser` 18.2.0, `likec4` 1.59.2, and
+  transitive packages; no `@next/swc` lines are present in the current Git diff. Because no
+  pre-build snapshot exists, the incremental build-caused portion cannot be isolated. This broad
+  diff is not attributed to Stage10 or solely to the build. Colin decided to preserve the lockfile
+  as separate, non-Stage10 work and exclude it from the Stage10 commit scope.
+- Documentation consistency QA: PASS after the exact changed implementation and test paths above
+  were added.
+- Codebase-memory generation `2026-08-20T14:55:09Z` was stale and did not track the two changed code
+  files. Independent QA therefore used current direct source as its ground truth.
+
+The first independent QA found three Medium issues: an empty-plan boundary bypass, incomplete
+runtime-snapshot validation, and hostile intrinsic/proxy exception escape. The first remediation
+closed those issues; focused validation reached 40/40 and typecheck passed. Independent re-review
+then found three Medium issues: a live `charCodeAt` integrity bypass, canonical year `0000`
+inconsistency, and unbounded array enumeration. QA Fix 2 closed all three. Final independent scoped
+QA returned PASS with no Critical, High, Medium, or Low finding, and explicitly marked the three
+re-review findings resolved.
+
+### Evaluation, compatibility, and privacy applicability
+
+This scaffold is private verification infrastructure. It does not change suggestion-engine input or
+output, filtering, ranking, prompt, model, guardrail, Golden Dataset, or A/B/C result semantics. No
+Golden or baseline rerun is required for this checkpoint, and no experimental A/B/C result is
+claimed. No public API, schema, or serialized protocol version was bumped, and no public
+authoritative-success path was added.
+
+No raw or private evidence value was emitted or added to Git. Hostile private-marker non-leak tests
+are included. Retention and deletion policy are unchanged.
+
+| Work item | Current status | Next authority |
+| --- | --- | --- |
+| Stage10-2A internal kernel scaffold | implementation, automated validation, and independent QA PASS | Colin final acceptance pending |
+| Stage10-2B actual source verifiers | deferred, unimplemented, unauthorized | separate Colin decision required |
+| Stage10-2C authoritative success path | deferred, unimplemented, unauthorized | separate Colin decision required |
+| Common engine and offline A/B/C execution | unchanged and pending | separate future Colin decisions required |
+| Live/API/persistence/provider/product/production | unchanged and pending | separate future Colin decisions required |
+
+<!-- dayflow-plan-section:STAGE10-2A-INTERNAL-AUTHORITATIVE-VERIFICATION-KERNEL-READY-2026-08-22:end -->
+
+<!-- dayflow-plan-section:STAGE10-2A-COLIN-ACCEPTED-2026-08-22:begin -->
+
+## Stage10-2A Colin acceptance - 2026-08-22
+
+- Date and timezone: 2026-08-22, Asia/Seoul.
+- Accepted by and sole human decision authority: Colin.
+- Checkpoint status: `ACCEPTED` and complete for planning; Stage10-only commit-scope preparation may
+  proceed as a separate task.
+
+Colin explicitly accepted the Stage10-2A internal/private authoritative-verification-kernel
+implementation checkpoint, including the documented implementation, focused and full automated
+validation, independent code and documentation QA, sandbox-exempt successful build, full
+`npm run arch:check`, and the limitations and residual risks recorded in the immediately preceding
+READY section. This acceptance supersedes only that section's pending-Colin-acceptance status. Its
+46/46 focused result, typecheck PASS, dirty-worktree 168-file/1,591-test result, targeted lint PASS,
+full architecture-check PASS, build PASS, final QA results, sandbox `EPERM`, and lockfile-provenance
+caveats remain unchanged. No semantic suggestion or A/B/C behavior changed, so no Golden or baseline
+rerun is required.
+
+This is acceptance of the Stage10-2A technical checkpoint, not acceptance of a production-
+authoritative feature. Stage10-2B/2C actual source verifiers and authoritative-success path remain
+deferred and unimplemented. No public `authoritative: true` result, public API, schema, serialized
+protocol or version change, A/B/C experiment execution or result, production release, deployment,
+commit, push, or merge is approved by this record. The implementation commit SHA remains pending and
+must not be claimed before a future commit.
+
+The broad `package-lock.json` change remains preserved as separate non-Stage10 work and excluded from
+the Stage10 commit scope. David has no reviewer, approver, receipt, or artifact role. No command was
+rerun, no Git operation was performed, and no code changed for this acceptance record.
+
+<!-- dayflow-plan-section:STAGE10-2A-COLIN-ACCEPTED-2026-08-22:end -->
