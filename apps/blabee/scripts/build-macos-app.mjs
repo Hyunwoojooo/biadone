@@ -32,6 +32,7 @@ const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = resolve(dirname(scriptPath), "..");
 const bundleName = "Blabee.app";
+const figmaAssetDirectoryName = "blabee-dark-menu-bar";
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
 const launchAgentRelativePath = join(
   "Contents",
@@ -338,16 +339,19 @@ export async function assembleMacOSApp({
   const sourceLaunchAgent = join(sourceLaunchAgentDirectory, launchAgentFileName);
   const sourceContracts = join(canonicalSourceRoot, "Contracts", "v1");
   const sourcePlugin = join(canonicalSourceRoot, "Plugin", "blabee");
+  const sourceFigmaAssets = join(canonicalSourceRoot, "assets");
   assertWithin(canonicalSourceRoot, sourceInfoPlist, "Info.plist");
   assertWithin(canonicalSourceRoot, sourceLaunchAgent, "LaunchAgent plist");
   assertWithin(canonicalSourceRoot, sourceContracts, "Contracts/v1");
   assertWithin(canonicalSourceRoot, sourcePlugin, "Plugin/blabee");
+  assertWithin(canonicalSourceRoot, sourceFigmaAssets, "assets");
   await requireRegularFile(sourceInfoPlist, "Info.plist");
   await requireDirectory(sourceLaunchAgentDirectory, "LaunchAgents");
   await requireRegularFile(sourceLaunchAgent, "LaunchAgent plist");
   await validateLaunchAgentPlist(sourceLaunchAgent);
   await requireDirectory(sourceContracts, "Contracts/v1");
   await requireDirectory(sourcePlugin, "Plugin/blabee");
+  await requireDirectory(sourceFigmaAssets, "assets");
 
   const requestedParent = dirname(requestedOutput);
   const canonicalParent = await realpath(requestedParent);
@@ -422,6 +426,12 @@ export async function assembleMacOSApp({
       sourcePlugin,
       join(resources, "Plugin", "blabee"),
       join("Contents", "Resources", "Plugin", "blabee"),
+    );
+    await copyTreeStrict(
+      canonicalSourceRoot,
+      sourceFigmaAssets,
+      join(resources, figmaAssetDirectoryName),
+      join("Contents", "Resources", figmaAssetDirectoryName),
     );
     const manifest = await writeAssemblyManifest(staging);
     if (adhocSign) await adhocSignAndVerify(staging);

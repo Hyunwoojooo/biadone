@@ -56,6 +56,27 @@ func blabeePetReadyAndWorkingPresentation() throws {
     #expect(viewModel.presentationState == .ready)
 }
 
+@Test("BlabeePet auto-expands only for a newly arrived ready card")
+@MainActor
+func blabeePetNewCardAutoExpansion() throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let cardA = PetTestCard(suffix: "auto_expand_a")
+    let cardB = PetTestCard(suffix: "auto_expand_b")
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [cardA]))
+    #expect(viewModel.isExpanded)
+
+    viewModel.toggleExpanded()
+    #expect(!viewModel.isExpanded)
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [cardA]))
+    #expect(!viewModel.isExpanded)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [cardA, cardB]))
+    #expect(viewModel.isExpanded)
+}
+
 @Test("BlabeePet does nothing without an explicit local foreground")
 @MainActor
 func blabeePetNoForegroundNoOp() async throws {
@@ -242,6 +263,7 @@ func blabeePetFreshSelectionIDPerCard() async throws {
         response: try petTestSnapshotData(cards: [cardB])
     )
     await viewModel.requestPanelSelection(1)
+    #expect(viewModel.isExpanded)
 
     let identityB = try #require(viewModel.snapshotInteractions.first?.identity)
     await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
@@ -254,6 +276,7 @@ func blabeePetFreshSelectionIDPerCard() async throws {
     await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
     await viewModel.requestPanelSelection(1)
     #expect(viewModel.presentationState == .ready)
+    #expect(!viewModel.isExpanded)
 
     let payloads = await transport.requestPayloads(type: "select")
     #expect(payloads.count == 2)

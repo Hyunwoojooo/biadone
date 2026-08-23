@@ -4,118 +4,92 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Test("BlabeePet clamps frames purely across negative and oversized displays")
-func blabeePetMultiDisplayFrameClamp() {
+@Test("BlabeePet clamps status-item panels across negative and tiny displays")
+func blabeePetStatusPanelFrameClamp() {
     let leftVisible = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
     let offscreen = CGRect(x: -2_400, y: -300, width: 440, height: 620)
-    let clamped = PetFrameClamp.clamp(offscreen, to: leftVisible)
+    let clamped = PetStatusPanelPlacement.clamp(offscreen, to: leftVisible)
     #expect(clamped.minX == leftVisible.minX)
     #expect(clamped.minY == leftVisible.minY)
     #expect(leftVisible.contains(clamped))
 
     let tinyVisible = CGRect(x: 2_560, y: 100, width: 300, height: 200)
-    let oversized = PetFrameClamp.clamp(
+    let oversized = PetStatusPanelPlacement.clamp(
         CGRect(x: 3_000, y: 500, width: 900, height: 800),
         to: tinyVisible
     )
     #expect(oversized == tinyVisible)
 
-    let displays = [
-        PetDisplayGeometry(id: 1, frame: leftVisible, visibleFrame: leftVisible),
-        PetDisplayGeometry(
-            id: 2,
-            frame: CGRect(x: 0, y: 0, width: 2_560, height: 1_440),
-            visibleFrame: CGRect(x: 0, y: 24, width: 2_560, height: 1_416)
-        ),
-    ]
-    #expect(PetDisplaySelection.preferred(
-        displays: displays,
-        mouseLocation: CGPoint(x: -500, y: 500),
-        activeDisplayID: 2,
-        stableDisplayID: nil
-    )?.id == 1)
-    #expect(PetDisplaySelection.preferred(
-        displays: displays,
-        mouseLocation: CGPoint(x: -500, y: 500),
-        activeDisplayID: 2,
-        stableDisplayID: 2
-    )?.id == 2)
 }
 
-@Test("BlabeePet resizing preserves the lower-trailing anchor and round-trips")
-@MainActor
-func blabeePetLowerTrailingResizeRoundTrip() {
+@Test("BlabeePet anchors the 420x346 panel directly below its 32px status item")
+func blabeePetStatusPanelPlacement() {
     let visibleFrame = CGRect(x: 0, y: 24, width: 1_920, height: 1_056)
-    let initial = PetFrameClamp.lowerTrailingFrame(
-        size: PetPanelController.collapsedSize,
-        in: visibleFrame
-    )
-    let expanded = PetFrameClamp.resizedLowerTrailingFrame(
-        from: initial,
-        to: PetPanelController.expandedSize,
-        in: visibleFrame
-    )
-    let collapsed = PetFrameClamp.resizedLowerTrailingFrame(
-        from: expanded,
-        to: PetPanelController.collapsedSize,
+    let statusItemFrame = CGRect(x: 1_470, y: 1_080, width: 32, height: 32)
+    let panel = PetStatusPanelPlacement.frame(
+        size: PetPanelController.panelSize,
+        below: statusItemFrame,
         in: visibleFrame
     )
 
-    #expect(expanded.maxX == initial.maxX)
-    #expect(expanded.minY == initial.minY)
-    #expect(collapsed == initial)
+    #expect(PetPanelController.statusItemLength == 32)
+    #expect(PetPanelController.panelSize == CGSize(width: 420, height: 346))
+    #expect(panel.size == CGSize(width: 420, height: 346))
+    #expect(panel.midX == statusItemFrame.midX)
+    #expect(panel.maxY == visibleFrame.maxY)
 
-    let moved = CGRect(x: 1_200, y: 200, width: 92, height: 92)
-    let movedExpanded = PetFrameClamp.resizedLowerTrailingFrame(
-        from: moved,
-        to: PetPanelController.expandedSize,
+    let rightEdgeStatusItem = CGRect(x: 1_900, y: 1_080, width: 32, height: 32)
+    let rightClamped = PetStatusPanelPlacement.frame(
+        size: PetPanelController.panelSize,
+        below: rightEdgeStatusItem,
         in: visibleFrame
     )
-    #expect(movedExpanded.maxX == moved.maxX)
-    #expect(movedExpanded.minY == moved.minY)
+    #expect(rightClamped.maxX == visibleFrame.maxX)
+    #expect(visibleFrame.contains(rightClamped))
+
+    let negativeVisibleFrame = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
+    let negativeStatusItem = CGRect(x: -1_100, y: 1_080, width: 32, height: 32)
+    let negativePanel = PetStatusPanelPlacement.frame(
+        size: PetPanelController.panelSize,
+        below: negativeStatusItem,
+        in: negativeVisibleFrame
+    )
+    #expect(negativePanel.midX == negativeStatusItem.midX)
+    #expect(negativeVisibleFrame.contains(negativePanel))
 }
 
-@Test("BlabeePet lower-trailing resizing supports negative and tiny displays")
-@MainActor
-func blabeePetLowerTrailingResizeDisplaySafety() {
-    let negativeVisibleFrame = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
-    let negativeInitial = PetFrameClamp.lowerTrailingFrame(
-        size: PetPanelController.collapsedSize,
-        in: negativeVisibleFrame
+@Test("BlabeePet loads the complete exact-exported Figma SVG catalog")
+func blabeePetFigmaAssetCatalog() throws {
+    let repositoryRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let catalog = PetAssetCatalog(
+        rootURL: repositoryRoot.appendingPathComponent("assets", isDirectory: true)
     )
-    let negativeExpanded = PetFrameClamp.resizedLowerTrailingFrame(
-        from: negativeInitial,
-        to: PetPanelController.expandedSize,
-        in: negativeVisibleFrame
-    )
-    let negativeCollapsed = PetFrameClamp.resizedLowerTrailingFrame(
-        from: negativeExpanded,
-        to: PetPanelController.collapsedSize,
-        in: negativeVisibleFrame
-    )
-    #expect(negativeExpanded.maxX == negativeInitial.maxX)
-    #expect(negativeExpanded.minY == negativeInitial.minY)
-    #expect(negativeCollapsed == negativeInitial)
 
-    let tinyVisibleFrame = CGRect(x: 2_560, y: 100, width: 300, height: 200)
-    let oversized = PetFrameClamp.resizedLowerTrailingFrame(
-        from: CGRect(x: 2_748, y: 120, width: 92, height: 92),
-        to: PetPanelController.expandedSize,
-        in: tinyVisibleFrame
-    )
-    #expect(oversized == tinyVisibleFrame)
-    #expect(tinyVisibleFrame.contains(oversized))
-
-    let restoredVisibleFrame = CGRect(x: 0, y: 24, width: 3_420, height: 1_396)
-    let restored = PetFrameClamp.resizedLowerTrailingFrame(
-        from: oversized,
-        to: PetPanelController.expandedSize,
-        in: restoredVisibleFrame
-    )
-    #expect(restored.size == PetPanelController.expandedSize)
-    #expect(restored.maxX == oversized.maxX)
-    #expect(restored.minY == oversized.minY)
-    #expect(restoredVisibleFrame.contains(restored))
+    try catalog.validate()
+    #expect(Set(PetAsset.allCases.map(\.rawValue)) == Set([
+        "figma-v14-action-1.svg",
+        "figma-v14-action-2.svg",
+        "figma-v14-action-3.svg",
+        "figma-v14-action-4.svg",
+        "figma-v14-action-5.svg",
+        "figma-v14-ambient-blue.svg",
+        "figma-v14-ambient-coral.svg",
+        "figma-v14-bee.svg",
+        "figma-v14-needs-input.svg",
+        "figma-v14-working.svg",
+    ]))
+    #expect(PetAsset.action(slot: 1) == .action1)
+    #expect(PetAsset.action(slot: 2) == .action2)
+    #expect(PetAsset.action(slot: 3) == .action3)
+    #expect(PetAsset.action(slot: 4) == .action4)
+    #expect(PetAsset.action(slot: 5) == .action5)
+    #expect(catalog.image(for: .action1)?.size == CGSize(width: 28, height: 28))
+    #expect(catalog.image(for: .bee)?.size.height == 24)
 }
 
 @Test("BlabeePet panel policy is accessory-safe and never requests activation")
@@ -127,7 +101,7 @@ func blabeePetNonactivatingPanelPolicy() {
     #expect(PetPanelPolicy.collectionBehavior.contains(.ignoresCycle))
     #expect(!PetPanelPolicy.collectionBehavior.contains(.transient))
     #expect(!PetPanelPolicy.collectionBehavior.contains(.moveToActiveSpace))
-    #expect(PetPanelPolicy.level == .floating)
+    #expect(PetPanelPolicy.level == .popUpMenu)
     #expect(PetPanelPolicy.hidesOnDeactivate == false)
     #expect(PetPanelPolicy.activatesApplication == false)
     #expect(PetPanelPolicy.canBecomeKey == false)

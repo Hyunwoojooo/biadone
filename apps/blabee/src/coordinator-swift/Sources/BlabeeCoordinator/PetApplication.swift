@@ -89,6 +89,8 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startProductionPet() throws {
+        let assets = try PetAssetCatalog()
+        try assets.validate()
         let transport = try PetUnixDomainSocketTransport(socketPath: arguments.socketPath)
         let opener = PetWorkspaceApplicationOpener()
         let onboardingAdapter: any PetOnboardingAdapting
@@ -115,7 +117,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             viewModel?.handleShortcut(intent)
         }
         viewModel.attachHotKeyRegistry(registry)
-        let panelController = PetPanelController(viewModel: viewModel)
+        let panelController = PetPanelController(viewModel: viewModel, assets: assets)
         self.viewModel = viewModel
         self.panelController = panelController
         panelController.showWithoutActivation()

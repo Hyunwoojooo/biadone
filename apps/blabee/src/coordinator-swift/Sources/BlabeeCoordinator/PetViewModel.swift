@@ -86,6 +86,7 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var shortcutConfiguration = PetShortcutConfiguration.defaults
     @Published private(set) var shortcutDraft = PetShortcutConfiguration.defaults
     @Published private(set) var isEditingShortcuts = false
+    @Published private(set) var isShowingDecisionDetails = false
     @Published private(set) var shortcutSettingsError: String?
     @Published private(set) var isShowingOnboarding = false
     @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
@@ -225,6 +226,7 @@ final class PetViewModel: ObservableObject {
 
     func beginShortcutSettings() {
         isShowingOnboarding = false
+        isShowingDecisionDetails = false
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
         isEditingShortcuts = true
@@ -247,6 +249,7 @@ final class PetViewModel: ObservableObject {
 
     func beginOnboarding() async {
         cancelShortcutSettings()
+        isShowingDecisionDetails = false
         isShowingOnboarding = true
         setExpanded(true)
         await refreshOnboarding()
@@ -456,6 +459,14 @@ final class PetViewModel: ObservableObject {
         setExpanded(!isExpanded)
     }
 
+    func toggleDecisionDetails() {
+        guard focusedInteraction != nil,
+              !isShowingOnboarding,
+              !isEditingShortcuts
+        else { return }
+        isShowingDecisionDetails.toggle()
+    }
+
     func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
         if !expanded, isEditingShortcuts {
@@ -463,6 +474,7 @@ final class PetViewModel: ObservableObject {
         }
         if !expanded {
             closeOnboarding()
+            isShowingDecisionDetails = false
         }
         isExpanded = expanded
         onExpansionChanged?(expanded)
@@ -508,6 +520,7 @@ final class PetViewModel: ObservableObject {
             selectionReturnApplication = currentHost
         }
         pendingFocusIdentity = identity
+        isShowingDecisionDetails = false
         riskConfirmation = nil
         updateHotKeyEligibility()
         lastError = nil
@@ -624,6 +637,10 @@ final class PetViewModel: ObservableObject {
     }
 
     private func apply(_ newSnapshot: PetSnapshot) {
+        let previousIdentities = Set(snapshot?.interactions.map(\.identity) ?? [])
+        let shouldAutoExpand = newSnapshot.interactions.contains { interaction in
+            interaction.isSelectionReady && !previousIdentities.contains(interaction.identity)
+        }
         let priorPermissionCount = permissionNoticeCount
         let priorLocalForeground = localForegroundIdentity
         snapshot = newSnapshot
@@ -676,6 +693,10 @@ final class PetViewModel: ObservableObject {
             lastTerminalPresentation = .expired
         }
         updateHotKeyEligibility()
+        if shouldAutoExpand {
+            isShowingDecisionDetails = false
+            setExpanded(true)
+        }
     }
 
     private func authoritativeSelectionInteraction() -> PetInteraction? {
@@ -709,8 +730,10 @@ final class PetViewModel: ObservableObject {
             localForegroundIdentity = nil
             pendingFocusIdentity = nil
             riskConfirmation = nil
+            isShowingDecisionDetails = false
             lastTerminalPresentation = outcome == "pause" ? .paused : nil
             updateHotKeyEligibility()
+            setExpanded(false)
             if let selectionReturnApplication {
                 _ = externalApplicationOpener.open(selectionReturnApplication)
             }

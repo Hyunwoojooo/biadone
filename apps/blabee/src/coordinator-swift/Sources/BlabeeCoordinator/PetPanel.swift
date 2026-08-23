@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct PetPanelPolicy {
@@ -8,14 +9,19 @@ struct PetPanelPolicy {
         .fullScreenAuxiliary,
         .ignoresCycle,
     ]
-    static let level: NSWindow.Level = .floating
+    static let level: NSWindow.Level = .popUpMenu
     static let hidesOnDeactivate = false
     static let activatesApplication = false
     static let canBecomeKey = false
     static let canBecomeMain = false
 }
 
-enum PetFrameClamp {
+enum PetStatusItemMetrics {
+    static let statusItemLength: CGFloat = 32
+    static let panelSize = CGSize(width: 420, height: 346)
+}
+
+enum PetStatusPanelPlacement {
     static func clamp(_ frame: CGRect, to visibleFrame: CGRect) -> CGRect {
         guard visibleFrame.width > 0, visibleFrame.height > 0 else { return frame }
         let width = min(max(frame.width, 1), visibleFrame.width)
@@ -30,66 +36,20 @@ enum PetFrameClamp {
         )
     }
 
-    static func lowerTrailingFrame(
+    static func frame(
         size: CGSize,
-        in visibleFrame: CGRect,
-        margin: CGFloat = 20
-    ) -> CGRect {
-        clamp(
-            CGRect(
-                x: visibleFrame.maxX - size.width - margin,
-                y: visibleFrame.minY + margin,
-                width: size.width,
-                height: size.height
-            ),
-            to: visibleFrame
-        )
-    }
-
-    static func resizedLowerTrailingFrame(
-        from currentFrame: CGRect,
-        to size: CGSize,
+        below statusItemFrame: CGRect,
         in visibleFrame: CGRect
     ) -> CGRect {
         clamp(
             CGRect(
-                x: currentFrame.maxX - size.width,
-                y: currentFrame.minY,
+                x: statusItemFrame.midX - (size.width / 2),
+                y: statusItemFrame.minY - size.height,
                 width: size.width,
                 height: size.height
             ),
             to: visibleFrame
         )
-    }
-}
-
-struct PetDisplayGeometry: Sendable, Equatable {
-    let id: Int
-    let frame: CGRect
-    let visibleFrame: CGRect
-}
-
-enum PetDisplaySelection {
-    static func preferred(
-        displays: [PetDisplayGeometry],
-        mouseLocation: CGPoint,
-        activeDisplayID: Int?,
-        stableDisplayID: Int?
-    ) -> PetDisplayGeometry? {
-        if let stableDisplayID,
-           let stable = displays.first(where: { $0.id == stableDisplayID })
-        {
-            return stable
-        }
-        if let underMouse = displays.first(where: { $0.frame.contains(mouseLocation) }) {
-            return underMouse
-        }
-        if let activeDisplayID,
-           let active = displays.first(where: { $0.id == activeDisplayID })
-        {
-            return active
-        }
-        return displays.first
     }
 }
 
@@ -98,32 +58,57 @@ final class PetNonactivatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+final class PetPassThroughHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 @MainActor
 final class PetPanelController: NSObject, NSWindowDelegate {
-    static let collapsedSize = CGSize(width: 92, height: 92)
-    static let expandedSize = CGSize(width: 440, height: 620)
+    static let panelSize = PetStatusItemMetrics.panelSize
+    static let statusItemLength = PetStatusItemMetrics.statusItemLength
 
     let panel: PetNonactivatingPanel
-    private let viewModel: PetViewModel
-    private var screenObserver: NSObjectProtocol?
-    private var lastScreenID: Int?
+    let statusItem: NSStatusItem
 
-    init(viewModel: PetViewModel) {
+    private let viewModel: PetViewModel
+    private let statusBar: NSStatusBar
+    private var screenObserver: NSObjectProtocol?
+    private var statusHostingView: NSView?
+    private var cancellables: Set<AnyCancellable> = []
+
+    init(
+        viewModel: PetViewModel,
+        assets: PetAssetCatalog,
+        statusBar: NSStatusBar = .system
+    ) {
         self.viewModel = viewModel
+        self.statusBar = statusBar
+        statusItem = statusBar.statusItem(withLength: Self.statusItemLength)
         panel = PetNonactivatingPanel(
-            contentRect: CGRect(origin: .zero, size: Self.collapsedSize),
+            contentRect: CGRect(origin: .zero, size: Self.panelSize),
             styleMask: PetPanelPolicy.styleMask,
             backing: .buffered,
             defer: false
         )
         super.init()
-        configurePanel()
+        configureStatusItem(assets: assets)
+        configurePanel(assets: assets)
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: PetRootView(viewModel: viewModel))
-        placeInitially()
+
         viewModel.onExpansionChanged = { [weak self] expanded in
-            self?.resize(expanded: expanded)
+            guard let self else { return }
+            if expanded {
+                self.showPanel(animated: true)
+            } else {
+                self.hidePanel()
+            }
         }
+        viewModel.objectWillChange
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.refreshStatusItemAccessibility() }
+            }
+            .store(in: &cancellables)
+
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -134,92 +119,143 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     func showWithoutActivation() {
-        panel.orderFrontRegardless()
+        refreshStatusItemAccessibility()
+        if viewModel.isExpanded {
+            showPanel(animated: false)
+        } else {
+            panel.orderOut(nil)
+        }
     }
 
     func stopObservingScreenChanges() {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        cancellables.removeAll()
+        statusBar.removeStatusItem(statusItem)
+        panel.orderOut(nil)
     }
 
-    func windowDidMove(_ notification: Notification) {
-        if let screen = panel.screen {
-            lastScreenID = Self.screenID(screen)
-        }
+    @objc private func togglePanel() {
+        viewModel.toggleExpanded()
     }
 
-    private func configurePanel() {
+    private func configureStatusItem(assets: PetAssetCatalog) {
+        guard let button = statusItem.button else { return }
+        button.image = nil
+        button.title = ""
+        button.target = self
+        button.action = #selector(togglePanel)
+        button.sendAction(on: [.leftMouseUp])
+        button.setAccessibilityRole(.button)
+
+        let hostingView = PetPassThroughHostingView(
+            rootView: PetStatusItemView(viewModel: viewModel, assets: assets)
+                .allowsHitTesting(false)
+        )
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.wantsLayer = true
+        button.addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            hostingView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            hostingView.widthAnchor.constraint(equalToConstant: Self.statusItemLength),
+            hostingView.heightAnchor.constraint(equalToConstant: Self.statusItemLength),
+        ])
+        statusHostingView = hostingView
+    }
+
+    private func configurePanel(assets: PetAssetCatalog) {
         panel.level = PetPanelPolicy.level
         panel.collectionBehavior = PetPanelPolicy.collectionBehavior
         panel.hidesOnDeactivate = PetPanelPolicy.hidesOnDeactivate
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false
         panel.isReleasedWhenClosed = false
         panel.hasShadow = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.animationBehavior = .utilityWindow
-    }
-
-    private func placeInitially() {
-        guard let display = preferredDisplay(stable: false) else { return }
-        lastScreenID = display.id
-        panel.setFrame(
-            PetFrameClamp.lowerTrailingFrame(size: Self.collapsedSize, in: display.visibleFrame),
-            display: false
+        panel.animationBehavior = .none
+        panel.contentView = NSHostingView(
+            rootView: PetRootView(viewModel: viewModel, assets: assets)
         )
     }
 
-    private func resize(expanded: Bool) {
-        guard let display = preferredDisplay(stable: true) else { return }
-        lastScreenID = display.id
-        let size = expanded ? Self.expandedSize : Self.collapsedSize
-        panel.setFrame(
-            PetFrameClamp.resizedLowerTrailingFrame(
-                from: panel.frame,
-                to: size,
-                in: display.visibleFrame
-            ),
-            display: true
+    private func showPanel(animated: Bool) {
+        guard let placement = currentPlacement() else {
+            DispatchQueue.main.async { [weak self] in
+                guard self?.viewModel.isExpanded == true else { return }
+                self?.showPanel(animated: animated)
+            }
+            return
+        }
+
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = animated && !reduceMotion
+        if shouldAnimate {
+            var startFrame = placement
+            startFrame.origin.y += 8
+            panel.setFrame(startFrame, display: false)
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            pulseStatusItem()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(placement, display: true)
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            panel.setFrame(placement, display: true)
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+        }
+    }
+
+    private func hidePanel() {
+        panel.orderOut(nil)
+        panel.alphaValue = 1
+    }
+
+    private func currentPlacement() -> CGRect? {
+        guard let button = statusItem.button,
+              let window = button.window,
+              let screen = window.screen
+        else { return nil }
+        let frameInWindow = button.convert(button.bounds, to: nil)
+        let frameOnScreen = window.convertToScreen(frameInWindow)
+        return PetStatusPanelPlacement.frame(
+            size: Self.panelSize,
+            below: frameOnScreen,
+            in: screen.visibleFrame
         )
-        panel.orderFrontRegardless()
     }
 
     private func screenParametersChanged() {
-        guard let display = preferredDisplay(stable: true) else { return }
-        lastScreenID = display.id
-        let intendedSize = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
-        panel.setFrame(
-            PetFrameClamp.resizedLowerTrailingFrame(
-                from: panel.frame,
-                to: intendedSize,
-                in: display.visibleFrame
-            ),
-            display: true
-        )
+        guard viewModel.isExpanded, let placement = currentPlacement() else { return }
+        panel.setFrame(placement, display: true)
         panel.orderFrontRegardless()
     }
 
-    private func preferredDisplay(stable: Bool) -> PetDisplayGeometry? {
-        let screens = NSScreen.screens
-        let displays = screens.compactMap(Self.geometry)
-        let activeID = NSScreen.main.flatMap(Self.screenID)
-        return PetDisplaySelection.preferred(
-            displays: displays,
-            mouseLocation: NSEvent.mouseLocation,
-            activeDisplayID: activeID,
-            stableDisplayID: stable ? lastScreenID : nil
-        )
+    private func pulseStatusItem() {
+        guard let layer = statusHostingView?.layer else { return }
+        let animation = CAKeyframeAnimation(keyPath: "transform.scale")
+        animation.values = [1.0, 1.06, 1.0]
+        animation.keyTimes = [0, 0.55, 1]
+        animation.duration = 0.28
+        animation.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeOut),
+        ]
+        layer.add(animation, forKey: "blabee-status-pulse")
     }
 
-    private static func geometry(_ screen: NSScreen) -> PetDisplayGeometry? {
-        guard let id = screenID(screen) else { return nil }
-        return PetDisplayGeometry(id: id, frame: screen.frame, visibleFrame: screen.visibleFrame)
+    private func refreshStatusItemAccessibility() {
+        guard let button = statusItem.button else { return }
+        let state = viewModel.presentationState.displayTitle
+        let pendingCount = viewModel.snapshotInteractions.count
+        button.setAccessibilityLabel("Blabee")
+        button.setAccessibilityValue("\(state), 대기 카드 \(pendingCount)개")
+        button.toolTip = "Blabee · \(state)"
     }
-
-    private static func screenID(_ screen: NSScreen) -> Int? {
-        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue
-    }
-
 }

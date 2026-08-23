@@ -24,6 +24,7 @@ import { assembleMacOSApp } from "../../scripts/build-macos-app.mjs";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const execFile = promisify(execFileCallback);
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
+const figmaAssetDirectoryName = "blabee-dark-menu-bar";
 const canonicalLaunchAgent = join(
   repositoryRoot,
   "Packaging",
@@ -92,6 +93,16 @@ async function copyCanonicalLaunchAgent(sourceRoot) {
   await copyFile(canonicalLaunchAgent, join(directory, launchAgentFileName));
 }
 
+async function copyCanonicalAssets(sourceRoot) {
+  const source = join(repositoryRoot, "assets");
+  const destination = join(sourceRoot, "assets");
+  await mkdir(destination, { recursive: true });
+  const names = (await readdir(source)).sort(compareNames);
+  for (const name of names) {
+    await copyFile(join(source, name), join(destination, name));
+  }
+}
+
 test("assembler creates the required Blabee.app payload and deterministic manifest", async (t) => {
   const fixture = await makeWorkspace(t);
   const result = await assembleMacOSApp({
@@ -122,7 +133,21 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     "scripts",
     "blabee-launcher",
   );
-  for (const path of [executable, infoPlist, launchAgent, contract, plugin, launcher]) {
+  const beeAsset = join(
+    contents,
+    "Resources",
+    figmaAssetDirectoryName,
+    "figma-v14-bee.svg",
+  );
+  for (const path of [
+    executable,
+    infoPlist,
+    launchAgent,
+    contract,
+    plugin,
+    launcher,
+    beeAsset,
+  ]) {
     assert.equal((await lstat(path)).isFile(), true, path);
     assert.equal((await lstat(path)).isSymbolicLink(), false, path);
   }
@@ -135,6 +160,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(await mode(contract), 0o644);
   assert.equal(await mode(plugin), 0o644);
   assert.equal(await mode(launcher), 0o755);
+  assert.equal(await mode(beeAsset), 0o644);
 
   const { stdout: plistJSON } = await execFile(
     "/usr/bin/plutil",
@@ -194,6 +220,21 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   const sourcePlugin = join(repositoryRoot, "Plugin", "blabee");
   const bundledPlugin = join(contents, "Resources", "Plugin", "blabee");
   const pluginFiles = await assertTreeParity(sourcePlugin, bundledPlugin);
+  const sourceFigmaAssets = join(repositoryRoot, "assets");
+  const bundledFigmaAssets = join(contents, "Resources", figmaAssetDirectoryName);
+  const figmaAssetFiles = await assertTreeParity(sourceFigmaAssets, bundledFigmaAssets);
+  assert.deepEqual(figmaAssetFiles, [
+    "figma-v14-action-1.svg",
+    "figma-v14-action-2.svg",
+    "figma-v14-action-3.svg",
+    "figma-v14-action-4.svg",
+    "figma-v14-action-5.svg",
+    "figma-v14-ambient-blue.svg",
+    "figma-v14-ambient-coral.svg",
+    "figma-v14-bee.svg",
+    "figma-v14-needs-input.svg",
+    "figma-v14-working.svg",
+  ]);
   const allBundleFiles = await regularFiles(fixture.output);
   const expectedBundleFiles = [
     "Contents/Info.plist",
@@ -202,6 +243,9 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     "Contents/Resources/assembly-manifest.json",
     ...contractFiles.map((path) => `Contents/Resources/Contracts/v1/${path}`),
     ...pluginFiles.map((path) => `Contents/Resources/Plugin/blabee/${path}`),
+    ...figmaAssetFiles.map(
+      (path) => `Contents/Resources/${figmaAssetDirectoryName}/${path}`,
+    ),
   ].sort(compareNames);
   assert.deepEqual(allBundleFiles, expectedBundleFiles);
 
@@ -265,6 +309,7 @@ test("assembler rejects Info.plist value type drift and cleans staging", async (
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
   await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
   await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalAssets(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     "utf8",
@@ -299,6 +344,7 @@ test("assembler cleanup opt-out preserves its exact partial staging tree", async
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
   await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
   await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalAssets(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     "utf8",
@@ -345,6 +391,7 @@ test("assembler rejects LaunchAgent key, type, and service argv drift", async (t
     join(infoDirectory, "Info.plist"),
   );
   await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalAssets(sourceRoot);
   const fixtureLaunchAgent = join(
     sourceRoot,
     "Packaging",
@@ -459,6 +506,7 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
   await mkdir(contracts, { recursive: true });
   await mkdir(plugin, { recursive: true });
   await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalAssets(sourceRoot);
   await copyFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),
@@ -483,7 +531,7 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
   assert.deepEqual(leftovers, []);
 });
 
-test("an ad-hoc signed app rejects a mutated bundled LaunchAgent", {
+test("an ad-hoc signed app seals the exact bundled Figma SVG resources", {
   skip: process.platform !== "darwin" ? "codesign is available only on macOS" : false,
 }, async (t) => {
   const fixture = await makeWorkspace(t);
@@ -496,15 +544,15 @@ test("an ad-hoc signed app rejects a mutated bundled LaunchAgent", {
     "/usr/bin/codesign",
     ["--verify", "--deep", "--strict", "--verbose=2", fixture.output],
   );
-  const launchAgent = join(
+  const beeAsset = join(
     fixture.output,
     "Contents",
-    "Library",
-    "LaunchAgents",
-    launchAgentFileName,
+    "Resources",
+    figmaAssetDirectoryName,
+    "figma-v14-bee.svg",
   );
-  const original = await readFile(launchAgent, "utf8");
-  await writeFile(launchAgent, original.replace("\t<true\/>\n<\/dict>", "\t<false/>\n<\/dict>"));
+  const original = await readFile(beeAsset, "utf8");
+  await writeFile(beeAsset, original.replace("#F4F7FC", "#FFFFFF"));
   await assert.rejects(execFile(
     "/usr/bin/codesign",
     ["--verify", "--deep", "--strict", "--verbose=2", fixture.output],
