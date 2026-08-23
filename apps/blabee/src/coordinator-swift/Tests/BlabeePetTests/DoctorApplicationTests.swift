@@ -72,6 +72,9 @@ private final class DoctorFixture {
     let embeddedCoordinator: URL
     let codex: URL
     let plugin: URL
+    var runtimeCoordinatorPath: URL {
+        plugin.appendingPathComponent("runtime/coordinator-path")
+    }
     let processes = DoctorFakeProcesses()
 
     init() throws {
@@ -170,12 +173,22 @@ private final class DoctorFixture {
             plugin.appendingPathComponent("scripts/blabee-launcher"),
             data: DoctorApplication.bundledLauncherData
         )
+        try writeRuntimeCoordinatorPath(embeddedCoordinator.path)
+    }
+
+    func writeRuntimeCoordinatorPath(_ path: String) throws {
+        try FileManager.default.createDirectory(
+            at: runtimeCoordinatorPath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("\(path)\n".utf8).write(to: runtimeCoordinatorPath)
     }
 
     func writeMCP(includeEnvironment: Bool) throws {
         var server: [String: Any] = [
-            "command": "blabee-coordinator",
+            "command": "./scripts/blabee-launcher",
             "args": ["mcp"],
+            "cwd": ".",
         ]
         if includeEnvironment { server["env_vars"] = ["BLABEE_SOCKET"] }
         try writeJSON([
@@ -185,7 +198,7 @@ private final class DoctorFixture {
 
     func writeHooks(
         userPromptCommand: String = "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook UserPromptSubmit",
-        stopTimeout: Int = 130
+        stopTimeout: Int = 8
     ) throws {
         try writeJSON([
             "description": "Blabee test hooks",
@@ -214,7 +227,7 @@ private final class DoctorFixture {
                         "type": "command",
                         "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook Stop",
                         "timeout": stopTimeout,
-                        "statusMessage": "Blabee에서 다음 결정 대기 중",
+                        "statusMessage": "Blabee 결정 저장 중",
                     ]],
                 ]],
                 "PermissionRequest": [[
@@ -443,7 +456,7 @@ func doctorPluginExactContractRejectsDrift() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 
     let changedTimeout = try DoctorFixture()
-    try changedTimeout.writeHooks(stopTimeout: 129)
+    try changedTimeout.writeHooks(stopTimeout: 7)
     execution = DoctorApplication(dependencies: changedTimeout.dependencies())
         .run(arguments: try changedTimeout.arguments())
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
@@ -566,7 +579,7 @@ func doctorAppBundleExecutableContract() throws {
     #expect(try doctorCheck(execution, id: "app_bundle").code == "app_bundle_invalid")
 }
 
-@Test("Doctor MCP runtime must resolve to the embedded coordinator identity")
+@Test("Doctor MCP runtime validates the plugin locator without requiring a PATH shim")
 func doctorMCPRuntimeIdentity() throws {
     let fixture = try DoctorFixture()
     var execution = DoctorApplication(dependencies: fixture.dependencies())
@@ -576,17 +589,47 @@ func doctorMCPRuntimeIdentity() throws {
     execution = DoctorApplication(dependencies: fixture.dependencies(
         path: fixture.root.appendingPathComponent("missing-path").path
     )).run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "mcp_runtime").code == "mcp_runtime_missing")
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code == "mcp_runtime_ok")
 
-    let mismatched = fixture.root.appendingPathComponent("blabee-coordinator")
+    let missing = try DoctorFixture()
+    try FileManager.default.removeItem(at: missing.runtimeCoordinatorPath)
+    execution = DoctorApplication(dependencies: missing.dependencies())
+        .run(arguments: try missing.arguments())
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code
+        == "mcp_runtime_locator_missing")
+
+    let mismatchedFixture = try DoctorFixture()
+    let mismatched = mismatchedFixture.root.appendingPathComponent("blabee-coordinator")
     try Data("mismatched\n".utf8).write(to: mismatched)
     guard chmod(mismatched.path, mode_t(0o700)) == 0 else {
         throw CoordinatorError("test_chmod_failed")
     }
-    execution = DoctorApplication(dependencies: fixture.dependencies(path: fixture.root.path))
-        .run(arguments: try fixture.arguments())
+    try mismatchedFixture.writeRuntimeCoordinatorPath(mismatched.path)
+    execution = DoctorApplication(dependencies: mismatchedFixture.dependencies())
+        .run(arguments: try mismatchedFixture.arguments())
     #expect(try doctorCheck(execution, id: "mcp_runtime").code
         == "mcp_runtime_identity_mismatch")
+
+    let malformed = try DoctorFixture()
+    try Data("\(malformed.embeddedCoordinator.path)\n/second/path\n".utf8)
+        .write(to: malformed.runtimeCoordinatorPath)
+    execution = DoctorApplication(dependencies: malformed.dependencies())
+        .run(arguments: try malformed.arguments())
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code
+        == "mcp_runtime_locator_invalid")
+
+    let linked = try DoctorFixture()
+    let locatorTarget = linked.root.appendingPathComponent("linked-coordinator-path")
+    try Data("\(linked.embeddedCoordinator.path)\n".utf8).write(to: locatorTarget)
+    try FileManager.default.removeItem(at: linked.runtimeCoordinatorPath)
+    try FileManager.default.createSymbolicLink(
+        at: linked.runtimeCoordinatorPath,
+        withDestinationURL: locatorTarget
+    )
+    execution = DoctorApplication(dependencies: linked.dependencies())
+        .run(arguments: try linked.arguments())
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code
+        == "mcp_runtime_locator_invalid")
 }
 
 @Test("Doctor distinguishes exact descendant other and unavailable daemon project scopes")

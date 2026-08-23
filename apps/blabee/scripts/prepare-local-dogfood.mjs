@@ -525,6 +525,14 @@ export async function prepareLocalDogfood({
     join(outputRoot, bundledPluginRelativePath),
     marketplacePlugin,
   );
+  const marketplaceRuntimeDirectory = join(marketplacePlugin, "runtime");
+  await mkdir(marketplaceRuntimeDirectory, { mode: 0o700 });
+  await chmod(marketplaceRuntimeDirectory, 0o700);
+  await writeNewFile(
+    join(marketplaceRuntimeDirectory, "coordinator-path"),
+    `${join(outputRoot, coordinatorRelativePath)}\n`,
+    0o600,
+  );
 
   const marketplaceIdentity = makeMarketplaceIdentity(outputRoot);
   const marketplaceManifest = {

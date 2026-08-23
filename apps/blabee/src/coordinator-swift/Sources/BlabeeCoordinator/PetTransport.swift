@@ -9,16 +9,19 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
     private let client: UnixDomainSocketClient
     private let connectTimeoutMilliseconds: Int32
     private let responseTimeoutMilliseconds: Int32
+    private let selectionResponseTimeoutMilliseconds: Int32
 
     init(
         socketPath: String,
         connectTimeoutMilliseconds: Int32 = 2_000,
-        responseTimeoutMilliseconds: Int32 = 2_000
+        responseTimeoutMilliseconds: Int32 = 2_000,
+        selectionResponseTimeoutMilliseconds: Int32 = 12_000
     ) throws {
         let resolvedSocketPath = try OperationalSocketPath.resolve(explicitPath: socketPath)
         client = try UnixDomainSocketClient(socketPath: resolvedSocketPath)
         self.connectTimeoutMilliseconds = connectTimeoutMilliseconds
         self.responseTimeoutMilliseconds = responseTimeoutMilliseconds
+        self.selectionResponseTimeoutMilliseconds = selectionResponseTimeoutMilliseconds
     }
 
     func request(type: String, payload: Data) async throws -> Data {
@@ -30,7 +33,9 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
             type: type,
             payload: payloadObject,
             connectTimeoutMilliseconds: connectTimeoutMilliseconds,
-            responseTimeoutMilliseconds: responseTimeoutMilliseconds
+            responseTimeoutMilliseconds: type == "select"
+                ? selectionResponseTimeoutMilliseconds
+                : responseTimeoutMilliseconds
         )
         return try StrictJSONTransport.data(forJSONObject: result)
     }
@@ -59,10 +64,14 @@ enum PetTransportResponse {
             guard Set(outcome.keys) == ["kind"] else {
                 throw PetModelError.invalid("selection_response.outcome")
             }
-        case "continuation":
-            guard Set(outcome.keys) == ["kind", "continuation_id"],
+        case "next_turn":
+            guard Set(outcome.keys) == [
+                "kind", "continuation_id", "queued_submission_id",
+            ],
                   let continuationID = outcome["continuation_id"] as? String,
-                  !continuationID.isEmpty
+                  !continuationID.isEmpty,
+                  let queuedSubmissionID = outcome["queued_submission_id"] as? String,
+                  !queuedSubmissionID.isEmpty
             else { throw PetModelError.invalid("selection_response.outcome") }
         default:
             throw PetModelError.invalid("selection_response.outcome.kind")

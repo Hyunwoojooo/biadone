@@ -167,7 +167,7 @@ const EXPECTED_AJV_ERROR_PREDICATES = Object.freeze({
     hasAjvError(errors, "/choices/0/kind", "const", "allowedValue", "recommended_action")
   ),
   dispatch_mode_mismatch: (errors) => (
-    hasAjvError(errors, "/dispatch_mode", "const", "allowedValue", "same_turn_stop")
+    hasAjvError(errors, "/dispatch_mode", "const", "allowedValue", "queued_next_turn")
   ),
   continuation_mode_fields_forbidden: (errors) => (
     ["packet_id", "option_id", "action_id", "action"].every((field) => (

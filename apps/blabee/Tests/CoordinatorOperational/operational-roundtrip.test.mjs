@@ -141,7 +141,11 @@ async function startOperationalServer() {
         });
         child.kill("SIGTERM");
       });
-      assert.deepEqual(termination, { code: 0, signal: null });
+      assert.deepEqual(
+        termination,
+        { code: 0, signal: null },
+        Buffer.concat(stderr).toString("utf8"),
+      );
       assert.equal(Buffer.concat(stderr).toString("utf8"), "");
       await assert.rejects(
         stat(socketPath),
@@ -361,7 +365,7 @@ async function readStorageArtifacts(databasePath) {
   return Buffer.concat(values);
 }
 
-test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and completes two boundaries without leakage", async () => {
+test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next turns without leakage", async () => {
   const server = await startOperationalServer();
   const productBuild = await buildProductCoordinator();
   const productBinary = await readFile(productBuild.binaryPath);
@@ -370,35 +374,18 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
     false,
     "the integration server mode must be compiled out of the product binary",
   );
-  const adapters = new Set();
   let stopped = false;
   try {
-    const sessionStart = await runBuiltBinary(
-      productBuild,
-      ["hook", "SessionStart", "--socket", server.socketPath],
-      {
-        input: JSON.stringify(hookPayload("SessionStart", {
-          cwd: server.enabledProjectPath,
-          source: "startup",
-        })),
-      },
-    );
-    assert.deepEqual(
-      { code: sessionStart.code, signal: sessionStart.signal, stderr: sessionStart.stderr },
-      { code: 0, signal: null, stderr: "" },
-    );
-    const sessionOutput = JSON.parse(sessionStart.stdout);
-    assert.equal(sessionOutput.hookSpecificOutput.hookEventName, "SessionStart");
-
+    const userPromptPayload = hookPayload("UserPromptSubmit", {
+      cwd: server.enabledProjectPath,
+      turn_id: "turn_operational_roundtrip",
+      prompt: "Run the real operational roundtrip",
+    });
     const userPrompt = await runBuiltBinary(
       productBuild,
       ["hook", "UserPromptSubmit", "--socket", server.socketPath],
       {
-        input: JSON.stringify(hookPayload("UserPromptSubmit", {
-          cwd: server.enabledProjectPath,
-          turn_id: "turn_operational_roundtrip",
-          prompt: "Run the real operational roundtrip",
-        })),
+        input: JSON.stringify(userPromptPayload),
       },
     );
     assert.deepEqual(
@@ -414,9 +401,41 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
       "source_turn_id",
       "source_prompt_id",
       "episode_id",
+      "episode_root_prompt_id",
+      "episode_baseline_checkpoint_id",
       "correlation_token",
     ].map((key) => [key, contextValue(designatedContext, key)]));
     assert.equal(userPrompt.stdout.split(ids.correlation_token).length - 1, 1);
+
+    const sessionStart = await runBuiltBinary(
+      productBuild,
+      ["hook", "SessionStart", "--socket", server.socketPath],
+      {
+        input: JSON.stringify(hookPayload("SessionStart", {
+          cwd: server.enabledProjectPath,
+          source: "resume",
+        })),
+      },
+    );
+    assert.deepEqual(
+      { code: sessionStart.code, signal: sessionStart.signal, stderr: sessionStart.stderr },
+      { code: 0, signal: null, stderr: "" },
+    );
+    const sessionOutput = JSON.parse(sessionStart.stdout);
+    assert.equal(sessionOutput.hookSpecificOutput.hookEventName, "SessionStart");
+
+    const resumedPrompt = await udsRequest(
+      server.socketPath,
+      "user_prompt_submit",
+      userPromptPayload,
+    );
+    assert.equal(resumedPrompt.ok, true);
+    assert.equal(resumedPrompt.result.enabled, true);
+    for (const key of [
+      "project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
+    ]) {
+      assert.equal(resumedPrompt.result.identifiers[key], ids[key], key);
+    }
 
     const assistantPrivateMarker = "fictional-private-finalization-marker";
     const fallbackInput = JSON.stringify(hookPayload("Stop", {
@@ -434,9 +453,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
       { code: fallbackStop.code, signal: fallbackStop.signal, stderr: fallbackStop.stderr },
       { code: 0, signal: null, stderr: "" },
     );
-    const fallbackOutput = JSON.parse(fallbackStop.stdout);
-    assert.equal(fallbackOutput.decision, "block");
-    assert.match(fallbackOutput.reason, /finalization self-check/);
+    assert.equal(fallbackStop.stdout, "");
     assert.equal(fallbackStop.stdout.includes(assistantPrivateMarker), false);
     assert.equal(fallbackStop.stdout.includes(ids.correlation_token), false);
 
@@ -456,21 +473,26 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
     assert.equal(firstMCP.response.staged, false);
     assert.equal(firstMCP.response.packet.boundary_sequence, 1);
 
-    const firstStop = spawnBuiltBinary(
+    const firstStop = await runBuiltBinary(
       productBuild,
       ["hook", "Stop", "--socket", server.socketPath],
       {
         input: JSON.stringify(hookPayload("Stop", {
           cwd: server.enabledProjectPath,
           turn_id: ids.source_turn_id,
-          stop_hook_active: true,
+          stop_hook_active: false,
           last_assistant_message: "finalization self-check emitted boundary one",
         })),
       },
     );
-    adapters.add(firstStop);
+    assert.deepEqual(firstStop, {
+      code: 0,
+      signal: null,
+      stderr: "",
+      stdout: "",
+    });
+    // The Stop adapter has already exited before the user focuses or selects the Pet card.
     const firstWaiting = await waitForInteraction(server.socketPath, 1);
-    assert.equal(firstStop.child.exitCode, null);
     const firstFocus = await udsRequest(
       server.socketPath,
       "focus_interaction",
@@ -484,48 +506,99 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
     );
     assert.equal(firstSelection.ok, true);
     assert.equal(firstSelection.result.accepted, true);
-    assert.equal(firstSelection.result.outcome.kind, "continuation");
-    const firstBlock = await firstStop.completion;
-    adapters.delete(firstStop);
+    assert.equal(firstSelection.result.outcome.kind, "next_turn");
+    assert.equal(
+      firstSelection.result.outcome.queued_submission_id,
+      `queued_${firstSelection.result.outcome.continuation_id}`,
+    );
+    const afterFirstSelection = await udsRequest(server.socketPath, "get_state");
+    assert.equal(afterFirstSelection.ok, true);
+    assert.deepEqual(afterFirstSelection.result.interactions, []);
+    assert.deepEqual(afterFirstSelection.result.routing.pending, []);
+    assert.equal(afterFirstSelection.result.routing.in_flight_count, 0);
+
+    const secondUserPromptPayload = hookPayload("UserPromptSubmit", {
+      cwd: server.enabledProjectPath,
+      turn_id: "turn_operational_roundtrip_queued_two",
+      prompt: "Execute the first queued Blabee action",
+    });
+    const secondUserPrompt = await runBuiltBinary(
+      productBuild,
+      ["hook", "UserPromptSubmit", "--socket", server.socketPath],
+      { input: JSON.stringify(secondUserPromptPayload) },
+    );
     assert.deepEqual(
-      { code: firstBlock.code, signal: firstBlock.signal, stderr: firstBlock.stderr },
+      {
+        code: secondUserPrompt.code,
+        signal: secondUserPrompt.signal,
+        stderr: secondUserPrompt.stderr,
+      },
       { code: 0, signal: null, stderr: "" },
     );
-    assert.equal(JSON.parse(firstBlock.stdout).decision, "block");
+    const secondUserPromptOutput = JSON.parse(secondUserPrompt.stdout);
+    assert.equal(
+      secondUserPromptOutput.hookSpecificOutput.hookEventName,
+      "UserPromptSubmit",
+    );
+    const secondDesignatedContext = secondUserPromptOutput.hookSpecificOutput.additionalContext;
+    const secondIds = Object.fromEntries([
+      "project_id",
+      "session_id",
+      "source_turn_id",
+      "source_prompt_id",
+      "episode_id",
+      "episode_root_prompt_id",
+      "episode_baseline_checkpoint_id",
+      "correlation_token",
+    ].map((key) => [key, contextValue(secondDesignatedContext, key)]));
+    assert.equal(secondIds.project_id, ids.project_id);
+    assert.equal(secondIds.session_id, ids.session_id);
+    for (const key of [
+      "source_turn_id",
+      "source_prompt_id",
+      "episode_id",
+      "episode_root_prompt_id",
+      "episode_baseline_checkpoint_id",
+      "correlation_token",
+    ]) {
+      assert.notEqual(secondIds[key], ids[key], key);
+    }
+    assert.equal(
+      secondUserPrompt.stdout.split(secondIds.correlation_token).length - 1,
+      1,
+    );
 
     const secondMCP = await emitDecision(
       productBuild,
       server.socketPath,
-      proposalWrapper(ids, proposal(ids, "two")),
+      proposalWrapper(secondIds, proposal(secondIds, "two")),
     );
-    assert.deepEqual(secondMCP.response, {
-      accepted: true,
-      boundary_sequence: 2,
-      proposal_id: "proposal_operational_two",
-      staged: true,
-    });
+    assert.equal(secondMCP.response.accepted, true);
+    assert.equal(secondMCP.response.staged, false);
+    assert.equal(secondMCP.response.packet.boundary_sequence, 1);
 
-    const secondStop = spawnBuiltBinary(
+    const secondStop = await runBuiltBinary(
       productBuild,
       ["hook", "Stop", "--socket", server.socketPath],
       {
         input: JSON.stringify(hookPayload("Stop", {
           cwd: server.enabledProjectPath,
-          turn_id: ids.source_turn_id,
-          stop_hook_active: true,
-          last_assistant_message: "boundary one continuation returned",
+          turn_id: secondIds.source_turn_id,
+          stop_hook_active: false,
+          last_assistant_message: "queued next turn emitted boundary two",
         })),
       },
     );
-    adapters.add(secondStop);
-    const secondWaiting = await waitForInteraction(server.socketPath, 2);
-    assert.equal(secondStop.child.exitCode, null);
-    assert.equal(
-      secondWaiting.response.result.interactions.some(
-        (interaction) => interaction.boundary_sequence === 1,
-      ),
-      false,
-    );
+    assert.deepEqual(secondStop, {
+      code: 0,
+      signal: null,
+      stderr: "",
+      stdout: "",
+    });
+    // This Stop also completes before Pet interaction, and the new episode restarts at sequence 1.
+    const secondWaiting = await waitForInteraction(server.socketPath, 1);
+    assert.equal(secondWaiting.interaction.episode_id, secondIds.episode_id);
+    assert.equal(secondWaiting.interaction.boundary_sequence, 1);
     const secondFocus = await udsRequest(
       server.socketPath,
       "focus_interaction",
@@ -538,33 +611,12 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
       selection(secondWaiting.interaction, 2),
     );
     assert.equal(secondSelection.ok, true);
-    assert.equal(secondSelection.result.outcome.kind, "continuation");
-    const secondBlock = await secondStop.completion;
-    adapters.delete(secondStop);
-    assert.deepEqual(
-      { code: secondBlock.code, signal: secondBlock.signal, stderr: secondBlock.stderr },
-      { code: 0, signal: null, stderr: "" },
+    assert.equal(secondSelection.result.accepted, true);
+    assert.equal(secondSelection.result.outcome.kind, "next_turn");
+    assert.equal(
+      secondSelection.result.outcome.queued_submission_id,
+      `queued_${secondSelection.result.outcome.continuation_id}`,
     );
-    assert.equal(JSON.parse(secondBlock.stdout).decision, "block");
-
-    const finalStop = await runBuiltBinary(
-      productBuild,
-      ["hook", "Stop", "--socket", server.socketPath],
-      {
-        input: JSON.stringify(hookPayload("Stop", {
-          cwd: server.enabledProjectPath,
-          turn_id: ids.source_turn_id,
-          stop_hook_active: true,
-          last_assistant_message: "boundary two continuation returned",
-        })),
-      },
-    );
-    assert.deepEqual(finalStop, {
-      code: 0,
-      signal: null,
-      stderr: "",
-      stdout: "",
-    });
     const finalState = await udsRequest(server.socketPath, "get_state");
     assert.equal(finalState.ok, true);
     assert.deepEqual(finalState.result.interactions, []);
@@ -575,6 +627,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
     const publicOutputWithoutDesignatedContext = [
       sessionStart.stdout,
       sessionStart.stderr,
+      JSON.stringify(resumedPrompt),
       fallbackStop.stdout,
       fallbackStop.stderr,
       replayedFallbackStop.stdout,
@@ -584,27 +637,32 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
       JSON.stringify(firstWaiting.response),
       JSON.stringify(firstFocus),
       JSON.stringify(firstSelection),
-      firstBlock.stdout,
-      firstBlock.stderr,
+      firstStop.stdout,
+      firstStop.stderr,
+      JSON.stringify(afterFirstSelection),
       secondMCP.result.stdout,
       secondMCP.result.stderr,
       JSON.stringify(secondWaiting.response),
       JSON.stringify(secondFocus),
       JSON.stringify(secondSelection),
-      secondBlock.stdout,
-      secondBlock.stderr,
-      finalStop.stdout,
-      finalStop.stderr,
+      secondStop.stdout,
+      secondStop.stderr,
       JSON.stringify(finalState),
     ].join("\n");
     assert.equal(publicOutputWithoutDesignatedContext.includes(ids.correlation_token), false);
+    assert.equal(
+      publicOutputWithoutDesignatedContext.includes(secondIds.correlation_token),
+      false,
+    );
     assert.equal(publicOutputWithoutDesignatedContext.includes(assistantPrivateMarker), false);
     assert.equal(publicOutputWithoutDesignatedContext.includes('"correlation_token"'), false);
     assert.equal(publicOutputWithoutDesignatedContext.includes('"continuation_token"'), false);
     assert.equal(designatedContext.includes(ids.correlation_token), true);
+    assert.equal(secondDesignatedContext.includes(secondIds.correlation_token), true);
 
     const storageBytes = await readStorageArtifacts(server.databasePath);
     assert.equal(storageBytes.includes(Buffer.from(ids.correlation_token)), false);
+    assert.equal(storageBytes.includes(Buffer.from(secondIds.correlation_token)), false);
     assert.equal(storageBytes.includes(Buffer.from(assistantPrivateMarker)), false);
     assert.equal(storageBytes.includes(Buffer.from('"correlation_token"')), false);
     assert.equal(storageBytes.includes(Buffer.from('"continuation_token":')), false);
@@ -612,11 +670,6 @@ test("real Hook, MCP, Pet, UDS, SQLite flow recovers a missing decision and comp
     await server.stop();
     stopped = true;
   } finally {
-    for (const adapter of adapters) {
-      if (adapter.child.exitCode === null && adapter.child.signalCode === null) {
-        adapter.child.kill("SIGKILL");
-      }
-    }
     if (!stopped) await server.abort();
     await rm(server.fixtureRoot, { force: true, recursive: true });
   }

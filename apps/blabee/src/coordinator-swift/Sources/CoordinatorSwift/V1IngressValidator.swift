@@ -358,7 +358,7 @@ private enum V {
                 "action", "issued_at", "expires_at", "in_flight_deadline_at",
             ]).union(bindingKeys)
             try exact(envelope, required: root)
-            try constant(envelope, "dispatch_mode", "same_turn_stop")
+            try constant(envelope, "dispatch_mode", "queued_next_turn")
             for key in ["interaction_id", "packet_id", "option_id", "action_id"] {
                 _ = try string(envelope, key, identifier: true)
             }
@@ -465,14 +465,18 @@ private enum V {
                 _ = try string(payload, key, identifier: true)
             }
             _ = try positiveInteger(payload, "revision")
-            try constant(payload, "dispatch_mode", "same_turn_stop")
+            _ = try oneOf(payload, "dispatch_mode", ["queued_next_turn", "same_turn_stop"])
             try timestamp(payload, "issued_at")
             try timestamp(payload, "expires_at")
             try timestamp(payload, "in_flight_deadline_at")
         case "continuation_consumed":
             try exact(payload, required: ["continuation_id", "dispatch_mode"])
             _ = try string(payload, "continuation_id", identifier: true)
-            _ = try oneOf(payload, "dispatch_mode", ["same_turn_stop", "submitted_envelope"])
+            _ = try oneOf(
+                payload,
+                "dispatch_mode",
+                ["queued_next_turn", "same_turn_stop", "submitted_envelope"]
+            )
         case "continuation_transport_completed":
             try exact(payload, required: ["continuation_id", "transport_status", "work_outcome_status"])
             _ = try string(payload, "continuation_id", identifier: true)

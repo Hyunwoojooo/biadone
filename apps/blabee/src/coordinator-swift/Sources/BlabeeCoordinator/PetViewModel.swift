@@ -103,14 +103,19 @@ final class PetViewModel: ObservableObject {
     private var selectionReturnApplication: PetExternalApplicationReference?
     private var permissionNoticeApplication: PetExternalApplicationReference?
     private var inFlightSelectionIdentity: PetInteractionIdentity?
+    private var focusWaiters: [PetInteractionIdentity: [CheckedContinuation<Void, Never>]] = [:]
     private var hotKeyRegistry: PetHotKeyRegistry?
     private var pollingTask: Task<Void, Never>?
     private var nextSnapshotRequest: UInt64 = 0
     private var lastAppliedSnapshotRequest: UInt64 = 0
     private var refreshInProgress = false
     private var hasPermissionNoticeBaseline = false
+    private var autoFocusAttemptedIdentity: PetInteractionIdentity?
 
     var onExpansionChanged: ((Bool) -> Void)?
+    var onPanelToggleRequested: (() -> Void)?
+    var onAttentionChanged: ((Bool) -> Void)?
+    var onAttentionEvent: (() -> Void)?
 
     init(
         transport: any PetCoordinatorTransport,
@@ -140,11 +145,37 @@ final class PetViewModel: ObservableObject {
 
     var focusedInteraction: PetInteraction? {
         guard let localForegroundIdentity,
+              fifoHeadInteraction?.identity == localForegroundIdentity,
               snapshot?.routing.foreground == localForegroundIdentity,
               let interaction = snapshot?.interaction(identity: localForegroundIdentity),
               interaction.foreground
         else { return nil }
         return interaction
+    }
+
+    var fifoHeadInteraction: PetInteraction? {
+        snapshotInteractions.first
+    }
+
+    var fifoQueueCount: Int {
+        snapshotInteractions.count
+    }
+
+    var displayInteractionQueuePosition: Int? {
+        guard let displayIdentity = displayInteraction?.identity,
+              let index = snapshotInteractions.firstIndex(where: {
+                  $0.identity == displayIdentity
+              })
+        else { return nil }
+        return index + 1
+    }
+
+    var displayInteraction: PetInteraction? {
+        return fifoHeadInteraction
+    }
+
+    var hasAttention: Bool {
+        hasNewPermissionNotice || fifoHeadInteraction?.isSelectionReady == true
     }
 
     var presentationState: PetPresentationState {
@@ -470,13 +501,17 @@ final class PetViewModel: ObservableObject {
 
     func handleShortcut(_ intent: PetShortcutIntent) {
         if intent == .toggle {
-            toggleExpanded()
+            requestPanelToggle()
             return
         }
         guard let slot = intent.slot else { return }
         Task { [weak self] in
             await self?.handleGlobalSlot(slot)
         }
+    }
+
+    func requestPanelToggle() {
+        onPanelToggleRequested?()
     }
 
     func refresh() async {
@@ -496,7 +531,12 @@ final class PetViewModel: ObservableObject {
     }
 
     func focus(_ identity: PetInteractionIdentity) async {
+        guard fifoHeadInteraction?.identity == identity else { return }
         if focusedInteraction?.identity == identity { return }
+        if pendingFocusIdentity == identity {
+            await waitForFocusCompletion(identity)
+            return
+        }
         guard let interaction = snapshot?.interaction(identity: identity),
               interaction.isSelectionReady,
               pendingFocusIdentity == nil,
@@ -531,6 +571,7 @@ final class PetViewModel: ObservableObject {
             updateHotKeyEligibility()
             await fetchAndApplySnapshot()
         }
+        resumeFocusWaiters(identity)
     }
 
     func handleGlobalSlot(_ slot: Int) async {
@@ -569,6 +610,18 @@ final class PetViewModel: ObservableObject {
         await submit(interaction: interaction, choice: choice)
     }
 
+    func focusAndRequestPanelSelection(
+        _ slot: Int,
+        interaction identity: PetInteractionIdentity
+    ) async {
+        guard fifoHeadInteraction?.identity == identity else { return }
+        if focusedInteraction?.identity != identity {
+            await focus(identity)
+        }
+        guard focusedInteraction?.identity == identity else { return }
+        await requestPanelSelection(slot)
+    }
+
     func confirmRiskSelection() async {
         guard let confirmation = riskConfirmation,
               let interaction = authoritativeSelectionInteraction(),
@@ -593,7 +646,10 @@ final class PetViewModel: ObservableObject {
 
     func openPermissionRequestHost() {
         guard hasNewPermissionNotice, let permissionNoticeApplication else { return }
-        if !externalApplicationOpener.open(permissionNoticeApplication) {
+        if externalApplicationOpener.open(permissionNoticeApplication) {
+            hasNewPermissionNotice = false
+            onAttentionChanged?(hasAttention)
+        } else {
             lastError = "권한 요청 때 감지한 앱을 열 수 없습니다."
         }
     }
@@ -611,6 +667,7 @@ final class PetViewModel: ObservableObject {
             lastAppliedSnapshotRequest = requestNumber
             apply(parsed)
             lastError = nil
+            await focusFIFOHeadIfNeeded()
         } catch {
             guard requestNumber >= lastAppliedSnapshotRequest else { return }
             lastAppliedSnapshotRequest = requestNumber
@@ -620,12 +677,21 @@ final class PetViewModel: ObservableObject {
             riskConfirmation = nil
             lastError = String(describing: error)
             updateHotKeyEligibility()
+            onAttentionChanged?(hasAttention)
         }
     }
 
     private func apply(_ newSnapshot: PetSnapshot) {
         let priorPermissionCount = permissionNoticeCount
         let priorLocalForeground = localForegroundIdentity
+        let priorHead = fifoHeadInteraction
+        let priorReadyHeadIdentity = priorHead?.isSelectionReady == true
+            ? priorHead?.identity
+            : nil
+        let priorReminderHeadIdentity = priorHead?.isSelectionReady == true
+            && priorHead?.reminderDue == true
+            ? priorHead?.identity
+            : nil
         snapshot = newSnapshot
         permissionNoticeCount = newSnapshot.permissionNoticeCount
         if hasPermissionNoticeBaseline, permissionNoticeCount > priorPermissionCount {
@@ -640,12 +706,14 @@ final class PetViewModel: ObservableObject {
         let authoritative = newSnapshot.routing.foreground
         if let localForegroundIdentity,
            authoritative == localForegroundIdentity,
+           newSnapshot.interactions.first?.identity == localForegroundIdentity,
            newSnapshot.interaction(identity: localForegroundIdentity) != nil
         {
             // Preserve an exact explicit local identity only while the
             // coordinator continues to expose that immutable identity.
         } else if let pendingFocusIdentity,
                   authoritative == pendingFocusIdentity,
+                  newSnapshot.interactions.first?.identity == pendingFocusIdentity,
                   newSnapshot.interaction(identity: pendingFocusIdentity) != nil
         {
             localForegroundIdentity = pendingFocusIdentity
@@ -675,11 +743,76 @@ final class PetViewModel: ObservableObject {
             // back to the generic working state.
             lastTerminalPresentation = .expired
         }
+        if let autoFocusAttemptedIdentity,
+           newSnapshot.interaction(identity: autoFocusAttemptedIdentity) == nil
+        {
+            self.autoFocusAttemptedIdentity = nil
+        }
         updateHotKeyEligibility()
+        onAttentionChanged?(hasAttention)
+
+        let currentHead = newSnapshot.interactions.first
+        let currentReadyHeadIdentity = currentHead?.isSelectionReady == true
+            ? currentHead?.identity
+            : nil
+        let receivedNewDecision = currentReadyHeadIdentity != nil
+            && currentReadyHeadIdentity != priorReadyHeadIdentity
+        let currentReminderHeadIdentity = currentHead?.isSelectionReady == true
+            && currentHead?.reminderDue == true
+            ? currentHead?.identity
+            : nil
+        let receivedReminder = currentReminderHeadIdentity != nil
+            && currentReminderHeadIdentity != priorReminderHeadIdentity
+        let receivedNewPermissionNotice = hasNewPermissionNotice
+            && permissionNoticeCount > priorPermissionCount
+        if receivedNewDecision || receivedReminder || receivedNewPermissionNotice {
+            onAttentionEvent?()
+        }
+    }
+
+    private func waitForFocusCompletion(_ identity: PetInteractionIdentity) async {
+        await withCheckedContinuation { continuation in
+            focusWaiters[identity, default: []].append(continuation)
+        }
+    }
+
+    private func resumeFocusWaiters(_ identity: PetInteractionIdentity) {
+        let waiters = focusWaiters.removeValue(forKey: identity) ?? []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func focusFIFOHeadIfNeeded() async {
+        guard localForegroundIdentity == nil,
+              pendingFocusIdentity == nil,
+              inFlightSelectionIdentity == nil
+        else { return }
+        guard let head = fifoHeadInteraction,
+              head.isSelectionReady,
+              coordinatorAllowsAutomaticFocus(on: head.identity)
+        else { return }
+        let identity = head.identity
+        guard autoFocusAttemptedIdentity != identity else { return }
+        autoFocusAttemptedIdentity = identity
+        await focus(identity)
+        if autoFocusAttemptedIdentity == identity {
+            // Keep the marker throughout focus()'s reconciliation fetch so a
+            // transient failure cannot recurse or hot-loop. Once the attempt
+            // settles, the next poll re-evaluates coordinator authority before
+            // retrying this exact FIFO head.
+            autoFocusAttemptedIdentity = nil
+        }
+    }
+
+    private func coordinatorAllowsAutomaticFocus(
+        on identity: PetInteractionIdentity
+    ) -> Bool {
+        guard let authoritativeForeground = snapshot?.routing.foreground else { return true }
+        return authoritativeForeground == identity
     }
 
     private func authoritativeSelectionInteraction() -> PetInteraction? {
         guard let interaction = focusedInteraction,
+              fifoHeadInteraction?.identity == interaction.identity,
               interaction.isSelectionReady,
               snapshot?.routing.foreground == interaction.identity,
               pendingFocusIdentity == nil

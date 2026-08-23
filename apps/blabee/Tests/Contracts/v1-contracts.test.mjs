@@ -326,11 +326,11 @@ test("continuation dispatch modes are mutually exclusive", async () => {
     const envelope = fixtureCase.value;
     const validator = fixtureValidator(suite.compiled, fixtureCase);
     origins.add(envelope.continuation_origin);
-    const expectedMode = envelope.continuation_origin === "pet_action" ? "same_turn_stop" : "submitted_envelope";
+    const expectedMode = envelope.continuation_origin === "pet_action" ? "queued_next_turn" : "submitted_envelope";
     assert.equal(envelope.dispatch_mode, expectedMode);
 
     const mutated = clone(envelope);
-    mutated.dispatch_mode = expectedMode === "same_turn_stop" ? "submitted_envelope" : "same_turn_stop";
+    mutated.dispatch_mode = expectedMode === "queued_next_turn" ? "submitted_envelope" : "queued_next_turn";
     assertSchemaResult(validator, mutated, false, `${envelope.continuation_origin} opposite dispatch mode`);
   }
   assert.deepEqual([...origins].sort(), ["internal_format_repair", "pet_action"]);
@@ -430,7 +430,7 @@ test("continuation claims are one-time, unexpired, mode-specific, and exactly bo
 
       const wrongMode = {
         ...clone(envelope),
-        dispatch_mode: envelope.dispatch_mode === "same_turn_stop" ? "submitted_envelope" : "same_turn_stop",
+        dispatch_mode: envelope.dispatch_mode === "queued_next_turn" ? "submitted_envelope" : "queued_next_turn",
       };
       assert.equal(
         createContinuationClaimLedger({ now: () => beforeExpiry }).claim({ envelope: wrongMode, expectedBinding }).errorCode,

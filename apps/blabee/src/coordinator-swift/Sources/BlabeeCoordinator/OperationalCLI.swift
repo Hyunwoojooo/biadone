@@ -29,7 +29,7 @@ func runHookCommand(arguments: [String]) {
             type: requestType,
             payload: payload,
             connectTimeoutMilliseconds: 2_000,
-            responseTimeoutMilliseconds: eventName == "Stop" ? 125_000 : 5_000
+            responseTimeoutMilliseconds: 5_000
         )
         guard result["enabled"] as? Bool != false else { return }
 

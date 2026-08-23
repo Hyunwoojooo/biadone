@@ -24,12 +24,20 @@ import { assembleMacOSApp } from "../../scripts/build-macos-app.mjs";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const execFile = promisify(execFileCallback);
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
+const menuBarIconFileName = "BlabeeMenuBar.svg";
 const canonicalLaunchAgent = join(
   repositoryRoot,
   "Packaging",
   "macos",
   "LaunchAgents",
   launchAgentFileName,
+);
+const canonicalMenuBarIcon = join(
+  repositoryRoot,
+  "Packaging",
+  "macos",
+  "Resources",
+  menuBarIconFileName,
 );
 
 async function mode(path) {
@@ -86,10 +94,13 @@ async function makeWorkspace(t) {
   return { root, binary, output: join(root, "Blabee.app") };
 }
 
-async function copyCanonicalLaunchAgent(sourceRoot) {
+async function copyCanonicalPackagingSupport(sourceRoot) {
   const directory = join(sourceRoot, "Packaging", "macos", "LaunchAgents");
   await mkdir(directory, { recursive: true });
   await copyFile(canonicalLaunchAgent, join(directory, launchAgentFileName));
+  const resources = join(sourceRoot, "Packaging", "macos", "Resources");
+  await mkdir(resources, { recursive: true });
+  await copyFile(canonicalMenuBarIcon, join(resources, menuBarIconFileName));
 }
 
 test("assembler creates the required Blabee.app payload and deterministic manifest", async (t) => {
@@ -105,6 +116,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   const executable = join(contents, "MacOS", "blabee-coordinator");
   const infoPlist = join(contents, "Info.plist");
   const launchAgent = join(contents, "Library", "LaunchAgents", launchAgentFileName);
+  const menuBarIcon = join(contents, "Resources", menuBarIconFileName);
   const contract = join(contents, "Resources", "Contracts", "v1", "manifest.json");
   const plugin = join(
     contents,
@@ -122,7 +134,15 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     "scripts",
     "blabee-launcher",
   );
-  for (const path of [executable, infoPlist, launchAgent, contract, plugin, launcher]) {
+  for (const path of [
+    executable,
+    infoPlist,
+    launchAgent,
+    menuBarIcon,
+    contract,
+    plugin,
+    launcher,
+  ]) {
     assert.equal((await lstat(path)).isFile(), true, path);
     assert.equal((await lstat(path)).isSymbolicLink(), false, path);
   }
@@ -132,6 +152,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(await mode(join(contents, "Library")), 0o755);
   assert.equal(await mode(join(contents, "Library", "LaunchAgents")), 0o755);
   assert.equal(await mode(launchAgent), 0o644);
+  assert.equal(await mode(menuBarIcon), 0o644);
   assert.equal(await mode(contract), 0o644);
   assert.equal(await mode(plugin), 0o644);
   assert.equal(await mode(launcher), 0o755);
@@ -187,6 +208,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(launchTargetMetadata.isFile(), true);
   assert.notEqual(launchTargetMetadata.mode & 0o111, 0);
   assert.equal(await digest(launchAgent), await digest(canonicalLaunchAgent));
+  assert.equal(await digest(menuBarIcon), await digest(canonicalMenuBarIcon));
 
   const sourceContracts = join(repositoryRoot, "Contracts", "v1");
   const bundledContracts = join(contents, "Resources", "Contracts", "v1");
@@ -199,6 +221,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     "Contents/Info.plist",
     `Contents/Library/LaunchAgents/${launchAgentFileName}`,
     "Contents/MacOS/blabee-coordinator",
+    `Contents/Resources/${menuBarIconFileName}`,
     "Contents/Resources/assembly-manifest.json",
     ...contractFiles.map((path) => `Contents/Resources/Contracts/v1/${path}`),
     ...pluginFiles.map((path) => `Contents/Resources/Plugin/blabee/${path}`),
@@ -264,7 +287,7 @@ test("assembler rejects Info.plist value type drift and cleans staging", async (
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
   await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
-  await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalPackagingSupport(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     "utf8",
@@ -298,7 +321,7 @@ test("assembler cleanup opt-out preserves its exact partial staging tree", async
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
   await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
-  await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalPackagingSupport(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     "utf8",
@@ -344,7 +367,7 @@ test("assembler rejects LaunchAgent key, type, and service argv drift", async (t
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),
   );
-  await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalPackagingSupport(sourceRoot);
   const fixtureLaunchAgent = join(
     sourceRoot,
     "Packaging",
@@ -458,7 +481,7 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(contracts, { recursive: true });
   await mkdir(plugin, { recursive: true });
-  await copyCanonicalLaunchAgent(sourceRoot);
+  await copyCanonicalPackagingSupport(sourceRoot);
   await copyFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),

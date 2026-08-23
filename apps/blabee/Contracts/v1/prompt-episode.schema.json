@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.blabee.local/contracts/v1/prompt-episode.schema.json",
   "title": "Blabee v1 prompt episode",
-  "description": "A human-prompt-bounded episode. Pet actions and internal format repair do not create a new episode.",
+  "description": "A user-prompt-bounded episode. A queued Pet action is submitted as the next user prompt and starts a new episode; internal format repair stays inside the current episode.",
   "type": "object",
   "additionalProperties": false,
   "required": [

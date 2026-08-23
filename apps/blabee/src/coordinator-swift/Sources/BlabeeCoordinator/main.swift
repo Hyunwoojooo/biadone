@@ -709,7 +709,8 @@ private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) thro
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: arguments.enabledProjectPaths,
-        secretCorpus: journal.secretCorpus
+        secretCorpus: journal.secretCorpus,
+        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher
     )
     try server.activate()
     try withExtendedLifetime(authorityLease) {
@@ -831,7 +832,12 @@ private func runOperationalRoundTripFixture(arguments rawArguments: [String]) th
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: [arguments.enabledProject.path],
-        secretCorpus: journal.secretCorpus
+        secretCorpus: journal.secretCorpus,
+        nextTurnDispatcher: { request in
+            CoordinatorNextTurnDispatchReceipt(
+                queuedSubmissionID: "queued_\(request.continuationID)"
+            )
+        }
     )
     try server.activate()
     try writeJSON(

@@ -33,7 +33,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     private let startupOverride: (@MainActor () throws -> Void)?
     private let stopApplicationAfterStartupFailure: @MainActor () -> Void
     private var viewModel: PetViewModel?
-    private var panelController: PetPanelController?
+    private var menuBarController: PetMenuBarController?
     private(set) var startupError: Error?
 
     init(
@@ -81,7 +81,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         viewModel?.stopPolling()
-        panelController?.stopObservingScreenChanges()
+        menuBarController?.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -115,10 +115,9 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             viewModel?.handleShortcut(intent)
         }
         viewModel.attachHotKeyRegistry(registry)
-        let panelController = PetPanelController(viewModel: viewModel)
+        let menuBarController = PetMenuBarController(viewModel: viewModel)
         self.viewModel = viewModel
-        self.panelController = panelController
-        panelController.showWithoutActivation()
+        self.menuBarController = menuBarController
         viewModel.startPolling()
     }
 }

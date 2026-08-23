@@ -34,8 +34,8 @@
           {
             "type": "command",
             "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook Stop",
-            "timeout": 130,
-            "statusMessage": "Blabee에서 다음 결정 대기 중"
+            "timeout": 8,
+            "statusMessage": "Blabee 결정 저장 중"
           }
         ]
       }

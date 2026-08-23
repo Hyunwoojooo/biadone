@@ -52,7 +52,7 @@
           "const": "pet_action"
         },
         "dispatch_mode": {
-          "const": "same_turn_stop"
+          "const": "queued_next_turn"
         },
         "continuation_id": {
           "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"

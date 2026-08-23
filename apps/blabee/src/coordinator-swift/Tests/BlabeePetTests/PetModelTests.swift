@@ -126,6 +126,52 @@ func blabeePetRejectsNumericBooleans() throws {
     }
 }
 
+@Test("BlabeePet accepts only pause or an acknowledged next-turn queue receipt")
+func blabeePetSelectionResponseContract() throws {
+    let nextTurn = try PetTransportResponse.requireAcceptedSelection(petTestData([
+        "accepted": true,
+        "outcome": [
+            "kind": "next_turn",
+            "continuation_id": "continuation_test",
+            "queued_submission_id": "queued_submission_test",
+        ],
+    ]))
+    #expect(nextTurn == "next_turn")
+
+    let pause = try PetTransportResponse.requireAcceptedSelection(petTestData([
+        "accepted": true,
+        "outcome": ["kind": "pause"],
+    ]))
+    #expect(pause == "pause")
+
+    let rejectedOutcomes: [[String: Any]] = [
+        ["kind": "continuation", "continuation_id": "legacy"],
+        ["kind": "next_turn", "continuation_id": "missing_queue_receipt"],
+        [
+            "kind": "next_turn",
+            "continuation_id": "",
+            "queued_submission_id": "queued_submission_test",
+        ],
+        [
+            "kind": "next_turn",
+            "continuation_id": "continuation_test",
+            "queued_submission_id": "",
+        ],
+    ]
+    for outcome in rejectedOutcomes {
+        var rejected = false
+        do {
+            _ = try PetTransportResponse.requireAcceptedSelection(petTestData([
+                "accepted": true,
+                "outcome": outcome,
+            ]))
+        } catch {
+            rejected = true
+        }
+        #expect(rejected)
+    }
+}
+
 @Test("BlabeePet rejects ambiguous option ids and inconsistent rollback checkpoints")
 func blabeePetChoiceIdentityAndCheckpointConsistency() throws {
     var duplicateOptions = petTestSnapshotObject(cards: [PetTestCard(suffix: "duplicate")])

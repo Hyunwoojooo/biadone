@@ -4,13 +4,7 @@ struct PetRootView: View {
     @ObservedObject var viewModel: PetViewModel
 
     var body: some View {
-        Group {
-            if viewModel.isExpanded {
-                expandedBody
-            } else {
-                collapsedBody
-            }
-        }
+        panelBody
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
         .overlay(
             RoundedRectangle(cornerRadius: 24)
@@ -20,29 +14,7 @@ struct PetRootView: View {
         .padding(8)
     }
 
-    private var collapsedBody: some View {
-        Button(action: viewModel.toggleExpanded) {
-            VStack(spacing: 4) {
-                Text("🐝")
-                    .font(.system(size: 34))
-                if !viewModel.snapshotInteractions.isEmpty {
-                    Text("\(viewModel.snapshotInteractions.count)")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                } else {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Blabee Pet 열기")
-    }
-
-    private var expandedBody: some View {
+    private var panelBody: some View {
         VStack(spacing: 12) {
             header
             if viewModel.isShowingOnboarding {
@@ -59,16 +31,16 @@ struct PetRootView: View {
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        interactionPicker
-                        if let interaction = viewModel.focusedInteraction {
-                            interactionDetail(interaction)
+                        if viewModel.snapshotInteractions.count > 1 {
+                            fifoQueueStatus
+                        }
+                        if let interaction = viewModel.displayInteraction {
+                            decisionCard(interaction)
+                            if viewModel.isExpanded {
+                                interactionDetails(interaction)
+                            }
                         } else if viewModel.snapshotInteractions.isEmpty {
                             emptyState
-                        } else {
-                            Text("카드를 눌러 전면 결정을 명시적으로 선택하세요.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .padding(.vertical, 10)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -133,12 +105,12 @@ struct PetRootView: View {
             .accessibilityLabel(
                 viewModel.isEditingShortcuts ? "단축키 설정 닫기" : "단축키 설정 열기"
             )
-            Button(action: viewModel.toggleExpanded) {
-                Image(systemName: "chevron.down")
+            Button(action: viewModel.requestPanelToggle) {
+                Image(systemName: "xmark")
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Blabee Pet 접기")
+            .accessibilityLabel("Blabee 패널 닫기")
         }
     }
 
@@ -157,61 +129,121 @@ struct PetRootView: View {
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var interactionPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !viewModel.snapshotInteractions.isEmpty {
-                Text("대기 카드")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
+    private var fifoQueueStatus: some View {
+        HStack(spacing: 8) {
+            Label("FIFO 대기열", systemImage: "list.number")
+                .font(.caption.bold())
+            Spacer(minLength: 8)
+            if let position = viewModel.displayInteractionQueuePosition {
+                Text("현재 \(position) / \(viewModel.fifoQueueCount)")
+                    .font(.caption.monospaced().bold())
             }
-            ForEach(viewModel.snapshotInteractions) { interaction in
-                interactionPickerRow(interaction)
+            Text("다음 \(max(viewModel.fifoQueueCount - 1, 0))개")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func decisionCard(_ interaction: PetInteraction) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(projectName(for: interaction))
+                        .font(.headline.monospaced())
+                        .lineLimit(1)
+                    Text(interaction.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    viewModel.toggleExpanded()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(viewModel.isExpanded ? "상세 닫기" : "상세 보기")
+                        Image(systemName: viewModel.isExpanded ? "chevron.up" : "arrow.right")
+                    }
+                    .font(.callout.bold())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+            }
+
+            VStack(spacing: 8) {
+                ForEach(interaction.choices) { choice in
+                    choiceRow(interaction: interaction, choice: choice)
+                }
             }
         }
     }
 
-    private func interactionPickerRow(_ interaction: PetInteraction) -> some View {
-        let isFocused = viewModel.localForegroundIdentity == interaction.identity
-        let background = isFocused
-            ? Color.accentColor.opacity(0.14)
-            : Color.primary.opacity(0.05)
+    private func choiceRow(interaction: PetInteraction, choice: PetChoice) -> some View {
+        let enabled = choice.enabled && interaction.isSelectionReady
+        let tint = choiceTint(slot: choice.slot)
         return Button {
-            Task { await viewModel.focus(interaction.identity) }
+            Task {
+                await viewModel.focusAndRequestPanelSelection(
+                    choice.slot,
+                    interaction: interaction.identity
+                )
+            }
         } label: {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: choiceIcon(slot: choice.slot))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(interaction.summary)
-                        .font(.callout.bold())
-                        .lineLimit(2)
-                    Text(interaction.cwd)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(Color.secondary)
-                        .lineLimit(1)
-                    Text(interaction.identity.binding.sessionID)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(Color.secondary.opacity(0.75))
-                        .lineLimit(1)
+                    HStack(spacing: 7) {
+                        Text(choice.displayTitle)
+                            .font(.callout.bold())
+                            .lineLimit(2)
+                        if choice.slot == 1 {
+                            Text("권장")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor, in: Capsule())
+                        }
+                    }
+                    if let disabledReason = choice.disabledReason {
+                        Text(disabledReason)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 8)
-                if interaction.reminderDue {
-                    Image(systemName: "bell.badge.fill")
-                        .foregroundStyle(Color.orange)
-                }
-                if isFocused {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.accentColor)
-                }
+                Text(viewModel.actionShortcutLabel(interaction: interaction, choice: choice))
+                    .font(.caption.monospaced().bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
-            .padding(10)
+            .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background, in: RoundedRectangle(cornerRadius: 10))
+            .background(
+                tint.opacity(choice.slot == 1 && enabled ? 0.13 : 0.07),
+                in: RoundedRectangle(cornerRadius: 13)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 13)
+                    .stroke(tint.opacity(choice.slot == 1 && enabled ? 0.45 : 0.14), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
-        .disabled(!interaction.isSelectionReady)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.52)
     }
 
     @ViewBuilder
-    private func interactionDetail(_ interaction: PetInteraction) -> some View {
+    private func interactionDetails(_ interaction: PetInteraction) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(interaction.summary)
@@ -270,39 +302,6 @@ struct PetRootView: View {
                 }
             }
 
-            VStack(spacing: 8) {
-                ForEach(interaction.choices) { choice in
-                    Button {
-                        Task { await viewModel.requestPanelSelection(choice.slot) }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Text(viewModel.actionShortcutLabel(
-                                interaction: interaction,
-                                choice: choice
-                            ))
-                                .font(.caption.monospaced().bold())
-                                .frame(minWidth: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(choice.displayTitle)
-                                    .font(.callout.bold())
-                                if let disabledReason = choice.disabledReason {
-                                    Text(disabledReason)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.plain)
-                    .background(Color.primary.opacity(choice.enabled ? 0.07 : 0.025), in: RoundedRectangle(cornerRadius: 10))
-                    .disabled(!choice.enabled || interaction.isExpired)
-                    .opacity(choice.enabled ? 1 : 0.55)
-                }
-            }
-
             if let confirmation = viewModel.riskConfirmation,
                confirmation.identity == interaction.identity
             {
@@ -323,6 +322,31 @@ struct PetRootView: View {
                 .padding(12)
                 .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
             }
+        }
+    }
+
+    private func projectName(for interaction: PetInteraction) -> String {
+        let name = URL(fileURLWithPath: interaction.cwd, isDirectory: true).lastPathComponent
+        return name.isEmpty ? interaction.identity.binding.projectID : name
+    }
+
+    private func choiceIcon(slot: Int) -> String {
+        switch slot {
+        case 1: "hand.thumbsup.fill"
+        case 2: "doc.text.magnifyingglass"
+        case 3: "pause.circle.fill"
+        case 4: "arrow.uturn.backward.circle.fill"
+        default: "circle"
+        }
+    }
+
+    private func choiceTint(slot: Int) -> Color {
+        switch slot {
+        case 1: .indigo
+        case 2: .purple
+        case 3: .orange
+        case 4: .red
+        default: .gray
         }
     }
 

@@ -259,7 +259,7 @@ private func actionContinuation(
             "revision": packet["revision"]!,
             "option_id": optionID,
             "action_id": actionID,
-            "dispatch_mode": "same_turn_stop",
+            "dispatch_mode": "queued_next_turn",
             "issued_at": "2026-08-21T01:00:02Z",
             "expires_at": "2026-08-21T01:02:02Z",
             "in_flight_deadline_at": "2026-08-21T01:05:02Z",

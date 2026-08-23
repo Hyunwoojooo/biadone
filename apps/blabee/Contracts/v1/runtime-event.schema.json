@@ -613,7 +613,10 @@
           "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
         },
         "dispatch_mode": {
-          "const": "same_turn_stop"
+          "enum": [
+            "queued_next_turn",
+            "same_turn_stop"
+          ]
         },
         "issued_at": {
           "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
@@ -639,6 +642,7 @@
         },
         "dispatch_mode": {
           "enum": [
+            "queued_next_turn",
             "same_turn_stop",
             "submitted_envelope"
           ]

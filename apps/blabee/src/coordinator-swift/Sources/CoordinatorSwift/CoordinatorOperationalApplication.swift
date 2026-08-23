@@ -43,6 +43,13 @@ public actor CoordinatorOperationalApplication {
         case expired
     }
 
+    private enum NextTurnDispatchPhase {
+        case notStarted
+        case inFlight
+        case accepted
+        case failed
+    }
+
     private struct Boundary {
         let proposalID: String
         let proposalCanonical: Data
@@ -51,12 +58,10 @@ public actor CoordinatorOperationalApplication {
         var packet: Data?
         var phase: BoundaryPhase
         var stopLedger: StopObservationLedger
-        var deliveryObservation: StopObservation?
-        var deliveryDigest: String?
-        var deliveryGeneration: UInt64?
         var continuationID: String?
+        var nextTurnDispatchPhase: NextTurnDispatchPhase
+        var expectedQueuedPromptDigest: Data?
         var acceptance: Data?
-        var acceptsActiveStopAsWaiter: Bool
         var openEventID: String?
         var openedAt: RFC3339Instant?
         var openedEventSequence: Int64?
@@ -69,21 +74,12 @@ public actor CoordinatorOperationalApplication {
         let boundaryKey: CoordinatorBindingKey
     }
 
-    private struct Waiter {
-        let observation: StopObservation
-        let continuation: CheckedContinuation<Data, Error>
-    }
-
-    private struct FinalizationFallback {
-        var stopLedger: StopObservationLedger
-        let response: Data
-    }
-
     private let routing: CoordinatorRoutingApplication
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
     private let wallInstantGenerator: WallInstantGenerator
     private let stopObservationHMACKey: Data
+    private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
 
     private var projects: [String: Project] = [:]
     private var sessions: [String: Session] = [:]
@@ -91,8 +87,6 @@ public actor CoordinatorOperationalApplication {
     private var activeByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     private var stagedByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     private var registrations: [String: ProposalRegistration] = [:]
-    private var waiters: [CoordinatorBindingKey: Waiter] = [:]
-    private var finalizationFallbacks: [CoordinatorTurnKey: FinalizationFallback] = [:]
     private var pendingTimeNotices: [Data] = []
     private var pendingCompletionClosures: Set<CoordinatorBindingKey> = []
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
@@ -105,7 +99,8 @@ public actor CoordinatorOperationalApplication {
         secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
         idGenerator: IDGenerator? = nil,
         wallInstantGenerator: WallInstantGenerator? = nil,
-        stopObservationHMACKey: Data? = nil
+        stopObservationHMACKey: Data? = nil,
+        nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil
     ) {
         let ids: IDGenerator = idGenerator ?? { purpose in
             "\(purpose)_\(UUID().uuidString.lowercased())"
@@ -115,6 +110,9 @@ public actor CoordinatorOperationalApplication {
         self.idGenerator = ids
         self.stopObservationHMACKey = stopObservationHMACKey
             ?? SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        self.nextTurnDispatcher = nextTurnDispatcher ?? { _ in
+            throw CoordinatorError("next_turn_dispatcher_unavailable")
+        }
         self.wallInstantGenerator = wallInstantGenerator ?? {
             let formatter = ISO8601DateFormatter()
             formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -186,7 +184,7 @@ public actor CoordinatorOperationalApplication {
         case "focus_interaction":
             return try focusInteraction(payload)
         case "select":
-            return try select(payload, generation: requestGeneration)
+            return try await select(payload)
         default:
             throw CoordinatorError("unsupported_request_type")
         }
@@ -235,12 +233,8 @@ public actor CoordinatorOperationalApplication {
             else { throw CoordinatorError("selection_recovery_binding_missing") }
             boundary.phase = .dispatched
             boundary.continuationID = continuationID
+            boundary.nextTurnDispatchPhase = .failed
             boundaries[key] = boundary
-            if let waiter = waiters.removeValue(forKey: key) {
-                waiter.continuation.resume(returning: try publicData([
-                    "status": "continuation_dispatch_failed_closed",
-                ]))
-            }
         } else if kind == "selection_pause_committed_response_lost" {
             let binding = try CoordinatorBinding(jsonObject: notice)
             let key = binding.fullKey
@@ -250,9 +244,6 @@ public actor CoordinatorOperationalApplication {
             boundary.phase = .paused
             boundaries[key] = boundary
             activeByTurn.removeValue(forKey: binding.turnKey)
-            if let waiter = waiters.removeValue(forKey: key) {
-                waiter.continuation.resume(returning: try publicData(["status": "paused"]))
-            }
         } else if kind == "interaction_expired",
            let packetID = notice["packet_id"] as? String,
            let key = boundaries.first(where: { _, boundary in
@@ -268,9 +259,6 @@ public actor CoordinatorOperationalApplication {
                 boundary.phase = .expired
                 boundaries[key] = boundary
                 activeByTurn.removeValue(forKey: boundary.binding.turnKey)
-                if let waiter = waiters.removeValue(forKey: key) {
-                    waiter.continuation.resume(returning: try publicData(["status": "expired"]))
-                }
             }
         } else if kind == "continuation_timed_out_unknown",
                   let continuationID = notice["continuation_id"] as? String,
@@ -368,7 +356,10 @@ public actor CoordinatorOperationalApplication {
             boundaries[stagedKey] = staged
             throw error
         }
-        staged.acceptsActiveStopAsWaiter = true
+        // The originating Codex answer has already finished. A promoted
+        // successor therefore becomes selectable immediately instead of
+        // waiting for another Stop invocation from that old turn.
+        staged.phase = .waiting
         boundaries[stagedKey] = staged
         activeByTurn[turnKey] = stagedKey
         stagedByTurn.removeValue(forKey: turnKey)
@@ -411,21 +402,11 @@ private extension CoordinatorOperationalApplication {
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
         }
-        if let previous = sessions[sessionID] {
-            try require(Self.byteExact(previous.projectID, project.projectID), "session_project_conflict")
-        } else {
-            sessions[sessionID] = Session(
-                sessionID: sessionID,
-                projectID: project.projectID,
-                path: cwd,
-                episode: nil,
-                latestTurnID: nil,
-                latestPromptID: nil,
-                correlationToken: nil,
-                promptDigest: nil,
-                contextDelivered: false
-            )
-        }
+        _ = try session(
+            registeringIfNeeded: sessionID,
+            cwd: cwd,
+            project: project
+        )
         return try publicData([
             "enabled": true,
             "additionalContext": "Blabee is enabled for this project. For an action-type request, every completed, partial, blocked, or failed result must call blabee.emit_decision before finalizing, even when the result is short or text-only. Do not emit for explanations, structure descriptions, status checks, or general questions.",
@@ -441,10 +422,11 @@ private extension CoordinatorOperationalApplication {
         guard let project = project(containing: cwd), project.enabled else {
             return try publicData(["enabled": false])
         }
-        guard var session = sessions[sessionID] else {
-            throw CoordinatorError("session_not_started")
-        }
-        try require(Self.byteExact(session.projectID, project.projectID), "session_project_conflict")
+        var session = try session(
+            registeringIfNeeded: sessionID,
+            cwd: cwd,
+            project: project
+        )
 
         let promptDigest = Data(SHA256.hash(data: Data(prompt.utf8)))
         if Self.byteExact(session.latestTurnID, turnID) {
@@ -463,12 +445,33 @@ private extension CoordinatorOperationalApplication {
                 sourceTurnID: previousTurn
             )
             if let activeKey = activeByTurn[key],
-               let active = boundaries[activeKey],
-               [.activating, .sealed, .waiting, .dispatched, .staged].contains(active.phase)
+               let active = boundaries[activeKey]
             {
-                throw CoordinatorError("session_decision_boundary_active")
+                switch active.phase {
+                case .dispatched:
+                    // `codex queue` can invoke UserPromptSubmit before its
+                    // command returns the queue receipt. Only the exact prompt
+                    // that this boundary queued is authority that its transport
+                    // happened. An unrelated human prompt may start normally,
+                    // while the old dispatch remains owned by its receipt,
+                    // failure, or timeout path.
+                    if active.expectedQueuedPromptDigest == promptDigest {
+                        guard active.nextTurnDispatchPhase == .inFlight
+                                || active.nextTurnDispatchPhase == .accepted
+                        else { throw CoordinatorError("session_decision_boundary_active") }
+                        try complete(boundaryKey: activeKey)
+                        try promoteStagedAfterRecoveredTerminal(
+                            turnKey: key,
+                            terminalKey: activeKey
+                        )
+                        pendingCompletionClosures.remove(activeKey)
+                    }
+                case .closed, .paused, .expired:
+                    activeByTurn.removeValue(forKey: key)
+                case .activating, .staged, .sealed, .waiting:
+                    throw CoordinatorError("session_decision_boundary_active")
+                }
             }
-            finalizationFallbacks.removeValue(forKey: key)
         }
 
         let promptID = try identifier(idGenerator("prompt"), "source_prompt_id")
@@ -493,6 +496,33 @@ private extension CoordinatorOperationalApplication {
         session.contextDelivered = true
         sessions[sessionID] = session
         return try promptContext(session: session)
+    }
+
+    private func session(
+        registeringIfNeeded sessionID: String,
+        cwd: String,
+        project: Project
+    ) throws -> Session {
+        if let current = sessions[sessionID] {
+            try require(
+                Self.byteExact(current.projectID, project.projectID),
+                "session_project_conflict"
+            )
+            return current
+        }
+        let registered = Session(
+            sessionID: sessionID,
+            projectID: project.projectID,
+            path: cwd,
+            episode: nil,
+            latestTurnID: nil,
+            latestPromptID: nil,
+            correlationToken: nil,
+            promptDigest: nil,
+            contextDelivered: false
+        )
+        sessions[sessionID] = registered
+        return registered
     }
 
     func emitDecision(_ data: Data) throws -> Data {
@@ -551,12 +581,9 @@ private extension CoordinatorOperationalApplication {
             if boundaries[existing.boundaryKey]?.acceptance == nil {
                 try resumeInitialActivation(boundaryKey: existing.boundaryKey)
             }
-            let acceptance = try requireOperational(boundaries[existing.boundaryKey]?.acceptance)
-            finalizationFallbacks.removeValue(forKey: turnKey)
-            return acceptance
+            return try requireOperational(boundaries[existing.boundaryKey]?.acceptance)
         }
 
-        let acceptsFinalizationStop = finalizationFallbacks[turnKey] != nil
         let sequence: Int64
         let phase: BoundaryPhase
         if let activeKey = activeByTurn[turnKey], let active = boundaries[activeKey] {
@@ -590,12 +617,10 @@ private extension CoordinatorOperationalApplication {
             packet: nil,
             phase: phase,
             stopLedger: StopObservationLedger(keyData: stopObservationHMACKey),
-            deliveryObservation: nil,
-            deliveryDigest: nil,
-            deliveryGeneration: nil,
             continuationID: nil,
+            nextTurnDispatchPhase: .notStarted,
+            expectedQueuedPromptDigest: nil,
             acceptance: nil,
-            acceptsActiveStopAsWaiter: acceptsFinalizationStop,
             openEventID: nil,
             openedAt: nil,
             openedEventSequence: nil,
@@ -634,7 +659,6 @@ private extension CoordinatorOperationalApplication {
             contextKey: contextKey,
             boundaryKey: key
         )
-        finalizationFallbacks.removeValue(forKey: turnKey)
         return try requireOperational(boundary.acceptance)
     }
 
@@ -670,149 +694,36 @@ private extension CoordinatorOperationalApplication {
             sourceTurnID: turnID
         )
         guard let key = activeByTurn[turnKey], var boundary = boundaries[key] else {
-            return try finalizationFallbackStop(
-                turnKey: turnKey,
-                sessionID: sessionID,
-                turnID: turnID,
-                activeFlag: activeFlag,
-                message: message,
-                generation: requestGeneration
-            )
+            return try publicData(["status": "no_proposal"])
         }
-        guard let observation = boundary.stopLedger.register(
+        guard boundary.stopLedger.register(
             sessionID: sessionID,
             turnID: turnID,
             stopHookActive: activeFlag,
             lastAssistantMessage: message,
             generation: requestGeneration
-        ) else {
+        ) != nil else {
             boundaries[key] = boundary
             return try publicData(["status": "duplicate_stop_observation"])
         }
         boundaries[key] = boundary
 
         if boundary.phase == .dispatched {
-            guard activeFlag else {
-                return try publicData([
-                    "status": "continuation_completion_rejected",
-                    "reason": "stop_hook_not_active",
-                ])
-            }
-            guard let delivered = boundary.deliveryObservation,
-                  let deliveryGeneration = boundary.deliveryGeneration,
-                  let deliveryDigest = boundary.deliveryDigest,
-                  observation.generation > deliveryGeneration,
-                  observation.digest != delivered.digest,
-                  observation.digest != deliveryDigest,
-                  observation.messageDigest != delivered.messageDigest
-            else {
-                return try publicData([
-                    "status": "continuation_completion_rejected",
-                    "reason": "stop_delivery_observation_ambiguous",
-                ])
-            }
-            try complete(boundaryKey: key)
-            if let stagedKey = stagedByTurn[turnKey],
-               var staged = boundaries[stagedKey]
-            {
-                do {
-                    try activate(&staged)
-                    staged.acceptance = try acceptanceData(staged)
-                } catch {
-                    boundaries[stagedKey] = staged
-                    pendingCompletionClosures.insert(key)
-                    throw error
-                }
-                guard let stagedObservation = staged.stopLedger.register(
-                    sessionID: sessionID,
-                    turnID: turnID,
-                    stopHookActive: activeFlag,
-                    lastAssistantMessage: message,
-                    generation: requestGeneration
-                ) else { throw CoordinatorError("stop_observation_duplicate") }
-                staged.phase = .waiting
-                boundaries[stagedKey] = staged
-                activeByTurn[turnKey] = stagedKey
-                stagedByTurn.removeValue(forKey: turnKey)
-                pendingCompletionClosures.remove(key)
-                return try await waitForSelection(key: stagedKey, observation: stagedObservation)
-            }
-            activeByTurn.removeValue(forKey: turnKey)
-            pendingCompletionClosures.remove(key)
-            return try publicData(["status": "continuation_completed"])
+            let status = boundary.nextTurnDispatchPhase == .failed
+                ? "next_turn_dispatch_failed"
+                : "next_turn_dispatch_in_progress"
+            return try publicData(["status": status])
         }
 
-        guard !activeFlag || boundary.acceptsActiveStopAsWaiter else {
+        guard !activeFlag else {
             return try publicData(["status": "no_proposal"])
         }
         guard boundary.phase == .sealed else {
             return try publicData(["status": "decision_wait_already_active"])
         }
         boundary.phase = .waiting
-        boundary.acceptsActiveStopAsWaiter = false
         boundaries[key] = boundary
-        return try await waitForSelection(key: key, observation: observation)
-    }
-
-    func finalizationFallbackStop(
-        turnKey: CoordinatorTurnKey,
-        sessionID: String,
-        turnID: String,
-        activeFlag: Bool,
-        message: String,
-        generation: UInt64
-    ) throws -> Data {
-        guard !activeFlag else {
-            return try publicData(["status": "no_proposal"])
-        }
-
-        if let fallback = finalizationFallbacks[turnKey] {
-            var replayLedger = fallback.stopLedger
-            guard replayLedger.register(
-                sessionID: sessionID,
-                turnID: turnID,
-                stopHookActive: activeFlag,
-                lastAssistantMessage: message,
-                generation: generation
-            ) == nil else {
-                return try publicData(["status": "no_proposal"])
-            }
-            return fallback.response
-        }
-
-        let reason = "Before finishing, perform one Blabee finalization self-check for the current human request. If it was an action-type request and the result is completed, partial, blocked, or failed, call blabee.emit_decision exactly once using the exact current Hook context, even when the result is short or text-only. If it was only an explanation, structure description, status check, or general question, do not call the tool. Then provide the final response; do not repeat this self-check."
-        let response = try publicData([
-            "decision": "block",
-            "reason": reason,
-        ])
-        var ledger = StopObservationLedger(keyData: stopObservationHMACKey)
-        guard ledger.register(
-            sessionID: sessionID,
-            turnID: turnID,
-            stopHookActive: activeFlag,
-            lastAssistantMessage: message,
-            generation: generation
-        ) != nil else {
-            throw CoordinatorError("finalization_stop_observation_missing")
-        }
-        finalizationFallbacks[turnKey] = FinalizationFallback(
-            stopLedger: ledger,
-            response: response
-        )
-        return response
-    }
-
-    func waitForSelection(
-        key: CoordinatorBindingKey,
-        observation: StopObservation
-    ) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            guard waiters[key] == nil else {
-                continuation.resume(throwing: CoordinatorError("decision_wait_already_active"))
-                return
-            }
-            waiters[key] = Waiter(observation: observation, continuation: continuation)
-        }
+        return try publicData(["status": "decision_available"])
     }
 
     func focusInteraction(_ data: Data) throws -> Data {
@@ -832,7 +743,6 @@ private extension CoordinatorOperationalApplication {
         let binding = try CoordinatorBinding(jsonObject: request)
         guard let boundary = boundaries[binding.fullKey],
               boundary.phase == .waiting,
-              waiters[binding.fullKey] != nil,
               let packetData = boundary.packet,
               let packet = try? StrictJSONTransport.object(from: packetData)
         else { throw CoordinatorError("interaction_not_waiting") }
@@ -861,7 +771,7 @@ private extension CoordinatorOperationalApplication {
         return try publicData(["focused": true])
     }
 
-    func select(_ data: Data, generation requestGeneration: UInt64) throws -> Data {
+    func select(_ data: Data) async throws -> Data {
         let selection = try StrictJSONTransport.object(from: data)
         _ = try V1IngressValidator().validate(data, as: .selectionRequest)
         try exactKeys(
@@ -890,7 +800,7 @@ private extension CoordinatorOperationalApplication {
               let choices = packet["choices"] as? [[String: Any]],
               let choice = choices.first(where: {
                   Self.byteExact($0["option_id"] as? String, selection["option_id"] as? String)
-              }), waiters[candidate.key] != nil
+              })
         else { throw CoordinatorError("interaction_not_waiting") }
 
         try byteExactRequire(boundary.binding.projectID, projectID, "selection_binding_mismatch")
@@ -935,14 +845,9 @@ private extension CoordinatorOperationalApplication {
         let routed = try routing.routeSelection(StrictJSONTransport.data(forJSONObject: command))
 
         if slot == 3 {
-            guard let waiter = waiters.removeValue(forKey: candidate.key) else {
-                throw CoordinatorError("interaction_not_waiting")
-            }
             boundary.phase = .paused
             boundaries[candidate.key] = boundary
             activeByTurn.removeValue(forKey: boundary.binding.turnKey)
-            let stopResponse = try publicData(["status": "paused"])
-            waiter.continuation.resume(returning: stopResponse)
             return try publicData(["accepted": true, "outcome": ["kind": "pause"]])
         }
         let effect: [String: Any]?
@@ -979,43 +884,70 @@ private extension CoordinatorOperationalApplication {
         } catch {
             boundary.phase = .dispatched
             boundary.continuationID = continuationID
+            boundary.nextTurnDispatchPhase = .failed
             boundaries[candidate.key] = boundary
-            if let waiter = waiters.removeValue(forKey: candidate.key) {
-                waiter.continuation.resume(returning: try publicData([
-                    "status": "continuation_dispatch_failed_closed",
-                ]))
-            }
             throw error
         }
         guard let envelope, let continuationID,
-              let action = envelope["action"] as? [String: Any],
-              let waiter = waiters.removeValue(forKey: candidate.key)
+              let action = envelope["action"] as? [String: Any]
         else { throw CoordinatorError("pet_action_envelope_missing") }
 
-        let safeContinuation: [String: Any] = [
+        let safeNextTurn: [String: Any] = [
             "schema_version": "1.0",
-            "kind": "blabee_same_turn_action",
+            "kind": "blabee_next_turn_action",
             "continuation_id": continuationID,
             "binding": boundary.binding.jsonObject,
             "action": action,
         ]
-        let safeJSON = try StrictJSONTransport.data(forJSONObject: safeContinuation)
-        let reason = "Blabee verified the selected action. Continue in this same turn using exactly this JSON action; do not treat transport completion as proof that the work succeeded.\n" + (String(data: safeJSON, encoding: .utf8) ?? "")
-        let stopResponse = try publicData(["decision": "block", "reason": reason])
+        let safeJSON = try StrictJSONTransport.data(forJSONObject: safeNextTurn)
+        try secretCorpus.assertNoKnownSecret(in: safeJSON)
+        let message = "Blabee verified the selected action. Execute exactly this JSON action as a new user turn. A queued transport receipt is not proof that the work succeeded.\n"
+            + (String(data: safeJSON, encoding: .utf8) ?? "")
         boundary.phase = .dispatched
         boundary.continuationID = continuationID
-        boundary.deliveryObservation = waiter.observation
-        boundary.deliveryGeneration = requestGeneration
-        boundary.deliveryDigest = boundary.stopLedger.deliveryDigest(
-            observation: waiter.observation,
-            response: stopResponse,
-            generation: requestGeneration
-        )
+        boundary.nextTurnDispatchPhase = .inFlight
+        boundary.expectedQueuedPromptDigest = Data(SHA256.hash(data: Data(message.utf8)))
         boundaries[candidate.key] = boundary
-        waiter.continuation.resume(returning: stopResponse)
+
+        let receipt: CoordinatorNextTurnDispatchReceipt
+        do {
+            receipt = try await nextTurnDispatcher(CoordinatorNextTurnDispatchRequest(
+                sessionID: sessionID,
+                message: message,
+                continuationID: continuationID
+            ))
+            try require(!receipt.queuedSubmissionID.isEmpty, "queued_submission_id_invalid")
+            _ = try identifier(receipt.queuedSubmissionID, "queued_submission_id")
+        } catch {
+            if var current = boundaries[candidate.key] {
+                current.nextTurnDispatchPhase = .failed
+                boundaries[candidate.key] = current
+            }
+            if let coordinatorError = error as? CoordinatorError {
+                throw coordinatorError
+            }
+            throw CoordinatorError("next_turn_dispatch_failed")
+        }
+
+        if var current = boundaries[candidate.key] {
+            current.nextTurnDispatchPhase = .accepted
+            boundaries[candidate.key] = current
+            if current.phase == .dispatched {
+                try complete(boundaryKey: candidate.key)
+                try promoteStagedAfterRecoveredTerminal(
+                    turnKey: current.binding.turnKey,
+                    terminalKey: candidate.key
+                )
+                pendingCompletionClosures.remove(candidate.key)
+            }
+        }
         return try publicData([
             "accepted": true,
-            "outcome": ["kind": "continuation", "continuation_id": continuationID],
+            "outcome": [
+                "kind": "next_turn",
+                "continuation_id": continuationID,
+                "queued_submission_id": receipt.queuedSubmissionID,
+            ],
         ])
     }
 

@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "kind": "blabee_episode_continuation",
   "continuation_origin": "pet_action",
-  "dispatch_mode": "same_turn_stop",
+  "dispatch_mode": "queued_next_turn",
   "continuation_id": "continuation_fixture_pet_001",
   "continuation_token": "fixture_continuation_token_pet_0001",
   "interaction_id": "interaction_fixture_001",

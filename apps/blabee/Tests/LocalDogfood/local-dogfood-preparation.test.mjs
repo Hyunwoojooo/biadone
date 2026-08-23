@@ -157,6 +157,8 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   );
   const marketplace = join(canonicalOutput, "marketplace");
   const marketplacePlugin = join(marketplace, "plugins", "blabee");
+  const marketplaceRuntime = join(marketplacePlugin, "runtime");
+  const coordinatorLocator = join(marketplaceRuntime, "coordinator-path");
   const marketplaceManifestPath = join(
     marketplace,
     ".agents",
@@ -180,6 +182,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     projectSettingsLauncher,
     serviceLauncher,
     petLauncher,
+    coordinatorLocator,
     result.summaryPath,
   ]) {
     const metadata = await lstat(path);
@@ -191,6 +194,15 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal((await lstat(projectSettingsLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(serviceLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(petLauncher)).mode & 0o777, 0o755);
+  assert.equal((await lstat(marketplaceRuntime)).isSymbolicLink(), false);
+  assert.equal((await lstat(marketplaceRuntime)).isDirectory(), true);
+  assert.equal((await lstat(marketplaceRuntime)).mode & 0o777, 0o700);
+  assert.equal((await lstat(coordinatorLocator)).mode & 0o777, 0o600);
+  assert.equal(await readFile(coordinatorLocator, "utf8"), `${bundledCoordinator}\n`);
+  await assert.rejects(
+    lstat(join(bundledPlugin, "runtime", "coordinator-path")),
+    { code: "ENOENT" },
+  );
 
   const doctorRun = await execFile(
     coordinatorShim,
@@ -208,7 +220,10 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
 
   const bundledFiles = await regularFiles(bundledPlugin);
   const marketplaceFiles = await regularFiles(marketplacePlugin);
-  assert.deepEqual(marketplaceFiles, bundledFiles);
+  assert.deepEqual(
+    marketplaceFiles,
+    [...bundledFiles, "runtime/coordinator-path"].sort(compareNames),
+  );
   for (const path of bundledFiles) {
     assert.equal(
       await digest(join(marketplacePlugin, path)),
@@ -216,6 +231,24 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
       `marketplace copy drift: ${path}`,
     );
   }
+  const expectedMCPManifest = {
+    mcpServers: {
+      blabee: {
+        command: "./scripts/blabee-launcher",
+        args: ["mcp"],
+        cwd: ".",
+        env_vars: ["BLABEE_SOCKET"],
+      },
+    },
+  };
+  assert.deepEqual(
+    JSON.parse(await readFile(join(bundledPlugin, ".mcp.json"), "utf8")),
+    expectedMCPManifest,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(join(marketplacePlugin, ".mcp.json"), "utf8")),
+    expectedMCPManifest,
+  );
 
   const marketplaceManifest = JSON.parse(await readFile(marketplaceManifestPath, "utf8"));
   const expectedMarketplaceSuffix = createHash("sha256")

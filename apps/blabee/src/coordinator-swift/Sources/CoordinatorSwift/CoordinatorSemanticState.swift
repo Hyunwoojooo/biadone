@@ -557,8 +557,13 @@ public enum CoordinatorSemanticReplay {
         else { throw CoordinatorError("decision_option_not_pet_action") }
         try require(boundary.dispatchedContinuationID == nil, "continuation_already_dispatched_for_selection")
         let payload = event.payload
-        let dispatchMode = payload["dispatch_mode"] as? String
-        try require(dispatchMode == "same_turn_stop", "dispatch_mode_conflict")
+        guard let dispatchMode = payload["dispatch_mode"] as? String else {
+            throw CoordinatorError("dispatch_mode_conflict")
+        }
+        try require(
+            dispatchMode == "queued_next_turn" || dispatchMode == "same_turn_stop",
+            "dispatch_mode_conflict"
+        )
         let interactionID = try SemanticJSON.string(payload, "interaction_id", field: "interaction_id", identifier: true)
         let packetID = try SemanticJSON.string(payload, "packet_id", field: "packet_id", identifier: true)
         let revision = try SemanticJSON.positiveInteger(payload["revision"], code: "packet_revision_invalid")
@@ -602,7 +607,7 @@ public enum CoordinatorSemanticReplay {
             revision: revision,
             optionID: optionID,
             actionID: actionID,
-            dispatchMode: "same_turn_stop",
+            dispatchMode: dispatchMode,
             issuedAt: issuedAt,
             expiresAt: expiresAt,
             inFlightDeadlineAt: deadlineAt,

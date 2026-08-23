@@ -4,6 +4,15 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
+private let petRepositoryRoot: URL = {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}()
+
 @Test("BlabeePet clamps frames purely across negative and oversized displays")
 func blabeePetMultiDisplayFrameClamp() {
     let leftVisible = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
@@ -40,6 +49,49 @@ func blabeePetMultiDisplayFrameClamp() {
         activeDisplayID: 2,
         stableDisplayID: 2
     )?.id == 2)
+}
+
+@Test("BlabeePet anchors its event panel below the menu-bar item")
+func blabeePetStatusItemPanelAnchor() {
+    let visibleFrame = CGRect(x: 0, y: 0, width: 1_440, height: 875)
+    let statusFrame = CGRect(x: 1_180, y: 875, width: 28, height: 25)
+    let size = CGSize(width: 460, height: 480)
+    let frame = PetFrameClamp.belowStatusItemFrame(
+        size: size,
+        statusItemFrame: statusFrame,
+        in: visibleFrame
+    )
+
+    #expect(frame.size == size)
+    #expect(frame.midX == statusFrame.midX)
+    #expect(frame.maxY == statusFrame.minY - 8)
+    #expect(visibleFrame.contains(frame))
+
+    let edgeFrame = PetFrameClamp.belowStatusItemFrame(
+        size: size,
+        statusItemFrame: CGRect(x: 1_432, y: 875, width: 8, height: 25),
+        in: visibleFrame
+    )
+    #expect(edgeFrame.maxX == visibleFrame.maxX)
+    #expect(visibleFrame.contains(edgeFrame))
+}
+
+@Test("BlabeePet loads the bundled SVG and overlays attention inside the icon")
+@MainActor
+func blabeePetStatusItemIconAsset() throws {
+    let asset = petRepositoryRoot
+        .appendingPathComponent("Packaging/macos/Resources/BlabeeMenuBar.svg")
+    let baseImage = try #require(PetStatusItemIcon.loadBaseImage(at: asset))
+    #expect(baseImage.size == PetStatusItemIcon.size)
+    #expect(baseImage.isTemplate == false)
+
+    let normal = PetStatusItemIcon.render(baseImage: baseImage, attention: false)
+    let attention = PetStatusItemIcon.render(baseImage: baseImage, attention: true)
+    #expect(normal.size == PetStatusItemIcon.size)
+    #expect(attention.size == PetStatusItemIcon.size)
+    #expect(normal.isTemplate == false)
+    #expect(attention.isTemplate == false)
+    #expect(normal.tiffRepresentation != attention.tiffRepresentation)
 }
 
 @Test("BlabeePet resizing preserves the lower-trailing anchor and round-trips")

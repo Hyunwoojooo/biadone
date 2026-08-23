@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,10 +30,10 @@ async function filesUnder(directory) {
   return result;
 }
 
-function run(executable, args, { env, input = "" } = {}) {
+function run(executable, args, { cwd = repositoryRoot, env, input = "" } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
-      cwd: repositoryRoot,
+      cwd,
       env: env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -71,7 +71,7 @@ test("four supported hooks call the native coordinator through the plugin launch
   const expected = {
     SessionStart: { timeout: 8, nativeBudget: 7 },
     UserPromptSubmit: { timeout: 8, nativeBudget: 7 },
-    Stop: { timeout: 130, nativeBudget: 127 },
+    Stop: { timeout: 8, nativeBudget: 5 },
     PermissionRequest: { timeout: 8, nativeBudget: 7 },
   };
 
@@ -97,18 +97,23 @@ test("four supported hooks call the native coordinator through the plugin launch
     hookDocument.hooks.PermissionRequest[0].hooks[0].statusMessage,
     /알림/,
   );
+  assert.equal(
+    hookDocument.hooks.Stop[0].hooks[0].statusMessage,
+    "Blabee 결정 저장 중",
+  );
 });
 
-test("MCP uses one installed native server on PATH without undocumented plugin-variable expansion", async () => {
+test("MCP uses the plugin-local launcher without undocumented plugin-variable expansion", async () => {
   // PLUGIN_ROOT and PLUGIN_DATA are documented for Hook commands, not MCP config
-  // expansion. T-011 therefore delegates PATH/app installation to T-012 and
-  // lets every native entry point resolve the same default socket itself.
+  // expansion. A relative command and cwd keep MCP on the same launcher/runtime
+  // discovery contract as Hooks without interpolating either variable.
   const mcp = await json(mcpPath);
   assert.deepEqual(Object.keys(mcp), ["mcpServers"]);
   assert.deepEqual(Object.keys(mcp.mcpServers), ["blabee"]);
   assert.deepEqual(mcp.mcpServers.blabee, {
-    command: "blabee-coordinator",
+    command: "./scripts/blabee-launcher",
     args: ["mcp"],
+    cwd: ".",
     env_vars: ["BLABEE_SOCKET"],
   });
   assert.equal(JSON.stringify(mcp).includes("PLUGIN_ROOT"), false);
@@ -172,6 +177,132 @@ test("launcher forwards Hook input and leaves socket resolution to the native co
 
     const launcher = await readFile(launcherPath, "utf8");
     assert.equal(launcher.includes("PLUGIN_DATA"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("installed launcher discovers the dogfood coordinator through its runtime path contract", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-runtime-"));
+  const installedPlugin = path.join(directory, "cached plugin");
+  const installedLauncher = path.join(installedPlugin, "scripts", "blabee-launcher");
+  const runtimePath = path.join(installedPlugin, "runtime", "coordinator-path");
+  const fakeCoordinator = path.join(
+    directory,
+    "Blabee.app",
+    "Contents",
+    "MacOS",
+    "blabee-coordinator",
+  );
+  try {
+    await mkdir(path.dirname(installedLauncher), { recursive: true });
+    await mkdir(path.dirname(runtimePath), { recursive: true });
+    await mkdir(path.dirname(fakeCoordinator), { recursive: true });
+    await writeFile(installedLauncher, await readFile(launcherPath));
+    await chmod(installedLauncher, 0o755);
+    await writeFile(
+      fakeCoordinator,
+      "#!/bin/sh\nprintf '%s\\n' \"$1:$2\"\n",
+    );
+    await chmod(fakeCoordinator, 0o755);
+    await writeFile(runtimePath, `${fakeCoordinator}\n`);
+
+    const env = { ...process.env };
+    delete env.BLABEE_COORDINATOR_BINARY;
+    const discovered = await run(installedLauncher, ["hook", "UserPromptSubmit"], {
+      env,
+      input: JSON.stringify({ hook_event_name: "UserPromptSubmit" }),
+    });
+    assert.equal(discovered.code, 0, discovered.stderr);
+    assert.equal(discovered.stderr, "");
+    assert.equal(discovered.stdout, "hook:UserPromptSubmit\n");
+
+    const relativeMCP = await run("./scripts/blabee-launcher", ["mcp"], {
+      cwd: installedPlugin,
+      env,
+    });
+    assert.equal(relativeMCP.code, 0, relativeMCP.stderr);
+    assert.equal(relativeMCP.stderr, "");
+    assert.equal(relativeMCP.stdout, "mcp:\n");
+
+    const relativeOverride = path.relative(repositoryRoot, fakeCoordinator);
+    const rejectedRelative = await run(installedLauncher, ["hook", "SessionStart"], {
+      env: { ...env, BLABEE_COORDINATOR_BINARY: relativeOverride },
+      input: JSON.stringify({ hook_event_name: "SessionStart" }),
+    });
+    assert.equal(rejectedRelative.code, 0);
+    assert.equal(rejectedRelative.stdout, "");
+    assert.equal(rejectedRelative.stderr, "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("invalid runtime locators never fall back while an absent locator may use Applications", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-invalid-runtime-"));
+  const installedPlugin = path.join(directory, "cached-plugin");
+  const installedLauncher = path.join(installedPlugin, "scripts", "blabee-launcher");
+  const runtimePath = path.join(installedPlugin, "runtime", "coordinator-path");
+  const fallbackCoordinator = path.join(directory, "applications-fallback");
+  const executableCoordinator = path.join(directory, "runtime-coordinator");
+  const nonExecutableCoordinator = path.join(directory, "non-executable-coordinator");
+  const linkedLocator = path.join(directory, "linked-coordinator-path");
+  try {
+    await mkdir(path.dirname(installedLauncher), { recursive: true });
+    await mkdir(path.dirname(runtimePath), { recursive: true });
+    const launcher = await readFile(launcherPath, "utf8");
+    const instrumentedLauncher = launcher.replace(
+      "/Applications/Blabee.app/Contents/MacOS/blabee-coordinator",
+      fallbackCoordinator,
+    );
+    assert.notEqual(instrumentedLauncher, launcher);
+    await writeFile(installedLauncher, instrumentedLauncher);
+    await chmod(installedLauncher, 0o755);
+    await writeFile(
+      fallbackCoordinator,
+      "#!/bin/sh\nprintf 'fallback:%s:%s\\n' \"$1\" \"$2\"\n",
+    );
+    await chmod(fallbackCoordinator, 0o755);
+    await writeFile(executableCoordinator, "#!/bin/sh\nexit 0\n");
+    await chmod(executableCoordinator, 0o755);
+    await writeFile(nonExecutableCoordinator, "not executable\n");
+    await writeFile(linkedLocator, `${executableCoordinator}\n`);
+
+    const env = { ...process.env };
+    delete env.BLABEE_COORDINATOR_BINARY;
+    const absent = await run(installedLauncher, ["hook", "SessionStart"], { env });
+    assert.equal(absent.code, 0, absent.stderr);
+    assert.equal(absent.stdout, "fallback:hook:SessionStart\n");
+
+    const invalidCases = [
+      ["relative", async () => writeFile(runtimePath, "relative-coordinator\n")],
+      ["malformed", async () => writeFile(runtimePath, Buffer.from([0xff, 0xfe, 0x0a]))],
+      ["multi-line", async () => writeFile(
+        runtimePath,
+        `${executableCoordinator}\n${fallbackCoordinator}\n`,
+      )],
+      ["oversized", async () => writeFile(runtimePath, `/${"a".repeat(4096)}\n`)],
+      ["non-executable", async () => writeFile(runtimePath, `${nonExecutableCoordinator}\n`)],
+      ["directory", async () => mkdir(runtimePath)],
+      ["symlink", async () => symlink(linkedLocator, runtimePath)],
+    ];
+    for (const [name, prepare] of invalidCases) {
+      await rm(runtimePath, { recursive: true, force: true });
+      await prepare();
+      const hook = await run(installedLauncher, ["hook", "Stop"], { env });
+      assert.equal(hook.code, 0, `${name}: ${hook.stderr}`);
+      assert.equal(hook.stdout, "", name);
+      assert.equal(hook.stderr, "", name);
+
+      const mcp = await run("./scripts/blabee-launcher", ["mcp"], {
+        cwd: installedPlugin,
+        env,
+      });
+      assert.equal(mcp.code, 127, `${name}: ${mcp.stderr}`);
+      assert.equal(mcp.stderr, "", name);
+      assert.equal(JSON.parse(mcp.stdout).error.code, -32000, name);
+      assert.equal(mcp.stdout.includes("fallback"), false, name);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

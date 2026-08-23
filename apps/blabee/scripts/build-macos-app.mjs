@@ -32,6 +32,7 @@ const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = resolve(dirname(scriptPath), "..");
 const bundleName = "Blabee.app";
+const menuBarIconFileName = "BlabeeMenuBar.svg";
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
 const launchAgentRelativePath = join(
   "Contents",
@@ -336,15 +337,24 @@ export async function assembleMacOSApp({
     "LaunchAgents",
   );
   const sourceLaunchAgent = join(sourceLaunchAgentDirectory, launchAgentFileName);
+  const sourceMenuBarIcon = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    menuBarIconFileName,
+  );
   const sourceContracts = join(canonicalSourceRoot, "Contracts", "v1");
   const sourcePlugin = join(canonicalSourceRoot, "Plugin", "blabee");
   assertWithin(canonicalSourceRoot, sourceInfoPlist, "Info.plist");
   assertWithin(canonicalSourceRoot, sourceLaunchAgent, "LaunchAgent plist");
+  assertWithin(canonicalSourceRoot, sourceMenuBarIcon, "menu-bar icon");
   assertWithin(canonicalSourceRoot, sourceContracts, "Contracts/v1");
   assertWithin(canonicalSourceRoot, sourcePlugin, "Plugin/blabee");
   await requireRegularFile(sourceInfoPlist, "Info.plist");
   await requireDirectory(sourceLaunchAgentDirectory, "LaunchAgents");
   await requireRegularFile(sourceLaunchAgent, "LaunchAgent plist");
+  await requireRegularFile(sourceMenuBarIcon, "menu-bar icon");
   await validateLaunchAgentPlist(sourceLaunchAgent);
   await requireDirectory(sourceContracts, "Contracts/v1");
   await requireDirectory(sourcePlugin, "Plugin/blabee");
@@ -411,6 +421,11 @@ export async function assembleMacOSApp({
       0o644,
     );
     await validateLaunchAgentPlist(join(staging, launchAgentRelativePath));
+    await copyFileWithMode(
+      sourceMenuBarIcon,
+      join(resources, menuBarIconFileName),
+      0o644,
+    );
     await copyTreeStrict(
       canonicalSourceRoot,
       sourceContracts,

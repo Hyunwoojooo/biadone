@@ -124,8 +124,16 @@ function validateDispatchMode(wrapperEvent, index) {
   const data = traceEventData(wrapperEvent);
   const origin = data.continuation_origin;
   const mode = data.dispatch_mode;
-  if (origin === "pet_action" && mode !== "same_turn_stop") {
-    return failure("dispatch_mode_conflict", index, "pet_action must use same_turn_stop only");
+  if (
+    origin === "pet_action"
+    && mode !== "queued_next_turn"
+    && mode !== "same_turn_stop"
+  ) {
+    return failure(
+      "dispatch_mode_conflict",
+      index,
+      "pet_action must use queued_next_turn (or legacy same_turn_stop replay)",
+    );
   }
   if (origin === "internal_format_repair" && mode !== "submitted_envelope") {
     return failure("dispatch_mode_conflict", index, "internal_format_repair must use submitted_envelope only");

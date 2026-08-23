@@ -1,7 +1,7 @@
-# Blabee M0, T-005, T-006, T-007, T-010, T-011 및 T-012 QA 보고서
+# Blabee M0, T-005, T-006, T-007, T-010, T-011, T-012 및 T-015 QA 보고서
 
-상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인
-검토일: 2026-08-22
+상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인, T-015 소스·계약·자동·실제 두 세션 dogfood 완료
+검토일: 2026-08-23
 대상: `spikes/m0/`, `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서
 
 ## 판정
@@ -26,15 +26,29 @@ T-007b-B2는 Swift routing/time 범위에서 조건부 승인한다. 같은 프�
 
 T-007b-C는 같은 턴 반복 계약 범위에서 조건부 승인한다. 실제 Codex CLI `0.149.0`과 M0 fake coordinator가 동일 session·turn·prompt·episode lineage로 `boundary_sequence` 1→2, 제안·대기·선택·dispatch·consume·완료 각 2회를 관찰했다. 별도 Swift 제품 게이트는 같은 lineage의 두 경계를 16개 이벤트로 영속화하고 재시작 후 재생했다. 실제 Hook→Swift 고수준 adapter·UDS·플러그인 패키징은 T-011 책임이므로 이 판정은 공개 dispatch 승인이 아니다.
 
-T-011은 코드와 Keychain 없는 실제 제품 구성요소 결합 범위에서 조건부 승인한다. Codex Plugin v0.1.0의 조건부 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet `get_state`/v1 full-selection, UDS·storage 단일 owner를 구현했다. 실제 제품 Hook/MCP CLI와 Pet API용 UDS test client를 test-only in-memory freshness를 사용하는 실제 SQLiteJournal→Routing→Operational→UDS에 연결했다. 최신 통합 gate는 proposal 없는 최초 Stop의 1회 finalization self-check, exact 재전달 응답 재생, 이후 emit된 경계의 active Stop 대기, 1번 선택과 같은 lineage 경계 1→2 완료를 통과했다. assistant 원문 marker, 지정된 첫 UserPrompt context 외 correlation token, proposal free-text copy, 원문 continuation token의 DB/WAL/SHM·공개 응답 유출을 차단한다.
+T-011은 코드와 Keychain 없는 실제 제품 구성요소 결합 범위에서 조건부 승인했다. Codex Plugin v0.1.0의 조건부 Skill·4개 Hook·MCP, Swift 고수준 operational application, Pet `get_state`/v1 full-selection, UDS·storage 단일 owner를 구현했다. 당시 통합 gate는 proposal 없는 최초 Stop의 1회 finalization self-check, exact 재전달 응답 재생, 이후 emit된 경계의 active Stop 대기, 1번 선택과 같은 lineage 경계 1→2 완료를 통과했다. 이 전달은 아래 T-015가 운영 경로에서 대체하지만, assistant 원문 marker, 지정된 첫 UserPrompt context 외 correlation token, proposal free-text copy, 원문 continuation token의 DB/WAL/SHM·공개 응답 유출 차단은 계속 적용한다.
 
-결정 누락 보완 범위도 코드 자격으로 조건부 승인한다. action-type 완료·부분 완료·차단·실패는 짧거나 텍스트 결과뿐이어도 Skill과 Hook context가 `emit_decision`을 요구한다. 최초 Stop fallback은 설명·구조·상태·일반 질문이면 도구를 호출하지 않고 다음 active Stop에서 fail-open하므로 결정 카드를 강제하지 않는다. 이 분류는 별도 LLM API가 아니라 현재 Codex의 self-check 판단에 의존한다. Pet의 빈 연결 상태는 `준비됨`, 실제 routing in-flight만 `작업 중`으로 표시한다. 자동 검증은 통과했지만 새 소스를 설치한 실제 사용자 Codex dogfood는 아직 실행하지 않았다.
+결정 누락 보완 범위도 코드 자격으로 조건부 승인한다. action-type 완료·부분 완료·차단·실패는 짧거나 텍스트 결과뿐이어도 Skill과 Hook context가 `emit_decision`을 요구한다. 설명·구조·상태·일반 질문은 결정 카드를 강제하지 않는다. 이 분류는 별도 LLM API가 아니라 현재 Codex의 self-check 판단에 의존한다. Pet의 빈 연결 상태는 `준비됨`, 실제 routing in-flight만 `작업 중`으로 표시한다. T-015 설치본 dogfood에서는 Stop이 답변을 붙잡지 않고 종료됐으며, 결정 카드는 Pet 선택 뒤 새 사용자 턴으로 전달됐다.
 
 T-011 실제 foreground service 재시작도 조건부 승인한다. 실제 사용자 Plugin·신뢰된 네 Hook·primary login Keychain service에서 미선택 sealed 경계 중 service를 종료했고, 재기동 시 `interaction_expired(restart_elapsed_ambiguous, automatic_selection=false)`로 종결해 공개 interactions·pending을 0, foreground를 null, selection을 disabled로 유지했다. 재기동 후 새 경계는 exact focus와 recommended 선택, dispatch, `same_turn_stop` consume, transport `completed`, `transport_terminal_observed` close를 거쳐 Codex가 `T011_RESTART_RECOVERED`를 출력했다. 최종 공개 상태도 비었다. 기존 Stop Hook은 연결 단절 시 fail-open으로 끝나므로 이전 Codex 출력의 결정 대기 문구를 제품이 수정하지 못하는 UX 한계가 있다.
 
 T-011 live prompt-only correction도 조건부 승인한다. 실제 Codex의 첫 호출은 `source_prompt_id`만 틀린 상태로 `proposal_source_prompt_mismatch`를 받았고, 같은 proposal 객체·나머지 wrapper를 유지한 해당 필드 단독 보정 한 번만 재시도해 accepted됐다. 비밀값을 출력하지 않은 세션 감사 결과는 `only_source_prompt_id_differed=true`, `retried=true`였다. 실패 호출은 journal sequence를 늘리지 않았고 corrected open/seal 두 이벤트와 packet document 하나만 추가됐다. 보정 경계는 단일 pause claim과 `episode_paused`로 닫혀 최종 공개 state가 비었다. secret 또는 다른 binding mismatch 비재시도는 실제 사용자 secret을 주입하지 않고 자동 계약 범위로 유지한다.
 
+T-011 auto-attach 변경은 코드·자동 통합·로컬 설치 범위에서 조건부 승인한다. 활성 프로젝트의 `UserPromptSubmit`이 `SessionStart`보다 먼저 오면 세션을 지연 등록하고, 뒤늦은 start/resume는 기존 prompt/episode identity를 보존한다. 비활성 프로젝트는 등록하지 않으며 교차 프로젝트 session ID는 fail-closed한다. Plugin-local MCP launcher는 4,096 byte 이하의 비-symlink locator에 단일 절대 실행 경로를 요구하고, 존재하지만 잘못된 locator에서 `/Applications`로 fallback하지 않는다. 독립 QA가 처음 찾은 잘못된 locator fallback과 Pet 자동 focus 재시도 누락 Medium 두 건은 각각 fail-closed locator 계약과 poll 단위 재시도로 닫았다. 다른 authoritative foreground는 빼앗지 않는다.
+
+T-015는 T-011의 운영 continuation을 대체하는 변경이다. Stop Hook의 blocking response와 waiter/finalization fallback을 제거해 현재 Codex 답변이 정상 종료되게 하고, Pet 1·2 선택 뒤에만 봉인된 action을 exact session의 `codex queue`에 새 사용자 턴으로 제출한다. transient Pet 봉투는 `queued_next_turn`만 발급하며 과거 `same_turn_stop`은 durable journal replay 호환으로만 읽는다. queue receipt가 오면 transport lifecycle만 terminal로 닫고 `work_outcome_status = not_recorded`를 유지한다. 큐 메시지가 `UserPromptSubmit`으로 돌아오면 새 turn·prompt·episode·baseline을 만들며, dispatcher 호출 도중 먼저 돌아오는 reentrant prompt도 중복 close 없이 처리한다. 슬롯 3은 큐 호출 없이 pause하고 슬롯 4 rollback은 기존처럼 비활성이다. 실제 로컬 Codex `0.149.0` 격리 시험에서 열린 유휴 TUI는 큐 메시지를 즉시 새 턴으로 실행했고 닫힌 thread는 resume 때 실행했다. 이어 제품 앱·service·Plugin 설치본의 실제 두 TUI에서 A·B 원래 답변이 선택 전에 종료됐고, FIFO A→B 선택 뒤 같은 session의 새 turn·episode에서 `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK`가 완료됐다. 이 dogfood 통과는 현재 로컬 빌드 자격이며 Codex 버전 allowlist나 공개 배포 승인은 아니다.
+
+T-015 독립 QA에서 발견한 한 건의 correctness race도 닫았다. 처음 구현은 dispatcher가 응답하기 전에 같은 세션의 **아무** 새 프롬프트가 오면 이전 transport를 완료할 수 있었다. 수정 후에는 dispatch 전에 exact 큐 메시지 SHA-256을 경계에 저장하고 그 digest와 일치하는 `UserPromptSubmit`만 조기 완료 근거로 인정한다. 무관한 사람 프롬프트는 새 episode로 허용하지만 이전 dispatch는 건드리지 않으며, 이후 dispatcher가 실패해도 `continuation_transport_completed`를 기록하지 않는 negative 회귀를 추가했다. 최종 Operational 24/24, queue process 6/6, Pet 108/108, Swift Testing 189/189+XCTest 5/5가 통과했고 독립 재검토에서 open critical/high/medium finding은 0개다. 전체 npm 회귀는 286개 중 285개가 통과했고 기존 Keychain 비유출 검사 한 건의 `/usr/bin/security` 30초 timeout만 남았으나, 동일 검사의 격리 재실행은 1/1 통과했다. race 수정 직전 동일 전체 suite는 286/286 통과했다.
+
+현재 `build/local-dogfood-async-next-turn-v1`은 ad-hoc deep/strict 서명 검증을 통과했고, `blabee@blabee-local-dogfood-8462d0eca28a` 하나만 활성화했다. service PID 74799와 Pet PID 76337이 해당 빌드에서 실행 중이며 launchd job은 1회 기동 뒤 종료 이력 없이 running이다. 읽기 전용 Doctor에서 coordinator runtime·app·embedded coordinator·Plugin 설치/구조·MCP runtime·daemon·project scope는 통과했다. 처음 캐시 복사본을 명시적 `--plugin`으로 넘긴 검사는 설치 source와 다른 inode라 `plugin_layout_invalid`를 냈지만, Codex가 보고한 marketplace 원본 경로로 재검사해 `plugin_layout_ok`를 확인했고 source·marketplace·cache payload hash도 일치했다. 빈 Codex 버전 allowlist는 실패, Hook hash 검토는 사용자 조치 필요로 의도대로 보고했다. 제품 설치본의 열린 두 Codex TUI에서 FIFO 새 턴 실행은 통과했으며, 기존에 닫혀 있던 실제 사용자 thread의 재개와 `/hooks` 세션별 검토는 후속 실환경 게이트다.
+
 T-010은 실제 macOS 1차 qualification 범위에서 조건부 승인한다. 비활성 floating `NSPanel`, routing 순서와 exact binding을 보존하는 다중 세션 카드, 명시적 14-field focus 뒤 16-field selection, single-flight 선택, disabled·stale·expired·ambiguous 입력의 fail-closed, high/critical 1·2 확인을 구현했다. 단축키 설정은 Option을 포함한 제한된 picker만 제공하고 Option 단독 문자를 차단하며, 중복·미지원 조합을 저장 전에 거부한다. 활성 등록 중 하나라도 실패하면 후보 전체를 저장하지 않고 이전 설정과 binding을 복원하며, 카드 label도 실제 등록·충돌·실패·확인·비활성 상태를 반영한다. 격리된 실제 WindowServer에서 호스트 active/key/focus 유지와 입력 연속성, 비활성 Picker, 취소와 저장/재시작, 실제 Carbon 충돌 진단, 유효 카드 focus/select를 확인했다. 독립 QA가 찾은 접기/펼치기 위치 점프와 화면 축소 뒤 정상 크기 미복원은 lower-trailing anchor 보존, intended-size 복원과 frame 회귀로 수정했다. PermissionRequest는 새 요청만 알리고 Allow/Deny를 중계하지 않는다. 요청에 원래 PID/창 identity가 없어 알림 증가 polling 시점의 frontmost 외부 앱으로만 best-effort 복귀한다. Pet 35/35, Operational 14/14, Routing 필터 18/18(Routing 16 + Pet 2)과 Swift package XCTest 5/5 + Swift Testing 106/106가 통과했다.
+
+2026-08-23 메뉴바 전환과 후속 FIFO 다중 세션 처리는 소스·자동 테스트 범위에서 조건부 승인한다. 앱 시작 시 상시 창을 열지 않고 `NSStatusItem`만 만들며, 새 결정 또는 새 권한 알림에서만 비활성 유리 패널을 아이콘 아래에 자동 표시한다. 전달받은 28×24 Blabee SVG는 SHA-256 원본 일치 상태로 번들 `Contents/Resources/BlabeeMenuBar.svg`에 포함하고, attention은 아이콘 우상단 red overlay badge로 합성한다. Pet은 `PetSnapshot.parse`가 보존한 코디네이터 `routing.pending` 순서의 선두만 표시·focus·선택 대상으로 삼는다. coordinator foreground가 없고 선두가 ready이면 대기열 길이와 관계없이 exact 14-field focus를 한 번 자동 요청하고, 그 응답이 snapshot으로 확인된 뒤에만 1·2·3·4 전역 단축키를 등록한다. 선두 선택 후 다음 세션을 자동 focus하며, sealed 선두를 뒤 ready 카드가 추월하거나 direct `focus`·panel selection identity로 건너뛰는 요청은 transport 전송 전에 거부한다. 기존 authoritative foreground는 자동으로 빼앗지 않고 exact focus/no-steal API는 코디네이터에 유지한다. 자동 focus가 진행 중일 때 누른 선택은 같은 focus 완료를 기다린 뒤 정확히 한 번 전송한다. 선택지는 상세 보기보다 먼저 렌더링하고 다중 세션 UI는 뒤 카드를 누르는 picker 대신 현재 `1/N`과 남은 개수만 표시한다. 독립 QA가 처음 찾은 ViewModel follower 직접 우회 Medium은 head identity 검증과 회귀 테스트로 닫혔다. SVG load/badge·메뉴바 앵커·자동 focus·직접 선택 대기·FIFO head/advance/block/direct-bypass·attention/reminder event·toggle 회귀를 포함한 최신 `BlabeePetTests` target 108/108, 전체 Swift Testing 189/189+XCTest 5/5와 앱 패키징 8/8이 통과했다. 최종 `git diff --check`는 아래 검증 결과에서 별도로 기록한다. 최신 release 앱 조립·교체·재시작과 실제 두 세션의 FIFO 선두 선택·후속 승격은 저널로 확인했지만, Computer Use AX가 비활성 메뉴바 패널에 붙지 않아 WindowServer 시각·포커스·badge·자동 열림/닫힘은 직접 캡처하지 못했다.
+
+역사적 메뉴바 교체 단계에서는 새 release 앱을 ad-hoc 서명해 `build/local-dogfood-prompt-retry-v2/Blabee.app`에 교체하고 Pet을 PID 70929로 재시작했다. 배포 경로에서 deep/strict codesign과 SVG SHA-256 `e0aaaf85285178a9befcc794fb8df312936ed73415560a65dac472721558745f`를 다시 확인했고, 기존 앱은 `Blabee.app.pre-menubar-svg`로 보존했다. 진행 중인 service와 Codex MCP는 세션 연속성을 위해 재시작하지 않았다. Orca computer-use runtime이 꺼져 있어 메뉴바 픽셀과 자동 패널 수명주기는 이 단계에서 직접 관찰하지 않았다.
+
+T-015 전 후속 FIFO 교체 단계에서는 새 production build를 같은 도그푸딩 앱 경로에 조립했다. 교체 직전 앱은 `Blabee.app.pre-fifo`로 보존했고, 새 번들의 deep/strict codesign과 SVG 원본 SHA-256을 확인했다. 이전 Pet PID 70929만 종료하고 LaunchServices로 새 Pet PID 18602를 실행했으며, service PID 66616과 MCP PID 74398은 유지했다. 당시에는 실제 두 세션 live dogfood가 미실행이었으나, 이후 `local-dogfood-async-next-turn-v1` 설치·재시작과 T-015 왕복으로 이 기능 게이트를 통과했다.
 
 T-010 실시간 deadline qualification도 조건부 승인한다. Keychain 없는 실제 SQLite→Routing→Operational→UDS와 제품 Hook·MCP·Stop을 연결해 reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 exact focus/select의 `interaction_not_waiting`, 최종 `interactions=0`·`pending=0`·`in_flight_count=0`·`selection_enabled=false`를 확인했다. Pet 시각 상태는 computer-use runtime 중단으로 확인하지 못했으므로 이 승인에 포함하지 않는다. 환경 QA는 호스트 복귀 계약을 앱 PID 수준으로 제한한다. 현재 소스에는 원래 창·탭·Space identity가 없어 동일 앱의 정확한 창 복귀를 보장할 수 없다.
 
@@ -82,7 +96,9 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - T-007b-C Hook 집중: 17/17, M0 전체: 55/55 통과. 실제 하네스 실패
   진단의 correlation/continuation token 가림 회귀를 포함
 - T-007b-C Swift 제품 반복 게이트: 1/1 통과, 같은 turn lineage의 16개 이벤트를 재시작 후 재생
-- T-011 부모 최종 `npm run test:t011`: 24/24 통과. 실제 제품 Hook/MCP CLI와 Pet API용 UDS test client를 SQLite→Routing→Operational→UDS에 연결해 decision 누락 fallback부터 두 경계를 완료하는 gate 포함
+- T-011 최신 `npm run test:t011`: 26/26 통과. 기존 decision 누락 fallback·두 경계 gate에 `UserPromptSubmit` 선행 지연 연결, resume identity 보존, Plugin-local MCP·locator 회귀를 추가
+- 최신 전체 Swift package: Swift Testing 178/178+XCTest 5/5, `BlabeePetTests` 101/101 통과. 일시 focus 실패·응답 유실 재시도와 다른 foreground no-steal 회귀 포함
+- 로컬 도그푸딩·패키징 회귀: `npm run test:dogfood` 4/4, `npm run test:t012` 8/8, 앱 패키징 8/8 통과
 - T-011 두 경계 제품 결합 gate 단독 반복: 3/3 통과. 지정된 correlation context 1회, CSPRNG continuation token 2개 발급과 DB/WAL/SHM 비저장, product binary의 test-server mode 비노출 포함
 - T-011 최신 UDS 종료 집중: 6개 × 3회, 18/18 통과. 결합 gate 추가 전 6개 × 5회, 30/30도 통과
 - T-011 Swift Operational: 12/12 통과, 최종 동결 소스에서 3회 연속 재통과. full 16-field selection, pre-write secret copy 차단, staged active Stop, open/seal·selection·completion·scheduler의 pre/post-commit 응답 유실, retained monotonic anchor와 timeout promotion 회귀 포함
@@ -90,12 +106,12 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - T-011 격리 Codex Plugin lifecycle: 실제 `0.149.0` install/cache-buster update/remove 통과. 제공 Python validator는 PyYAML 부재로 검증 전에 중단
 - T-011 실제 foreground service 재시작: pending sealed 경계가 `restart_elapsed_ambiguous`, `automatic_selection=false`로 폐기되고 공개 state 0건; 재기동 후 새 recommended 경계가 same-turn consume·transport completed·terminal close와 `T011_RESTART_RECOVERED`까지 통과
 - T-011 실제 prompt-only correction: 첫 prompt ID 단독 mismatch 전용 오류·pre-write 0건, 같은 proposal/나머지 wrapper의 필드 단독 1회 보정, 두 번째 accepted와 corrected pause close 통과. 세션 감사 `only_source_prompt_id_differed=true`, `retried=true`
-- T-010 Swift Pet: 35/35 통과. strict snapshot parsing, routing 순서와 bijective join, 명시적 focus/no-steal, stale·expiry·single-flight, 위험 확인, PermissionRequest 알림, 안전 조합·draft·영속 설정, 실제 상태 label, 등록 실패 전체 rollback·복원 실패 진단, retired candidate ID와 lower-trailing frame 왕복 회귀 포함
+- T-010 Swift Pet: 기존 35/35에 SVG load/badge·메뉴바 앵커·FIFO 선두 자동 focus·자동 focus 중 직접 선택 대기·다중 세션 선두/advance/block/direct-bypass·attention/reminder/toggle 회귀를 추가했고, 관련 `BlabeePetTests` target 98/98 통과. strict snapshot parsing, exact focus/no-steal, stale·expiry·single-flight, 위험 확인, PermissionRequest, 단축키 설정·복원 계약을 포함
 - T-010과 연동한 Swift Operational: 14/14, Routing 필터: 18/18(Routing 16 + Pet 2) 통과. `focus_interaction` exact 14-field binding과 foreground 없는 `select` 거부 포함
 - T-010 실제 macOS 1차 qualification: 호스트 active/key/focus 유지와 `A→AB` 입력, Picker·취소, 격리 저장/재시작, 실제 Carbon 충돌, frame exact 왕복, 유효 카드 14-field focus·16-field select 통과
 - T-010 실제 연속 시계 qualification: reminder `60,056.709 ms`, expiry `120,030.318 ms`, 늦은 focus/select `interaction_not_waiting`, 최종 interactions/pending/in-flight 0과 selection disabled 통과. Pet 시각 상태는 computer-use `runtime_unavailable`로 미검증
 - T-010 실제 물리 슬롯 3 qualification: 사용자 수행 `Option+Space` 무선택→카드 local focus→포인터 밖 물리 `Option+3`; 저널의 단일 `option_pause_*` claim→`episode_paused`, continuation 0건 통과. 입력 장치 자체는 사용자 수행 보고 기반이며 확장 카드 시각 캡처는 미검증
-- T-010 최신 독립 QA: lower-trailing resize·화면 복귀 크기 복원과 문서 경계를 재검토해 Critical/High/Medium/Low finding 없음, Pet 35/35와 `git diff --check` 재통과
+- T-010 최신 독립 QA: FIFO follower 직접 focus/selection 우회 Medium을 발견해 ViewModel head identity 권한 경계와 회귀로 닫았고, 재검토에서 열린 Critical/High/Medium finding 0건을 확인했다. `BlabeePetTests` 98/98, 전체 Swift Testing 173/173+XCTest 5/5와 최종 `git diff --check`가 통과했다.
 - T-012a Doctor 집중: 18/18 통과. read-only projection, strict args/Bool, alpha/allowlist, redacted deterministic output, Plugin source/version/manifest/layout/Skill exactness, MCP runtime identity, subprocess pipe drain, UDS 전용 dispatch 포함
 - T-012a 관련 회귀: Operational 15/15, Routing 18/18, T-011 운영 23/23, v1 계약 114/114 통과. 실제 로컬 Doctor는 현재 미설치 환경과 Codex `0.149.0`을 예상대로 exit 1로 보고
 - T-012b-1 패키징: 5/5 통과. 전체 Contracts/Plugin 경로·내용 parity, plist 값·Boolean 타입, manifest 전 항목 hash/size/mode, 허용 출력 root, symlink·특수 파일, 기존 출력, 동시 builder와 staging 정리를 포함
@@ -139,7 +155,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - packet 만료 뒤 선택, deadline 전 timeout, deadline 이후 transport 완료, 선택 뒤 interaction expiry를 거부
 - 이전 결정 경계를 닫기 전 같은 턴의 다음 경계를 열거나 닫힌·만료된 경계에 후속 이벤트를 기록하지 못하게 함
 - 토큰을 제외한 continuation 봉투 전체를 봉인하고 추가 필드·ID·만료값 변조를 거부
-- `pet_action = same_turn_stop`, `internal_format_repair = submitted_envelope`로 전달 모드를 상호배타화해 이중 실행 차단
+- 새 `pet_action = queued_next_turn`, `internal_format_repair = submitted_envelope`로 전달 모드를 상호배타화해 이중 실행을 차단하고, 과거 `same_turn_stop`은 저장된 runtime event replay에만 허용
 - 형식 보정을 결정 경계당 한 번으로 제한하고 repair kind allowlist 적용
 - 같은 세션 ID가 다른 프로젝트로 재바인딩될 때 이전 wait/proposal/dispatch/token 라우팅 폐기
 - 슬롯 3·4 선택 후 상태를 `paused`·`rollback_intent`로 기록
@@ -182,7 +198,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - SQLite bind/read에 explicit UTF-8 byte length를 사용해 embedded NUL이 있는 event·packet·continuation ID를 재시작 뒤에도 정확히 복원함
 - 제품 raw append를 compile-time test gate 뒤로 이동하고 발급 토큰이 허용된 stdout effect에 정확히 한 번만 나타나며 consume·stderr·durable state에는 다시 노출되지 않게 함
 - 같은 프로젝트·세션에서 두 decision boundary가 동시에 packet을 seal하지 못하게 decision/replay 양쪽에 atomic invariant를 추가하고 다른 세션 queue는 독립적으로 유지함
-- foreground가 없을 때 selection을 차단하고, 새 세션 카드가 기존 foreground를 선점하지 않으며 명시적 전환 뒤에만 exact project/session/episode/interaction/packet/revision/option 입력을 받게 함
+- 코디네이터는 foreground가 없을 때 selection을 차단하고 새 세션 카드가 기존 foreground를 선점하지 않으며 exact manual focus 뒤에만 identity-bound 입력을 받는다. Pet은 이 일반 API 위에서 `routing.pending` FIFO 선두만 focus·selection 대상으로 허용해 뒤 세션의 직접 우회를 차단함
 - 제품 `execute_command`의 direct `select_option`·Pet token consume·expiry/timeout을 차단하고 `set_foreground`·`route_selection`·`route_consume_pet_action`·`routing_snapshot`·`process_time`으로 권한 경계를 분리함
 - 60초 reminder·120초 expiry와 300초 in-flight deadline을 독립 continuous-clock anchor로 처리하고 wall clock forward/backward 입력이 selection window를 바꾸지 않게 함
 - Pet token은 119초까지 소비되고 정확히 120초부터 forged wall timestamp와 무관하게 거부되며, 형식 보정 예약·claim도 caller expiry를 무시한 고정 120초와 restart anchor-loss fail-closed를 적용함
@@ -204,20 +220,20 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 
 1. **실제 저장소 동시성**: canonical repository identity 기준 전역 잠금, 기준선 이중 스냅샷, mutation 직전 재검증, 같은 경로 작성자 provenance가 필요하다. 현재 `projectId` 기반 임시 잠금과 `ownedPaths`만으로는 실제 편집기와의 경쟁을 증명하지 못한다.
 2. **복구 스냅샷 재적용**: 현재는 생성·보존만 검증했다. staged Git object의 독립 보존, index/manifest 해시, 원자적 저장, 실제 재적용, 삭제·reset·catalog 단계별 실패 주입을 통과해야 한다.
-3. **실사용 Hook→Swift→Pet qualification**: T-011은 Keychain 없는 실제 제품 구성요소에서 첫 action 중 다음 proposal staging, 후속 active Stop의 이전 경계 terminal 처리와 다음 경계 open/seal, 단일 UDS/storage owner와 원문 token 비노출을 하나의 두 경계 경로로 연결했다. 실제 사용자 Plugin·Hook 신뢰·login Keychain foreground service 왕복과 pending 중 service 재시작 fail-closed·새 경계 복구도 통과했다. T-010은 격리된 실제 WindowServer의 비활성 panel·Picker·Carbon 충돌·frame 왕복·focus/select와 실제 물리 슬롯 3 pause를 통과했다. 공개 dispatch 전 실제 sleep, 다중 디스플레이·Spaces·나머지 물리 전역 키·Terminal/VS Code/Orca 복귀를 한 실환경 경로에서 통과해야 한다.
+3. **실사용 Hook→Swift→Pet qualification**: T-011은 단일 UDS/storage owner, 원문 token 비노출, 실제 사용자 Plugin·Hook 신뢰·login Keychain foreground service와 재시작 fail-closed를 통과했다. T-015는 설치된 app·service·Plugin의 실제 두 Codex TUI에서 `답변 완료 → FIFO Pet 선택 → 같은 세션 새 턴` 왕복을 통과했고 queue receipt와 작업 완료 증거를 분리했다. T-010은 격리된 실제 WindowServer의 비활성 panel·Picker·Carbon 충돌·frame 왕복·focus/select와 실제 물리 슬롯 3 pause를 통과했다. 공개 dispatch 전에는 sleep, 다중 디스플레이·Spaces·나머지 물리 전역 키·Terminal/VS Code/Orca 복귀 및 비활성 메뉴바 패널의 시각 수명주기를 한 실환경 경로에서 통과해야 한다.
 4. **배포 Keychain 격리**: unsigned CLI에서는 Data Protection Keychain이 `errSecMissingEntitlement(-34018)`로 거부되어 legacy login Keychain을 사용한다. 현재 UI 차단에는 deprecated `kSecUseAuthenticationUIFail` 경고도 남아 있다. T-012에서 signed wrapper, provisioning/access group, `LAContext`, code-signing ACL을 검증하고 deprecated API를 교체해야 한다. 같은 UID 공격자의 anchor 삭제·교체와 DB·키·anchor 동시 삭제는 현재 A2만으로 차단하지 못한다.
 5. **Doctor의 공개용 경로·프로세스 격리**: T-012a는 final component `O_NOFOLLOW`, fd 기반 bounded read와 exact identity/content 검사를 적용했지만, 서명된 고정 root 없이 전체 ancestor tree의 동시 rename/교체를 보안 증명하지 않는다. subprocess timeout도 직접 자식만 TERM/KILL한다. 공개 Doctor 전 directory-FD traversal, 서명/codesign 결합과 별도 process group TERM/KILL 회귀가 필요하다.
 
 ### Medium
 
-1. `continuation_completed`는 정확한 후속 Stop을 관찰한 전송 수명 주기 종료이지 작업 성공 판정이 아니다. 성공·실패 outcome과 근거는 별도 이벤트로 모델링해야 한다.
+1. `continuation_transport_completed`는 exact queue receipt 또는 exact 큐 메시지의 `UserPromptSubmit` 도착을 관찰한 전송 수명 주기 종료이지 작업 성공 판정이 아니다. 성공·실패 outcome과 근거는 새 턴의 별도 이벤트로 모델링해야 한다.
 2. 120초는 선택 전 결정 패킷 대기에 적용한다. B2는 sleep을 포함하는 continuous clock과 재시작 fail-closed 처리를 구현했지만, 실제 장시간 macOS sleep/복귀와 daemon lifecycle은 서명된 패키징 환경에서 다시 검증해야 한다.
 3. 소켓 `0600` 외에 같은 사용자 프로세스를 구분할 IPC 인증이 없다. 제품에서는 launch secret/capability token, peer 검증, 메서드별 권한 분리가 필요하다.
-4. SQLite transaction, cross-process CAS와 crash replay는 T-007b-A에서 검증했고 B2가 세션 queue와 deadline을 연결했다. T-011은 정상적인 두 경계 Hook pending Stop과 실제 foreground service 재시작을 제품 구성요소에 연결했다. 재시작 중 pending 카드는 복구하지 않고 fail-closed하며, 끊긴 기존 Codex가 남기는 결정 대기 문구의 사용자 안내 UX와 실제 resume/compact는 후속 운영 범위다.
+4. SQLite transaction, cross-process CAS와 crash replay는 T-007b-A에서 검증했고 B2가 세션 queue와 deadline을 연결했다. T-015는 Stop waiter를 제거했으므로 끊긴 Stop의 결정 대기 문구 문제는 없어졌다. 재시작 중 pending 카드는 복구하지 않고 fail-closed하며, queue 접수 뒤 닫힌 Codex thread의 resume/compact와 dispatcher 실패 안내 UX는 후속 운영 범위다.
 5. packet/seal/selection/action/verification 교차 문서 binding과 row-bound 인증은 T-007b-A에서 입증했고 T-011이 실제 Hook/MCP/Pet 경로의 full selection exact binding을 검증했다. 실제 사용자 Codex 버전별 호환성은 allowlist gate로 다시 검증해야 한다.
 6. 외부 키 파일 `0600`과 상위 디렉터리 `0700`은 다른 UID를 막는 파일 권한 경계다. A2는 login Keychain freshness를 추가했지만 키 회전과 일반 운영자 복구는 아직 없다. 특히 exact batch가 없는 `pending + source DB`는 자동 복구하지 않는다. runtime-known secret corpus는 관찰·등록된 값만 검사하고 재시작 시 다시 등록하며, 보지 못한 임의 secret 전체의 비유출 증거가 아니다.
 7. T-011 storage authority는 정규화한 절대 DB 경로별 singleton을 storage 초기화 전에 강제한다. 다만 symlink/hard-link/특수 mount에서 서로 다른 path가 같은 inode를 가리키는 alias는 현재 path digest가 합치지 못한다. 공개 설치 경로를 고정하고 alias 공격을 별도 hardening해야 한다.
-8. Stop 입력 자체에는 `decision_boundary_id`나 Hook invocation ID가 없다. T-011은 HMAC observation·request generation·delivery digest·phase gate로 같은 Stop replay와 후속 active Stop을 구분하고 두 경계 gate를 통과했다. 이 ledger는 process-local이며 completion은 계속 transport 수명 주기 종료일 뿐 work outcome이 아니다.
+8. Stop 입력 자체에는 `decision_boundary_id`나 Hook invocation ID가 없다. T-015는 process-local HMAC ledger로 같은 Stop의 중복 기록만 거부하고, delivery는 queue receipt 또는 미리 저장한 exact 큐 메시지 digest가 일치하는 reentrant `UserPromptSubmit`으로 판정한다. 이 completion은 transport 수명 주기 종료일 뿐 work outcome이 아니다.
 
 ### Low
 

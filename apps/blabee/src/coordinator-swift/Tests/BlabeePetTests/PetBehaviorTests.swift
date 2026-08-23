@@ -34,6 +34,24 @@ private func blabeePetFocus(
     return identity
 }
 
+@MainActor
+private func blabeePetWaitForRequestCount(
+    _ expectedCount: Int,
+    type: String,
+    transport: PetFakeTransport,
+    timeout: Duration = .seconds(2)
+) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while clock.now < deadline {
+        if await transport.requestCount(type: type) >= expectedCount {
+            return true
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return await transport.requestCount(type: type) >= expectedCount
+}
+
 @Test("BlabeePet distinguishes ready from an actual in-flight continuation")
 @MainActor
 func blabeePetReadyAndWorkingPresentation() throws {
@@ -56,7 +74,7 @@ func blabeePetReadyAndWorkingPresentation() throws {
     #expect(viewModel.presentationState == .ready)
 }
 
-@Test("BlabeePet does nothing without an explicit local foreground")
+@Test("BlabeePet does nothing without exact local foreground authority")
 @MainActor
 func blabeePetNoForegroundNoOp() async throws {
     let transport = PetFakeTransport()
@@ -70,6 +88,384 @@ func blabeePetNoForegroundNoOp() async throws {
     await viewModel.requestPanelSelection(3)
     #expect(await transport.requestCount(type: "select") == 0)
     #expect(viewModel.localForegroundIdentity == nil)
+}
+
+@Test("BlabeePet auto-focuses one unambiguous waiting decision")
+@MainActor
+func blabeePetAutoFocusesSingleWaitingDecision() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let hotKeyBackend = PetFakeHotKeyBackend()
+    let hotKeyRegistry = try PetHotKeyRegistry(
+        backend: hotKeyBackend,
+        configuration: .defaults
+    ) { _ in }
+    viewModel.attachHotKeyRegistry(hotKeyRegistry)
+    let card = PetTestCard(suffix: "auto_focus")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [card])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [card], foregroundSuffix: "auto_focus")
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(viewModel.localForegroundIdentity?.interactionID == "interaction_auto_focus")
+    #expect(viewModel.focusedInteraction?.identity == viewModel.localForegroundIdentity)
+    if case .registered = hotKeyRegistry.statuses[.slot1] {
+        // The first choice is immediately available through its registered shortcut.
+    } else {
+        Issue.record("slot 1 shortcut should be active after automatic focus")
+    }
+}
+
+@Test("BlabeePet retries the same FIFO head on the next poll after transient focus failure")
+@MainActor
+func blabeePetRetriesAutoFocusAfterTransientFailure() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let head = PetTestCard(suffix: "retry_head")
+    let follower = PetTestCard(suffix: "retry_follower")
+
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [head, follower])
+    )
+    await transport.enqueueFailure(type: "focus_interaction", code: "socket_unavailable")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [head, follower])
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(viewModel.localForegroundIdentity == nil)
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_retry_head")
+
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [head, follower])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [head, follower],
+            foregroundSuffix: "retry_head"
+        )
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 2)
+    #expect(viewModel.localForegroundIdentity?.interactionID == "interaction_retry_head")
+    let focusPayloads = await transport.requestPayloads(type: "focus_interaction")
+    let focusedInteractionIDs = try focusPayloads.map { payload in
+        try #require(petTestObject(payload)["interaction_id"] as? String)
+    }
+    #expect(focusedInteractionIDs == ["interaction_retry_head", "interaction_retry_head"])
+}
+
+@Test("BlabeePet refocuses the exact authoritative FIFO head after a lost focus response")
+@MainActor
+func blabeePetRetriesExactAuthoritativeHeadAfterLostFocusResponse() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let head = PetTestCard(suffix: "retry_authoritative_head")
+
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [head])
+    )
+    await transport.enqueueFailure(type: "focus_interaction", code: "lost_response")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [head],
+            foregroundSuffix: "retry_authoritative_head"
+        )
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(viewModel.snapshot?.routing.foreground?.interactionID
+        == "interaction_retry_authoritative_head")
+    #expect(viewModel.localForegroundIdentity == nil)
+
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [head],
+            foregroundSuffix: "retry_authoritative_head"
+        )
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [head],
+            foregroundSuffix: "retry_authoritative_head"
+        )
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 2)
+    #expect(viewModel.localForegroundIdentity?.interactionID
+        == "interaction_retry_authoritative_head")
+    let focusPayloads = await transport.requestPayloads(type: "focus_interaction")
+    let focusedInteractionIDs = try focusPayloads.map { payload in
+        try #require(petTestObject(payload)["interaction_id"] as? String)
+    }
+    #expect(focusedInteractionIDs == [
+        "interaction_retry_authoritative_head",
+        "interaction_retry_authoritative_head",
+    ])
+}
+
+@Test("BlabeePet never auto-focuses over a different authoritative foreground")
+@MainActor
+func blabeePetDoesNotStealDifferentAuthoritativeForeground() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let head = PetTestCard(suffix: "no_steal_head")
+    let authoritativeFollower = PetTestCard(suffix: "no_steal_foreground")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [head, authoritativeFollower],
+            foregroundSuffix: "no_steal_foreground"
+        )
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 0)
+    #expect(viewModel.snapshot?.routing.foreground?.interactionID
+        == "interaction_no_steal_foreground")
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_no_steal_head")
+    #expect(viewModel.localForegroundIdentity == nil)
+}
+
+@Test("BlabeePet clears an accepted next-turn card without presenting work success")
+@MainActor
+func blabeePetClearsAcceptedNextTurnCard() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let card = PetTestCard(suffix: "auto_focus_choice")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [card])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [card],
+            foregroundSuffix: "auto_focus_choice"
+        )
+    )
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await transport.setFocusBlocked(true)
+
+    let refresh = Task { @MainActor in
+        await viewModel.refresh()
+    }
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "focus_interaction",
+        transport: transport
+    ), "timed out waiting for the blocked automatic focus request")
+    let identity = try #require(viewModel.displayInteraction?.identity)
+    #expect(viewModel.pendingFocusIdentity == identity)
+
+    let selection = Task { @MainActor in
+        await viewModel.focusAndRequestPanelSelection(1, interaction: identity)
+    }
+    await Task.yield()
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(await transport.requestCount(type: "select") == 0)
+
+    await transport.setFocusBlocked(false)
+    await refresh.value
+    await selection.value
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(await transport.requestCount(type: "select") == 1)
+    #expect(viewModel.displayInteraction == nil)
+    #expect(viewModel.lastTerminalPresentation == nil)
+    #expect(viewModel.presentationState == .ready)
+}
+
+@Test("BlabeePet auto-focuses the first FIFO decision from multiple sessions")
+@MainActor
+func blabeePetAutoFocusesFIFOHeadFromMultipleSessions() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let cardA = PetTestCard(suffix: "fifo_a")
+    let cardB = PetTestCard(suffix: "fifo_b")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [cardA, cardB])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [cardA, cardB], foregroundSuffix: "fifo_a")
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(viewModel.localForegroundIdentity?.interactionID == "interaction_fifo_a")
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_fifo_a")
+    #expect(viewModel.displayInteractionQueuePosition == 1)
+    #expect(viewModel.fifoQueueCount == 2)
+}
+
+@Test("BlabeePet advances to the next FIFO session after selection")
+@MainActor
+func blabeePetAdvancesFIFOAfterSelection() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let cardA = PetTestCard(suffix: "fifo_advance_a")
+    let cardB = PetTestCard(suffix: "fifo_advance_b")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [cardA, cardB])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [cardA, cardB],
+            foregroundSuffix: "fifo_advance_a"
+        )
+    )
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [cardB])
+    )
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [cardB],
+            foregroundSuffix: "fifo_advance_b"
+        )
+    )
+
+    await viewModel.refresh()
+    await viewModel.requestPanelSelection(1)
+
+    #expect(await transport.requestCount(type: "select") == 1)
+    #expect(await transport.requestCount(type: "focus_interaction") == 2)
+    #expect(viewModel.localForegroundIdentity?.interactionID == "interaction_fifo_advance_b")
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_fifo_advance_b")
+    #expect(viewModel.displayInteractionQueuePosition == 1)
+    #expect(viewModel.fifoQueueCount == 1)
+}
+
+@Test("BlabeePet never lets a ready later session overtake a blocked FIFO head")
+@MainActor
+func blabeePetDoesNotOvertakeBlockedFIFOHead() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    var attentionEvents = 0
+    viewModel.onAttentionEvent = { attentionEvents += 1 }
+    var blockedHead = PetTestCard(suffix: "fifo_blocked")
+    blockedHead.state = "sealed"
+    let readyFollower = PetTestCard(suffix: "fifo_ready_follower")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [blockedHead, readyFollower])
+    )
+
+    await viewModel.refresh()
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 0)
+    #expect(viewModel.localForegroundIdentity == nil)
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_fifo_blocked")
+    #expect(viewModel.hasAttention == false)
+    #expect(attentionEvents == 0)
+}
+
+@Test("BlabeePet rejects direct focus and selection for a FIFO follower")
+@MainActor
+func blabeePetRejectsDirectFIFOBypass() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let head = PetTestCard(suffix: "fifo_direct_head")
+    let follower = PetTestCard(suffix: "fifo_direct_follower")
+    try viewModel.receiveSnapshotDataForTesting(
+        petTestSnapshotData(cards: [head, follower])
+    )
+    let followerIdentity = try #require(
+        viewModel.snapshotInteractions.first(where: {
+            $0.identity.interactionID == "interaction_fifo_direct_follower"
+        })?.identity
+    )
+
+    await viewModel.focus(followerIdentity)
+    await viewModel.focusAndRequestPanelSelection(1, interaction: followerIdentity)
+
+    #expect(await transport.requestCount(type: "focus_interaction") == 0)
+    #expect(await transport.requestCount(type: "select") == 0)
+    #expect(viewModel.localForegroundIdentity == nil)
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_fifo_direct_head")
+    #expect(viewModel.displayInteractionQueuePosition == 1)
+}
+
+@Test("BlabeePet emits attention once per new decision and toggle requests panel visibility")
+@MainActor
+func blabeePetAttentionAndPanelToggleCallbacks() throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    var attentionEvents = 0
+    var attentionStates: [Bool] = []
+    var panelToggles = 0
+    viewModel.onAttentionEvent = { attentionEvents += 1 }
+    viewModel.onAttentionChanged = { attentionStates.append($0) }
+    viewModel.onPanelToggleRequested = { panelToggles += 1 }
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+    let card = PetTestCard(suffix: "attention")
+    var sealedCard = card
+    sealedCard.state = "sealed"
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [sealedCard]))
+    #expect(attentionEvents == 0)
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    var reminderCard = card
+    reminderCard.reminderDue = true
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [reminderCard]))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [reminderCard]))
+    viewModel.handleShortcut(.toggle)
+
+    #expect(attentionEvents == 2)
+    #expect(attentionStates == [false, false, true, true, true, true])
+    #expect(panelToggles == 1)
+    #expect(viewModel.isExpanded == false)
+    #expect(viewModel.displayInteraction?.identity.interactionID == "interaction_attention")
 }
 
 @Test("BlabeePet focuses explicitly and a new second session never steals local foreground")
@@ -241,14 +637,14 @@ func blabeePetFreshSelectionIDPerCard() async throws {
         type: "get_state",
         response: try petTestSnapshotData(cards: [cardB])
     )
-    await viewModel.requestPanelSelection(1)
-
-    let identityB = try #require(viewModel.snapshotInteractions.first?.identity)
     await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
     await transport.enqueue(
         type: "get_state",
         response: try petTestSnapshotData(cards: [cardB], foregroundSuffix: "fresh_b")
     )
+    await viewModel.requestPanelSelection(1)
+
+    let identityB = try #require(viewModel.snapshotInteractions.first?.identity)
     await viewModel.focus(identityB)
     await transport.enqueue(type: "select", response: try petTestSelectionResponse())
     await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
@@ -362,7 +758,7 @@ func blabeePetAmbiguousFocusFailureClearsAuthority() async throws {
         transport: transport
     )
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
-        cards: [cardA, cardB],
+        cards: [cardB, cardA],
         foregroundSuffix: "focus_lost_a"
     ))
     let identityB = try #require(
@@ -374,7 +770,7 @@ func blabeePetAmbiguousFocusFailureClearsAuthority() async throws {
     await transport.enqueue(
         type: "get_state",
         response: try petTestSnapshotData(
-            cards: [cardA, cardB],
+            cards: [cardB, cardA],
             foregroundSuffix: "focus_lost_b"
         )
     )
@@ -452,6 +848,7 @@ func blabeePetPermissionNotificationOwnership() async throws {
     #expect(opener.captureCalls == 2)
     viewModel.openPermissionRequestHost()
     #expect(opener.opened.count == 1)
+    #expect(viewModel.hasNewPermissionNotice == false)
     #expect(await transport.requestCount(type: "select") == 0)
     #expect(await transport.requestCount(type: "permission_request") == 0)
 }

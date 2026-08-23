@@ -29,11 +29,11 @@ v1 JSON Schema의 `identifier` 정의는 문자열 형태와 길이만 고정한
 
 ## 전달 완료와 작업 결과
 
-`continuation_transport_completed`는 봉투가 같은 턴 Stop 경로에서 소비되어 전달 수명 주기가 끝났다는 뜻일 뿐, 선택한 작업이 성공했다는 뜻이 아니다. 실제 결과는 별도 `work_outcome_recorded` 이벤트로 기록한다.
+`continuation_transport_completed`는 봉투가 검증·소비되고 Codex 새 턴 큐가 메시지를 인수해 전달 수명 주기가 끝났다는 뜻일 뿐, 선택한 작업이 시작되었거나 성공했다는 뜻이 아니다. 실제 결과는 새 턴의 별도 `work_outcome_recorded` 이벤트로 기록한다.
 
 `continuation_transport_timed_out_unknown`은 작업 결과가 `unknown`이라는 뜻이다. 취소나 실패를 추론하지 않으며 `automatic_retry`는 항상 `false`다. 중복 실행 위험 때문에 자동 재시도하지 않는다.
 
-`pet_action`은 `dispatch_mode: "same_turn_stop"`만 허용한다. `internal_format_repair`는 `dispatch_mode: "submitted_envelope"`만 허용하며 같은 결정 경계에서 `repair_attempt = max_repair_attempts = 1`이다. 두 봉투의 필드는 서로 섞을 수 없다.
+새 `pet_action` 봉투는 `dispatch_mode: "queued_next_turn"`만 허용한다. 선택은 완료된 Codex 응답을 다시 열지 않고 같은 세션의 새 사용자 턴으로 큐잉된다. 이전 결정의 binding은 선택이 만들어진 원본 에피소드를 가리키고, 큐 메시지가 `UserPromptSubmit`으로 들어오면 새 turn·prompt·episode·baseline을 만든다. queue receipt는 Codex가 메시지를 인수했다는 전송 증거일 뿐 실행 시작이나 작업 성공 증거가 아니다. 런타임 이벤트 스키마는 기존 로컬 저널 재생을 위해 과거 `same_turn_stop` 값도 읽을 수 있지만 새 봉투를 그 모드로 발급하지 않는다. `internal_format_repair`는 `dispatch_mode: "submitted_envelope"`만 허용하며 같은 결정 경계에서 `repair_attempt = max_repair_attempts = 1`이다. 각 봉투의 필드는 서로 섞을 수 없다.
 
 두 모드 모두 전체 바인딩과 만료 시각이 정확히 일치할 때만 한 번 claim할 수 있다. `continuation_id`와 token fingerprint는 Pet 작업과 형식 보정을 합친 저널 전체에서 재사용할 수 없다. `internal_format_repair`는 새 ID와 토큰을 발급하더라도 같은 결정 경계에서 두 번째로 claim할 수 없다. Pet dispatch는 `issued_at < expires_at <= in_flight_deadline_at` 순서를 지켜야 하며 deadline 전에는 timeout으로 기록할 수 없다. 형식 보정의 예약·claim 이벤트는 각각 `issued_at <= occurred_at < expires_at` 범위 안에 있어야 한다.
 

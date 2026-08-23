@@ -73,7 +73,7 @@ export function createContinuationClaimLedger({ now = () => Date.now() } = {}) {
       const fields = bindingFields(envelope.continuation_origin);
       if (!fields) return rejected("continuation_origin_invalid");
 
-      const expectedMode = envelope.continuation_origin === "pet_action" ? "same_turn_stop" : "submitted_envelope";
+      const expectedMode = envelope.continuation_origin === "pet_action" ? "queued_next_turn" : "submitted_envelope";
       if (envelope.dispatch_mode !== expectedMode) {
         return rejected("dispatch_mode_conflict", { expectedMode, actualMode: envelope.dispatch_mode });
       }

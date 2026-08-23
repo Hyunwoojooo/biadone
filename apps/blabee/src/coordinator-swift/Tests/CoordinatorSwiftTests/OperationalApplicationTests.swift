@@ -162,18 +162,71 @@ private final class OperationalTokens: @unchecked Sendable {
     }
 }
 
+private actor OperationalNextTurnDispatchRecorder {
+    enum Mode: Sendable {
+        case succeed
+        case fail(String)
+        case suspendThenSucceed
+        case suspendThenFail(String)
+    }
+
+    private let mode: Mode
+    private var requests: [CoordinatorNextTurnDispatchRequest] = []
+    private var suspended: [CheckedContinuation<Void, Never>] = []
+
+    init(mode: Mode = .succeed) {
+        self.mode = mode
+    }
+
+    func dispatch(
+        _ request: CoordinatorNextTurnDispatchRequest
+    ) async throws -> CoordinatorNextTurnDispatchReceipt {
+        requests.append(request)
+        switch mode {
+        case .succeed:
+            break
+        case .fail(let code):
+            throw CoordinatorError(code)
+        case .suspendThenSucceed:
+            await withCheckedContinuation { suspended.append($0) }
+        case .suspendThenFail(let code):
+            await withCheckedContinuation { suspended.append($0) }
+            throw CoordinatorError(code)
+        }
+        return CoordinatorNextTurnDispatchReceipt(
+            queuedSubmissionID: "queued_submission_operational_\(requests.count)"
+        )
+    }
+
+    func recordedRequests() -> [CoordinatorNextTurnDispatchRequest] {
+        requests
+    }
+
+    func resumeSuspendedDispatches() {
+        let continuations = suspended
+        suspended.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+}
+
 private struct OperationalFixture {
     let app: CoordinatorOperationalApplication
     let journal: OperationalMemoryJournal
     let clock: OperationalClock
     let tokens: OperationalTokens
+    let nextTurnDispatcher: OperationalNextTurnDispatchRecorder
 }
 
-private func operationalFixture() throws -> OperationalFixture {
+private func operationalFixture(
+    dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed
+) throws -> OperationalFixture {
     let journal = OperationalMemoryJournal()
     let clock = OperationalClock()
     let ids = OperationalIDs()
     let tokens = OperationalTokens()
+    let nextTurnDispatcher = OperationalNextTurnDispatchRecorder(mode: dispatchMode)
     let routing = try CoordinatorRoutingApplication(
         journal: journal,
         clock: clock,
@@ -185,9 +238,18 @@ private func operationalFixture() throws -> OperationalFixture {
         secretCorpus: RuntimeSecretCorpus(),
         idGenerator: ids.next,
         wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
-        stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
+        stopObservationHMACKey: Data(repeating: 0xA5, count: 32),
+        nextTurnDispatcher: { request in
+            try await nextTurnDispatcher.dispatch(request)
+        }
     )
-    return OperationalFixture(app: app, journal: journal, clock: clock, tokens: tokens)
+    return OperationalFixture(
+        app: app,
+        journal: journal,
+        clock: clock,
+        tokens: tokens,
+        nextTurnDispatcher: nextTurnDispatcher
+    )
 }
 
 private func contextValue(_ context: String, key: String) throws -> String {
@@ -313,6 +375,32 @@ private func waitForOperationalInteraction(
     throw CoordinatorError("test_interaction_missing")
 }
 
+private func waitForRecordedDispatch(
+    _ recorder: OperationalNextTurnDispatchRecorder
+) async throws -> CoordinatorNextTurnDispatchRequest {
+    for _ in 0..<100 {
+        if let request = await recorder.recordedRequests().first {
+            return request
+        }
+        try await Task.sleep(for: .milliseconds(2))
+    }
+    throw CoordinatorError("test_dispatch_missing")
+}
+
+private func waitForRecordedDispatches(
+    _ recorder: OperationalNextTurnDispatchRecorder,
+    count: Int
+) async throws -> [CoordinatorNextTurnDispatchRequest] {
+    for _ in 0..<100 {
+        let requests = await recorder.recordedRequests()
+        if requests.count >= count {
+            return requests
+        }
+        try await Task.sleep(for: .milliseconds(2))
+    }
+    throw CoordinatorError("test_dispatch_missing")
+}
+
 private func operationalFocus(_ interaction: [String: Any]) throws -> [String: Any] {
     var request: [String: Any] = [
         "schema_version": "1.0",
@@ -370,6 +458,148 @@ private func operationalStop(
         "last_assistant_message": message,
         "hook_event_name": "Stop",
     ])
+}
+
+@Test("Operational prompt late-registers a missing session without changing resume semantics")
+func operationalPromptLateRegistersMissingSession() async throws {
+    let fixture = try operationalFixture()
+    let cwd = "/tmp/blabee-operational-late-register"
+    let projectID = "project_operational_late_register"
+    let sessionID = "session_operational_late_register"
+    let turnID = "turn_operational_late_register"
+    let promptText = "Attach this already-open Codex session"
+
+    _ = try await fixture.app.handle(
+        type: "enable_project",
+        payload: operationalData([
+            "cwd": cwd,
+            "project_id": projectID,
+        ])
+    )
+    let first = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": sessionID,
+                "turn_id": turnID,
+                "cwd": cwd,
+                "prompt": promptText,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(first["enabled"] as? Bool == true)
+    #expect(first["prompt_origin"] as? String == "human")
+    let firstIdentifiers = try #require(first["identifiers"] as? [String: Any])
+    #expect(first["additionalContext"] as? String != nil)
+
+    let resumed = try operationalObject(
+        await fixture.app.handle(
+            type: "session_start",
+            payload: operationalData([
+                "session_id": sessionID,
+                "cwd": cwd,
+                "source": "resume",
+                "hook_event_name": "SessionStart",
+            ])
+        )
+    )
+    #expect(resumed["enabled"] as? Bool == true)
+    #expect(resumed["additionalContext"] as? String != nil)
+
+    let retried = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": sessionID,
+                "turn_id": turnID,
+                "cwd": cwd,
+                "prompt": promptText,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    let retriedIdentifiers = try #require(retried["identifiers"] as? [String: Any])
+    for key in [
+        "project_id", "session_id", "source_turn_id", "source_prompt_id",
+        "episode_id", "episode_root_prompt_id", "episode_baseline_checkpoint_id",
+    ] {
+        #expect(retriedIdentifiers[key] as? String == firstIdentifiers[key] as? String)
+    }
+
+    let otherCWD = "/tmp/blabee-operational-late-register-other"
+    _ = try await fixture.app.handle(
+        type: "enable_project",
+        payload: operationalData([
+            "cwd": otherCWD,
+            "project_id": "project_operational_late_register_other",
+        ])
+    )
+    await expectOperationalError("session_project_conflict") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": sessionID,
+                "turn_id": "turn_operational_late_register_other",
+                "cwd": otherCWD,
+                "prompt": "Must not cross project ownership",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    }
+}
+
+@Test("Operational disabled prompt stays unregistered until an enabled project receives it")
+func operationalDisabledPromptDoesNotLateRegister() async throws {
+    let fixture = try operationalFixture()
+    let sessionID = "session_operational_disabled_late_register"
+    let disabledCWD = "/tmp/blabee-operational-disabled-late-register"
+    _ = try await fixture.app.handle(
+        type: "enable_project",
+        payload: operationalData([
+            "cwd": disabledCWD,
+            "project_id": "project_operational_disabled_late_register",
+            "enabled": false,
+        ])
+    )
+    let disabled = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": sessionID,
+                "turn_id": "turn_operational_disabled_late_register",
+                "cwd": disabledCWD,
+                "prompt": "Do not attach this disabled project",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(disabled["enabled"] as? Bool == false)
+    #expect(disabled["additionalContext"] == nil)
+
+    let enabledCWD = "/tmp/blabee-operational-enabled-after-disabled"
+    _ = try await fixture.app.handle(
+        type: "enable_project",
+        payload: operationalData([
+            "cwd": enabledCWD,
+            "project_id": "project_operational_enabled_after_disabled",
+        ])
+    )
+    let attached = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": sessionID,
+                "turn_id": "turn_operational_enabled_after_disabled",
+                "cwd": enabledCWD,
+                "prompt": "Attach only after reaching an enabled project",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(attached["enabled"] as? Bool == true)
+    let identifiers = try #require(attached["identifiers"] as? [String: Any])
+    #expect(identifiers["project_id"] as? String == "project_operational_enabled_after_disabled")
 }
 
 @Test("Operational doctor status is an exact read-only projection")
@@ -440,7 +670,7 @@ func operationalDoctorStatusIsPure() async throws {
         _ = try await fixture.app.doctorStatus(payload: operationalData(["unexpected": true]))
     }
     _ = try await fixture.app.processTime()
-    #expect(try operationalObject(await stopTask.value)["status"] as? String == "expired")
+    #expect(try operationalObject(await stopTask.value)["status"] as? String == "decision_available")
 }
 
 private func expectOperationalError(
@@ -470,8 +700,8 @@ private func expectAnyOperationalError(
     }
 }
 
-@Test("Operational finalization self-check blocks once, replays, then fails open")
-func operationalFinalizationSelfCheckOneTime() async throws {
+@Test("Operational Stop without a proposal always finishes without blocking")
+func operationalStopWithoutProposalDoesNotBlock() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "finalization_once")
     let firstStop = try operationalStop(
@@ -482,11 +712,9 @@ func operationalFinalizationSelfCheckOneTime() async throws {
 
     let first = try await fixture.app.handle(type: "stop", payload: firstStop)
     let firstObject = try operationalObject(first)
-    #expect(firstObject["decision"] as? String == "block")
-    let reason = try #require(firstObject["reason"] as? String)
-    #expect(reason.contains("action-type request"))
-    #expect(reason.contains("short or text-only"))
-    #expect(!reason.contains(ids["correlation_token"]!))
+    #expect(firstObject["status"] as? String == "no_proposal")
+    #expect(firstObject["decision"] == nil)
+    #expect(firstObject["reason"] == nil)
 
     let replayed = try await fixture.app.handle(type: "stop", payload: firstStop)
     #expect(replayed == first)
@@ -517,8 +745,8 @@ func operationalFinalizationSelfCheckOneTime() async throws {
     #expect(try fixture.journal.load().journalSequence == 0)
 }
 
-@Test("Operational fallback proposal admits the active Stop as its waiter")
-func operationalFinalizationFallbackProposalWaits() async throws {
+@Test("Operational proposal becomes selectable without holding Stop open")
+func operationalProposalDoesNotHoldStopOpen() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "finalization_emit")
     let fallback = try operationalObject(
@@ -531,7 +759,7 @@ func operationalFinalizationFallbackProposalWaits() async throws {
             )
         )
     )
-    #expect(fallback["decision"] as? String == "block")
+    #expect(fallback["status"] as? String == "no_proposal")
 
     let accepted = try operationalObject(
         await fixture.app.handle(
@@ -545,38 +773,28 @@ func operationalFinalizationFallbackProposalWaits() async throws {
     #expect(accepted["accepted"] as? Bool == true)
     #expect(accepted["staged"] as? Bool == false)
 
-    let activeWait = Task {
-        try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "Finalization self-check emitted the missing proposal"
-            )
-        )
-    }
-    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(interaction, slot: 1))
-    )
-    let selectedBlock = try operationalObject(await activeWait.value)
-    #expect(selectedBlock["decision"] as? String == "block")
-
-    let completed = try operationalObject(
+    let stopResult = try operationalObject(
         await fixture.app.handle(
             type: "stop",
             payload: operationalStop(
                 ids: ids,
-                active: true,
-                message: "The selected continuation completed"
+                active: false,
+                message: "The answer containing the proposal has finished"
             )
         )
     )
-    #expect(completed["status"] as? String == "continuation_completed")
+    #expect(stopResult["status"] as? String == "decision_available")
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selected = try operationalObject(
+        await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 1))
+        )
+    )
+    #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "next_turn")
 }
 
-@Test("Operational proposal seals rollback-disabled packet and consumes token before Stop completion")
+@Test("Operational selection queues one exact next-turn action and closes transport")
 func operationalPacketSelectionAndCompletion() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture)
@@ -611,36 +829,246 @@ func operationalPacketSelectionAndCompletion() async throws {
         payload: operationalData(operationalSelection(interaction, slot: 1))
     )
     let stopResult = try await stopTask.value
+    let selectedObject = try operationalObject(selected)
+    let selectedOutcome = try #require(selectedObject["outcome"] as? [String: Any])
+    #expect(selectedOutcome["kind"] as? String == "next_turn")
+    #expect(selectedOutcome["queued_submission_id"] as? String == "queued_submission_operational_1")
+    #expect(try operationalObject(stopResult)["status"] as? String == "decision_available")
     let rawToken = try #require(fixture.tokens.token(at: 0))
     #expect(!selected.contains(Data(rawToken.utf8)))
     #expect(!stopResult.contains(Data(rawToken.utf8)))
     #expect(!stopResult.contains(Data("continuation_token".utf8)))
 
-    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     let continuation = try #require(state.continuations.values.first)
     #expect(continuation.consumedAt != nil)
-    #expect(continuation.transport == nil)
-
-    let ambiguous = try operationalObject(
-        await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(ids: ids, active: true, message: "first assistant message")
-        )
-    )
-    #expect(ambiguous["reason"] as? String == "stop_delivery_observation_ambiguous")
-    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.continuations.values.first?.transport == nil)
-
-    let completed = try operationalObject(
-        await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(ids: ids, active: true, message: "selected work returned")
-        )
-    )
-    #expect(completed["status"] as? String == "continuation_completed")
-    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.continuations.values.first?.transport?.status == .completed)
+    #expect(continuation.transport?.status == .completed)
     #expect(state.boundaries.values.first?.closed == true)
+
+    let dispatches = await fixture.nextTurnDispatcher.recordedRequests()
+    #expect(dispatches.count == 1)
+    let dispatch = try #require(dispatches.first)
+    #expect(dispatch.sessionID == ids["session_id"])
+    #expect(dispatch.continuationID == selectedOutcome["continuation_id"] as? String)
+    let messageJSON = try #require(dispatch.message.split(separator: "\n").last)
+    let nextTurn = try operationalObject(Data(messageJSON.utf8))
+    #expect(nextTurn["kind"] as? String == "blabee_next_turn_action")
+    #expect((nextTurn["binding"] as? [String: Any])?["session_id"] as? String == ids["session_id"])
+    #expect((nextTurn["action"] as? [String: Any])?["title"] as? String == "Recommended first")
+
+    await expectOperationalError("interaction_not_waiting") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 1))
+        )
+    }
+}
+
+@Test("Operational pause closes the card without dispatching a new turn")
+func operationalPauseDoesNotDispatch() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "next_turn_pause")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "next_turn_pause")
+        ))
+    )
+    let stopped = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: false,
+                message: "Pause card is ready"
+            )
+        )
+    )
+    #expect(stopped["status"] as? String == "decision_available")
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selected = try operationalObject(
+        await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 3))
+        )
+    )
+    #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "pause")
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.continuations.isEmpty)
+}
+
+@Test("Operational dispatch failure is explicit and the committed selection is not retried")
+func operationalNextTurnDispatchFailureIsExplicit() async throws {
+    let fixture = try operationalFixture(
+        dispatchMode: .fail("simulated_next_turn_dispatch_failure")
+    )
+    let ids = try await operationalBegin(fixture, suffix: "next_turn_failure")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "next_turn_failure")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Failure card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selection = try operationalSelection(interaction, slot: 1)
+    await expectOperationalError("simulated_next_turn_dispatch_failure") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(selection)
+        )
+    }
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+    await expectOperationalError("interaction_not_waiting") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(selection)
+        )
+    }
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.continuations.values.first?.consumedAt != nil)
+    #expect(state.continuations.values.first?.transport == nil)
+}
+
+@Test("Operational queued prompt may arrive before the queue receipt")
+func operationalPromptRaceClosesPreviousBoundaryIdempotently() async throws {
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "next_turn_race")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "next_turn_race")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Race card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selectionTask = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 1))
+        )
+    }
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    #expect(dispatch.sessionID == ids["session_id"])
+
+    let nextPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_next_turn_race_queued",
+                "cwd": ids["cwd"]!,
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    let nextIdentifiers = try #require(nextPrompt["identifiers"] as? [String: Any])
+    #expect(nextIdentifiers["episode_id"] as? String != ids["episode_id"])
+    #expect(nextIdentifiers["source_prompt_id"] as? String != ids["source_prompt_id"])
+    let stateBeforeReceipt = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(stateBeforeReceipt.boundaries.values.first?.closed == true)
+    #expect(stateBeforeReceipt.continuations.values.first?.transport?.status == .completed)
+
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    let selected = try operationalObject(await selectionTask.value)
+    #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "next_turn")
+    #expect(
+        (selected["outcome"] as? [String: Any])?["queued_submission_id"] as? String
+            == "queued_submission_operational_1"
+    )
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.continuations.values.first?.transport?.status == .completed)
+}
+
+@Test("Operational unrelated prompt does not complete an in-flight queued transport")
+func operationalUnrelatedPromptDoesNotCompletePreviousDispatch() async throws {
+    let fixture = try operationalFixture(
+        dispatchMode: .suspendThenFail("simulated_unrelated_prompt_dispatch_failure")
+    )
+    let ids = try await operationalBegin(fixture, suffix: "next_turn_unrelated_race")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "next_turn_unrelated_race")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Unrelated prompt race card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selectionTask = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 1))
+        )
+    }
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    #expect(dispatch.sessionID == ids["session_id"])
+
+    let unrelatedPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_next_turn_unrelated_human",
+                "cwd": ids["cwd"]!,
+                "prompt": "An unrelated human prompt while Blabee dispatch is in flight",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    let unrelatedIdentifiers = try #require(unrelatedPrompt["identifiers"] as? [String: Any])
+    #expect(unrelatedIdentifiers["episode_id"] as? String != ids["episode_id"])
+    #expect(unrelatedIdentifiers["source_prompt_id"] as? String != ids["source_prompt_id"])
+
+    let stateBeforeFailure = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(stateBeforeFailure.boundaries.values.first?.closed == false)
+    #expect(stateBeforeFailure.continuations.values.first?.transport == nil)
+    let eventTypesBeforeFailure = try fixture.journal.load().events.map {
+        try #require(operationalObject($0)["event_type"] as? String)
+    }
+    #expect(!eventTypesBeforeFailure.contains("continuation_transport_completed"))
+
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    await expectOperationalError("simulated_unrelated_prompt_dispatch_failure") {
+        _ = try await selectionTask.value
+    }
+
+    let stateAfterFailure = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(stateAfterFailure.boundaries.values.first?.closed == false)
+    #expect(stateAfterFailure.continuations.values.first?.transport == nil)
+    let eventTypesAfterFailure = try fixture.journal.load().events.map {
+        try #require(operationalObject($0)["event_type"] as? String)
+    }
+    #expect(!eventTypesAfterFailure.contains("continuation_transport_completed"))
 }
 
 @Test("Operational Pet focus is explicit, exact, and required before selection")
@@ -714,7 +1142,7 @@ func operationalExplicitPetFocusContract() async throws {
         type: "select",
         payload: operationalData(operationalSelection(interaction, slot: 3))
     )
-    #expect(try operationalObject(await stopTask.value)["status"] as? String == "paused")
+    #expect(try operationalObject(await stopTask.value)["status"] as? String == "decision_available")
 }
 
 @Test("Operational new sessions never steal Pet foreground")
@@ -791,7 +1219,7 @@ func operationalPetForegroundDoesNotAutoSwitch() async throws {
         type: "select",
         payload: operationalData(operationalSelection(second, slot: 3))
     )
-    #expect(try operationalObject(await secondStop.value)["status"] as? String == "paused")
+    #expect(try operationalObject(await secondStop.value)["status"] as? String == "decision_available")
 
     _ = try await fixture.app.handle(
         type: "focus_interaction",
@@ -801,7 +1229,7 @@ func operationalPetForegroundDoesNotAutoSwitch() async throws {
         type: "select",
         payload: operationalData(operationalSelection(first, slot: 3))
     )
-    #expect(try operationalObject(await firstStop.value)["status"] as? String == "paused")
+    #expect(try operationalObject(await firstStop.value)["status"] as? String == "decision_available")
 }
 
 @Test("Operational initial activation resumes exact packet after seal append failure")
@@ -881,7 +1309,7 @@ func operationalCommittedActivationResponseLoss() async throws {
         type: "select",
         payload: operationalData(operationalSelection(interaction, slot: 3))
     )
-    #expect(try operationalObject(await stopTask.value)["status"] as? String == "paused")
+    #expect(try operationalObject(await stopTask.value)["status"] as? String == "decision_available")
 }
 
 @Test("Operational seal recovery preserves the original monotonic expiry anchor")
@@ -939,121 +1367,117 @@ func operationalCommittedSealDelayedRecoveryExpires() async throws {
     #expect(expiryEvents.count == 1)
 }
 
-@Test("Operational staged boundary reuses completion Stop only as waiter and rejects its replay")
+@Test("Operational queue receipt promotes one staged boundary without another Stop")
 func operationalTwoBoundariesRejectOldStopReplay() async throws {
-    let fixture = try operationalFixture()
-    let ids = try await operationalBegin(fixture, suffix: "two")
-    let first = operationalProposal(ids, suffix: "two_first")
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "queued_staged")
     _ = try await fixture.app.handle(
         type: "emit_decision",
-        payload: operationalData(operationalWrapper(ids, proposal: first))
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "queued_staged_first")
+        ))
     )
-    let firstWait = Task {
-        try await fixture.app.handle(
+    let stopped = try operationalObject(
+        await fixture.app.handle(
             type: "stop",
-            payload: operationalStop(ids: ids, active: false, message: "boundary one ready")
+            payload: operationalStop(ids: ids, active: false, message: "first queued card")
+        )
+    )
+    #expect(stopped["status"] as? String == "decision_available")
+    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let firstSelection = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
         )
     }
-    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(firstInteraction, slot: 1))
-    )
-    _ = try await firstWait.value
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1)
 
-    let second = operationalProposal(ids, suffix: "two_second")
     let staged = try operationalObject(
         await fixture.app.handle(
             type: "emit_decision",
-            payload: operationalData(operationalWrapper(ids, proposal: second))
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: "queued_staged_second")
+            ))
         )
     )
     #expect(staged["staged"] as? Bool == true)
+    #expect(ExactJSONInteger.int64(staged["boundary_sequence"], minimum: 1) == 2)
 
-    let deliveryStop = try operationalStop(
-        ids: ids,
-        active: true,
-        message: "boundary one continuation returned"
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    #expect(
+        (try operationalObject(await firstSelection.value)["outcome"] as? [String: Any])?["kind"] as? String
+            == "next_turn"
     )
-    let secondWait = Task { try await fixture.app.handle(type: "stop", payload: deliveryStop) }
     let secondInteraction = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
     )
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 1))
-    )
-    _ = try await secondWait.value
-
-    let duplicate = try operationalObject(
-        await fixture.app.handle(type: "stop", payload: deliveryStop)
-    )
-    #expect(duplicate["status"] as? String == "duplicate_stop_observation")
-    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.continuations.values.filter { $0.transport == nil }.count == 1)
-
-    _ = try await fixture.app.handle(
-        type: "stop",
-        payload: operationalStop(ids: ids, active: true, message: "boundary two continuation returned")
-    )
-    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.boundaries.count == 2)
-    #expect(state.boundaries.values.allSatisfy { $0.closed })
-    #expect(state.continuations.values.allSatisfy { $0.consumedAt != nil && $0.transport?.status == .completed })
-}
-
-@Test("Operational completion and staged activation resume after partial appends")
-func operationalCompletionAndStagedActivationRetry() async throws {
-    let fixture = try operationalFixture()
-    let ids = try await operationalBegin(fixture, suffix: "partial_retry")
-    _ = try await fixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            ids,
-            proposal: operationalProposal(ids, suffix: "partial_retry_first")
-        ))
-    )
-    let firstWait = Task {
+    let secondSelection = Task {
         try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(ids: ids, active: false, message: "partial retry first ready")
+            type: "select",
+            payload: operationalData(operationalSelection(secondInteraction, slot: 1))
         )
     }
-    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(firstInteraction, slot: 1))
-    )
-    _ = try await firstWait.value
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 2)
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    _ = try await secondSelection.value
+
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.count == 2)
+    #expect(state.boundaries.values.allSatisfy { $0.closed })
+    #expect(state.continuations.values.allSatisfy {
+        $0.consumedAt != nil && $0.transport?.status == .completed
+    })
+}
+
+@Test("Operational queued completion and staged activation recover after partial appends")
+func operationalCompletionAndStagedActivationRetry() async throws {
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "queued_partial_retry")
     _ = try await fixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             ids,
-            proposal: operationalProposal(ids, suffix: "partial_retry_second")
+            proposal: operationalProposal(ids, suffix: "queued_partial_retry_first")
         ))
     )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "partial retry card")
+    )
+    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let firstSelection = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
+        )
+    }
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1)
+    let staged = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: "queued_partial_retry_second")
+            ))
+        )
+    )
+    #expect(staged["staged"] as? Bool == true)
 
     fixture.journal.failNextAppend(eventType: "continuation_transport_completed")
-    fixture.journal.failNextAppend(eventType: "decision_boundary_closed")
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
     await expectOperationalError("injected_append_failure") {
-        _ = try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "partial retry first continuation returned"
-            )
-        )
+        _ = try await firstSelection.value
     }
     var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.continuations.values.first?.transport == nil)
     #expect(state.boundaries.count == 1)
-    #expect(state.boundaries.values.first?.closed == false)
 
-    // The consumed Stop cannot be replayed, so the empty scheduler tick must
-    // retry transport completion. Its following close append fails once too.
+    fixture.journal.failNextAppend(eventType: "decision_boundary_closed")
     await expectOperationalError("injected_append_failure") {
         _ = try await fixture.app.processTime()
     }
@@ -1061,8 +1485,6 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     #expect(state.continuations.values.first?.transport?.status == .completed)
     #expect(state.boundaries.values.first?.closed == false)
 
-    // Recovery first closes boundary one, then deliberately loses the seal
-    // append for boundary two after its open was committed.
     fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
     await expectOperationalError("injected_append_failure") {
         _ = try await fixture.app.processTime()
@@ -1073,109 +1495,72 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     #expect(state.boundaries.values.filter(\.closed).count == 1)
     #expect(journalSnapshot.documents.count == 1)
 
-    // The completion key, staged mapping, durable-open sequence, and exact
-    // packet all remain retry anchors. An empty tick seals without reopening.
     _ = try await fixture.app.processTime()
     let secondInteraction = try await waitForOperationalInteraction(
-        fixture.app,
-        boundarySequence: 2
-    )
-    journalSnapshot = try fixture.journal.load()
-    #expect(journalSnapshot.documents.count == 2)
-    #expect(try CoordinatorSemanticReplay.replay(journalSnapshot).boundaries.count == 2)
-
-    let secondWait = Task {
-        try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "partial retry promoted boundary ready"
-            )
-        )
-    }
-    _ = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
     )
+    journalSnapshot = try fixture.journal.load()
+    #expect(journalSnapshot.documents.count == 2)
     _ = try await fixture.app.handle(
         type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 1))
-    )
-    _ = try await secondWait.value
-    _ = try await fixture.app.handle(
-        type: "stop",
-        payload: operationalStop(
-            ids: ids,
-            active: true,
-            message: "partial retry second continuation returned"
-        )
+        payload: operationalData(operationalSelection(secondInteraction, slot: 3))
     )
     state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.count == 2)
     #expect(state.boundaries.values.allSatisfy { $0.closed })
-    #expect(state.continuations.values.allSatisfy { $0.transport?.status == .completed })
+    #expect(state.continuations.values.count == 1)
+    #expect(state.continuations.values.first?.transport?.status == .completed)
 }
 
-@Test("Operational completion response losses promote one staged successor exactly once")
+@Test("Operational committed queue completion responses promote one successor exactly once")
 func operationalCommittedCompletionResponseLoss() async throws {
-    let fixture = try operationalFixture()
-    let ids = try await operationalBegin(fixture, suffix: "completion_response_loss")
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "queued_completion_loss")
     _ = try await fixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             ids,
-            proposal: operationalProposal(ids, suffix: "completion_response_loss_first")
+            proposal: operationalProposal(ids, suffix: "queued_completion_loss_first")
         ))
     )
-    let firstWait = Task {
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "response-loss card")
+    )
+    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let firstSelection = Task {
         try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: false,
-                message: "completion response loss first ready"
-            )
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
         )
     }
-    let firstInteraction = try await waitForOperationalInteraction(
-        fixture.app,
-        state: "waiting"
-    )
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(firstInteraction, slot: 1))
-    )
-    _ = try await firstWait.value
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1)
     _ = try await fixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             ids,
-            proposal: operationalProposal(ids, suffix: "completion_response_loss_second")
+            proposal: operationalProposal(ids, suffix: "queued_completion_loss_second")
         ))
     )
 
     fixture.journal.loseNextCommittedResponse(eventType: "continuation_transport_completed")
-    await expectOperationalError("simulated_lost_response") {
-        _ = try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "completion response was lost"
-            )
-        )
-    }
     fixture.journal.loseNextCommittedResponse(eventType: "decision_boundary_closed")
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    await expectOperationalError("simulated_lost_response") {
+        _ = try await firstSelection.value
+    }
     await expectOperationalError("simulated_lost_response") {
         _ = try await fixture.app.processTime()
     }
     _ = try await fixture.app.processTime()
+
     let secondInteraction = try await waitForOperationalInteraction(
         fixture.app,
-        boundarySequence: 2
+        boundarySequence: 2,
+        state: "waiting"
     )
-
     let snapshot = try fixture.journal.load()
     let eventTypes = try snapshot.events.map {
         try #require(operationalObject($0)["event_type"] as? String)
@@ -1185,17 +1570,62 @@ func operationalCommittedCompletionResponseLoss() async throws {
     #expect(eventTypes.filter { $0 == "decision_boundary_opened" }.count == 2)
     #expect(eventTypes.filter { $0 == "decision_packet_sealed" }.count == 2)
 
-    let secondWait = Task {
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(secondInteraction, slot: 3))
+    )
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.count == 2)
+    #expect(state.boundaries.values.allSatisfy { $0.closed })
+}
+
+@Test("Operational failed queued dispatch times out before promoting its staged successor")
+func operationalCompletionTimeoutPromotionInterleaving() async throws {
+    let fixture = try operationalFixture(
+        dispatchMode: .suspendThenFail("simulated_queued_dispatch_failure")
+    )
+    let ids = try await operationalBegin(fixture, suffix: "queued_timeout_promotion")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "queued_timeout_first")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "timeout card")
+    )
+    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let firstSelection = Task {
         try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "completion response loss promoted ready"
-            )
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
         )
     }
-    _ = try await waitForOperationalInteraction(
+    _ = try await waitForRecordedDispatches(fixture.nextTurnDispatcher, count: 1)
+    let staged = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: "queued_timeout_second")
+            ))
+        )
+    )
+    #expect(staged["staged"] as? Bool == true)
+
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    await expectOperationalError("simulated_queued_dispatch_failure") {
+        _ = try await firstSelection.value
+    }
+    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.continuations.values.first?.consumedAt != nil)
+    #expect(state.continuations.values.first?.transport == nil)
+
+    fixture.clock.advance(seconds: 300)
+    _ = try await fixture.app.processTime()
+    let secondInteraction = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
@@ -1204,96 +1634,11 @@ func operationalCommittedCompletionResponseLoss() async throws {
         type: "select",
         payload: operationalData(operationalSelection(secondInteraction, slot: 3))
     )
-    #expect(try operationalObject(await secondWait.value)["status"] as? String == "paused")
-    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.count == 2)
     #expect(state.boundaries.values.allSatisfy { $0.closed })
-}
-
-@Test("Operational timeout notice cannot orphan a successor promoted in the same tick")
-func operationalCompletionTimeoutPromotionInterleaving() async throws {
-    let fixture = try operationalFixture()
-    let ids = try await operationalBegin(fixture, suffix: "timeout_interleave")
-    _ = try await fixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            ids,
-            proposal: operationalProposal(ids, suffix: "timeout_interleave_first")
-        ))
-    )
-    let firstWait = Task {
-        try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(ids: ids, active: false, message: "interleave first ready")
-        )
-    }
-    let firstInteraction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(firstInteraction, slot: 1))
-    )
-    _ = try await firstWait.value
-    _ = try await fixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            ids,
-            proposal: operationalProposal(ids, suffix: "timeout_interleave_second")
-        ))
-    )
-
-    fixture.journal.failNextAppend(eventType: "continuation_transport_completed")
-    await expectOperationalError("injected_append_failure") {
-        _ = try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "interleave completion append failed"
-            )
-        )
-    }
-    fixture.clock.advance(seconds: 300)
-
-    // One tick both observes the routing timeout and retries the pending
-    // completion workflow. The old timeout notice must not remove boundary
-    // two after that boundary was promoted earlier in this same tick.
-    _ = try await fixture.app.processTime()
-    let secondInteraction = try await waitForOperationalInteraction(
-        fixture.app,
-        boundarySequence: 2
-    )
-    let secondWait = Task {
-        try await fixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: ids,
-                active: true,
-                message: "interleave promoted boundary ready"
-            )
-        )
-    }
-    _ = try await waitForOperationalInteraction(
-        fixture.app,
-        boundarySequence: 2,
-        state: "waiting"
-    )
-    _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 1))
-    )
-    _ = try await secondWait.value
-    _ = try await fixture.app.handle(
-        type: "stop",
-        payload: operationalStop(
-            ids: ids,
-            active: true,
-            message: "interleave second continuation returned"
-        )
-    )
-    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.boundaries.values.allSatisfy { $0.closed })
-    #expect(state.continuations.values.contains { $0.transport?.status == .timedOutUnknown })
-    #expect(state.continuations.values.contains { $0.transport?.status == .completed })
+    #expect(state.continuations.values.count == 1)
+    #expect(state.continuations.values.first?.transport?.status == .timedOutUnknown)
 }
 
 @Test("Operational selection response loss never reissues action tokens and releases waiters")
@@ -1342,10 +1687,7 @@ func operationalCommittedSelectionResponseLoss() async throws {
     }
     _ = try await actionFixture.app.processTime()
     let failedClosed = try await actionWait.value
-    #expect(
-        try operationalObject(failedClosed)["status"] as? String
-            == "continuation_dispatch_failed_closed"
-    )
+    #expect(try operationalObject(failedClosed)["status"] as? String == "decision_available")
     let rawToken = try #require(actionFixture.tokens.token(at: 0))
     #expect(!failedClosed.contains(Data(rawToken.utf8)))
     var state = try CoordinatorSemanticReplay.replay(actionFixture.journal.load())
@@ -1387,7 +1729,7 @@ func operationalCommittedSelectionResponseLoss() async throws {
         )
     }
     _ = try await pauseFixture.app.processTime()
-    #expect(try operationalObject(await pauseWait.value)["status"] as? String == "paused")
+    #expect(try operationalObject(await pauseWait.value)["status"] as? String == "decision_available")
     state = try CoordinatorSemanticReplay.replay(pauseFixture.journal.load())
     #expect(state.boundaries.values.first?.closed == true)
 
@@ -1431,16 +1773,8 @@ func operationalCommittedSelectionResponseLoss() async throws {
         type: "select",
         payload: operationalData(retrySelection)
     )
-    let retryBlock = try await retryWait.value
-    #expect(try operationalObject(retryBlock)["decision"] as? String == "block")
-    _ = try await retryFixture.app.handle(
-        type: "stop",
-        payload: operationalStop(
-            ids: retryIDs,
-            active: true,
-            message: "selection uncommitted retry completed"
-        )
-    )
+    let retryStop = try await retryWait.value
+    #expect(try operationalObject(retryStop)["status"] as? String == "decision_available")
     state = try CoordinatorSemanticReplay.replay(retryFixture.journal.load())
     #expect(state.boundaries.values.first?.closed == true)
 }
@@ -1538,7 +1872,7 @@ func operationalValidationAndPause() async throws {
         payload: operationalData(validPauseSelection)
     )
     let paused = try operationalObject(await stopTask.value)
-    #expect(paused["status"] as? String == "paused")
+    #expect(paused["status"] as? String == "decision_available")
     #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load()).boundaries.values.first?.closed == true)
 }
 
@@ -1617,37 +1951,33 @@ func operationalPromptOnlyProposalCorrection() async throws {
     #expect(repeatedSnapshot.documents == snapshot.documents)
 }
 
-@Test("Operational scheduler closes expiry and timeout before activating staged work")
+@Test("Operational scheduler closes waiting expiry and failed queued dispatch timeout")
 func operationalSchedulerTerminalTransitions() async throws {
     let expiryFixture = try operationalFixture()
-    let expiryIDs = try await operationalBegin(expiryFixture, suffix: "expiry")
+    let expiryIDs = try await operationalBegin(expiryFixture, suffix: "queued_expiry")
     _ = try await expiryFixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             expiryIDs,
-            proposal: operationalProposal(expiryIDs, suffix: "expiry")
+            proposal: operationalProposal(expiryIDs, suffix: "queued_expiry")
         ))
     )
-    let expiryWait = Task {
-        try await expiryFixture.app.handle(
+    let expiryStop = try operationalObject(
+        await expiryFixture.app.handle(
             type: "stop",
-            payload: operationalStop(ids: expiryIDs, active: false, message: "expiry waiting")
+            payload: operationalStop(ids: expiryIDs, active: false, message: "expiry card")
         )
-    }
+    )
+    #expect(expiryStop["status"] as? String == "decision_available")
     let expiryInteraction = try await waitForOperationalInteraction(
         expiryFixture.app,
         state: "waiting"
     )
     expiryFixture.clock.advance(seconds: 120)
     _ = try await expiryFixture.app.processTime()
-    #expect(try operationalObject(await expiryWait.value)["status"] as? String == "expired")
-    #expect(try CoordinatorSemanticReplay.replay(expiryFixture.journal.load()).boundaries.values.first?.closed == true)
-    await expectOperationalError("interaction_not_waiting") {
-        _ = try await expiryFixture.app.handle(
-            type: "focus_interaction",
-            payload: operationalData(operationalFocus(expiryInteraction))
-        )
-    }
+    let expiryState = try CoordinatorSemanticReplay.replay(expiryFixture.journal.load())
+    #expect(expiryState.boundaries.values.first?.expired == true)
+    #expect(expiryState.boundaries.values.first?.closed == true)
     await expectOperationalError("interaction_not_waiting") {
         _ = try await expiryFixture.app.handle(
             type: "select",
@@ -1655,196 +1985,107 @@ func operationalSchedulerTerminalTransitions() async throws {
         )
     }
 
-    let timeoutFixture = try operationalFixture()
-    let timeoutIDs = try await operationalBegin(timeoutFixture, suffix: "timeout")
+    let timeoutFixture = try operationalFixture(
+        dispatchMode: .fail("simulated_scheduler_dispatch_failure")
+    )
+    let timeoutIDs = try await operationalBegin(timeoutFixture, suffix: "queued_timeout")
     _ = try await timeoutFixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             timeoutIDs,
-            proposal: operationalProposal(timeoutIDs, suffix: "timeout_first")
+            proposal: operationalProposal(timeoutIDs, suffix: "queued_timeout")
         ))
     )
-    let firstWait = Task {
-        try await timeoutFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(ids: timeoutIDs, active: false, message: "timeout packet ready")
+    _ = try await timeoutFixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: timeoutIDs, active: false, message: "timeout card")
+    )
+    let timeoutInteraction = try await waitForOperationalInteraction(
+        timeoutFixture.app,
+        state: "waiting"
+    )
+    await expectOperationalError("simulated_scheduler_dispatch_failure") {
+        _ = try await timeoutFixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(timeoutInteraction, slot: 1))
         )
     }
-    let interaction = try await waitForOperationalInteraction(timeoutFixture.app, state: "waiting")
-    _ = try await timeoutFixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(interaction, slot: 1))
-    )
-    _ = try await firstWait.value
-    _ = try await timeoutFixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            timeoutIDs,
-            proposal: operationalProposal(timeoutIDs, suffix: "timeout_second")
-        ))
-    )
     timeoutFixture.clock.advance(seconds: 300)
     timeoutFixture.journal.failNextAppend(eventType: "decision_boundary_closed")
     await expectOperationalError("injected_append_failure") {
         _ = try await timeoutFixture.app.processTime()
     }
-    var state = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
-    #expect(state.boundaries.count == 1)
-    #expect(state.boundaries.values.first?.closed == false)
-    #expect(state.continuations.values.first?.transport?.status == .timedOutUnknown)
+    var timeoutState = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
+    #expect(timeoutState.continuations.values.first?.transport?.status == .timedOutUnknown)
+    #expect(timeoutState.boundaries.values.first?.closed == false)
 
-    // The routing notice was already drained, so this empty scheduler tick can
-    // recover only if the operational layer retained it until close succeeded.
     _ = try await timeoutFixture.app.processTime()
-    let staged = try await waitForOperationalInteraction(timeoutFixture.app, boundarySequence: 2)
-    #expect(staged["state"] as? String == "sealed")
-    state = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
-    #expect(state.boundaries.count == 2)
-    #expect(state.boundaries.values.contains { $0.closeReason == "transport_timed_out_unknown" })
-
-    // The next real Stop still belongs to the continuation-enabled Codex turn,
-    // so stop_hook_active remains true. Timeout promotion must admit this exact
-    // observation as boundary two's waiter instead of deadlocking the session.
-    let promotedWait = Task {
-        try await timeoutFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: timeoutIDs,
-                active: true,
-                message: "the timed out continuation emitted another Stop"
-            )
-        )
-    }
-    let promotedInteraction = try await waitForOperationalInteraction(
-        timeoutFixture.app,
-        boundarySequence: 2,
-        state: "waiting"
-    )
-    _ = try await timeoutFixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(promotedInteraction, slot: 1))
-    )
-    let promotedBlock = try operationalObject(await promotedWait.value)
-    #expect(promotedBlock["decision"] as? String == "block")
-    _ = try await timeoutFixture.app.handle(
-        type: "stop",
-        payload: operationalStop(
-            ids: timeoutIDs,
-            active: true,
-            message: "the promoted boundary continuation returned"
-        )
-    )
-    state = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
-    #expect(state.boundaries.values.allSatisfy { $0.closed })
-    #expect(state.continuations.values.contains { $0.transport?.status == .timedOutUnknown })
-    #expect(state.continuations.values.contains { $0.transport?.status == .completed })
+    timeoutState = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
+    #expect(timeoutState.boundaries.values.first?.closed == true)
+    #expect(timeoutState.boundaries.values.first?.closeReason == "transport_timed_out_unknown")
 }
 
-@Test("Operational scheduler emits terminal notices after committed responses are lost")
+@Test("Operational scheduler recovers committed expiry and queued-timeout response loss")
 func operationalSchedulerCommittedResponseLoss() async throws {
     let expiryFixture = try operationalFixture()
-    let expiryIDs = try await operationalBegin(expiryFixture, suffix: "expiry_response_loss")
+    let expiryIDs = try await operationalBegin(expiryFixture, suffix: "queued_expiry_loss")
     _ = try await expiryFixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             expiryIDs,
-            proposal: operationalProposal(expiryIDs, suffix: "expiry_response_loss")
+            proposal: operationalProposal(expiryIDs, suffix: "queued_expiry_loss")
         ))
     )
-    let expiryWait = Task {
-        try await expiryFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: expiryIDs,
-                active: false,
-                message: "expiry committed response loss"
-            )
-        )
-    }
+    _ = try await expiryFixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: expiryIDs, active: false, message: "expiry loss card")
+    )
     _ = try await waitForOperationalInteraction(expiryFixture.app, state: "waiting")
     expiryFixture.journal.loseNextCommittedResponse(eventType: "interaction_expired")
     expiryFixture.clock.advance(seconds: 120)
     _ = try await expiryFixture.app.processTime()
-    #expect(try operationalObject(await expiryWait.value)["status"] as? String == "expired")
-    var state = try CoordinatorSemanticReplay.replay(expiryFixture.journal.load())
-    #expect(state.boundaries.values.first?.expired == true)
-    #expect(state.boundaries.values.first?.closed == true)
+    let expiryState = try CoordinatorSemanticReplay.replay(expiryFixture.journal.load())
+    #expect(expiryState.boundaries.values.first?.expired == true)
+    #expect(expiryState.boundaries.values.first?.closed == true)
 
-    let timeoutFixture = try operationalFixture()
-    let timeoutIDs = try await operationalBegin(timeoutFixture, suffix: "timeout_response_loss")
+    let timeoutFixture = try operationalFixture(
+        dispatchMode: .fail("simulated_timeout_response_loss_dispatch_failure")
+    )
+    let timeoutIDs = try await operationalBegin(timeoutFixture, suffix: "queued_timeout_loss")
     _ = try await timeoutFixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(
             timeoutIDs,
-            proposal: operationalProposal(timeoutIDs, suffix: "timeout_response_loss_first")
+            proposal: operationalProposal(timeoutIDs, suffix: "queued_timeout_loss")
         ))
     )
-    let firstWait = Task {
-        try await timeoutFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: timeoutIDs,
-                active: false,
-                message: "timeout committed response loss first"
-            )
-        )
-    }
-    let firstInteraction = try await waitForOperationalInteraction(
+    _ = try await timeoutFixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: timeoutIDs, active: false, message: "timeout loss card")
+    )
+    let timeoutInteraction = try await waitForOperationalInteraction(
         timeoutFixture.app,
         state: "waiting"
     )
-    _ = try await timeoutFixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(firstInteraction, slot: 1))
-    )
-    _ = try await firstWait.value
-    _ = try await timeoutFixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            timeoutIDs,
-            proposal: operationalProposal(timeoutIDs, suffix: "timeout_response_loss_second")
-        ))
-    )
+    await expectOperationalError("simulated_timeout_response_loss_dispatch_failure") {
+        _ = try await timeoutFixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(timeoutInteraction, slot: 1))
+        )
+    }
     timeoutFixture.journal.loseNextCommittedResponse(
         eventType: "continuation_transport_timed_out_unknown"
     )
     timeoutFixture.clock.advance(seconds: 300)
     _ = try await timeoutFixture.app.processTime()
 
-    let promoted = try await waitForOperationalInteraction(
-        timeoutFixture.app,
-        boundarySequence: 2
-    )
-    let promotedWait = Task {
-        try await timeoutFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: timeoutIDs,
-                active: true,
-                message: "timeout response loss promoted boundary"
-            )
-        )
+    let timeoutSnapshot = try timeoutFixture.journal.load()
+    let timeoutState = try CoordinatorSemanticReplay.replay(timeoutSnapshot)
+    #expect(timeoutState.continuations.values.first?.transport?.status == .timedOutUnknown)
+    #expect(timeoutState.boundaries.values.first?.closed == true)
+    let timeoutEvents = try timeoutSnapshot.events.filter {
+        try operationalObject($0)["event_type"] as? String
+            == "continuation_transport_timed_out_unknown"
     }
-    _ = try await waitForOperationalInteraction(
-        timeoutFixture.app,
-        boundarySequence: 2,
-        state: "waiting"
-    )
-    _ = try await timeoutFixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(promoted, slot: 1))
-    )
-    _ = try await promotedWait.value
-    _ = try await timeoutFixture.app.handle(
-        type: "stop",
-        payload: operationalStop(
-            ids: timeoutIDs,
-            active: true,
-            message: "timeout response loss second continuation returned"
-        )
-    )
-    state = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
-    #expect(state.boundaries.values.allSatisfy { $0.closed })
-    #expect(state.continuations.values.contains { $0.transport?.status == .timedOutUnknown })
-    #expect(state.continuations.values.contains { $0.transport?.status == .completed })
+    #expect(timeoutEvents.count == 1)
 }

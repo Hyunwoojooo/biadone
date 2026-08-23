@@ -180,18 +180,81 @@ struct DoctorApplication {
 
     mode=${1:-}
 
+    is_usable_binary() {
+      case "$1" in
+        /*) ;;
+        *) return 1 ;;
+      esac
+      [ -f "$1" ] && [ -x "$1" ]
+    }
+
     if [ "${BLABEE_COORDINATOR_BINARY+x}" = "x" ]; then
       coordinator_binary=$BLABEE_COORDINATOR_BINARY
     else
-      coordinator_binary=/Applications/Blabee.app/Contents/MacOS/blabee-coordinator
+      coordinator_binary=
+      launcher_path=
+      runtime_path_state=unknown
+      case "$0" in
+        /*) launcher_path=$0 ;;
+        */*)
+          current_directory=$(pwd -P 2>/dev/null) || current_directory=
+          if [ -n "$current_directory" ]; then
+            launcher_path=$current_directory/$0
+          fi
+          ;;
+        *) launcher_path= ;;
+      esac
+      if [ -n "$launcher_path" ]; then
+        launcher_directory=${launcher_path%/*}
+        plugin_root=$(CDPATH= cd -P "$launcher_directory/.." 2>/dev/null && pwd -P) \\
+          || plugin_root=
+        if [ -n "$plugin_root" ]; then
+          runtime_path_file=$plugin_root/runtime/coordinator-path
+          if [ -e "$runtime_path_file" ] || [ -L "$runtime_path_file" ]; then
+            runtime_path_state=invalid
+            if [ -f "$runtime_path_file" ] && [ ! -L "$runtime_path_file" ]; then
+              runtime_path_size=$(/usr/bin/stat -f '%z' "$runtime_path_file" 2>/dev/null) \\
+                || runtime_path_size=
+              case "$runtime_path_size" in
+                ''|*[!0-9]*) runtime_path_size_valid=false ;;
+                *)
+                  if [ "$runtime_path_size" -le 4096 ] 2>/dev/null; then
+                    runtime_path_size_valid=true
+                  else
+                    runtime_path_size_valid=false
+                  fi
+                  ;;
+              esac
+              if [ "$runtime_path_size_valid" = true ]; then
+                runtime_binary=
+                runtime_extra=
+                runtime_path_valid=false
+                {
+                  if IFS= read -r runtime_binary <&3 || [ -n "$runtime_binary" ]; then
+                    if IFS= read -r runtime_extra <&3 || [ -n "$runtime_extra" ]; then
+                      runtime_binary=
+                    else
+                      runtime_path_valid=true
+                    fi
+                  fi
+                } 3< "$runtime_path_file" 2>/dev/null
+                if [ "$runtime_path_valid" = true ] && is_usable_binary "$runtime_binary"; then
+                  coordinator_binary=$runtime_binary
+                  runtime_path_state=valid
+                fi
+              fi
+            fi
+          else
+            runtime_path_state=absent
+          fi
+        fi
+      fi
+      if [ -z "$coordinator_binary" ] && [ "$runtime_path_state" = absent ]; then
+        coordinator_binary=/Applications/Blabee.app/Contents/MacOS/blabee-coordinator
+      fi
     fi
 
-    case "$coordinator_binary" in
-      /*) ;;
-      *) coordinator_binary= ;;
-    esac
-
-    if [ -n "$coordinator_binary" ] && [ -f "$coordinator_binary" ] && [ -x "$coordinator_binary" ]; then
+    if is_usable_binary "$coordinator_binary"; then
       exec "$coordinator_binary" "$@"
     fi
 
@@ -251,7 +314,7 @@ struct DoctorApplication {
             requireInstalledSourceMatch: arguments.pluginURL != nil
                 && pluginInspection.check.status == .pass
         ))
-        checks.append(checkMCPRuntime(appURL: arguments.appURL))
+        checks.append(checkMCPRuntime(appURL: arguments.appURL, pluginURL: pluginURL))
         checks.append(DoctorCheck(
             id: "hook_trust",
             status: .actionRequired,
@@ -523,30 +586,77 @@ private extension DoctorApplication {
         )
     }
 
-    func checkMCPRuntime(appURL: URL) -> DoctorCheck {
+    func checkMCPRuntime(appURL: URL, pluginURL: URL?) -> DoctorCheck {
         let embedded = appURL.appendingPathComponent("Contents/MacOS/blabee-coordinator")
-        guard let resolved = resolveExecutable(
-            named: "blabee-coordinator",
-            path: dependencies.environment["PATH"]
-        ) else {
-            return DoctorCheck(
-                id: "mcp_runtime", status: .fail,
-                code: "mcp_runtime_missing",
-                summary: "PATH에서 blabee-coordinator를 찾지 못했습니다."
-            )
+        if let pluginURL {
+            let locator = pluginURL.appendingPathComponent("runtime/coordinator-path")
+            var locatorInfo = stat()
+            if lstat(locator.path, &locatorInfo) == 0 {
+                guard locatorInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+                      let data = boundedFileData(locator),
+                      let target = runtimeCoordinatorURL(data),
+                      resolvedExecutable(target) != nil
+                else {
+                    return DoctorCheck(
+                        id: "mcp_runtime", status: .fail,
+                        code: "mcp_runtime_locator_invalid",
+                        summary: "Plugin runtime coordinator 경로가 안전한 단일 절대 실행 파일이 아닙니다."
+                    )
+                }
+                guard sameFile(target, embedded) else {
+                    return DoctorCheck(
+                        id: "mcp_runtime", status: .fail,
+                        code: "mcp_runtime_identity_mismatch",
+                        summary: "Plugin runtime coordinator가 앱 내장 실행 파일과 다릅니다."
+                    )
+                }
+                return DoctorCheck(
+                    id: "mcp_runtime", status: .pass,
+                    code: "mcp_runtime_ok",
+                    summary: "Plugin runtime coordinator가 앱 내장 실행 파일과 동일합니다."
+                )
+            }
+            if errno != ENOENT {
+                return DoctorCheck(
+                    id: "mcp_runtime", status: .fail,
+                    code: "mcp_runtime_locator_invalid",
+                    summary: "Plugin runtime coordinator 경로를 안전하게 확인하지 못했습니다."
+                )
+            }
         }
-        guard sameFile(resolved, embedded) else {
+
+        guard appURL.standardizedFileURL.path == "/Applications/Blabee.app",
+              isExecutableRegularFile(embedded, allowingSymlink: false)
+        else {
             return DoctorCheck(
                 id: "mcp_runtime", status: .fail,
-                code: "mcp_runtime_identity_mismatch",
-                summary: "PATH의 coordinator가 앱 내장 실행 파일과 다릅니다."
+                code: "mcp_runtime_locator_missing",
+                summary: "Plugin runtime 경로가 없고 앱도 표준 /Applications 위치에 있지 않습니다."
             )
         }
         return DoctorCheck(
             id: "mcp_runtime", status: .pass,
             code: "mcp_runtime_ok",
-            summary: "MCP coordinator가 앱 내장 실행 파일과 동일합니다."
+            summary: "MCP launcher가 표준 /Applications 앱 coordinator를 사용합니다."
         )
+    }
+
+    func runtimeCoordinatorURL(_ data: Data) -> URL? {
+        guard data.count <= 4_096,
+              var path = String(data: data, encoding: .utf8)
+        else { return nil }
+        if path.hasSuffix("\n") { path.removeLast() }
+        guard !path.isEmpty,
+              path.hasPrefix("/"),
+              !path.contains("\n"),
+              !path.contains("\r"),
+              !path.contains("\0")
+        else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard url.path == path,
+              url.standardizedFileURL.path == path
+        else { return nil }
+        return url
     }
 
     func validatePluginManifest(_ pluginURL: URL) -> Bool {
@@ -612,9 +722,10 @@ private extension DoctorApplication {
               let servers = mcp["mcpServers"] as? [String: Any],
               Set(servers.keys) == Set(["blabee"]),
               let blabee = servers["blabee"] as? [String: Any],
-              Set(blabee.keys) == Set(["command", "args", "env_vars"]),
-              blabee["command"] as? String == "blabee-coordinator",
+              Set(blabee.keys) == Set(["command", "args", "cwd", "env_vars"]),
+              blabee["command"] as? String == "./scripts/blabee-launcher",
               (blabee["args"] as? [String]) == ["mcp"],
+              blabee["cwd"] as? String == ".",
               (blabee["env_vars"] as? [String]) == ["BLABEE_SOCKET"]
         else { return false }
         return true
@@ -640,8 +751,8 @@ private extension DoctorApplication {
             statusMessage: "Blabee 작업 경계 연결 중", additionalContextLimit: 1_200
         ) && validateHook(
             hooks["Stop"], event: "Stop",
-            matcher: nil, timeout: 130,
-            statusMessage: "Blabee에서 다음 결정 대기 중", additionalContextLimit: nil
+            matcher: nil, timeout: 8,
+            statusMessage: "Blabee 결정 저장 중", additionalContextLimit: nil
         ) && validateHook(
             hooks["PermissionRequest"], event: "PermissionRequest",
             matcher: nil, timeout: 8,

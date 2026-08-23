@@ -98,7 +98,7 @@
         "revision": 1,
         "option_id": "option_fixture_timeout_001",
         "action_id": "action_fixture_timeout_001",
-        "dispatch_mode": "same_turn_stop",
+        "dispatch_mode": "queued_next_turn",
         "issued_at": "2026-01-15T12:00:03Z",
         "expires_at": "2026-01-15T12:02:03Z",
         "in_flight_deadline_at": "2026-01-15T12:05:03Z"

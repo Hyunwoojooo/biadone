@@ -61,6 +61,23 @@ enum PetFrameClamp {
             to: visibleFrame
         )
     }
+
+    static func belowStatusItemFrame(
+        size: CGSize,
+        statusItemFrame: CGRect,
+        in visibleFrame: CGRect,
+        gap: CGFloat = 8
+    ) -> CGRect {
+        clamp(
+            CGRect(
+                x: statusItemFrame.midX - (size.width / 2),
+                y: statusItemFrame.minY - size.height - gap,
+                width: size.width,
+                height: size.height
+            ),
+            to: visibleFrame
+        )
+    }
 }
 
 struct PetDisplayGeometry: Sendable, Equatable {
@@ -100,11 +117,12 @@ final class PetNonactivatingPanel: NSPanel {
 
 @MainActor
 final class PetPanelController: NSObject, NSWindowDelegate {
-    static let collapsedSize = CGSize(width: 92, height: 92)
-    static let expandedSize = CGSize(width: 440, height: 620)
+    static let collapsedSize = CGSize(width: 460, height: 480)
+    static let expandedSize = CGSize(width: 460, height: 680)
 
     let panel: PetNonactivatingPanel
     private let viewModel: PetViewModel
+    private weak var statusItemButton: NSStatusBarButton?
     private var screenObserver: NSObjectProtocol?
     private var lastScreenID: Int?
 
@@ -133,8 +151,26 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         }
     }
 
+    func attach(to statusItemButton: NSStatusBarButton) {
+        self.statusItemButton = statusItemButton
+        placeAtStatusItem(display: false)
+    }
+
     func showWithoutActivation() {
+        placeAtStatusItem(display: false)
         panel.orderFrontRegardless()
+    }
+
+    func hide() {
+        panel.orderOut(nil)
+    }
+
+    func toggleVisibility() {
+        if panel.isVisible {
+            hide()
+        } else {
+            showWithoutActivation()
+        }
     }
 
     func stopObservingScreenChanges() {
@@ -163,42 +199,46 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     private func placeInitially() {
-        guard let display = preferredDisplay(stable: false) else { return }
-        lastScreenID = display.id
-        panel.setFrame(
-            PetFrameClamp.lowerTrailingFrame(size: Self.collapsedSize, in: display.visibleFrame),
-            display: false
-        )
+        placeAtStatusItem(display: false)
     }
 
     private func resize(expanded: Bool) {
-        guard let display = preferredDisplay(stable: true) else { return }
-        lastScreenID = display.id
-        let size = expanded ? Self.expandedSize : Self.collapsedSize
-        panel.setFrame(
-            PetFrameClamp.resizedLowerTrailingFrame(
-                from: panel.frame,
-                to: size,
-                in: display.visibleFrame
-            ),
-            display: true
-        )
-        panel.orderFrontRegardless()
+        placeAtStatusItem(display: true)
+        if panel.isVisible { panel.orderFrontRegardless() }
     }
 
     private func screenParametersChanged() {
-        guard let display = preferredDisplay(stable: true) else { return }
-        lastScreenID = display.id
-        let intendedSize = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
+        placeAtStatusItem(display: true)
+        if panel.isVisible { panel.orderFrontRegardless() }
+    }
+
+    private func placeAtStatusItem(display: Bool) {
+        let size = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
+        if let statusItemButton,
+           let window = statusItemButton.window,
+           let screen = window.screen
+        {
+            let statusItemFrame = window.convertToScreen(
+                statusItemButton.convert(statusItemButton.bounds, to: nil)
+            )
+            lastScreenID = Self.screenID(screen)
+            panel.setFrame(
+                PetFrameClamp.belowStatusItemFrame(
+                    size: size,
+                    statusItemFrame: statusItemFrame,
+                    in: screen.visibleFrame
+                ),
+                display: display
+            )
+            return
+        }
+
+        guard let targetDisplay = preferredDisplay(stable: true) else { return }
+        lastScreenID = targetDisplay.id
         panel.setFrame(
-            PetFrameClamp.resizedLowerTrailingFrame(
-                from: panel.frame,
-                to: intendedSize,
-                in: display.visibleFrame
-            ),
-            display: true
+            PetFrameClamp.lowerTrailingFrame(size: size, in: targetDisplay.visibleFrame),
+            display: display
         )
-        panel.orderFrontRegardless()
     }
 
     private func preferredDisplay(stable: Bool) -> PetDisplayGeometry? {
@@ -222,4 +262,132 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue
     }
 
+}
+
+@MainActor
+enum PetStatusItemIcon {
+    static let size = NSSize(width: 28, height: 24)
+    private static let badgeFrame = NSRect(x: 20.5, y: 16.5, width: 7, height: 7)
+
+    static func loadBaseImage(bundle: Bundle = .main) -> NSImage? {
+        guard let url = bundle.url(
+            forResource: "BlabeeMenuBar",
+            withExtension: "svg"
+        ) else { return nil }
+        return loadBaseImage(at: url)
+    }
+
+    static func loadBaseImage(at url: URL) -> NSImage? {
+        guard let image = NSImage(contentsOf: url), image.isValid else { return nil }
+        image.size = size
+        image.isTemplate = false
+        return image
+    }
+
+    static func render(baseImage: NSImage?, attention: Bool) -> NSImage {
+        let usesFallback = baseImage == nil
+        let source = baseImage
+            ?? NSImage(
+                systemSymbolName: "ladybug.fill",
+                accessibilityDescription: "Blabee"
+            )
+            ?? NSImage(size: size)
+        let image = NSImage(size: size, flipped: false) { frame in
+            let imageFrame = usesFallback
+                ? frame.insetBy(dx: 4, dy: 2)
+                : frame
+            source.draw(in: imageFrame)
+            if attention {
+                NSColor.systemRed.setFill()
+                NSBezierPath(ovalIn: badgeFrame).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
+@MainActor
+final class PetMenuBarController: NSObject {
+    private let viewModel: PetViewModel
+    private let panelController: PetPanelController
+    private let statusItem: NSStatusItem
+    private let baseStatusImage: NSImage?
+    private var wasAutomaticallyPresented = false
+
+    init(viewModel: PetViewModel) {
+        self.viewModel = viewModel
+        panelController = PetPanelController(viewModel: viewModel)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        baseStatusImage = PetStatusItemIcon.loadBaseImage()
+        super.init()
+
+        if let button = statusItem.button {
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.target = self
+            button.action = #selector(togglePanel(_:))
+            button.toolTip = "Blabee"
+            button.setAccessibilityLabel("Blabee 메뉴")
+            panelController.attach(to: button)
+        }
+        updateStatusItem(attention: viewModel.hasAttention)
+
+        viewModel.onPanelToggleRequested = { [weak self] in
+            self?.togglePanel(nil)
+        }
+        viewModel.onAttentionChanged = { [weak self] attention in
+            self?.attentionChanged(attention)
+        }
+        viewModel.onAttentionEvent = { [weak self] in
+            self?.presentForAttention()
+        }
+    }
+
+    func stop() {
+        viewModel.onPanelToggleRequested = nil
+        viewModel.onAttentionChanged = nil
+        viewModel.onAttentionEvent = nil
+        panelController.stopObservingScreenChanges()
+        panelController.hide()
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    @objc private func togglePanel(_ sender: Any?) {
+        wasAutomaticallyPresented = false
+        panelController.toggleVisibility()
+    }
+
+    private func presentForAttention() {
+        if !panelController.panel.isVisible {
+            wasAutomaticallyPresented = true
+        }
+        if !viewModel.isEditingShortcuts && !viewModel.isShowingOnboarding {
+            viewModel.setExpanded(false)
+        }
+        panelController.showWithoutActivation()
+    }
+
+    private func attentionChanged(_ attention: Bool) {
+        updateStatusItem(attention: attention)
+        guard !attention,
+              wasAutomaticallyPresented,
+              !viewModel.isEditingShortcuts,
+              !viewModel.isShowingOnboarding
+        else { return }
+        wasAutomaticallyPresented = false
+        panelController.hide()
+    }
+
+    private func updateStatusItem(attention: Bool) {
+        guard let button = statusItem.button else { return }
+        button.image = PetStatusItemIcon.render(
+            baseImage: baseStatusImage,
+            attention: attention
+        )
+        button.attributedTitle = NSAttributedString(string: "")
+        button.toolTip = attention ? "Blabee · 결정 필요" : "Blabee"
+        button.setAccessibilityLabel(attention ? "Blabee, 결정 필요" : "Blabee 메뉴")
+    }
 }

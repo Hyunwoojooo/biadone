@@ -284,7 +284,7 @@ function decideSelectOption(state, command) {
       revision: packet.revision,
       option_id: choice.option_id,
       action_id: choice.action_id,
-      dispatch_mode: "same_turn_stop",
+      dispatch_mode: "queued_next_turn",
       issued_at: command.issued_at,
       expires_at: command.expires_at,
       in_flight_deadline_at: command.in_flight_deadline_at,
@@ -295,7 +295,7 @@ function decideSelectOption(state, command) {
     schema_version: "1.0",
     kind: "blabee_episode_continuation",
     continuation_origin: "pet_action",
-    dispatch_mode: "same_turn_stop",
+    dispatch_mode: "queued_next_turn",
     continuation_id: command.continuation_id,
     continuation_token: tokenMaterial.token,
     interaction_id: packet.interaction_id,
@@ -320,9 +320,13 @@ function decideConsumePetAction(state, command) {
   const envelope = command.envelope;
   invariant(envelope?.schema_version === "1.0" && envelope?.kind === "blabee_episode_continuation", "continuation_envelope_invalid");
   invariant(envelope.continuation_origin === "pet_action", "continuation_origin_mismatch");
-  invariant(envelope.dispatch_mode === "same_turn_stop", "dispatch_mode_conflict");
+  invariant(envelope.dispatch_mode === "queued_next_turn", "dispatch_mode_conflict");
   const continuation = state.continuations[envelope.continuation_id];
   invariant(continuation, "continuation_not_dispatched");
+  invariant(
+    envelope.dispatch_mode === continuation.dispatchMode,
+    "continuation_dispatch_mode_mismatch",
+  );
   assertBindingsEqual(envelope, continuation.binding);
   for (const [field, expected] of [
     ["interaction_id", continuation.interactionId],

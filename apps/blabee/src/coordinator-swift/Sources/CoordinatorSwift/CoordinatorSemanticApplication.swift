@@ -423,7 +423,7 @@ private extension CoordinatorSemanticDecision {
                 "revision": packet.revision,
                 "option_id": choice.optionID,
                 "action_id": actionID,
-                "dispatch_mode": "same_turn_stop",
+                "dispatch_mode": "queued_next_turn",
                 "issued_at": issuedAt.rawValue,
                 "expires_at": expiresAt.rawValue,
                 "in_flight_deadline_at": deadlineAt.rawValue,
@@ -447,7 +447,7 @@ private extension CoordinatorSemanticDecision {
             "schema_version": "1.0",
             "kind": "blabee_episode_continuation",
             "continuation_origin": "pet_action",
-            "dispatch_mode": "same_turn_stop",
+            "dispatch_mode": "queued_next_turn",
             "continuation_id": continuationID,
             "continuation_token": tokenMaterial.token,
             "interaction_id": packet.interactionID,
@@ -483,13 +483,17 @@ private extension CoordinatorSemanticDecision {
             "continuation_envelope_invalid"
         )
         try require(envelope["continuation_origin"] as? String == "pet_action", "continuation_origin_mismatch")
-        try require(envelope["dispatch_mode"] as? String == "same_turn_stop", "dispatch_mode_conflict")
+        try require(envelope["dispatch_mode"] as? String == "queued_next_turn", "dispatch_mode_conflict")
         guard let continuationID = envelope["continuation_id"] as? String,
               IdentifierNormalization.isNFC(continuationID),
               let continuation = state.continuations[continuationID]
         else {
             throw CoordinatorError("continuation_not_dispatched")
         }
+        try require(
+            envelope["dispatch_mode"] as? String == continuation.dispatchMode,
+            "continuation_dispatch_mode_mismatch"
+        )
         let binding = try CoordinatorBinding(jsonObject: envelope)
         try require(binding == continuation.binding, "decision_boundary_binding_mismatch")
         for (key, expected): (String, Any) in [

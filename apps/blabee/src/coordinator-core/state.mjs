@@ -481,7 +481,10 @@ export function reduce(state, event) {
     invariant(selectedChoice?.action, "decision_option_not_pet_action");
     invariant(!boundary.dispatchedContinuationId, "continuation_already_dispatched_for_selection");
     const payload = event.payload;
-    invariant(payload.dispatch_mode === "same_turn_stop", "dispatch_mode_conflict");
+    invariant(
+      payload.dispatch_mode === "queued_next_turn" || payload.dispatch_mode === "same_turn_stop",
+      "dispatch_mode_conflict",
+    );
     for (const [field, selectedField] of [
       ["interaction_id", "interactionId"],
       ["packet_id", "packetId"],

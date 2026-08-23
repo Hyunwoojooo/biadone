@@ -220,10 +220,14 @@ func petTestFocusResponse() throws -> Data {
     try petTestData(["focused": true])
 }
 
-func petTestSelectionResponse(kind: String = "continuation") throws -> Data {
+func petTestSelectionResponse(kind: String = "next_turn") throws -> Data {
     let outcome: [String: Any] = kind == "pause"
         ? ["kind": "pause"]
-        : ["kind": "continuation", "continuation_id": "continuation_test"]
+        : [
+            "kind": "next_turn",
+            "continuation_id": "continuation_test",
+            "queued_submission_id": "queued_submission_test",
+        ]
     return try petTestData(["accepted": true, "outcome": outcome])
 }
 
@@ -231,6 +235,8 @@ actor PetFakeTransport: PetCoordinatorTransport {
     private var responses: [String: [Data]] = [:]
     private var failures: [String: [String]] = [:]
     private var requests: [(String, Data)] = []
+    private var blockFocus = false
+    private var focusWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockSelection = false
     private var selectionWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -240,6 +246,15 @@ actor PetFakeTransport: PetCoordinatorTransport {
 
     func enqueueFailure(type: String, code: String) {
         failures[type, default: []].append(code)
+    }
+
+    func setFocusBlocked(_ blocked: Bool) {
+        blockFocus = blocked
+        if !blocked {
+            let waiters = focusWaiters
+            focusWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
     }
 
     func setSelectionBlocked(_ blocked: Bool) {
@@ -253,6 +268,11 @@ actor PetFakeTransport: PetCoordinatorTransport {
 
     func request(type: String, payload: Data) async throws -> Data {
         requests.append((type, payload))
+        if type == "focus_interaction", blockFocus {
+            await withCheckedContinuation { continuation in
+                focusWaiters.append(continuation)
+            }
+        }
         if type == "select", blockSelection {
             await withCheckedContinuation { continuation in
                 selectionWaiters.append(continuation)
