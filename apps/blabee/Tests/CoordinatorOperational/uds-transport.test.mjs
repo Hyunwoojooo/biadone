@@ -899,6 +899,82 @@ test("a suspended Stop connection does not block concurrent UDS requests or sche
   }
 });
 
+test("an idle scheduler skips time processing and discovers newly-created deadlines", async () => {
+  const fixture = await startFixtureTransportServer();
+  try {
+    await udsRequest(fixture.socketPath, "get_state", { fixture_scheduler_idle: true });
+    // Allow any time pass scheduled before the idle request to finish, then
+    // capture the stable idle baseline.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const idleBaseline = await udsRequest(fixture.socketPath, "get_state");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const idleAfter = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(
+      idleAfter.result.scheduler_passes,
+      idleBaseline.result.scheduler_passes,
+      "nil deadlines must not trigger processTime",
+    );
+
+    const armed = await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_deadline_ms: 25,
+    });
+    const discoveryDeadline = Date.now() + 1_000;
+    let progressed = armed;
+    while (
+      progressed.result.scheduler_passes <= armed.result.scheduler_passes
+      && Date.now() < discoveryDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      progressed = await udsRequest(fixture.socketPath, "get_state");
+    }
+    assert.ok(
+      progressed.result.scheduler_passes > armed.result.scheduler_passes,
+      "bounded idle checks must discover and process a newly-created deadline",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a long-future deadline skips early processing and can be shortened", async () => {
+  const fixture = await startFixtureTransportServer();
+  try {
+    await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_deadline_ms: 2_000,
+    });
+    // Allow a pass scheduled from the fixture's initial short deadline to
+    // finish before capturing the long-future baseline.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const futureBaseline = await udsRequest(fixture.socketPath, "get_state");
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const futureAfter = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(
+      futureAfter.result.scheduler_passes,
+      futureBaseline.result.scheduler_passes,
+      "deadlines beyond the bounded window must not trigger processTime",
+    );
+
+    const shortened = await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_deadline_ms: 25,
+    });
+    const discoveryDeadline = Date.now() + 1_000;
+    let progressed = shortened;
+    while (
+      progressed.result.scheduler_passes <= shortened.result.scheduler_passes
+      && Date.now() < discoveryDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      progressed = await udsRequest(fixture.socketPath, "get_state");
+    }
+    assert.ok(
+      progressed.result.scheduler_passes > shortened.result.scheduler_passes,
+      "bounded checks must discover and process a shortened deadline",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("UDS admission is capped and oversized input cannot kill the server", async () => {
   const fixture = await startFixtureTransportServer();
   const holding = [];

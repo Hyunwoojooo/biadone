@@ -417,7 +417,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         try reconcileAmbiguousSelectionsLocked()
-        try processDueLocked()
+        try processDueLocked(reconcileTerminalRuntime: false)
         return drainNoticesLocked()
     }
 
@@ -427,13 +427,22 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         try reconcileAmbiguousSelectionsLocked()
-        try processDueLocked()
+        try processDueLocked(reconcileTerminalRuntime: false)
     }
 
     public func snapshot() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
         defer { lock.unlock() }
         try processDueLocked()
+        return try snapshotLocked()
+    }
+
+    /// Returns the current projection after the caller has already advanced
+    /// routing time. This keeps one operational state request to one due-work
+    /// pass while preserving the existing notice reconciliation order.
+    func snapshotWithoutProcessingTime() throws -> CoordinatorRoutingSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
         return try snapshotLocked()
     }
 
@@ -861,7 +870,7 @@ private extension CoordinatorRoutingApplication {
         lastClockNanoseconds = clock.nowNanoseconds()
     }
 
-    func processDueLocked() throws {
+    func processDueLocked(reconcileTerminalRuntime: Bool = true) throws {
         let now = clock.nowNanoseconds()
         if let previous = lastClockNanoseconds, now < previous {
             try failClosedForClockRegressionLocked()
@@ -909,6 +918,17 @@ private extension CoordinatorRoutingApplication {
         formatRepairs = formatRepairs.filter { _, item in
             elapsedNanoseconds(from: item.anchorNanoseconds, to: now)
                 < Self.continuationValidityNanoseconds
+        }
+        // Frequent Pet/scheduler time ticks update process-local monotonic
+        // authority directly. Durable transitions above still pass through
+        // the semantic application and its full journal verification. Reserve
+        // this extra authoritative cleanup for command paths where a journal
+        // CAS can make the local runtime maps stale.
+        guard reconcileTerminalRuntime else { return }
+        // With no process-local runtime authority there is nothing for the
+        // authoritative replay below to remove.
+        guard !pending.isEmpty || !inFlight.isEmpty || !formatRepairs.isEmpty else {
+            return
         }
         try removeTerminalRuntimeEntriesLocked()
     }

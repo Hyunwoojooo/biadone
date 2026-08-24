@@ -365,6 +365,10 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 let delay = max(1, min(requestedDelay ?? 250, 250))
                 try? await Task.sleep(for: .milliseconds(Int64(delay)))
                 if Task.isCancelled { return }
+                // Keep checking for new or shortened deadlines at the bounded
+                // cadence, but do not run the expensive journal-backed time
+                // pass until scheduled work is within that bounded window.
+                guard let requestedDelay, requestedDelay <= 250 else { continue }
                 _ = try? await application.processTime()
             }
         }

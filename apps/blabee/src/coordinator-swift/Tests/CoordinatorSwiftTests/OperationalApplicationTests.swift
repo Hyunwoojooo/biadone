@@ -29,15 +29,23 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
     private var lostResponsesByEventType: [String: Int] = [:]
     private var loadFailuresAfterLostResponseByEventType: [String: Int] = [:]
     private var loadFailuresRemaining = 0
+    private var loads = 0
 
     func load() throws -> JournalSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        loads += 1
         if loadFailuresRemaining > 0 {
             loadFailuresRemaining -= 1
             throw CoordinatorError("simulated_load_failure")
         }
         return snapshot
+    }
+
+    func loadCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return loads
     }
 
     func append(
@@ -458,6 +466,43 @@ private func operationalStop(
         "last_assistant_message": message,
         "hook_event_name": "Stop",
     ])
+}
+
+@Test("Operational state requests perform one routing reconciliation tick")
+func operationalStateRequestsUseSingleRoutingTick() async throws {
+    let idleFixture = try operationalFixture()
+
+    var loadCountBeforeRequest = idleFixture.journal.loadCount()
+    let state = try operationalObject(
+        await idleFixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect(state["kind"] as? String == "blabee_operational_snapshot")
+    #expect(idleFixture.journal.loadCount() - loadCountBeforeRequest == 0)
+
+    loadCountBeforeRequest = idleFixture.journal.loadCount()
+    _ = try await idleFixture.app.handle(type: "pet_snapshot", payload: operationalData([:]))
+    #expect(idleFixture.journal.loadCount() - loadCountBeforeRequest == 0)
+
+    let activeFixture = try operationalFixture()
+    let ids = try await operationalBegin(activeFixture, suffix: "single_state_tick")
+    _ = try await activeFixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "single_state_tick")
+        ))
+    )
+
+    activeFixture.clock.advance(seconds: 60)
+    loadCountBeforeRequest = activeFixture.journal.loadCount()
+    let activeState = try operationalObject(
+        await activeFixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let activeInteraction = try #require(
+        (activeState["interactions"] as? [[String: Any]])?.first
+    )
+    #expect(activeInteraction["reminder_due"] as? Bool == true)
+    #expect(activeFixture.journal.loadCount() - loadCountBeforeRequest == 0)
 }
 
 @Test("Operational prompt late-registers a missing session without changing resume semantics")

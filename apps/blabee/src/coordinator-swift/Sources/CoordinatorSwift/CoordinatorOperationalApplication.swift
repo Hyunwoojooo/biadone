@@ -1148,11 +1148,12 @@ private extension CoordinatorOperationalApplication {
     }
 
     func stateSnapshot() throws -> Data {
-        let notices = try routing.processTime()
-        for notice in notices { try secretCorpus.assertNoKnownSecret(in: notice) }
-        enqueueTimeNotices(notices)
-        try reconcilePendingOperationalWork()
-        let routingObject = try StrictJSONTransport.object(from: routing.snapshot().canonicalJSON)
+        // The common operational request prelude already advanced routing
+        // time and reconciled its notices. Keep this projection read-only so
+        // one Pet state request remains exactly one reconciliation tick.
+        let routingObject = try StrictJSONTransport.object(
+            from: routing.snapshotWithoutProcessingTime().canonicalJSON
+        )
         let projectObjects = projects.values.sorted { $0.path < $1.path }.map { project in
             ["project_id": project.projectID, "cwd": project.path, "enabled": project.enabled] as [String: Any]
         }
