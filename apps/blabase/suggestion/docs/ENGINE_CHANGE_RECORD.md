@@ -8402,3 +8402,143 @@ as a new execution.
   prior identity/QA evidence and requires Colin's explicit decision.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24:begin -->
+
+## Colin Common V0.3 Contract Freeze Decision Receipt: ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24
+
+- Date: 2026-08-24
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David role, gate, package, receipt, artifact, review, or approval: none
+- Goal: Record Colin's explicit decision to freeze the exact Common V0.3 source-verification
+  contract bytes after contract review, cumulative bounded QA, and exact-byte identity preparation.
+- Affected pipeline stages: Governance and contract lifecycle record only. No runtime or semantic
+  pipeline stage is changed by this receipt.
+- Decision evidence: Colin reviewed the Common V0.3 contract summary and explicitly selected option
+  1 to approve its content and prepare exact-byte identities. After receiving the computed byte
+  length, SHA-256, and Git-compatible blob SHA-1, Colin explicitly selected option 1 again to write
+  this freeze receipt.
+- Common V0.3 contract freeze decision: `APPROVED` and `ACCEPTED` by Colin for only the exact bytes
+  bound below.
+
+### Bound immutable identities and lifecycle transition
+
+- Contract ID: `blabase-common-suggestion-evidence-source-verification-v0.3`
+- Exact bound contract path:
+  `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_3_CONTRACT.md`
+- Exact bound document byte length: `88549`
+- Exact bound raw document bytes SHA-256:
+  `3fa0d5944f3fa6623217d2f73362b7f2347c7a134eb37c7bf4f51e76873e6729`
+- Exact bound Git-compatible blob SHA-1:
+  `676f52894a513a2d4b69b2915faf2e993a504213`
+- Git-compatible blob preimage: `blob 88549\0<exact bound document bytes>`; this identifier is
+  SHA-1 and is not called or treated as the contract SHA-256.
+- Historical predecessor contract Git blob SHA-1:
+  `0bdb0bc5d57d207ff1ff8b393d83a1d750eb7715`
+- Historical predecessor freeze receipt:
+  `ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22`
+- Source-document state before this external receipt: proposal-only and unfrozen.
+- External lifecycle transition recorded by this receipt:
+  `COMMON_V0_3_PROPOSAL_ONLY_UNFROZEN` -> `COMMON_V0_3_CONTRACT_FROZEN_BY_COLIN`
+- Resulting external lifecycle state: `COMMON_V0_3_CONTRACT_FROZEN_BY_COLIN`
+
+The contract source document remains byte-for-byte unchanged by this receipt. The lifecycle
+transition and exact identities are external so the contract never self-hashes or claims a receipt
+or commit containing itself. Any byte change invalidates all three exact identities above and
+requires a new proposal version, renewed QA, new identities, and another explicit Colin decision.
+
+### Approved contract decisions
+
+1. **Yes.** Freeze Common V0.3 as the sole owner of shared primitives, brands, enums, generic
+   result construction, preflight, source combination, and Common builder invocation rules.
+2. **Yes.** Require parent canonical-byte, hostile-object, source-binding, privacy, and caps
+   preflight before any source callback can execute.
+3. **Yes.** Keep raw repository identifiers only in the parent-owned, non-wire, single-use proof
+   and zeroization vault until per-reference and set-HMAC recomputation completes.
+4. **Yes.** Exclude that mutable vault from immutable callback graphs, zeroize and invalidate it
+   after use, and expose only a frozen projection-only callback payload.
+5. **Yes.** Require one-shot disposable adapter isolation, closed globals and intrinsics, canonical
+   IPC, adapter-artifact digest binding, and separate supervisor completion semantics.
+6. **Yes.** Allow source adapters to return neutral Common build records only. Final suggestion
+   wording, ranking, caveats, engine controls, or output paths are not source-adapter authority.
+7. **Yes.** Combine all prepared sources in the parent and invoke the canonical Common builder
+   exactly once for a nonempty fully prepared attempt, and zero times for empty, interrupted, or
+   global-failure outcomes.
+8. **Yes.** Continue bounded processing of later sources after a source-local failure while keeping
+   sealed failure states limited to exact failed-source and legal failure-code pairs.
+9. **Yes.** Keep `aborted` as an unsealed operational interruption with no semantic primary
+   diagnostic, and preserve the contract's exact coverage-conversion rules.
+10. **Yes.** Freeze the fully distributed tuple/result union so source identity, legal failure,
+    exact tuple state, diagnostics, seal state, and builder count remain correlated without child
+    widening.
+11. **Yes.** Preserve record-local evidence authority only; no aggregate result, source adapter, or
+    GitHub evidence becomes system-level or suggestion-level authority.
+12. **Yes.** Preserve the A/B/C identical-engine invariant and the Dayflow evidence-only boundary.
+    Only evidence inputs may differ across arms; model, prompt, configuration, ranking,
+    guardrails, engine, and output schema remain common.
+13. **Yes.** Keep frozen V0.2 bytes as immutable history and provide no V0.2/V0.3 compatibility
+    union, alias, coercion, default, or migration path.
+
+### Freeze scope and binding effect
+
+- Frozen scope: Only the Common V0.3 source-verification contract embodied by exact SHA-256
+  `3fa0d5944f3fa6623217d2f73362b7f2347c7a134eb37c7bf4f51e76873e6729`, Git-compatible blob
+  SHA-1 `676f52894a513a2d4b69b2915faf2e993a504213`, and byte length `88549` is frozen.
+- The V0.2 Common and GitHub contracts and their receipts remain immutable historical records. This
+  receipt neither mutates their bytes nor creates a compatibility layer.
+- The still-unfrozen GitHub V0.3 proposal is not frozen by this receipt. It must separately bind the
+  exact Common V0.3 identities, complete renewed cross-contract QA, receive Colin's review, prepare
+  its own exact-byte identities, and receive its own freeze decision.
+- GitHub remains private, offline, and always `authoritative: false` in the current Stage10 scope.
+- No source adapter may bypass the Common adapter, builder, suggestion engine, or output contract.
+
+### Explicit non-authorizations
+
+- This receipt does not implement Common V0.3 or any source-specific adapter, verifier, parser,
+  collector, isolation runtime, callback, fixture, or test.
+- It does not approve or freeze the GitHub V0.3 source-bundle contract.
+- It does not approve live provider access, credentials, key provisioning, operational activation,
+  real-user data collection, public API exposure, `authoritative: true`, release, or rollout.
+- It does not claim that the embedded TypeScript declarations have compiled or that recursive union
+  instantiation depth and compiler cost have been measured.
+- Release decision: Not released.
+- Implementation decision: Not approved by this receipt.
+
+### Bound technical evidence and execution record
+
+- Cumulative bounded contract QA reported all known contract findings closed before Colin's review.
+- The latest ultra-bounded re-QA returned `PASS` and `CLOSED` for the corrected recursive
+  type-distribution block, including exact source/failure/tuple correlation and child aliases
+  without widening.
+- That latest result was not a fresh full-contract Tier 3 audit. Its residual scope limitation and
+  the cumulative bounded nature of the evidence remain explicit.
+- Actual TypeScript compilation, compiler instantiation-depth measurement, runtime execution, and
+  implementation validation were not performed before this freeze decision.
+- Exact-byte identity preparation used one local Node.js streaming pass over the contract bytes to
+  compute byte length, raw SHA-256, and Git-compatible blob SHA-1 without modifying the file.
+- Files changed by this receipt: `suggestion/docs/ENGINE_CHANGE_RECORD.md` only.
+- Contract source files changed by this receipt: none.
+- Tests, typecheck, lint, build, baseline, evaluation, architecture check, provider call, runtime
+  command, or Git command executed while appending this receipt: none.
+- Evaluation dataset version and SHA-256: not applicable; no evaluation input or semantic behavior
+  changed.
+- Candidate run ID and comparison run ID: none.
+- Metrics changed: none.
+- Privacy and retention impact: unchanged. No secret, credential, raw conversation, private
+  evidence, provider data, provider artifact, model call, dataset, or user data was added or used.
+
+### Next permitted task, release boundary, and rollback
+
+- Recommended next task: Bind the exact Common V0.3 byte length, SHA-256, and Git-compatible blob
+  SHA-1 into the still-unfrozen GitHub V0.3 proposal without freezing that child contract.
+- After that binding, renewed cross-contract QA, Colin review, GitHub V0.3 identity preparation,
+  and GitHub V0.3 freeze remain separate checkpoints in that order.
+- No runtime implementation may start from this receipt alone.
+- Reopen, replace, or roll back this freeze only through an explicit Colin decision recorded in a
+  new proposal or decision receipt. Never silently mutate the bound Common V0.3 contract bytes.
+- Reverting or voiding this receipt does not alter the frozen Common V0.3 bytes or historical V0.2
+  records; it only removes this external freeze decision and requires Colin's explicit approval.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24:end -->
