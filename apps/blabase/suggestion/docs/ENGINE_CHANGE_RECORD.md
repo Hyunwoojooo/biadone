@@ -8542,3 +8542,59 @@ requires a new proposal version, renewed QA, new identities, and another explici
   records; it only removes this external freeze decision and requires Colin's explicit approval.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24:begin -->
+
+## Colin Common V0.4 Exact-Byte Identity Preparation: ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24
+
+- Date: 2026-08-24
+- Timezone: Asia/Seoul
+- Identity computation timestamp: `2026-08-24T14:18:01.951Z`
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David role, gate, package, receipt, artifact, review, or approval: none
+- Colin content approval: `APPROVED` on 2026-08-24
+- Contract QA evidence: full-QA corrections completed and focused re-QA `PASS`
+- Goal: Prepare candidate exact-byte identities for the approved Common V0.4 contract content and
+  stop before any freeze decision, receipt, implementation approval, activation, or release.
+- Affected pipeline stages: Governance and contract lifecycle record only. No runtime or semantic
+  pipeline stage is changed by this preparation record.
+
+### Candidate exact-byte identities and lifecycle state
+
+- Preparation record identifier:
+  `ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24`
+- Contract ID: `blabase-common-suggestion-evidence-source-verification-v0.4`
+- Exact source path:
+  `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_4_CONTRACT.md`
+- Current worktree document byte length: `126060`
+- Current worktree raw document bytes SHA-256:
+  `5bbf7f5904913680f63eff2a12574bf98114fc55487349baa7a971d78f083909`
+- Current worktree Git-compatible blob SHA-1:
+  `ff093b3387111f91a4cbd2c244c8bbe133e575ea`
+- Git-compatible blob preimage: `blob 126060\0<exact current worktree document bytes>`; this
+  identifier is SHA-1 and is not called or treated as the contract SHA-256.
+- External lifecycle transition recorded by this preparation:
+  `FULL_STANDALONE_CONTRACT_CONTENT_APPROVED_PENDING_EXACT_IDENTITY_PREPARATION` ->
+  `IDENTITY_PREPARED` with `FREEZE_DECISION_PENDING`, `UNFROZEN`, `INACTIVE`, and `UNIMPLEMENTED`.
+
+These three values identify only the contract bytes present in the worktree at the computation
+timestamp. They are external-only and non-self-referential; none is inserted into the contract.
+Any contract byte change invalidates the byte length, SHA-256, and Git-compatible blob SHA-1
+together and requires renewed identity preparation before a later freeze decision.
+
+This preparation record is not a freeze receipt, does not freeze or activate the contract, grants
+no implementation approval, and is not a commit-backed identity. No contract freeze receipt ID,
+freeze Git commit ID, or candidate commit identity is assigned. The Common V0.4 contract remains
+`UNFROZEN`, `INACTIVE`, and `UNIMPLEMENTED`.
+
+### Next permitted decision and child boundary
+
+- The next permitted gate is a separate Colin decision to freeze or decline these exact Common
+  V0.4 bytes. This preparation does not infer that decision.
+- GitHub V0.3 remains unfrozen and blocked. It must not be rebound, reviewed for freeze, frozen, or
+  implemented until Common V0.4 is separately frozen and Colin later authorizes the child task.
+- No source implementation, test execution, runtime activation, release, or Stage10-2C authority
+  work is authorized by this record.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24:end -->
