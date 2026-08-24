@@ -5,8 +5,13 @@ import Foundation
 /// A compile-time-only transport fixture. It keeps UDS ownership, allowlist,
 /// and concurrency tests away from the product Keychain and SQLite runtime.
 actor FixtureTransportHandler: CoordinatorOperationalHandling {
+    private var schedulerAttempts = 0
     private var schedulerPasses = 0
+    private var schedulerFailures = 0
     private var schedulerDeadlineMilliseconds: Int32? = 25
+    private var schedulerFailuresRemaining = 0
+    private var schedulerFailsPersistently = false
+    private var schedulerIdlesAfterSuccess = false
 
     func handle(type: String, payload: Data) async throws -> Data {
         let object = try StrictJSONTransport.object(
@@ -22,12 +27,25 @@ actor FixtureTransportHandler: CoordinatorOperationalHandling {
         {
             schedulerDeadlineMilliseconds = Int32(deadline)
         }
+        if let failures = object["fixture_scheduler_failures_remaining"] as? Int,
+           failures >= 0
+        {
+            schedulerFailuresRemaining = failures
+        }
+        if let failsPersistently = object["fixture_scheduler_fail_always"] as? Bool {
+            schedulerFailsPersistently = failsPersistently
+        }
+        if let idlesAfterSuccess = object["fixture_scheduler_idle_after_success"] as? Bool {
+            schedulerIdlesAfterSuccess = idlesAfterSuccess
+        }
         if let delay = object["fixture_delay_ms"] as? Int, delay > 0 {
             try await Task.sleep(for: .milliseconds(Int64(min(delay, 2_000))))
         }
         return try StrictJSONTransport.data(forJSONObject: [
             "fixture": "ok",
             "handled_type": type,
+            "scheduler_attempts": schedulerAttempts,
+            "scheduler_failures": schedulerFailures,
             "scheduler_passes": schedulerPasses,
         ])
     }
@@ -46,7 +64,16 @@ actor FixtureTransportHandler: CoordinatorOperationalHandling {
     }
 
     func processTime() async throws -> [Data] {
+        schedulerAttempts += 1
+        if schedulerFailsPersistently || schedulerFailuresRemaining > 0 {
+            schedulerFailuresRemaining = max(0, schedulerFailuresRemaining - 1)
+            schedulerFailures += 1
+            throw CoordinatorError("fixture_scheduler_failure")
+        }
         schedulerPasses += 1
+        if schedulerIdlesAfterSuccess {
+            schedulerDeadlineMilliseconds = nil
+        }
         return []
     }
 

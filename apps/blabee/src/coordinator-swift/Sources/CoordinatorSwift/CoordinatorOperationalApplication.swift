@@ -1,4 +1,5 @@
 import CryptoKit
+import Dispatch
 import Foundation
 
 /// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
@@ -7,6 +8,18 @@ import Foundation
 public actor CoordinatorOperationalApplication {
     public typealias IDGenerator = @Sendable (_ purpose: String) -> String
     public typealias WallInstantGenerator = @Sendable () throws -> RFC3339Instant
+    public typealias MonotonicInstantGenerator = @Sendable () -> UInt64
+
+    private static let reconciliationCooldownNanoseconds: [UInt64] = [
+        250_000_000,
+        500_000_000,
+        1_000_000_000,
+        2_000_000_000,
+        4_000_000_000,
+    ]
+    private static let reconciliationCooldownError = CoordinatorError(
+        "operational_reconciliation_cooldown"
+    )
 
     private struct Project {
         let projectID: String
@@ -78,6 +91,7 @@ public actor CoordinatorOperationalApplication {
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
     private let wallInstantGenerator: WallInstantGenerator
+    private let monotonicInstantGenerator: MonotonicInstantGenerator
     private let stopObservationHMACKey: Data
     private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
 
@@ -92,6 +106,9 @@ public actor CoordinatorOperationalApplication {
     private var pendingInitialActivations: Set<CoordinatorBindingKey> = []
     private var generation: UInt64 = 0
     private var permissionNoticeCount: UInt64 = 0
+    private var consecutiveReconciliationFailures = 0
+    private var reconciliationRetryNotBeforeNanoseconds: UInt64?
+    private var foregroundAuthorityRecoveryBinding: CoordinatorBindingKey?
 
     public init(
         routing: CoordinatorRoutingApplication,
@@ -99,6 +116,7 @@ public actor CoordinatorOperationalApplication {
         secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
         idGenerator: IDGenerator? = nil,
         wallInstantGenerator: WallInstantGenerator? = nil,
+        monotonicInstantGenerator: MonotonicInstantGenerator? = nil,
         stopObservationHMACKey: Data? = nil,
         nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil
     ) {
@@ -112,6 +130,9 @@ public actor CoordinatorOperationalApplication {
             ?? SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         self.nextTurnDispatcher = nextTurnDispatcher ?? { _ in
             throw CoordinatorError("next_turn_dispatcher_unavailable")
+        }
+        self.monotonicInstantGenerator = monotonicInstantGenerator ?? {
+            DispatchTime.now().uptimeNanoseconds
         }
         self.wallInstantGenerator = wallInstantGenerator ?? {
             let formatter = ISO8601DateFormatter()
@@ -157,15 +178,31 @@ public actor CoordinatorOperationalApplication {
     public func handle(type: String, payload: Data) async throws -> Data {
         generation = try nextGeneration(generation)
         let requestGeneration = generation
+        if reconciliationCooldownIsActive() {
+            // Pet polling remains useful during a storage outage, but it must
+            // not bypass the same cooldown as the scheduler. This projection
+            // is actor/routing memory only and intentionally does not advance
+            // time or consult durable authority.
+            if type == "pet_snapshot" || type == "get_state" {
+                return try stateSnapshot()
+            }
+            throw Self.reconciliationCooldownError
+        }
         // Finish any actor-local durable workflow before another high-level
         // request can append to the shared journal. This preserves the packet
         // valid-after sequence across an open/seal retry and keeps promotion
         // atomic from the operational adapter's point of view.
-        try reconcilePendingOperationalWork()
-        let dueNotices = try routing.processTime()
-        for notice in dueNotices { try secretCorpus.assertNoKnownSecret(in: notice) }
-        enqueueTimeNotices(dueNotices)
-        try reconcilePendingOperationalWork()
+        do {
+            try reconcilePendingOperationalWork()
+            let dueNotices = try routing.processTime()
+            for notice in dueNotices { try secretCorpus.assertNoKnownSecret(in: notice) }
+            enqueueTimeNotices(dueNotices)
+            try reconcilePendingOperationalWork()
+            resetReconciliationCooldown()
+        } catch {
+            recordReconciliationFailure()
+            throw error
+        }
         switch type {
         case "enable_project":
             return try enableProject(payload)
@@ -191,16 +228,97 @@ public actor CoordinatorOperationalApplication {
     }
 
     public func processTime() async throws -> [Data] {
-        try reconcilePendingOperationalWork()
-        let notices = try routing.processTime()
-        for notice in notices { try secretCorpus.assertNoKnownSecret(in: notice) }
-        enqueueTimeNotices(notices)
-        try reconcilePendingOperationalWork()
-        return notices
+        guard !reconciliationCooldownIsActive() else {
+            throw Self.reconciliationCooldownError
+        }
+        do {
+            try reconcilePendingOperationalWork()
+            let notices = try routing.processTime()
+            for notice in notices { try secretCorpus.assertNoKnownSecret(in: notice) }
+            enqueueTimeNotices(notices)
+            try reconcilePendingOperationalWork()
+            resetReconciliationCooldown()
+            return notices
+        } catch {
+            recordReconciliationFailure()
+            throw error
+        }
     }
 
     public func millisecondsUntilNextDeadline() -> Int32? {
-        routing.millisecondsUntilNextDeadline()
+        var deadline = routing.millisecondsUntilNextDeadline()
+        if hasPendingOperationalWork,
+           deadline == nil || deadline! > 250
+        {
+            deadline = 250
+        }
+        guard let deadline, deadline <= 250 else {
+            // No immediate work remains. A prior transient failure must not
+            // make the idle daemon retain a stale exponential penalty.
+            resetReconciliationCooldown()
+            return deadline
+        }
+        guard let retryNotBefore = reconciliationRetryNotBeforeNanoseconds else {
+            return deadline
+        }
+        let now = monotonicInstantGenerator()
+        guard now < retryNotBefore else { return deadline }
+        let remaining = retryNotBefore - now
+        let milliseconds = (remaining + 999_999) / 1_000_000
+        return Int32(min(milliseconds, UInt64(Int32.max)))
+    }
+
+    private var hasPendingOperationalWork: Bool {
+        !pendingTimeNotices.isEmpty
+            || !pendingCompletionClosures.isEmpty
+            || !pendingInitialActivations.isEmpty
+    }
+
+    private func reconciliationCooldownIsActive() -> Bool {
+        guard let retryNotBefore = reconciliationRetryNotBeforeNanoseconds else {
+            return false
+        }
+        return monotonicInstantGenerator() < retryNotBefore
+    }
+
+    private func recordReconciliationFailure(
+        awaitingForegroundAuthority binding: CoordinatorBindingKey? = nil
+    ) {
+        if let binding {
+            foregroundAuthorityRecoveryBinding = binding
+        }
+        let index = min(
+            consecutiveReconciliationFailures,
+            Self.reconciliationCooldownNanoseconds.count - 1
+        )
+        let delay = Self.reconciliationCooldownNanoseconds[index]
+        consecutiveReconciliationFailures = min(
+            consecutiveReconciliationFailures + 1,
+            Self.reconciliationCooldownNanoseconds.count
+        )
+        let now = monotonicInstantGenerator()
+        let (retryAt, overflow) = now.addingReportingOverflow(delay)
+        reconciliationRetryNotBeforeNanoseconds = overflow ? UInt64.max : retryAt
+    }
+
+    private func resetReconciliationCooldown(
+        recoveredForegroundAuthority: Bool = false
+    ) {
+        if recoveredForegroundAuthority {
+            foregroundAuthorityRecoveryBinding = nil
+        }
+        // A successful lightweight time/state pass does not prove that the
+        // journal-backed foreground authority recovered. Keep its failure
+        // streak until setForeground itself succeeds, so Pet's state poll
+        // cannot collapse persistent failures back to a 2 Hz retry loop.
+        if let binding = foregroundAuthorityRecoveryBinding,
+           boundaries[binding]?.phase == .waiting
+        {
+            return
+        }
+        foregroundAuthorityRecoveryBinding = nil
+        consecutiveReconciliationFailures = 0
+        reconciliationRetryNotBeforeNanoseconds = nil
     }
 
     private func enqueueTimeNotices(_ notices: [Data]) {
@@ -767,7 +885,24 @@ private extension CoordinatorOperationalApplication {
         target["interaction_id"] = packet["interaction_id"]
         target["packet_id"] = packet["packet_id"]
         target["revision"] = packet["revision"]
-        _ = try routing.setForeground(StrictJSONTransport.data(forJSONObject: target))
+        do {
+            _ = try routing.setForeground(StrictJSONTransport.data(forJSONObject: target))
+            resetReconciliationCooldown(recoveredForegroundAuthority: true)
+        } catch {
+            if error.coordinatorError.code == "foreground_target_not_pending" {
+                // The journal-backed due-work pass succeeded before this
+                // state mismatch was reported; it is not a storage outage.
+                resetReconciliationCooldown(recoveredForegroundAuthority: true)
+            } else {
+                // Request/binding validation happens above. Errors reaching
+                // this point come from the journal-backed routing authority
+                // or an internal target invariant, not plain user input.
+                recordReconciliationFailure(
+                    awaitingForegroundAuthority: binding.fullKey
+                )
+            }
+            throw error
+        }
         return try publicData(["focused": true])
     }
 

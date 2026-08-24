@@ -360,16 +360,61 @@ final class UnixDomainSocketServer: @unchecked Sendable {
 
     private static func startScheduler(application: any CoordinatorOperationalHandling) {
         Task.detached(priority: .utility) {
+            let pollingIntervalMilliseconds: Int32 = 250
+            let initialFailureBackoffMilliseconds: Int32 = 250
+            let maximumFailureBackoffMilliseconds: Int32 = 4_000
+            var retryDelayRemainingMilliseconds: Int32 = 0
+            var nextFailureBackoffMilliseconds = initialFailureBackoffMilliseconds
+
             while !Task.isCancelled {
                 let requestedDelay = await application.millisecondsUntilNextDeadline()
-                let delay = max(1, min(requestedDelay ?? 250, 250))
+
+                // If the failed work was removed or moved out of the bounded
+                // window, do not carry its retry penalty to future work.
+                if requestedDelay.map({ $0 > pollingIntervalMilliseconds }) ?? true {
+                    retryDelayRemainingMilliseconds = 0
+                    nextFailureBackoffMilliseconds = initialFailureBackoffMilliseconds
+                }
+
+                let delay: Int32
+                if retryDelayRemainingMilliseconds > 0 {
+                    // Continue querying deadlines at the normal bounded cadence
+                    // while gating only the expensive failing time pass.
+                    delay = min(retryDelayRemainingMilliseconds, pollingIntervalMilliseconds)
+                } else {
+                    delay = max(
+                        1,
+                        min(requestedDelay ?? pollingIntervalMilliseconds, pollingIntervalMilliseconds)
+                    )
+                }
                 try? await Task.sleep(for: .milliseconds(Int64(delay)))
                 if Task.isCancelled { return }
+
+                if retryDelayRemainingMilliseconds > 0 {
+                    retryDelayRemainingMilliseconds = max(
+                        0,
+                        retryDelayRemainingMilliseconds - delay
+                    )
+                    if retryDelayRemainingMilliseconds > 0 { continue }
+                }
+
                 // Keep checking for new or shortened deadlines at the bounded
                 // cadence, but do not run the expensive journal-backed time
                 // pass until scheduled work is within that bounded window.
-                guard let requestedDelay, requestedDelay <= 250 else { continue }
-                _ = try? await application.processTime()
+                guard let requestedDelay,
+                      requestedDelay <= pollingIntervalMilliseconds
+                else { continue }
+                do {
+                    _ = try await application.processTime()
+                    retryDelayRemainingMilliseconds = 0
+                    nextFailureBackoffMilliseconds = initialFailureBackoffMilliseconds
+                } catch {
+                    retryDelayRemainingMilliseconds = nextFailureBackoffMilliseconds
+                    nextFailureBackoffMilliseconds = min(
+                        maximumFailureBackoffMilliseconds,
+                        nextFailureBackoffMilliseconds * 2
+                    )
+                }
             }
         }
     }

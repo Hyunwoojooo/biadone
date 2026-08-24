@@ -16,6 +16,10 @@ const launcherPath = path.join(pluginRoot, "scripts/blabee-launcher");
 const skillPath = path.join(pluginRoot, "skills/blabee-decision/SKILL.md");
 const skillMetadataPath = path.join(pluginRoot, "skills/blabee-decision/agents/openai.yaml");
 
+function guardedHookCommand(eventName) {
+  return `if [ -n "\${PLUGIN_ROOT:-}" ] && [ -d "$PLUGIN_ROOT" ] && [ ! -L "$PLUGIN_ROOT" ] && [ -d "$PLUGIN_ROOT/scripts" ] && [ ! -L "$PLUGIN_ROOT/scripts" ] && [ -f "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ ! -L "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ -x "$PLUGIN_ROOT/scripts/blabee-launcher" ]; then exec "$PLUGIN_ROOT/scripts/blabee-launcher" hook ${eventName}; fi; exit 0`;
+}
+
 async function json(pathname) {
   return JSON.parse(await readFile(pathname, "utf8"));
 }
@@ -84,7 +88,7 @@ test("four supported hooks call the native coordinator through the plugin launch
     assert.equal(hook.type, "command", eventName);
     assert.equal(
       hook.command,
-      `"$PLUGIN_ROOT/scripts/blabee-launcher" hook ${eventName}`,
+      guardedHookCommand(eventName),
       eventName,
     );
     assert.equal(hook.timeout, budget.timeout, eventName);
@@ -101,6 +105,152 @@ test("four supported hooks call the native coordinator through the plugin launch
     hookDocument.hooks.Stop[0].hooks[0].statusMessage,
     "Blabee 결정 저장 중",
   );
+});
+
+test("guarded Hook commands quote plugin roots and preserve launcher I/O and status", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-quoted-hook-"));
+  const injectionMarkerName = "blabee-hook-injection-marker";
+  const cachedPluginRoot = path.join(
+    directory,
+    `cached plugin ; $(touch ${injectionMarkerName}) [*]`,
+  );
+  const cachedLauncher = path.join(cachedPluginRoot, "scripts", "blabee-launcher");
+  const invocationLog = path.join(directory, "invocations.log");
+  const hookDocument = await json(hooksPath);
+  const commands = Object.fromEntries(
+    Object.entries(hookDocument.hooks).map(([eventName, registrations]) => [
+      eventName,
+      registrations[0].hooks[0].command,
+    ]),
+  );
+
+  try {
+    await mkdir(path.dirname(cachedLauncher), { recursive: true });
+    await writeFile(
+      cachedLauncher,
+      "#!/bin/sh\nprintf '%s:%s\\n' \"$1\" \"$2\" >> \"$BLABEE_HOOK_INVOCATION_LOG\"\n/bin/cat\nprintf 'launcher-stderr:%s:%s' \"$1\" \"$2\" >&2\nexit 23\n",
+      "utf8",
+    );
+    await chmod(cachedLauncher, 0o755);
+
+    const env = {
+      ...process.env,
+      PLUGIN_ROOT: cachedPluginRoot,
+      BLABEE_HOOK_INVOCATION_LOG: invocationLog,
+    };
+    for (const [eventName, command] of Object.entries(commands)) {
+      const input = `payload:${eventName}:한글:\u0000\nsecond line\n`;
+      const result = await run("/bin/sh", ["-c", command], {
+        cwd: directory,
+        env,
+        input,
+      });
+      assert.equal(result.code, 23, eventName);
+      assert.equal(result.signal, null, eventName);
+      assert.equal(result.stdout, input, eventName);
+      assert.equal(result.stderr, `launcher-stderr:hook:${eventName}`, eventName);
+    }
+    assert.equal(
+      await readFile(invocationLog, "utf8"),
+      Object.keys(commands).map((eventName) => `hook:${eventName}\n`).join(""),
+    );
+    assert.equal((await readdir(directory)).includes(injectionMarkerName), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("unusable or symlinked cached Hook launchers fail open silently", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-cached-hook-"));
+  const privateValue = "private-cached-hook-payload";
+  const unsafeMarkerName = "unsafe-launcher-invoked";
+  const unsafeMarker = path.join(directory, unsafeMarkerName);
+  const unsafeLauncher = path.join(directory, "unsafe-launcher");
+  const deletedRoot = path.join(directory, "deleted-root");
+  const launcherDirectoryRoot = path.join(directory, "launcher-directory-root");
+  const nonExecutableRoot = path.join(directory, "non-executable-root");
+  const symlinkScriptsRoot = path.join(directory, "symlink-scripts-root");
+  const symlinkLauncherRoot = path.join(directory, "symlink-launcher-root");
+  const symlinkRootTarget = path.join(directory, "symlink-root-target");
+  const symlinkRoot = path.join(directory, "symlink-root");
+  const hookDocument = await json(hooksPath);
+  const commands = Object.fromEntries(
+    Object.entries(hookDocument.hooks).map(([eventName, registrations]) => [
+      eventName,
+      registrations[0].hooks[0].command,
+    ]),
+  );
+
+  try {
+    await writeFile(
+      unsafeLauncher,
+      "#!/bin/sh\nprintf invoked > \"$BLABEE_UNSAFE_MARKER\"\n/bin/cat\nprintf unsafe >&2\nexit 31\n",
+      "utf8",
+    );
+    await chmod(unsafeLauncher, 0o755);
+
+    await mkdir(path.join(launcherDirectoryRoot, "scripts", "blabee-launcher"), {
+      recursive: true,
+    });
+    await mkdir(path.join(nonExecutableRoot, "scripts"), { recursive: true });
+    await writeFile(
+      path.join(nonExecutableRoot, "scripts", "blabee-launcher"),
+      await readFile(unsafeLauncher),
+    );
+    await chmod(path.join(nonExecutableRoot, "scripts", "blabee-launcher"), 0o644);
+    await mkdir(symlinkScriptsRoot, { recursive: true });
+    await mkdir(path.join(symlinkLauncherRoot, "scripts"), { recursive: true });
+    await symlink(unsafeLauncher, path.join(symlinkLauncherRoot, "scripts", "blabee-launcher"));
+    await mkdir(path.join(symlinkRootTarget, "scripts"), { recursive: true });
+    await writeFile(
+      path.join(symlinkRootTarget, "scripts", "blabee-launcher"),
+      await readFile(unsafeLauncher),
+    );
+    await chmod(path.join(symlinkRootTarget, "scripts", "blabee-launcher"), 0o755);
+    await symlink(
+      path.join(symlinkRootTarget, "scripts"),
+      path.join(symlinkScriptsRoot, "scripts"),
+      "dir",
+    );
+    await symlink(symlinkRootTarget, symlinkRoot, "dir");
+
+    // Packaged Plugin trees contain no symlinks. Reject symlinks at each fixed
+    // executable path component without restricting ordinary real cache trees.
+    const cases = [
+      { name: "PLUGIN_ROOT unset", pluginRoot: undefined },
+      { name: "PLUGIN_ROOT empty", pluginRoot: "" },
+      { name: "deleted root", pluginRoot: deletedRoot },
+      { name: "launcher directory", pluginRoot: launcherDirectoryRoot },
+      { name: "non-executable launcher", pluginRoot: nonExecutableRoot },
+      { name: "symlink scripts directory", pluginRoot: symlinkScriptsRoot },
+      { name: "symlink launcher", pluginRoot: symlinkLauncherRoot },
+      { name: "symlink root", pluginRoot: symlinkRoot },
+    ];
+    for (const scenario of cases) {
+      const env = {
+        ...process.env,
+        BLABEE_UNSAFE_MARKER: unsafeMarker,
+      };
+      if (scenario.pluginRoot === undefined) delete env.PLUGIN_ROOT;
+      else env.PLUGIN_ROOT = scenario.pluginRoot;
+
+      for (const [eventName, command] of Object.entries(commands)) {
+        const result = await run("/bin/sh", ["-c", command], {
+          env,
+          input: JSON.stringify({ hook_event_name: eventName, private_value: privateValue }),
+        });
+        const label = `${scenario.name}:${eventName}`;
+        assert.equal(result.code, 0, `${label}: ${result.stderr}`);
+        assert.equal(result.signal, null, label);
+        assert.equal(result.stdout, "", label);
+        assert.equal(result.stderr, "", label);
+        assert.equal(`${result.stdout}${result.stderr}`.includes(privateValue), false, label);
+      }
+    }
+    assert.equal((await readdir(directory)).includes(unsafeMarkerName), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("MCP uses the plugin-local launcher without undocumented plugin-variable expansion", async () => {

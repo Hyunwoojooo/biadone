@@ -975,6 +975,84 @@ test("a long-future deadline skips early processing and can be shortened", async
   }
 });
 
+test("scheduler failures back off and a successful recovery resets the retry delay", async () => {
+  const fixture = await startFixtureTransportServer();
+  try {
+    const armed = await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_deadline_ms: 0,
+      fixture_scheduler_fail_always: true,
+      fixture_scheduler_idle_after_success: true,
+    });
+    const threeFailuresDeadline = Date.now() + 3_000;
+    let failed = armed;
+    while (
+      failed.result.scheduler_failures < armed.result.scheduler_failures + 3
+      && Date.now() < threeFailuresDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      failed = await udsRequest(fixture.socketPath, "get_state");
+    }
+    assert.ok(
+      failed.result.scheduler_failures >= armed.result.scheduler_failures + 3,
+      "the failure fixture must reach the exponential-backoff path",
+    );
+
+    const boundedFailureCount = failed.result.scheduler_failures;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const bounded = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(
+      bounded.result.scheduler_failures,
+      boundedFailureCount,
+      "an already-due persistent failure must not hot-loop",
+    );
+
+    const recoveryRequested = await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_fail_always: false,
+      fixture_scheduler_failures_remaining: 0,
+    });
+    const recoveryDeadline = Date.now() + 2_500;
+    let recovered = recoveryRequested;
+    while (
+      recovered.result.scheduler_passes <= recoveryRequested.result.scheduler_passes
+      && Date.now() < recoveryDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      recovered = await udsRequest(fixture.socketPath, "get_state");
+    }
+    assert.ok(
+      recovered.result.scheduler_passes > recoveryRequested.result.scheduler_passes,
+      "the scheduler must recover when processTime succeeds",
+    );
+
+    const rearmed = await udsRequest(fixture.socketPath, "get_state", {
+      fixture_scheduler_deadline_ms: 0,
+      fixture_scheduler_failures_remaining: 1,
+    });
+    const resetDeadline = Date.now() + 1_200;
+    let resetObserved = rearmed;
+    while (
+      (
+        resetObserved.result.scheduler_failures <= rearmed.result.scheduler_failures
+        || resetObserved.result.scheduler_passes <= rearmed.result.scheduler_passes
+      )
+      && Date.now() < resetDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      resetObserved = await udsRequest(fixture.socketPath, "get_state");
+    }
+    assert.ok(
+      resetObserved.result.scheduler_failures > rearmed.result.scheduler_failures,
+      "the rearmed fixture must inject one failure",
+    );
+    assert.ok(
+      resetObserved.result.scheduler_passes > rearmed.result.scheduler_passes,
+      "a success must reset the next failure to the initial retry delay",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("UDS admission is capped and oversized input cannot kill the server", async () => {
   const fixture = await startFixtureTransportServer();
   const holding = [];

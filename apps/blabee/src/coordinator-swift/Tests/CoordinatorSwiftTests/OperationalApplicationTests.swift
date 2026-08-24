@@ -48,6 +48,12 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
         return loads
     }
 
+    func failNextLoad() {
+        lock.lock()
+        loadFailuresRemaining += 1
+        lock.unlock()
+    }
+
     func append(
         expectedSequence: Int64,
         events: [Data],
@@ -133,6 +139,12 @@ private final class OperationalClock: CoordinatorContinuousClock, @unchecked Sen
     func advance(seconds: UInt64) {
         lock.lock()
         value += seconds * 1_000_000_000
+        lock.unlock()
+    }
+
+    func advance(milliseconds: UInt64) {
+        lock.lock()
+        value += milliseconds * 1_000_000
         lock.unlock()
     }
 }
@@ -223,6 +235,7 @@ private struct OperationalFixture {
     let app: CoordinatorOperationalApplication
     let journal: OperationalMemoryJournal
     let clock: OperationalClock
+    let cooldownClock: OperationalClock
     let tokens: OperationalTokens
     let nextTurnDispatcher: OperationalNextTurnDispatchRecorder
 }
@@ -232,6 +245,7 @@ private func operationalFixture(
 ) throws -> OperationalFixture {
     let journal = OperationalMemoryJournal()
     let clock = OperationalClock()
+    let cooldownClock = OperationalClock()
     let ids = OperationalIDs()
     let tokens = OperationalTokens()
     let nextTurnDispatcher = OperationalNextTurnDispatchRecorder(mode: dispatchMode)
@@ -246,6 +260,7 @@ private func operationalFixture(
         secretCorpus: RuntimeSecretCorpus(),
         idGenerator: ids.next,
         wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
+        monotonicInstantGenerator: cooldownClock.nowNanoseconds,
         stopObservationHMACKey: Data(repeating: 0xA5, count: 32),
         nextTurnDispatcher: { request in
             try await nextTurnDispatcher.dispatch(request)
@@ -255,6 +270,7 @@ private func operationalFixture(
         app: app,
         journal: journal,
         clock: clock,
+        cooldownClock: cooldownClock,
         tokens: tokens,
         nextTurnDispatcher: nextTurnDispatcher
     )
@@ -503,6 +519,213 @@ func operationalStateRequestsUseSingleRoutingTick() async throws {
     )
     #expect(activeInteraction["reminder_due"] as? Bool == true)
     #expect(activeFixture.journal.loadCount() - loadCountBeforeRequest == 0)
+}
+
+@Test("Operational reconciliation failures share a bounded cooldown across scheduler and Pet requests")
+func operationalReconciliationFailureCooldown() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "reconciliation_cooldown")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "reconciliation_cooldown")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Cooldown remains fail closed"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        focusWhenWaiting: false
+    )
+    fixture.clock.advance(seconds: 120)
+
+    let expectedCooldowns: [UInt64] = [250, 500, 1_000, 2_000, 4_000, 4_000]
+    for expectedCooldown in expectedCooldowns {
+        fixture.journal.failNextAppend(eventType: "interaction_expired")
+        await expectOperationalError("injected_append_failure") {
+            _ = try await fixture.app.processTime()
+        }
+        #expect(
+            await fixture.app.millisecondsUntilNextDeadline()
+                == Int32(expectedCooldown)
+        )
+
+        let loadCountBeforeCooldownRequests = fixture.journal.loadCount()
+        let staleState = try operationalObject(
+            await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+        )
+        #expect(staleState["kind"] as? String == "blabee_operational_snapshot")
+        #expect(
+            (staleState["interactions"] as? [[String: Any]])?.first?["state"] as? String
+                == "waiting"
+        )
+        await expectOperationalError("operational_reconciliation_cooldown") {
+            _ = try await fixture.app.handle(
+                type: "focus_interaction",
+                payload: operationalData(operationalFocus(interaction))
+            )
+        }
+        await expectOperationalError("operational_reconciliation_cooldown") {
+            _ = try await fixture.app.handle(
+                type: "enable_project",
+                payload: operationalData([
+                    "cwd": "/tmp/blabee-operational-cooldown-blocked",
+                    "project_id": "project_operational_cooldown_blocked",
+                ])
+            )
+        }
+        await expectOperationalError("operational_reconciliation_cooldown") {
+            _ = try await fixture.app.processTime()
+        }
+        #expect(fixture.journal.loadCount() == loadCountBeforeCooldownRequests)
+
+        fixture.cooldownClock.advance(milliseconds: expectedCooldown)
+    }
+
+    _ = try await fixture.app.processTime()
+    let recoveredState = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(recoveredState.boundaries.values.first?.expired == true)
+    #expect(recoveredState.boundaries.values.first?.closed == true)
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+
+    let resetIDs = try await operationalBegin(fixture, suffix: "reconciliation_cooldown_reset")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            resetIDs,
+            proposal: operationalProposal(resetIDs, suffix: "reconciliation_cooldown_reset")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: resetIDs,
+            active: false,
+            message: "A successful pass resets the cooldown"
+        )
+    )
+    _ = try await waitForOperationalInteraction(
+        fixture.app,
+        sessionID: resetIDs["session_id"],
+        focusWhenWaiting: false
+    )
+    fixture.clock.advance(seconds: 120)
+    fixture.journal.failNextAppend(eventType: "interaction_expired")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.processTime()
+    }
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == 250)
+}
+
+@Test("Operational focus authority failures retain cooldown across Pet state polls")
+func operationalFocusAuthorityFailureCooldown() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "focus_authority_cooldown")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "focus_authority_cooldown")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Focus authority remains fail closed"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting",
+        focusWhenWaiting: false
+    )
+
+    var loadsBeforeFocus = fixture.journal.loadCount()
+    fixture.journal.failNextLoad()
+    await expectOperationalError("simulated_load_failure") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    #expect(fixture.journal.loadCount() == loadsBeforeFocus + 1)
+
+    let loadsDuringCooldown = fixture.journal.loadCount()
+    let staleState = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect(staleState["kind"] as? String == "blabee_operational_snapshot")
+    await expectOperationalError("operational_reconciliation_cooldown") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    #expect(fixture.journal.loadCount() == loadsDuringCooldown)
+
+    // Pet polls state before retrying focus. That successful lightweight poll
+    // must not reset the foreground authority failure streak.
+    fixture.cooldownClock.advance(milliseconds: 250)
+    _ = try await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    loadsBeforeFocus = fixture.journal.loadCount()
+    fixture.journal.failNextLoad()
+    await expectOperationalError("simulated_load_failure") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    #expect(fixture.journal.loadCount() == loadsBeforeFocus + 1)
+
+    fixture.cooldownClock.advance(milliseconds: 250)
+    let loadsHalfwayThroughSecondCooldown = fixture.journal.loadCount()
+    await expectOperationalError("operational_reconciliation_cooldown") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    #expect(fixture.journal.loadCount() == loadsHalfwayThroughSecondCooldown)
+
+    fixture.cooldownClock.advance(milliseconds: 250)
+    let recovered = try operationalObject(
+        await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    )
+    #expect(recovered["focused"] as? Bool == true)
+
+    // A successful journal-backed focus resets the exponential sequence.
+    fixture.journal.failNextLoad()
+    await expectOperationalError("simulated_load_failure") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    fixture.cooldownClock.advance(milliseconds: 249)
+    await expectOperationalError("operational_reconciliation_cooldown") {
+        _ = try await fixture.app.handle(
+            type: "focus_interaction",
+            payload: operationalData(operationalFocus(interaction))
+        )
+    }
+    fixture.cooldownClock.advance(milliseconds: 1)
+    _ = try await fixture.app.handle(
+        type: "focus_interaction",
+        payload: operationalData(operationalFocus(interaction))
+    )
 }
 
 @Test("Operational prompt late-registers a missing session without changing resume semantics")
@@ -1389,6 +1612,7 @@ func operationalCommittedSealDelayedRecoveryExpires() async throws {
         try CoordinatorSemanticReplay.replay(fixture.journal.load())
             .boundaries.values.first?.expired == false
     )
+    fixture.cooldownClock.advance(milliseconds: 250)
     fixture.journal.loseNextCommittedResponse(
         eventType: "interaction_expired",
         failFollowingLoads: 1
@@ -1399,12 +1623,23 @@ func operationalCommittedSealDelayedRecoveryExpires() async throws {
             payload: operationalData(wrapper)
         )
     }
-    let snapshot = try operationalObject(
+    let loadCountBeforeStaleSnapshot = fixture.journal.loadCount()
+    var snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == false)
+    #expect(fixture.journal.loadCount() == loadCountBeforeStaleSnapshot)
+    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.values.first?.expired == true)
+    #expect(state.boundaries.values.first?.closed == false)
+
+    fixture.cooldownClock.advance(milliseconds: 500)
+    _ = try await fixture.app.processTime()
+    snapshot = try operationalObject(
         await fixture.app.handle(type: "get_state", payload: operationalData([:]))
     )
     #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
-    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
-    #expect(state.boundaries.values.first?.expired == true)
+    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.values.first?.closed == true)
     let expiryEvents = try fixture.journal.load().events.filter {
         try operationalObject($0)["event_type"] as? String == "interaction_expired"
@@ -1530,6 +1765,7 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     #expect(state.continuations.values.first?.transport?.status == .completed)
     #expect(state.boundaries.values.first?.closed == false)
 
+    fixture.cooldownClock.advance(milliseconds: 250)
     fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
     await expectOperationalError("injected_append_failure") {
         _ = try await fixture.app.processTime()
@@ -1540,6 +1776,7 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     #expect(state.boundaries.values.filter(\.closed).count == 1)
     #expect(journalSnapshot.documents.count == 1)
 
+    fixture.cooldownClock.advance(milliseconds: 500)
     _ = try await fixture.app.processTime()
     let secondInteraction = try await waitForOperationalInteraction(
         fixture.app,
@@ -1599,6 +1836,7 @@ func operationalCommittedCompletionResponseLoss() async throws {
     await expectOperationalError("simulated_lost_response") {
         _ = try await fixture.app.processTime()
     }
+    fixture.cooldownClock.advance(milliseconds: 250)
     _ = try await fixture.app.processTime()
 
     let secondInteraction = try await waitForOperationalInteraction(
@@ -1724,11 +1962,15 @@ func operationalCommittedSelectionResponseLoss() async throws {
     #expect(await actionFixture.app.millisecondsUntilNextDeadline() == 250)
     actionFixture.clock.advance(seconds: 300)
     #expect(await actionFixture.app.millisecondsUntilNextDeadline() == 250)
-    for _ in 0..<2 {
+    for expectedCooldown: Int32 in [250, 500] {
         await expectOperationalError("simulated_load_failure") {
             _ = try await actionFixture.app.processTime()
         }
-        #expect(await actionFixture.app.millisecondsUntilNextDeadline() == 250)
+        #expect(
+            await actionFixture.app.millisecondsUntilNextDeadline()
+                == expectedCooldown
+        )
+        actionFixture.cooldownClock.advance(milliseconds: UInt64(expectedCooldown))
     }
     _ = try await actionFixture.app.processTime()
     let failedClosed = try await actionWait.value
@@ -2064,6 +2306,7 @@ func operationalSchedulerTerminalTransitions() async throws {
     #expect(timeoutState.continuations.values.first?.transport?.status == .timedOutUnknown)
     #expect(timeoutState.boundaries.values.first?.closed == false)
 
+    timeoutFixture.cooldownClock.advance(milliseconds: 250)
     _ = try await timeoutFixture.app.processTime()
     timeoutState = try CoordinatorSemanticReplay.replay(timeoutFixture.journal.load())
     #expect(timeoutState.boundaries.values.first?.closed == true)

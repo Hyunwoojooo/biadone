@@ -197,9 +197,11 @@ private final class DoctorFixture {
     }
 
     func writeHooks(
-        userPromptCommand: String = "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook UserPromptSubmit",
+        userPromptCommand: String? = nil,
         stopTimeout: Int = 8
     ) throws {
+        let userPromptCommand = userPromptCommand
+            ?? DoctorApplication.expectedHookCommand(event: "UserPromptSubmit")
         try writeJSON([
             "description": "Blabee test hooks",
             "hooks": [
@@ -207,7 +209,7 @@ private final class DoctorFixture {
                     "matcher": "startup|resume|clear|compact",
                     "hooks": [[
                         "type": "command",
-                        "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook SessionStart",
+                        "command": DoctorApplication.expectedHookCommand(event: "SessionStart"),
                         "timeout": 8,
                         "statusMessage": "Blabee 프로젝트 연결 확인 중",
                         "additionalContextLimit": 600,
@@ -225,7 +227,7 @@ private final class DoctorFixture {
                 "Stop": [[
                     "hooks": [[
                         "type": "command",
-                        "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook Stop",
+                        "command": DoctorApplication.expectedHookCommand(event: "Stop"),
                         "timeout": stopTimeout,
                         "statusMessage": "Blabee 결정 저장 중",
                     ]],
@@ -233,7 +235,7 @@ private final class DoctorFixture {
                 "PermissionRequest": [[
                     "hooks": [[
                         "type": "command",
-                        "command": "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook PermissionRequest",
+                        "command": DoctorApplication.expectedHookCommand(event: "PermissionRequest"),
                         "timeout": 8,
                         "statusMessage": "Blabee에 권한 요청 알림 전송 중",
                     ]],
@@ -449,10 +451,28 @@ func doctorPluginExactContractRejectsDrift() throws {
         .run(arguments: try missingLauncher.arguments())
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 
+    let legacyCommand = try DoctorFixture()
+    try legacyCommand.writeHooks(
+        userPromptCommand: "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook UserPromptSubmit"
+    )
+    execution = DoctorApplication(dependencies: legacyCommand.dependencies())
+        .run(arguments: try legacyCommand.arguments())
+    #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
+
     let changedCommand = try DoctorFixture()
-    try changedCommand.writeHooks(userPromptCommand: "blabee-launcher hook UserPromptSubmit")
+    let weakenedGuard = DoctorApplication.expectedHookCommand(event: "UserPromptSubmit")
+        .replacingOccurrences(of: " && [ ! -L \"$PLUGIN_ROOT/scripts/blabee-launcher\" ]", with: "")
+    try changedCommand.writeHooks(userPromptCommand: weakenedGuard)
     execution = DoctorApplication(dependencies: changedCommand.dependencies())
         .run(arguments: try changedCommand.arguments())
+    #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
+
+    let changedScriptsGuard = try DoctorFixture()
+    let weakenedScriptsGuard = DoctorApplication.expectedHookCommand(event: "UserPromptSubmit")
+        .replacingOccurrences(of: " && [ ! -L \"$PLUGIN_ROOT/scripts\" ]", with: "")
+    try changedScriptsGuard.writeHooks(userPromptCommand: weakenedScriptsGuard)
+    execution = DoctorApplication(dependencies: changedScriptsGuard.dependencies())
+        .run(arguments: try changedScriptsGuard.arguments())
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 
     let changedTimeout = try DoctorFixture()
@@ -476,6 +496,22 @@ func doctorPluginExactContractRejectsDrift() throws {
     execution = DoctorApplication(dependencies: changedLauncher.dependencies())
         .run(arguments: try changedLauncher.arguments())
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
+}
+
+@Test("Doctor Hook contract matches the bundled version 0.1.0 Plugin")
+func doctorHookContractMatchesBundledPlugin() throws {
+    let data = try Data(contentsOf: doctorBundledPluginRoot()
+        .appendingPathComponent("hooks/hooks.json"))
+    let document = try #require(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let hooks = try #require(document["hooks"] as? [String: Any])
+    for event in ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"] {
+        let registrations = try #require(hooks[event] as? [[String: Any]])
+        let commands = try #require(registrations.first?["hooks"] as? [[String: Any]])
+        let command = try #require(commands.first?["command"] as? String)
+        #expect(command == DoctorApplication.expectedHookCommand(event: event))
+    }
 }
 
 @Test("Doctor launcher bytes match the bundled version 0.1.0 contract")

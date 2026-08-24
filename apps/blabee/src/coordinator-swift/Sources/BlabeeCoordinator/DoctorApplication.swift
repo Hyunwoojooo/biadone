@@ -175,6 +175,9 @@ struct DoctorApplication {
     static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
     static let skillSHA256 = "a6ac83e213cafb755e75f92d63f7a47fe90a8c0bfa7b4e88c42fb02f3dcc4b52"
     static let skillAgentSHA256 = "48f8357783a6f96d1d387501e78ba2ed6785c9945a80d1a45c14dff341ee9520"
+    static func expectedHookCommand(event: String) -> String {
+        #"if [ -n "${PLUGIN_ROOT:-}" ] && [ -d "$PLUGIN_ROOT" ] && [ ! -L "$PLUGIN_ROOT" ] && [ -d "$PLUGIN_ROOT/scripts" ] && [ ! -L "$PLUGIN_ROOT/scripts" ] && [ -f "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ ! -L "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ -x "$PLUGIN_ROOT/scripts/blabee-launcher" ]; then exec "$PLUGIN_ROOT/scripts/blabee-launcher" hook \#(event); fi; exit 0"#
+    }
     static let bundledLauncherData = Data(("""
     #!/bin/sh
 
@@ -782,7 +785,7 @@ private extension DoctorApplication {
         guard Set(command.keys) == expectedCommandKeys,
               command["type"] as? String == "command",
               command["command"] as? String
-                == "\"$PLUGIN_ROOT/scripts/blabee-launcher\" hook \(event)",
+                == Self.expectedHookCommand(event: event),
               command["timeout"] as? Int == timeout,
               command["statusMessage"] as? String == statusMessage
         else { return false }
