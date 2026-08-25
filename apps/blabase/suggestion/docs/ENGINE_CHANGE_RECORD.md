@@ -8598,3 +8598,103 @@ freeze Git commit ID, or candidate commit identity is assigned. The Common V0.4 
   work is authorized by this record.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24:end -->
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B5-COLIN-COMMON-V0-4-CONTRACT-FREEZE-2026-08-25:begin -->
+
+## Colin Common V0.4 Contract Freeze Decision Receipt: ECR-STAGE10-2B5-COLIN-COMMON-V0-4-CONTRACT-FREEZE-2026-08-25
+
+- Date: 2026-08-25
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David role, gate, package, receipt, artifact, review, or approval: none
+- Goal: Record Colin's explicit option 1 decision to freeze only the independently verified exact
+  Common V0.4 contract bytes bound below.
+- Affected pipeline stages: Governance and contract lifecycle record only. No runtime or semantic
+  pipeline stage is changed by this receipt.
+- Content evidence: Colin approved the Common V0.4 content after full-QA corrections and focused
+  re-QA `PASS`.
+- Identity-preparation record:
+  `ECR-STAGE10-2B4-COLIN-COMMON-V0-4-IDENTITY-PREPARATION-2026-08-24`
+- Independent identity verification: `PASS`. Before Colin's freeze decision, the committed
+  contract bytes, repository tree blob, worktree bytes, ECR candidate byte length and hashes, and
+  remote tip all matched. The repository object format is SHA-1.
+- Common V0.4 contract freeze decision: `APPROVED` and `ACCEPTED` by Colin for only the exact bytes
+  bound below.
+
+### Bound immutable identities and lifecycle transition
+
+- Contract ID: `blabase-common-suggestion-evidence-source-verification-v0.4`
+- Exact bound contract path:
+  `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_SOURCE_VERIFICATION_V0_4_CONTRACT.md`
+- Exact bound document byte length: `126060`
+- Exact bound raw document bytes SHA-256:
+  `5bbf7f5904913680f63eff2a12574bf98114fc55487349baa7a971d78f083909`
+- Exact bound Git blob SHA-1:
+  `ff093b3387111f91a4cbd2c244c8bbe133e575ea`
+- Git blob preimage: `blob 126060\0<exact bound document bytes>`; this object ID is SHA-1 and
+  is not called or treated as the contract SHA-256.
+- Contract source commit: `f1d0900ea815a3f430b445be92145a1a2e2ee3d6`
+- Source lifecycle state before this receipt:
+  `IDENTITY_PREPARED / FREEZE_DECISION_PENDING / UNFROZEN / INACTIVE / UNIMPLEMENTED`
+- External lifecycle transition recorded by this receipt:
+  `IDENTITY_PREPARED / FREEZE_DECISION_PENDING / UNFROZEN` ->
+  `COMMON_V0_4_CONTRACT_FROZEN_BY_COLIN`
+- Resulting external lifecycle state:
+  `COMMON_V0_4_CONTRACT_FROZEN_BY_COLIN / FROZEN / INACTIVE / UNIMPLEMENTED`
+
+The exact contract identity is commit-backed by contract source commit
+`f1d0900ea815a3f430b445be92145a1a2e2ee3d6`. This receipt and lifecycle transition remain external
+and non-self-referential; the contract file remains byte-for-byte unchanged and contains none of
+its own external identities.
+
+This new freeze receipt itself has not yet been committed or pushed. Receipt persistence is a
+separate Colin-authorized Git task. No receipt persistence commit ID or freeze-receipt Git commit
+ID is invented or assigned by this record.
+
+### Freeze scope and immutability
+
+- Frozen scope: Only the Common V0.4 contract embodied by byte length `126060`, raw SHA-256
+  `5bbf7f5904913680f63eff2a12574bf98114fc55487349baa7a971d78f083909`, Git blob SHA-1
+  `ff093b3387111f91a4cbd2c244c8bbe133e575ea`, and contract source commit
+  `f1d0900ea815a3f430b445be92145a1a2e2ee3d6` is frozen.
+- These exact bytes are immutable. Any behavior, type, text, fixture, whitespace, or other byte
+  change requires a new contract version, renewed content review, QA, exact-byte identity
+  preparation, and a separate Colin freeze decision. Silent V0.4 mutation is prohibited.
+- The contract remains `INACTIVE` and `UNIMPLEMENTED`. Freeze creates no runtime authority.
+
+### Explicit non-authorizations
+
+- This receipt does not approve implementation, activation, release, deployment, live data,
+  provider access, credentials, collection, public API behavior, system authority, or
+  `authoritative: true`.
+- It does not authorize or implement a parser, verifier, adapter, collector, callback, isolate,
+  fixture, test, capability, key, registry, engine change, or source integration.
+- It does not approve Stage10-2C or any public-authority path.
+- Release decision: Not released.
+- Implementation decision: Not approved by this receipt.
+
+### Child boundary and next separate tasks
+
+- This Common V0.4 freeze does not freeze, approve, activate, release, or implement GitHub V0.3.
+- The only next permitted child-contract task is a separately authorized correction and exact
+  parent rebinding of the still-unfrozen GitHub V0.3 proposal/contract, followed by its own
+  cross-contract QA and Colin review. GitHub remains private, offline, and always
+  `authoritative: false`.
+- Any child field that requires the freeze receipt persistence commit must wait for the separate
+  Colin-authorized Git persistence task; this receipt does not invent that commit ID.
+- Child identity preparation, child freeze, implementation approval, implementation validation,
+  activation, and release remain separate later gates.
+
+### Execution record
+
+- Files changed by this receipt: `suggestion/docs/ENGINE_CHANGE_RECORD.md` only.
+- Contract source files changed by this receipt: none.
+- New hash calculation: none; the independently verified exact identities above were supplied to
+  and approved by Colin before this receipt.
+- Tests, compile, typecheck, lint, build, baseline, evaluation, architecture check, provider call,
+  runtime command, Blabee command, or Git command executed while appending this receipt: none.
+- Privacy, retention, and data impact: unchanged. No secret, credential, private evidence,
+  provider data, model input, dataset, or user data was added or used.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B5-COLIN-COMMON-V0-4-CONTRACT-FREEZE-2026-08-25:end -->
