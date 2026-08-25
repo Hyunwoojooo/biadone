@@ -327,6 +327,7 @@ struct DoctorApplication {
 
         let daemonInspection = inspectDaemon(socketPath: arguments.socketPath)
         checks.append(daemonInspection.check)
+        checks.append(daemonInspection.reconciliationCheck)
         checks.append(checkProjectScope(arguments.projectURL, projects: daemonInspection.projects))
 
         return DoctorExecution(report: DoctorReport(checks: checks), json: arguments.json)
@@ -347,6 +348,7 @@ private extension DoctorApplication {
     struct DaemonInspection {
         let check: DoctorCheck
         let projects: [DoctorProject]?
+        let reconciliationCheck: DoctorCheck
     }
 
     func checkCoordinatorRuntime(appURL: URL) -> DoctorCheck {
@@ -751,7 +753,7 @@ private extension DoctorApplication {
         ) && validateHook(
             hooks["UserPromptSubmit"], event: "UserPromptSubmit",
             matcher: nil, timeout: 8,
-            statusMessage: "Blabee 작업 경계 연결 중", additionalContextLimit: 1_200
+            statusMessage: "Blabee 작업 경계 연결 중", additionalContextLimit: 65_536
         ) && validateHook(
             hooks["Stop"], event: "Stop",
             matcher: nil, timeout: 8,
@@ -798,16 +800,23 @@ private extension DoctorApplication {
     func inspectDaemon(socketPath: String) -> DaemonInspection {
         guard let data = try? dependencies.daemonRequester(socketPath),
               let object = try? StrictJSONTransport.object(from: data),
-              Set(object.keys) == Set(["schema_version", "kind", "projects"]),
-              object["schema_version"] as? String == "1.0",
+              let schemaVersion = object["schema_version"] as? String,
+              ["1.0", "1.1"].contains(schemaVersion),
+              Set(object.keys) == (schemaVersion == "1.0"
+                ? Set(["schema_version", "kind", "projects"])
+                : Set(["schema_version", "kind", "projects", "reconciliation"])),
               object["kind"] as? String == "blabee_doctor_status",
-              let rawProjects = object["projects"] as? [[String: Any]]
+              let rawProjects = object["projects"] as? [[String: Any]],
+              let reconciliationCheck = reconciliationCheck(
+                schemaVersion: schemaVersion,
+                raw: object["reconciliation"]
+              )
         else {
             return DaemonInspection(check: DoctorCheck(
                 id: "daemon_status", status: .fail,
                 code: "daemon_unavailable",
                 summary: "Blabee daemon의 읽기 전용 상태를 확인하지 못했습니다."
-            ), projects: nil)
+            ), projects: nil, reconciliationCheck: unavailableReconciliationCheck())
         }
         var projects: [DoctorProject] = []
         var previousPath: String?
@@ -823,7 +832,7 @@ private extension DoctorApplication {
                     id: "daemon_status", status: .fail,
                     code: "daemon_status_malformed",
                     summary: "Blabee daemon 진단 응답이 올바르지 않습니다."
-                ), projects: nil)
+                ), projects: nil, reconciliationCheck: unavailableReconciliationCheck())
             }
             projects.append(DoctorProject(
                 cwd: cwd,
@@ -835,7 +844,101 @@ private extension DoctorApplication {
             id: "daemon_status", status: .pass,
             code: "daemon_status_ok",
             summary: "Blabee daemon의 읽기 전용 상태를 확인했습니다."
-        ), projects: projects)
+        ), projects: projects, reconciliationCheck: reconciliationCheck)
+    }
+
+    func reconciliationCheck(schemaVersion: String, raw: Any?) -> DoctorCheck? {
+        if schemaVersion == "1.0" {
+            guard raw == nil else { return nil }
+            return DoctorCheck(
+                id: "reconciliation_status", status: .actionRequired,
+                code: "reconciliation_status_legacy",
+                summary: "daemon을 갱신해야 재시도 격리 상태를 확인할 수 있습니다."
+            )
+        }
+        guard let object = raw as? [String: Any],
+              Set(object.keys) == Set([
+                "state", "consecutive_failure_count",
+                "quarantined_initial_activation_count", "last_error_code",
+                "milliseconds_until_retry",
+              ]),
+              let state = object["state"] as? String,
+              ["healthy", "retrying", "quarantined"].contains(state),
+              let consecutiveFailures = ExactJSONInteger.int64(
+                object["consecutive_failure_count"], minimum: 0
+              ),
+              let quarantinedCount = ExactJSONInteger.int64(
+                object["quarantined_initial_activation_count"], minimum: 0
+              )
+        else { return nil }
+
+        let lastErrorCode: String?
+        if object["last_error_code"] is NSNull {
+            lastErrorCode = nil
+        } else if let value = object["last_error_code"] as? String,
+                  value.range(of: "^[a-z0-9_]{1,128}$", options: .regularExpression) != nil
+        {
+            lastErrorCode = value
+        } else {
+            return nil
+        }
+
+        let millisecondsUntilRetry: Int64?
+        if object["milliseconds_until_retry"] is NSNull {
+            millisecondsUntilRetry = nil
+        } else if let value = ExactJSONInteger.int64(
+            object["milliseconds_until_retry"], minimum: 0
+        ) {
+            millisecondsUntilRetry = value
+        } else {
+            return nil
+        }
+
+        switch state {
+        case "healthy":
+            guard consecutiveFailures == 0,
+                  quarantinedCount == 0,
+                  lastErrorCode == nil,
+                  millisecondsUntilRetry == nil
+            else { return nil }
+            return DoctorCheck(
+                id: "reconciliation_status", status: .pass,
+                code: "reconciliation_healthy",
+                summary: "daemon 재시도 상태가 정상입니다."
+            )
+        case "retrying":
+            guard consecutiveFailures > 0,
+                  quarantinedCount == 0,
+                  lastErrorCode != nil,
+                  millisecondsUntilRetry != nil
+            else { return nil }
+            return DoctorCheck(
+                id: "reconciliation_status", status: .actionRequired,
+                code: "reconciliation_retrying",
+                summary: "daemon이 실패한 작업을 제한적으로 다시 시도하고 있습니다."
+            )
+        case "quarantined":
+            guard consecutiveFailures > 0,
+                  quarantinedCount > 0,
+                  lastErrorCode != nil,
+                  millisecondsUntilRetry == nil
+            else { return nil }
+            return DoctorCheck(
+                id: "reconciliation_status", status: .fail,
+                code: "reconciliation_quarantined",
+                summary: "반복 실패한 작업이 자동 재시도에서 격리되었습니다."
+            )
+        default:
+            return nil
+        }
+    }
+
+    func unavailableReconciliationCheck() -> DoctorCheck {
+        DoctorCheck(
+            id: "reconciliation_status", status: .fail,
+            code: "reconciliation_status_unavailable",
+            summary: "daemon 재시도 상태를 확인하지 못했습니다."
+        )
     }
 
     func checkProjectScope(_ projectURL: URL, projects: [DoctorProject]?) -> DoctorCheck {

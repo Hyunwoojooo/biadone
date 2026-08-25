@@ -23,7 +23,7 @@
             "command": "if [ -n \"${PLUGIN_ROOT:-}\" ] && [ -d \"$PLUGIN_ROOT\" ] && [ ! -L \"$PLUGIN_ROOT\" ] && [ -d \"$PLUGIN_ROOT/scripts\" ] && [ ! -L \"$PLUGIN_ROOT/scripts\" ] && [ -f \"$PLUGIN_ROOT/scripts/blabee-launcher\" ] && [ ! -L \"$PLUGIN_ROOT/scripts/blabee-launcher\" ] && [ -x \"$PLUGIN_ROOT/scripts/blabee-launcher\" ]; then exec \"$PLUGIN_ROOT/scripts/blabee-launcher\" hook UserPromptSubmit; fi; exit 0",
             "timeout": 8,
             "statusMessage": "Blabee 작업 경계 연결 중",
-            "additionalContextLimit": 1200
+            "additionalContextLimit": 65536
           }
         ]
       }

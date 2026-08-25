@@ -102,6 +102,23 @@ private func routingSeal(packet: [String: Any], suffix: String) throws -> Data {
     ])
 }
 
+private func routingInitialActivation(
+    binding: [String: Any],
+    packet: [String: Any],
+    suffix: String,
+    occurredAt: String
+) throws -> Data {
+    try routingData([
+        "type": "activate_initial_boundary",
+        "open_event_id": "event_routing_\(suffix)_open",
+        "seal_event_id": "event_routing_\(suffix)_seal",
+        "occurred_at": occurredAt,
+        "binding": binding,
+        "proposal_id": "proposal_routing_\(suffix)",
+        "packet": packet,
+    ])
+}
+
 private func routingTarget(
     packet: [String: Any],
     binding: [String: Any]
@@ -938,6 +955,190 @@ func routingRestartPendingFailsClosed() throws {
     #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
     let notices = try app.processTime().map(routingObject)
     #expect(notices.first?["reason"] as? String == "restart_elapsed_ambiguous")
+}
+
+@Test("atomic activation recovery rejects a changed packet under the same event ids")
+func routingAtomicActivationRecoveryIsExact() throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let suffix = "atomic_recovery_exact"
+    let binding = routingBinding(suffix: suffix)
+    let template = try routingPacket(
+        binding: binding,
+        validAfter: 1,
+        suffix: suffix,
+        sealedAt: "2026-08-21T06:10:00Z"
+    )
+    let command = try routingInitialActivation(
+        binding: binding,
+        packet: template,
+        suffix: suffix,
+        occurredAt: "2026-08-21T06:10:00Z"
+    )
+    let committed = try app.executeCommand(command)
+    #expect(committed.commit.eventCount == 2)
+    let baseline = try journal.load()
+
+    var changed = template
+    changed["summary"] = "Changed bytes must not authenticate recovery"
+    routingExpectCode("decision_boundary_reopened") {
+        _ = try app.executeCommand(
+            routingInitialActivation(
+                binding: binding,
+                packet: changed,
+                suffix: suffix,
+                occurredAt: "2026-08-21T06:10:00Z"
+            )
+        )
+    }
+    let after = try journal.load()
+    #expect(after.journalSequence == baseline.journalSequence)
+    #expect(after.events == baseline.events)
+    #expect(after.documents == baseline.documents)
+}
+
+@Test("atomic activation starts its monotonic expiry window at activation time")
+func routingAtomicActivationUsesFreshAnchor() throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    clock.advance(seconds: 119)
+
+    let suffix = "atomic_fresh_anchor"
+    let binding = routingBinding(suffix: suffix)
+    let packet = try routingPacket(
+        binding: binding,
+        validAfter: 1,
+        suffix: suffix,
+        sealedAt: "2026-08-21T06:20:00Z"
+    )
+    _ = try app.executeCommand(routingInitialActivation(
+        binding: binding,
+        packet: packet,
+        suffix: suffix,
+        occurredAt: "2026-08-21T06:20:00Z"
+    ))
+
+    clock.advance(seconds: 119)
+    let beforeExpiry = try app.processTime().map(routingObject)
+    #expect(beforeExpiry.contains { $0["kind"] as? String == "interaction_reminder_due" })
+    var state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.pendingInteractions.count == 1)
+    #expect(state.boundaries.values.first?.expired == false)
+
+    clock.advance(seconds: 1)
+    let atExpiry = try app.processTime().map(routingObject)
+    #expect(atExpiry.contains { $0["kind"] as? String == "interaction_expired" })
+    state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.pendingInteractions.isEmpty)
+    #expect(state.boundaries.values.first?.expired == true)
+}
+
+@Test("restart quarantines a legacy unsealed open before any recovery write")
+func routingRestartLegacyUnsealedOpenQuarantines() throws {
+    let journal = RoutingMemoryJournal()
+    let semantic = CoordinatorSemanticApplication(journal: journal)
+    let orphanBinding = routingBinding(suffix: "restart_orphan")
+    _ = try semantic.execute(
+        command: routingOpen(
+            binding: orphanBinding,
+            suffix: "restart_orphan",
+            occurredAt: "2026-08-21T06:29:59Z"
+        )
+    )
+
+    // Include both kinds of ordinary restart recovery work. The orphan must
+    // prevent either one from appending and consuming its required sequence.
+    let pendingBinding = routingBinding(suffix: "restart_orphan_pending")
+    let pendingPacket = try routingPacket(
+        binding: pendingBinding,
+        validAfter: 3,
+        suffix: "restart_orphan_pending",
+        sealedAt: "2026-08-21T06:30:00Z"
+    )
+    _ = try semantic.execute(
+        command: routingOpen(
+            binding: pendingBinding,
+            suffix: "restart_orphan_pending",
+            occurredAt: "2026-08-21T06:29:59Z"
+        )
+    )
+    _ = try semantic.execute(
+        command: routingSeal(packet: pendingPacket, suffix: "restart_orphan_pending")
+    )
+    let flightBinding = routingBinding(suffix: "restart_orphan_flight")
+    let flightPacket = try routingPacket(
+        binding: flightBinding,
+        validAfter: 5,
+        suffix: "restart_orphan_flight",
+        sealedAt: "2026-08-21T06:31:00Z"
+    )
+    _ = try semantic.execute(
+        command: routingOpen(
+            binding: flightBinding,
+            suffix: "restart_orphan_flight",
+            occurredAt: "2026-08-21T06:30:59Z"
+        )
+    )
+    _ = try semantic.execute(
+        command: routingSeal(packet: flightPacket, suffix: "restart_orphan_flight")
+    )
+    var flightSelection = try routingObject(routingSelection(
+        packet: flightPacket,
+        binding: flightBinding,
+        suffix: "restart_orphan_flight",
+        externalOccurredAt: "2026-08-21T06:31:01Z"
+    ))
+    flightSelection["expires_at"] = "2026-08-21T06:33:01Z"
+    flightSelection["in_flight_deadline_at"] = "2026-08-21T06:36:01Z"
+    _ = try semantic.execute(command: routingData(flightSelection))
+    let baseline = try journal.load().journalSequence
+
+    let app = try routingApplication(journal: journal, clock: RoutingFakeClock())
+    #expect(app.recoveryStatus().unsealedBoundaryCount == 1)
+    #expect(app.millisecondsUntilNextDeadline() == nil)
+    let readOnly = try routingObject(
+        app.snapshotWithoutProcessingTime().canonicalJSON
+    )
+    #expect(readOnly["selection_enabled"] as? Bool == false)
+    #expect((readOnly["pending"] as? [Any])?.isEmpty == true)
+    #expect(try app.authoritativeState().boundaries.count == 3)
+
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.processTime()
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.snapshot()
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.clearForeground()
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.setForeground(routingData([:]))
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.routeSelection(routingData([:]))
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.routeConsumePetAction(routingData([:]))
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        try app.processTimeKeepingNotices()
+    }
+    routingExpectCode("routing_restart_unsealed_boundary_quarantined") {
+        _ = try app.executeCommand(
+            routingOpen(
+                binding: routingBinding(suffix: "restart_orphan_blocked"),
+                suffix: "restart_orphan_blocked",
+                occurredAt: "2026-08-21T06:32:00Z"
+            )
+        )
+    }
+    #expect(try journal.load().journalSequence == baseline)
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.pendingInteractions.count == 1)
+    #expect(state.unterminatedContinuations.count == 1)
 }
 
 @Test("late selection cannot mutate any session after scheduler expiry")

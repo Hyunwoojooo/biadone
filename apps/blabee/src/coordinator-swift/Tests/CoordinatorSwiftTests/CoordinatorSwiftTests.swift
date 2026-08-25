@@ -319,7 +319,7 @@ func fixtureParity() throws {
         }
         checked += 1
     }
-    #expect(checked == 20)
+    #expect(checked == 22)
 }
 
 @Test("raw JSON gate rejects duplicates, invalid UTF-8, excessive depth, and invalid calendar dates")

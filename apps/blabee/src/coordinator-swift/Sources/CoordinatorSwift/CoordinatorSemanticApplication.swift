@@ -110,6 +110,22 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                 journalSequence: state.eventSequence + Int64(change.events.count)
             )
             _ = try CoordinatorSemanticReplay.replay(candidate)
+            if change.events.isEmpty {
+                try require(
+                    commandType == "claim_queued_action_context"
+                        && change.documents.isEmpty
+                        && change.verificationRecords.isEmpty,
+                    "semantic_change_empty"
+                )
+                return CoordinatorSemanticExecutionResult(
+                    commit: JournalAppendResult(
+                        firstSequence: state.eventSequence,
+                        lastSequence: state.eventSequence,
+                        eventCount: 0
+                    ),
+                    effects: change.effects
+                )
+            }
             do {
                 let commit = try journal.append(
                     expectedSequence: state.eventSequence,
@@ -153,6 +169,8 @@ public enum CoordinatorSemanticDecision {
     ) throws -> CoordinatorSemanticChange {
         let type = try SemanticJSON.commandType(command)
         switch type {
+        case "activate_initial_boundary":
+            return try activateInitialBoundary(state, command)
         case "open_boundary":
             return try openBoundary(state, command)
         case "seal_packet":
@@ -168,6 +186,8 @@ public enum CoordinatorSemanticDecision {
             return try consumePetAction(state, command, hmacKey: tokenHMACKey)
         case "complete_transport":
             return try completeTransport(state, command)
+        case "claim_queued_action_context":
+            return try claimQueuedActionContext(state, command)
         case "timeout_transport_unknown":
             return try timeoutTransport(state, command)
         case "record_work_outcome":
@@ -194,6 +214,8 @@ public enum CoordinatorSemanticDecision {
 // MARK: - Decisions
 
 private extension CoordinatorSemanticDecision {
+    static let initialActivationEffectKind = "blabee_initial_activation_committed"
+
     static let categories: [String: String] = [
         "decision_boundary_opened": "decision_lifecycle",
         "decision_boundary_closed": "decision_lifecycle",
@@ -205,6 +227,7 @@ private extension CoordinatorSemanticDecision {
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
         "continuation_transport_timed_out_unknown": "transport",
+        "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
         "interaction_expired": "decision_lifecycle",
     ]
@@ -254,6 +277,83 @@ private extension CoordinatorSemanticDecision {
             payload: ["proposal_id": proposalID]
         )
         return try change(events: [event])
+    }
+
+    /// Commits the first boundary open and its packet as one journal batch.
+    /// The packet template carries stable product identities, while the
+    /// sequence-bound field is derived again on every semantic CAS attempt.
+    /// Existing event and packet wire contracts stay unchanged.
+    static func activateInitialBoundary(
+        _ state: CoordinatorSemanticState,
+        _ command: [String: Any]
+    ) throws -> CoordinatorSemanticChange {
+        let binding = try SemanticJSON.binding(command, nestedAt: "binding")
+        let openEventID = try SemanticJSON.identifier(command, "open_event_id")
+        let sealEventID = try SemanticJSON.identifier(command, "seal_event_id")
+        try require(
+            !IdentifierNormalization.isByteExact(openEventID, sealEventID),
+            "runtime_event_id_duplicate"
+        )
+        let proposalID = try SemanticJSON.identifier(command, "proposal_id")
+        let openedAt = try SemanticJSON.timestampString(
+            command,
+            "occurred_at",
+            code: "runtime_event_time_invalid"
+        )
+        guard var packetObject = command["packet"] as? [String: Any] else {
+            throw CoordinatorError("packet_document_kind_invalid")
+        }
+        let (validAfter, overflow) = state.eventSequence.addingReportingOverflow(2)
+        try require(!overflow, "event_sequence_overflow")
+        packetObject["valid_after_event_sequence"] = validAfter
+
+        // Reuse the full open validation, then validate the initial seal
+        // against the pre-open authority with its known +2 sequence.
+        let opened = try openBoundary(state, [
+            "type": "open_boundary",
+            "event_id": openEventID,
+            "occurred_at": openedAt,
+            "binding": binding.jsonObject,
+            "proposal_id": proposalID,
+        ])
+        let packetData = try StrictJSON.canonicalData(for: packetObject)
+        let packet = try CoordinatorPacketDocument.parse(packetData)
+        try require(packet.binding == binding, "decision_boundary_binding_mismatch")
+        try state.assertSessionPendingSlotAvailable(for: binding)
+        try require(packet.validAfterEventSequence == validAfter, "packet_document_valid_after_sequence_mismatch")
+        try require(packet.revision == 1, "decision_packet_initial_revision_invalid")
+        try require(state.packetDocuments[packet.revisionKey] == nil, "packet_document_duplicate")
+        try require(
+            IdentifierNormalization.isByteExact(packet.sealedAt.rawValue, openedAt),
+            "packet_sealed_at_mismatch"
+        )
+        let sealed = try event(
+            state: state,
+            type: "decision_packet_sealed",
+            id: sealEventID,
+            occurredAt: packet.sealedAt.rawValue,
+            binding: binding,
+            payload: [
+                "interaction_id": packet.interactionID,
+                "packet_id": packet.packetID,
+                "revision": packet.revision,
+                "expires_at": packet.expiresAt.rawValue,
+            ],
+            sequenceOffset: 2
+        )
+        guard let openedEvent = try opened.events.first.map({
+            try StrictJSONTransport.object(from: $0)
+        }) else {
+            throw CoordinatorError("initial_activation_open_event_missing")
+        }
+        return try change(
+            events: [openedEvent, sealed],
+            documents: [packet.canonicalJSON],
+            effects: [[
+                "kind": initialActivationEffectKind,
+                "packet": packetObject,
+            ]]
+        )
     }
 
     static func sealPacket(
@@ -424,6 +524,7 @@ private extension CoordinatorSemanticDecision {
                 "option_id": choice.optionID,
                 "action_id": actionID,
                 "dispatch_mode": "queued_next_turn",
+                "queued_action_context_claim_protocol": "v1",
                 "issued_at": issuedAt.rawValue,
                 "expires_at": expiresAt.rawValue,
                 "in_flight_deadline_at": deadlineAt.rawValue,
@@ -569,6 +670,81 @@ private extension CoordinatorSemanticDecision {
                 "continuation_id": continuation.continuationID,
                 "transport_status": "completed",
                 "work_outcome_status": "not_recorded",
+            ]
+        )
+        return try change(events: [eventObject])
+    }
+
+    static func claimQueuedActionContext(
+        _ state: CoordinatorSemanticState,
+        _ command: [String: Any]
+    ) throws -> CoordinatorSemanticChange {
+        let continuation = try continuationForCommand(state, command)
+        let boundaryClosed = state.boundaries[continuation.binding.fullKey]?.closed == true
+        try require(continuation.dispatchMode == "queued_next_turn", "dispatch_mode_conflict")
+        try require(
+            continuation.queuedActionContextClaimProtocol == "v1",
+            "queued_action_context_claim_protocol_missing"
+        )
+        try require(continuation.consumedAt != nil, "continuation_not_consumed")
+        try require(
+            continuation.transport?.status == .completed,
+            "transport_terminal_observation_missing"
+        )
+        try require(boundaryClosed, "decision_boundary_not_closed")
+        let deliveryTurnID = try SemanticJSON.identifier(command, "delivery_turn_id")
+        let queuedPromptSHA256 = try CoordinatorSHA256.fingerprint(
+            command["queued_prompt_sha256"]
+        )
+        let cwdSHA256 = try CoordinatorSHA256.fingerprint(command["cwd_sha256"])
+        let actionSHA256 = try CoordinatorSHA256.fingerprint(command["action_sha256"])
+        _ = try SemanticJSON.timestampString(
+            command,
+            "occurred_at",
+            code: "runtime_event_time_invalid"
+        )
+        _ = try SemanticJSON.identifier(command, "event_id")
+
+        if let existing = continuation.queuedActionContextClaim {
+            try require(
+                IdentifierNormalization.isByteExact(existing.deliveryTurnID, deliveryTurnID),
+                "queued_action_context_already_claimed"
+            )
+            try require(
+                IdentifierNormalization.isByteExact(
+                    existing.queuedPromptSHA256,
+                    queuedPromptSHA256
+                ) && IdentifierNormalization.isByteExact(existing.cwdSHA256, cwdSHA256)
+                    && IdentifierNormalization.isByteExact(existing.actionSHA256, actionSHA256),
+                "queued_action_context_claim_mismatch"
+            )
+            return CoordinatorSemanticChange(events: [])
+        }
+
+        let expectedActionSHA256 = CoordinatorSHA256.fingerprint(
+            try state.selectedActionJSON(for: continuation.continuationID)
+        )
+        try require(
+            actionSHA256 == expectedActionSHA256,
+            "queued_action_context_claim_mismatch"
+        )
+
+        let eventObject = try event(
+            state: state,
+            type: "queued_action_context_claimed",
+            id: SemanticJSON.identifier(command, "event_id"),
+            occurredAt: SemanticJSON.timestampString(
+                command,
+                "occurred_at",
+                code: "runtime_event_time_invalid"
+            ),
+            binding: continuation.binding,
+            payload: [
+                "continuation_id": continuation.continuationID,
+                "delivery_turn_id": deliveryTurnID,
+                "queued_prompt_sha256": queuedPromptSHA256,
+                "cwd_sha256": cwdSHA256,
+                "action_sha256": actionSHA256,
             ]
         )
         return try change(events: [eventObject])

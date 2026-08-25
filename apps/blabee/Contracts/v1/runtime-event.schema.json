@@ -49,6 +49,7 @@
         "continuation_consumed",
         "continuation_transport_completed",
         "continuation_transport_timed_out_unknown",
+        "queued_action_context_claimed",
         "work_outcome_recorded",
         "interaction_expired"
       ]
@@ -247,6 +248,21 @@
     },
     {
       "if": {
+        "$ref": "#/$defs/is_queued_action_context_claimed"
+      },
+      "then": {
+        "properties": {
+          "event_category": {
+            "const": "transport"
+          },
+          "payload": {
+            "$ref": "#/$defs/queued_action_context_claimed_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
         "$ref": "#/$defs/is_work_outcome_recorded"
       },
       "then": {
@@ -305,6 +321,9 @@
         },
         {
           "$ref": "#/$defs/transport_timed_out_unknown_payload"
+        },
+        {
+          "$ref": "#/$defs/queued_action_context_claimed_payload"
         },
         {
           "$ref": "#/$defs/work_outcome_recorded_payload"
@@ -418,6 +437,17 @@
       "properties": {
         "event_type": {
           "const": "continuation_transport_timed_out_unknown"
+        }
+      },
+      "required": [
+        "event_type"
+      ]
+    },
+    "is_queued_action_context_claimed": {
+      "type": "object",
+      "properties": {
+        "event_type": {
+          "const": "queued_action_context_claimed"
         }
       },
       "required": [
@@ -626,8 +656,30 @@
         },
         "in_flight_deadline_at": {
           "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/timestamp"
+        },
+        "queued_action_context_claim_protocol": {
+          "const": "v1"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "queued_action_context_claim_protocol": {}
+            },
+            "required": [
+              "queued_action_context_claim_protocol"
+            ]
+          },
+          "then": {
+            "properties": {
+              "dispatch_mode": {
+                "const": "queued_next_turn"
+              }
+            }
+          }
+        }
+      ]
     },
     "continuation_consumed_payload": {
       "type": "object",
@@ -698,6 +750,38 @@
         },
         "failure_inferred": {
           "const": false
+        }
+      }
+    },
+    "sha256_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "queued_action_context_claimed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "continuation_id",
+        "delivery_turn_id",
+        "queued_prompt_sha256",
+        "cwd_sha256",
+        "action_sha256"
+      ],
+      "properties": {
+        "continuation_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "delivery_turn_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "queued_prompt_sha256": {
+          "$ref": "#/$defs/sha256_digest"
+        },
+        "cwd_sha256": {
+          "$ref": "#/$defs/sha256_digest"
+        },
+        "action_sha256": {
+          "$ref": "#/$defs/sha256_digest"
         }
       }
     },

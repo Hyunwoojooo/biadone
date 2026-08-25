@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import CoordinatorSwift
@@ -16,6 +17,10 @@ private func operationalObject(_ data: Data) throws -> [String: Any] {
     return object
 }
 
+private func operationalSHA256Fingerprint(_ data: Data) -> String {
+    "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
 private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @unchecked Sendable {
     private let lock = NSLock()
     private var snapshot = JournalSnapshot(
@@ -25,9 +30,11 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
         journalSequence: 0
     )
     private var failuresByEventType: [String: Int] = [:]
+    private var failureCodesByEventType: [String: String] = [:]
     private var loadFailuresAfterFailureByEventType: [String: Int] = [:]
     private var lostResponsesByEventType: [String: Int] = [:]
     private var loadFailuresAfterLostResponseByEventType: [String: Int] = [:]
+    private var appendAttemptsByEventType: [String: Int] = [:]
     private var loadFailuresRemaining = 0
     private var loads = 0
 
@@ -64,14 +71,19 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
         defer { lock.unlock() }
         for eventData in events {
             guard let event = try JSONSerialization.jsonObject(with: eventData) as? [String: Any],
-                  let eventType = event["event_type"] as? String,
+                  let eventType = event["event_type"] as? String
+            else { continue }
+            appendAttemptsByEventType[eventType, default: 0] += 1
+            guard
                   let remaining = failuresByEventType[eventType],
                   remaining > 0
             else { continue }
             failuresByEventType[eventType] = remaining - 1
             loadFailuresRemaining += loadFailuresAfterFailureByEventType[eventType] ?? 0
             loadFailuresAfterFailureByEventType[eventType] = 0
-            throw CoordinatorError("injected_append_failure")
+            throw CoordinatorError(
+                failureCodesByEventType[eventType] ?? "injected_append_failure"
+            )
         }
         guard snapshot.journalSequence == expectedSequence else {
             throw CoordinatorError("journal_sequence_conflict")
@@ -105,10 +117,12 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
 
     func failNextAppend(
         eventType: String,
+        errorCode: String = "injected_append_failure",
         failFollowingLoads: Int = 0
     ) {
         lock.lock()
         failuresByEventType[eventType, default: 0] += 1
+        failureCodesByEventType[eventType] = errorCode
         loadFailuresAfterFailureByEventType[eventType, default: 0]
             += failFollowingLoads
         lock.unlock()
@@ -123,6 +137,12 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
         loadFailuresAfterLostResponseByEventType[eventType, default: 0]
             += failFollowingLoads
         lock.unlock()
+    }
+
+    func appendAttemptCount(eventType: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return appendAttemptsByEventType[eventType, default: 0]
     }
 }
 
@@ -145,6 +165,12 @@ private final class OperationalClock: CoordinatorContinuousClock, @unchecked Sen
     func advance(milliseconds: UInt64) {
         lock.lock()
         value += milliseconds * 1_000_000
+        lock.unlock()
+    }
+
+    func set(nanoseconds: UInt64) {
+        lock.lock()
+        value = nanoseconds
         lock.unlock()
     }
 }
@@ -625,6 +651,40 @@ func operationalReconciliationFailureCooldown() async throws {
     #expect(await fixture.app.millisecondsUntilNextDeadline() == 250)
 }
 
+@Test("Operational saturated cooldown conversion never overflows")
+func operationalSaturatedCooldownIsSafe() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "cooldown_saturation")
+    let wrapper = operationalWrapper(
+        ids,
+        proposal: operationalProposal(ids, suffix: "cooldown_saturation")
+    )
+    fixture.cooldownClock.set(nanoseconds: UInt64.max - 100)
+    fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    }
+
+    // Simulate a regressed injected clock after the saturated addition. The
+    // public projections must ceil-divide UInt64.max without adding into it.
+    fixture.cooldownClock.set(nanoseconds: 0)
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == Int32.max)
+    let doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    let reconciliation = try #require(
+        doctor["reconciliation"] as? [String: Any]
+    )
+    #expect(reconciliation["state"] as? String == "retrying")
+    #expect(
+        ExactJSONInteger.int64(reconciliation["milliseconds_until_retry"])
+            == Int64(UInt64.max / 1_000_000 + 1)
+    )
+}
+
 @Test("Operational focus authority failures retain cooldown across Pet state polls")
 func operationalFocusAuthorityFailureCooldown() async throws {
     let fixture = try operationalFixture()
@@ -916,8 +976,23 @@ func operationalDoctorStatusIsPure() async throws {
     let second = try await fixture.app.doctorStatus(payload: operationalData([:]))
     #expect(first == second)
     let status = try operationalObject(first)
-    #expect(status["schema_version"] as? String == "1.0")
+    #expect(status["schema_version"] as? String == "1.1")
     #expect(status["kind"] as? String == "blabee_doctor_status")
+    let reconciliation = try #require(status["reconciliation"] as? [String: Any])
+    #expect(Set(reconciliation.keys) == Set([
+        "state",
+        "consecutive_failure_count",
+        "quarantined_initial_activation_count",
+        "last_error_code",
+        "milliseconds_until_retry",
+    ]))
+    #expect(reconciliation["state"] as? String == "healthy")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 0)
+    #expect(ExactJSONInteger.int64(
+        reconciliation["quarantined_initial_activation_count"]
+    ) == 0)
+    #expect(reconciliation["last_error_code"] is NSNull)
+    #expect(reconciliation["milliseconds_until_retry"] is NSNull)
     let projects = try #require(status["projects"] as? [[String: Any]])
     #expect(projects.count == 3)
     #expect(projects.allSatisfy { Set($0.keys) == Set(["cwd", "enabled"]) })
@@ -939,6 +1014,81 @@ func operationalDoctorStatusIsPure() async throws {
     }
     _ = try await fixture.app.processTime()
     #expect(try operationalObject(await stopTask.value)["status"] as? String == "decision_available")
+}
+
+@Test("Operational exposes restart orphan quarantine while keeping reads pure")
+func operationalRestartOrphanDoctorStatusIsPure() async throws {
+    let journal = OperationalMemoryJournal()
+    let binding: [String: Any] = [
+        "project_id": "project_operational_restart_orphan",
+        "session_id": "session_operational_restart_orphan",
+        "source_turn_id": "turn_operational_restart_orphan",
+        "source_prompt_id": "prompt_operational_restart_orphan",
+        "episode_id": "episode_operational_restart_orphan",
+        "episode_root_prompt_id": "prompt_operational_restart_orphan",
+        "episode_baseline_checkpoint_id": "checkpoint_operational_restart_orphan",
+        "decision_boundary_id": "boundary_operational_restart_orphan",
+        "boundary_sequence": 1,
+    ]
+    let semantic = CoordinatorSemanticApplication(journal: journal)
+    _ = try semantic.execute(command: operationalData([
+        "type": "open_boundary",
+        "event_id": "event_operational_restart_orphan_open",
+        "occurred_at": "2026-08-21T12:00:00Z",
+        "binding": binding,
+        "proposal_id": "proposal_operational_restart_orphan",
+    ]))
+    let baseline = try journal.load()
+    let routing = try CoordinatorRoutingApplication(
+        journal: journal,
+        clock: OperationalClock()
+    )
+    let app = CoordinatorOperationalApplication(routing: routing)
+
+    let first = try await app.doctorStatus(payload: operationalData([:]))
+    let second = try await app.doctorStatus(payload: operationalData([:]))
+    #expect(first == second)
+    let status = try operationalObject(first)
+    let reconciliation = try #require(status["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "quarantined")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 1)
+    #expect(ExactJSONInteger.int64(
+        reconciliation["quarantined_initial_activation_count"]
+    ) == 1)
+    #expect(
+        reconciliation["last_error_code"] as? String
+            == "routing_restart_unsealed_boundary_quarantined"
+    )
+    #expect(reconciliation["milliseconds_until_retry"] is NSNull)
+
+    let snapshotData = try await app.handle(
+        type: "get_state",
+        payload: operationalData([:])
+    )
+    let repeatedSnapshotData = try await app.handle(
+        type: "get_state",
+        payload: operationalData([:])
+    )
+    #expect(snapshotData == repeatedSnapshotData)
+    let snapshot = try operationalObject(snapshotData)
+    #expect((snapshot["interactions"] as? [Any])?.isEmpty == true)
+    #expect(await app.millisecondsUntilNextDeadline() == nil)
+    await expectOperationalError("routing_restart_unsealed_boundary_quarantined") {
+        _ = try await app.handle(
+            type: "enable_project",
+            payload: operationalData([
+                "cwd": "/tmp/blabee-operational-restart-orphan-blocked",
+                "project_id": "project_operational_restart_orphan_blocked",
+            ])
+        )
+    }
+    await expectOperationalError("routing_restart_unsealed_boundary_quarantined") {
+        _ = try await app.processTime()
+    }
+    let after = try journal.load()
+    #expect(after.journalSequence == baseline.journalSequence)
+    #expect(after.events == baseline.events)
+    #expect(after.documents == baseline.documents)
 }
 
 private func expectOperationalError(
@@ -1118,11 +1268,156 @@ func operationalPacketSelectionAndCompletion() async throws {
     let dispatch = try #require(dispatches.first)
     #expect(dispatch.sessionID == ids["session_id"])
     #expect(dispatch.continuationID == selectedOutcome["continuation_id"] as? String)
-    let messageJSON = try #require(dispatch.message.split(separator: "\n").last)
-    let nextTurn = try operationalObject(Data(messageJSON.utf8))
-    #expect(nextTurn["kind"] as? String == "blabee_next_turn_action")
-    #expect((nextTurn["binding"] as? [String: Any])?["session_id"] as? String == ids["session_id"])
-    #expect((nextTurn["action"] as? [String: Any])?["title"] as? String == "Recommended first")
+    let queuedPromptPrefix =
+        "Blabee 선택 작업을 불러옵니다. Hook 세부 조건이 없으면 실행하지 마세요. ref="
+    #expect(dispatch.message.hasPrefix(queuedPromptPrefix))
+    let reference = String(dispatch.message.dropFirst(queuedPromptPrefix.count))
+    #expect(reference.utf8.count == 32)
+    #expect(reference.utf8.allSatisfy { byte in
+        (byte >= 0x30 && byte <= 0x39) || (byte >= 0x61 && byte <= 0x66)
+    })
+    #expect(dispatch.message == queuedPromptPrefix + reference)
+    let continuationID = try #require(selectedOutcome["continuation_id"] as? String)
+    for forbidden in [
+        "{", "\"action\"", "\"binding\"", "Recommended first",
+        "Run recommended work first", "Keep the binding exact",
+        continuationID, ids["cwd"]!, ids["project_id"]!, ids["session_id"]!,
+        ids["source_turn_id"]!, ids["source_prompt_id"]!, ids["episode_id"]!,
+        ids["correlation_token"]!, rawToken,
+    ] {
+        #expect(!dispatch.message.contains(forbidden))
+    }
+
+    let selectedAction = try #require(proposal["recommended_next"] as? [String: Any])
+    let canonicalAction = try operationalData(selectedAction)
+    let canonicalActionText = try #require(String(data: canonicalAction, encoding: .utf8))
+
+    let crossSession = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": "session_operational_cross_session",
+                "turn_id": "turn_operational_cross_session",
+                "cwd": ids["cwd"]!,
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(crossSession["prompt_origin"] as? String == "blabee_rejected")
+    let crossSessionContext = try #require(crossSession["additionalContext"] as? String)
+    #expect(!crossSessionContext.contains(canonicalActionText))
+    #expect(!crossSessionContext.contains("Recommended first"))
+
+    let wrongWorkingDirectory = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_wrong_working_directory",
+                "cwd": ids["cwd"]! + "/nested",
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(wrongWorkingDirectory["prompt_origin"] as? String == "blabee_rejected")
+    let wrongWorkingDirectoryContext = try #require(
+        wrongWorkingDirectory["additionalContext"] as? String
+    )
+    #expect(!wrongWorkingDirectoryContext.contains(canonicalActionText))
+    #expect(!wrongWorkingDirectoryContext.contains("Recommended first"))
+
+    let queuedTurnID = "turn_operational_first_queued"
+    let decomposedQueuedPrompt = dispatch.message.decomposedStringWithCanonicalMapping
+    #expect(Data(decomposedQueuedPrompt.utf8) != Data(dispatch.message.utf8))
+    let queuedPromptPayload: [String: Any] = [
+        "session_id": ids["session_id"]!,
+        "turn_id": queuedTurnID,
+        "cwd": ids["cwd"]!,
+        "prompt": decomposedQueuedPrompt,
+        "hook_event_name": "UserPromptSubmit",
+    ]
+    fixture.journal.failNextAppend(eventType: "queued_action_context_claimed")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData(queuedPromptPayload)
+        )
+    }
+    #expect(
+        try fixture.journal.load().events.contains { data in
+            (try operationalObject(data)["event_type"] as? String)
+                == "queued_action_context_claimed"
+        } == false
+    )
+
+    // If SQLite committed the claim but its response was lost, routing must
+    // recover the exact durable tuple before exposing the hidden action.
+    fixture.journal.loseNextCommittedResponse(
+        eventType: "queued_action_context_claimed"
+    )
+    let queuedPromptData = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData(queuedPromptPayload)
+    )
+    let queuedPrompt = try operationalObject(queuedPromptData)
+    #expect(queuedPrompt["prompt_origin"] as? String == "blabee_next_turn")
+    let queuedContext = try #require(queuedPrompt["additionalContext"] as? String)
+    #expect(queuedContext.hasSuffix(canonicalActionText))
+    #expect(queuedContext.contains("Blabee verified the selected action locally."))
+    #expect(!queuedContext.contains(continuationID))
+    let claimEvents = try fixture.journal.load().events
+        .map(operationalObject)
+        .filter { $0["event_type"] as? String == "queued_action_context_claimed" }
+    let claimEvent = try #require(claimEvents.count == 1 ? claimEvents.first : nil)
+    let claimPayload = try #require(claimEvent["payload"] as? [String: Any])
+    let rawQueuedPromptFingerprint = operationalSHA256Fingerprint(
+        Data(decomposedQueuedPrompt.utf8)
+    )
+    let normalizedQueuedPromptFingerprint = operationalSHA256Fingerprint(
+        Data(dispatch.message.utf8)
+    )
+    #expect(rawQueuedPromptFingerprint != normalizedQueuedPromptFingerprint)
+    #expect(claimPayload["queued_prompt_sha256"] as? String == rawQueuedPromptFingerprint)
+    #expect(claimPayload["queued_prompt_sha256"] as? String != normalizedQueuedPromptFingerprint)
+    #expect(
+        fixture.journal.appendAttemptCount(
+            eventType: "queued_action_context_claimed"
+        ) == 2
+    )
+
+    let sameTurnRetry = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData(queuedPromptPayload)
+    )
+    #expect(sameTurnRetry == queuedPromptData)
+    var wrongPathRetryPayload = queuedPromptPayload
+    wrongPathRetryPayload["cwd"] = ids["cwd"]! + "/nested"
+    await expectOperationalError("user_prompt_retry_conflict") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData(wrongPathRetryPayload)
+        )
+    }
+
+    let replay = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_first_replay",
+                "cwd": ids["cwd"]!,
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(replay["prompt_origin"] as? String == "blabee_rejected")
+    let replayContext = try #require(replay["additionalContext"] as? String)
+    #expect(replayContext.contains("Do not execute the visible Blabee request."))
+    #expect(!replayContext.contains(canonicalActionText))
+    #expect(!replayContext.contains("Recommended first"))
 
     await expectOperationalError("interaction_not_waiting") {
         _ = try await fixture.app.handle(
@@ -1130,6 +1425,269 @@ func operationalPacketSelectionAndCompletion() async throws {
             payload: operationalData(operationalSelection(interaction, slot: 1))
         )
     }
+}
+
+@Test("Operational reconstructs a queued action from the journal after restart")
+func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "queued_restart")
+    let proposal = operationalProposal(ids, suffix: "queued_restart")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(ids, proposal: proposal))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "Restart recovery card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 1))
+    )
+    let dispatch = try #require(
+        await fixture.nextTurnDispatcher.recordedRequests().first
+    )
+
+    let restartClock = OperationalClock()
+    let restartCooldownClock = OperationalClock()
+    let restartIDs = OperationalIDs()
+    let restartTokens = OperationalTokens()
+    let restartedRouting = try CoordinatorRoutingApplication(
+        journal: fixture.journal,
+        clock: restartClock,
+        tokenGenerator: restartTokens.next,
+        eventIDGenerator: restartIDs.next
+    )
+    let restartedApp = CoordinatorOperationalApplication(
+        routing: restartedRouting,
+        enabledProjectPaths: [ids["cwd"]!],
+        secretCorpus: RuntimeSecretCorpus(),
+        idGenerator: restartIDs.next,
+        wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
+        monotonicInstantGenerator: restartCooldownClock.nowNanoseconds,
+        stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
+    )
+
+    let restoredTurnID = "turn_operational_queued_restart_restored"
+    let restoredPayload: [String: Any] = [
+        "session_id": ids["session_id"]!,
+        "turn_id": restoredTurnID,
+        "cwd": ids["cwd"]!,
+        "prompt": dispatch.message,
+        "hook_event_name": "UserPromptSubmit",
+    ]
+    let restoredPrompt = try operationalObject(
+        await restartedApp.handle(
+            type: "user_prompt_submit",
+            payload: operationalData(restoredPayload)
+        )
+    )
+    #expect(restoredPrompt["prompt_origin"] as? String == "blabee_next_turn")
+    let restoredContext = try #require(restoredPrompt["additionalContext"] as? String)
+    let selectedAction = try #require(proposal["recommended_next"] as? [String: Any])
+    let canonicalActionText = try #require(String(
+        data: operationalData(selectedAction),
+        encoding: .utf8
+    ))
+    #expect(restoredContext.hasSuffix(canonicalActionText))
+    #expect(restoredContext.contains("Blabee verified the selected action locally."))
+
+    let claimedEvents = try fixture.journal.load().events.filter { data in
+        (try operationalObject(data)["event_type"] as? String)
+            == "queued_action_context_claimed"
+    }
+    #expect(claimedEvents.count == 1)
+    let claimedEvent = try #require(claimedEvents.first)
+    let claimedEventObject = try operationalObject(claimedEvent)
+    let claimedPayload = try #require(
+        claimedEventObject["payload"] as? [String: Any]
+    )
+    #expect(claimedPayload["delivery_turn_id"] as? String == restoredTurnID)
+
+    // Losing every process-local session cache after the claim must still let
+    // the exact same Codex turn recover the sealed action, without appending a
+    // second claim. A different turn is a replay and must fail closed.
+    let secondRestartIDs = OperationalIDs()
+    let secondRestartTokens = OperationalTokens()
+    let secondRestartCooldownClock = OperationalClock()
+    let secondRestartRouting = try CoordinatorRoutingApplication(
+        journal: fixture.journal,
+        clock: OperationalClock(),
+        tokenGenerator: secondRestartTokens.next,
+        eventIDGenerator: secondRestartIDs.next
+    )
+    let secondRestartApp = CoordinatorOperationalApplication(
+        routing: secondRestartRouting,
+        enabledProjectPaths: [ids["cwd"]!],
+        secretCorpus: RuntimeSecretCorpus(),
+        idGenerator: secondRestartIDs.next,
+        wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:01Z") },
+        monotonicInstantGenerator: secondRestartCooldownClock.nowNanoseconds,
+        stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
+    )
+    let sameTurnAfterRestart = try operationalObject(
+        await secondRestartApp.handle(
+            type: "user_prompt_submit",
+            payload: operationalData(restoredPayload)
+        )
+    )
+    #expect(sameTurnAfterRestart["prompt_origin"] as? String == "blabee_next_turn")
+    #expect(
+        (sameTurnAfterRestart["additionalContext"] as? String)?
+            .hasSuffix(canonicalActionText) == true
+    )
+    #expect(try fixture.journal.load().events.filter { data in
+        (try operationalObject(data)["event_type"] as? String)
+            == "queued_action_context_claimed"
+    }.count == 1)
+
+    var replayPayload = restoredPayload
+    replayPayload["turn_id"] = "turn_operational_queued_restart_replay"
+    let replayAfterRestart = try operationalObject(
+        await secondRestartApp.handle(
+            type: "user_prompt_submit",
+            payload: operationalData(replayPayload)
+        )
+    )
+    #expect(replayAfterRestart["prompt_origin"] as? String == "blabee_rejected")
+    #expect(
+        (replayAfterRestart["additionalContext"] as? String)?
+            .contains(canonicalActionText) == false
+    )
+}
+
+@Test("Operational rejects a pre-claim full-action queue prompt after restart")
+func operationalRejectsLegacyFullActionQueuePromptAfterRestart() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "legacy_queued_prompt")
+
+    let restartIDs = OperationalIDs()
+    let restartTokens = OperationalTokens()
+    let restartCooldownClock = OperationalClock()
+    let restartedRouting = try CoordinatorRoutingApplication(
+        journal: fixture.journal,
+        clock: OperationalClock(),
+        tokenGenerator: restartTokens.next,
+        eventIDGenerator: restartIDs.next
+    )
+    let restartedApp = CoordinatorOperationalApplication(
+        routing: restartedRouting,
+        enabledProjectPaths: [ids["cwd"]!],
+        secretCorpus: RuntimeSecretCorpus(),
+        idGenerator: restartIDs.next,
+        wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
+        monotonicInstantGenerator: restartCooldownClock.nowNanoseconds,
+        stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
+    )
+
+    let proposal = operationalProposal(ids, suffix: "legacy_queued_prompt")
+    let action = try #require(proposal["recommended_next"] as? [String: Any])
+    let actionJSON = try operationalData(action)
+    let actionText = try #require(String(data: actionJSON, encoding: .utf8))
+    let legacyQueuedPrompt =
+        "Blabee verified the selected action. Execute exactly this JSON action as a new user turn. A queued transport receipt is not proof that the work succeeded.\n"
+        + actionText
+
+    let response = try operationalObject(
+        await restartedApp.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_legacy_queued_prompt_after_restart",
+                "cwd": ids["cwd"]!,
+                "prompt": legacyQueuedPrompt,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(response["prompt_origin"] as? String == "blabee_rejected")
+    let context = try #require(response["additionalContext"] as? String)
+    #expect(context.contains("Do not execute the visible Blabee request."))
+    #expect(!context.contains(actionText))
+    let journal = try fixture.journal.load()
+    #expect(!journal.events.contains { data in
+        (try? operationalObject(data)["event_type"] as? String)
+            == "queued_action_context_claimed"
+    })
+}
+
+@Test("Operational queues against the latest prompt cwd after a same-project resume")
+func operationalQueuedActionUsesLatestPromptWorkingDirectory() async throws {
+    let fixture = try operationalFixture()
+    let initial = try await operationalBegin(fixture, suffix: "queued_moved_cwd")
+    let movedCWD = initial["cwd"]! + "/nested"
+    let movedPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": initial["session_id"]!,
+                "turn_id": "turn_operational_queued_moved_cwd_nested",
+                "cwd": movedCWD,
+                "prompt": "Continue this session from a nested project directory",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    let identifiers = try #require(movedPrompt["identifiers"] as? [String: Any])
+    let context = try #require(movedPrompt["additionalContext"] as? String)
+    let movedIDs: [String: String] = [
+        "cwd": movedCWD,
+        "project_id": try #require(identifiers["project_id"] as? String),
+        "session_id": try #require(identifiers["session_id"] as? String),
+        "source_turn_id": try #require(identifiers["source_turn_id"] as? String),
+        "source_prompt_id": try #require(identifiers["source_prompt_id"] as? String),
+        "episode_id": try #require(identifiers["episode_id"] as? String),
+        "correlation_token": try contextValue(context, key: "correlation_token"),
+    ]
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            movedIDs,
+            proposal: operationalProposal(movedIDs, suffix: "queued_moved_cwd")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: movedIDs,
+            active: false,
+            message: "Moved cwd card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 1))
+    )
+    let dispatch = try #require(
+        await fixture.nextTurnDispatcher.recordedRequests().first
+    )
+    let queuedPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": movedIDs["session_id"]!,
+                "turn_id": "turn_operational_queued_moved_cwd_delivery",
+                "cwd": movedCWD,
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(queuedPrompt["prompt_origin"] as? String == "blabee_next_turn")
+    let queuedContext = try #require(queuedPrompt["additionalContext"] as? String)
+    #expect(queuedContext.contains("Recommended queued_moved_cwd"))
 }
 
 @Test("Operational pause closes the card without dispatching a new turn")
@@ -1208,6 +1766,41 @@ func operationalNextTurnDispatchFailureIsExplicit() async throws {
     let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.continuations.values.first?.consumedAt != nil)
     #expect(state.continuations.values.first?.transport == nil)
+
+    let failedDispatch = try #require(
+        await fixture.nextTurnDispatcher.recordedRequests().first
+    )
+    let unrelated = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_next_turn_failure_human",
+                "cwd": ids["cwd"]!,
+                "prompt": "Continue independently after the failed queue request",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(unrelated["prompt_origin"] as? String == "human")
+
+    let rejected = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_next_turn_failure_rejected",
+                "cwd": ids["cwd"]!,
+                "prompt": failedDispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(rejected["prompt_origin"] as? String == "blabee_rejected")
+    let rejectedContext = try #require(rejected["additionalContext"] as? String)
+    #expect(rejectedContext.contains("Do not execute the visible Blabee request."))
+    #expect(!rejectedContext.contains("Recommended next_turn_failure"))
+    #expect(!rejectedContext.contains("Blabee verified the selected action locally."))
 }
 
 @Test("Operational queued prompt may arrive before the queue receipt")
@@ -1239,6 +1832,8 @@ func operationalPromptRaceClosesPreviousBoundaryIdempotently() async throws {
     let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
     #expect(dispatch.sessionID == ids["session_id"])
 
+    let decomposedQueuedPrompt = dispatch.message.decomposedStringWithCanonicalMapping
+    #expect(Data(decomposedQueuedPrompt.utf8) != Data(dispatch.message.utf8))
     let nextPrompt = try operationalObject(
         await fixture.app.handle(
             type: "user_prompt_submit",
@@ -1246,17 +1841,27 @@ func operationalPromptRaceClosesPreviousBoundaryIdempotently() async throws {
                 "session_id": ids["session_id"]!,
                 "turn_id": "turn_operational_next_turn_race_queued",
                 "cwd": ids["cwd"]!,
-                "prompt": dispatch.message,
+                "prompt": decomposedQueuedPrompt,
                 "hook_event_name": "UserPromptSubmit",
             ])
         )
     )
+    #expect(nextPrompt["prompt_origin"] as? String == "blabee_next_turn")
     let nextIdentifiers = try #require(nextPrompt["identifiers"] as? [String: Any])
     #expect(nextIdentifiers["episode_id"] as? String != ids["episode_id"])
     #expect(nextIdentifiers["source_prompt_id"] as? String != ids["source_prompt_id"])
     let stateBeforeReceipt = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(stateBeforeReceipt.boundaries.values.first?.closed == true)
     #expect(stateBeforeReceipt.continuations.values.first?.transport?.status == .completed)
+    let claimEvents = try fixture.journal.load().events
+        .map(operationalObject)
+        .filter { $0["event_type"] as? String == "queued_action_context_claimed" }
+    let claimEvent = try #require(claimEvents.count == 1 ? claimEvents.first : nil)
+    let claimPayload = try #require(claimEvent["payload"] as? [String: Any])
+    #expect(
+        claimPayload["queued_prompt_sha256"] as? String
+            == operationalSHA256Fingerprint(Data(decomposedQueuedPrompt.utf8))
+    )
 
     await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
     let selected = try operationalObject(await selectionTask.value)
@@ -1500,7 +2105,7 @@ func operationalPetForegroundDoesNotAutoSwitch() async throws {
     #expect(try operationalObject(await firstStop.value)["status"] as? String == "decision_available")
 }
 
-@Test("Operational initial activation resumes exact packet after seal append failure")
+@Test("Operational initial activation retries one exact atomic packet after append failure")
 func operationalInitialActivationRetry() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "initial_retry")
@@ -1515,11 +2120,18 @@ func operationalInitialActivationRetry() async throws {
         )
     }
     var journalSnapshot = try fixture.journal.load()
-    #expect(journalSnapshot.journalSequence == 1)
+    #expect(journalSnapshot.journalSequence == 0)
+    #expect(journalSnapshot.events.isEmpty)
     #expect(journalSnapshot.documents.isEmpty)
+    let restartedAfterFailure = try CoordinatorRoutingApplication(
+        journal: fixture.journal,
+        clock: OperationalClock()
+    )
+    #expect(restartedAfterFailure.recoveryStatus().isQuarantined == false)
 
-    // Pet polling is also a reconciliation tick. It must seal the packet that
-    // was constructed for the durable open, without appending a second open.
+    // Pet polling is also a reconciliation tick. It must retry the exact
+    // retained identities and commit open + seal + packet as one batch.
+    fixture.cooldownClock.advance(milliseconds: 250)
     let snapshot = try operationalObject(
         await fixture.app.handle(type: "get_state", payload: operationalData([:]))
     )
@@ -1535,11 +2147,267 @@ func operationalInitialActivationRetry() async throws {
     #expect(try CoordinatorSemanticReplay.replay(journalSnapshot).boundaries.count == 1)
 }
 
-@Test("Operational recovers committed open and seal responses without duplicate events")
+@Test("Operational quarantines a persistent initial activation and resumes only by exact duplicate")
+func operationalInitialActivationQuarantine() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "initial_quarantine")
+    let proposal = operationalProposal(ids, suffix: "initial_quarantine")
+    let wrapper = operationalWrapper(ids, proposal: proposal)
+
+    for _ in 0..<5 {
+        fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    }
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    }
+
+    var doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    var reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "retrying")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 1)
+    #expect(reconciliation["last_error_code"] as? String == "injected_append_failure")
+    #expect(ExactJSONInteger.int64(reconciliation["milliseconds_until_retry"]) == 250)
+
+    for cooldown in [250, 500, 1_000, 2_000] as [UInt64] {
+        fixture.cooldownClock.advance(milliseconds: cooldown)
+        await expectOperationalError("injected_append_failure") {
+            _ = try await fixture.app.processTime()
+        }
+    }
+
+    #expect(
+        fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 5
+    )
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+    doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "quarantined")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 5)
+    #expect(ExactJSONInteger.int64(
+        reconciliation["quarantined_initial_activation_count"]
+    ) == 1)
+    #expect(reconciliation["last_error_code"] as? String == "injected_append_failure")
+    #expect(reconciliation["milliseconds_until_retry"] is NSNull)
+
+    let quarantinedSnapshot = try fixture.journal.load()
+    #expect(quarantinedSnapshot.journalSequence == 0)
+    #expect(quarantinedSnapshot.events.isEmpty)
+    #expect(quarantinedSnapshot.documents.isEmpty)
+
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.processTime()
+    }
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.handle(
+            type: "enable_project",
+            payload: operationalData([
+                "cwd": "/tmp/blabee-quarantine-must-not-append",
+                "project_id": "project_quarantine_must_not_append",
+            ])
+        )
+    }
+    var mismatchedProposal = proposal
+    mismatchedProposal["task_goal"] = "A different proposal must not bypass quarantine"
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: mismatchedProposal
+            ))
+        )
+    }
+    #expect(
+        fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 5
+    )
+    #expect(try fixture.journal.load().journalSequence == 0)
+
+    // One explicit duplicate grants exactly one recovery attempt. If it still
+    // fails, the write barrier remains armed and no automatic loop restarts.
+    fixture.journal.failNextAppend(eventType: "decision_packet_sealed")
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    }
+    #expect(
+        fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6
+    )
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+    await expectOperationalError("operational_reconciliation_quarantined") {
+        _ = try await fixture.app.processTime()
+    }
+    #expect(
+        fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 6
+    )
+
+    let accepted = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    )
+    let packet = try #require(accepted["packet"] as? [String: Any])
+    #expect(ExactJSONInteger.int64(packet["valid_after_event_sequence"]) == 2)
+
+    let recoveredSnapshot = try fixture.journal.load()
+    #expect(recoveredSnapshot.journalSequence == 2)
+    #expect(recoveredSnapshot.events.count == 2)
+    #expect(recoveredSnapshot.documents.count == 1)
+    #expect(try CoordinatorSemanticReplay.replay(recoveredSnapshot).boundaries.count == 1)
+    doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "healthy")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 0)
+    #expect(ExactJSONInteger.int64(
+        reconciliation["quarantined_initial_activation_count"]
+    ) == 0)
+    #expect(reconciliation["last_error_code"] is NSNull)
+    #expect(reconciliation["milliseconds_until_retry"] is NSNull)
+}
+
+@Test("Operational slows known transient activation failures before bounded quarantine")
+func operationalTransientInitialActivationRetryBudget() async throws {
+    let transientCodes = [
+        "freshness_anchor_unavailable",
+        "freshness_commit_ambiguous",
+        "freshness_transition_pending",
+    ]
+    for errorCode in transientCodes {
+        let fixture = try operationalFixture()
+        let ids = try await operationalBegin(fixture, suffix: errorCode)
+        let proposal = operationalProposal(ids, suffix: errorCode)
+        let wrapper = operationalWrapper(ids, proposal: proposal)
+
+        for _ in 0..<10 {
+            fixture.journal.failNextAppend(
+                eventType: "decision_packet_sealed",
+                errorCode: errorCode
+            )
+        }
+        await expectOperationalError(errorCode) {
+            _ = try await fixture.app.handle(
+                type: "emit_decision",
+                payload: operationalData(wrapper)
+            )
+        }
+
+        let retryDelays = [250, 500, 1_000, 2_000, 4_000, 15_000, 30_000, 60_000, 120_000]
+        for (index, cooldown) in retryDelays.enumerated() {
+            fixture.cooldownClock.advance(milliseconds: UInt64(cooldown))
+            await expectOperationalError(errorCode) {
+                _ = try await fixture.app.processTime()
+            }
+            if index == 4 {
+                let doctor = try operationalObject(
+                    await fixture.app.doctorStatus(payload: operationalData([:]))
+                )
+                let reconciliation = try #require(
+                    doctor["reconciliation"] as? [String: Any]
+                )
+                #expect(reconciliation["state"] as? String == "retrying")
+                #expect(ExactJSONInteger.int64(
+                    reconciliation["consecutive_failure_count"]
+                ) == 6)
+                #expect(await fixture.app.millisecondsUntilNextDeadline() == 15_000)
+            }
+        }
+
+        #expect(
+            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 10
+        )
+        #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+        var doctor = try operationalObject(
+            await fixture.app.doctorStatus(payload: operationalData([:]))
+        )
+        var reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+        #expect(reconciliation["state"] as? String == "quarantined")
+        #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 10)
+        #expect(reconciliation["last_error_code"] as? String == errorCode)
+
+        fixture.journal.failNextAppend(
+            eventType: "decision_packet_sealed",
+            errorCode: errorCode
+        )
+        await expectOperationalError(errorCode) {
+            _ = try await fixture.app.handle(
+                type: "emit_decision",
+                payload: operationalData(wrapper)
+            )
+        }
+        #expect(
+            fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 11
+        )
+        #expect(await fixture.app.millisecondsUntilNextDeadline() == nil)
+        doctor = try operationalObject(
+            await fixture.app.doctorStatus(payload: operationalData([:]))
+        )
+        reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+        #expect(reconciliation["state"] as? String == "quarantined")
+        #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 10)
+    }
+}
+
+@Test("Operational automatically recovers a transient activation after the fast retry budget")
+func operationalTransientInitialActivationLateRecovery() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "transient_recovery")
+    let proposal = operationalProposal(ids, suffix: "transient_recovery")
+    let wrapper = operationalWrapper(ids, proposal: proposal)
+
+    for _ in 0..<6 {
+        fixture.journal.failNextAppend(
+            eventType: "decision_packet_sealed",
+            errorCode: "freshness_anchor_unavailable"
+        )
+    }
+    await expectOperationalError("freshness_anchor_unavailable") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    }
+    for cooldown in [250, 500, 1_000, 2_000, 4_000] as [UInt64] {
+        fixture.cooldownClock.advance(milliseconds: cooldown)
+        await expectOperationalError("freshness_anchor_unavailable") {
+            _ = try await fixture.app.processTime()
+        }
+    }
+
+    #expect(await fixture.app.millisecondsUntilNextDeadline() == 15_000)
+    fixture.cooldownClock.advance(milliseconds: 15_000)
+    _ = try await fixture.app.processTime()
+
+    #expect(
+        fixture.journal.appendAttemptCount(eventType: "decision_packet_sealed") == 7
+    )
+    let snapshot = try fixture.journal.load()
+    #expect(snapshot.journalSequence == 2)
+    #expect(snapshot.events.count == 2)
+    #expect(snapshot.documents.count == 1)
+    let doctor = try operationalObject(
+        await fixture.app.doctorStatus(payload: operationalData([:]))
+    )
+    let reconciliation = try #require(doctor["reconciliation"] as? [String: Any])
+    #expect(reconciliation["state"] as? String == "healthy")
+    #expect(ExactJSONInteger.int64(reconciliation["consecutive_failure_count"]) == 0)
+    #expect(reconciliation["last_error_code"] is NSNull)
+}
+
+@Test("Operational recovers a committed atomic activation response without duplicate events")
 func operationalCommittedActivationResponseLoss() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "activation_response_loss")
-    fixture.journal.loseNextCommittedResponse(eventType: "decision_boundary_opened")
     fixture.journal.loseNextCommittedResponse(eventType: "decision_packet_sealed")
 
     let accepted = try operationalObject(
@@ -1600,6 +2468,7 @@ func operationalCommittedSealDelayedRecoveryExpires() async throws {
     }
     #expect(try fixture.journal.load().journalSequence == 2)
 
+    fixture.cooldownClock.advance(milliseconds: 250)
     fixture.clock.advance(seconds: 120)
     fixture.journal.failNextAppend(eventType: "interaction_expired")
     await expectOperationalError("injected_append_failure") {
@@ -1772,7 +2641,7 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     }
     var journalSnapshot = try fixture.journal.load()
     state = try CoordinatorSemanticReplay.replay(journalSnapshot)
-    #expect(state.boundaries.count == 2)
+    #expect(state.boundaries.count == 1)
     #expect(state.boundaries.values.filter(\.closed).count == 1)
     #expect(journalSnapshot.documents.count == 1)
 
@@ -2064,6 +2933,35 @@ func operationalCommittedSelectionResponseLoss() async throws {
     #expect(try operationalObject(retryStop)["status"] as? String == "decision_available")
     state = try CoordinatorSemanticReplay.replay(retryFixture.journal.load())
     #expect(state.boundaries.values.first?.closed == true)
+}
+
+@Test("Operational rejects an oversized queued action before writing or showing a card")
+func operationalOversizedQueuedActionFailsBeforeActivation() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "oversized_action")
+    var proposal = operationalProposal(ids, suffix: "oversized_action")
+    var action = try #require(proposal["recommended_next"] as? [String: Any])
+    action["constraints"] = (0..<8).map { index in
+        String(repeating: Character(String(index)), count: 8_192)
+    }
+    proposal["recommended_next"] = action
+
+    await expectOperationalError("invalid_proposal") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(ids, proposal: proposal))
+        )
+    }
+
+    let journal = try fixture.journal.load()
+    #expect(journal.journalSequence == 0)
+    #expect(journal.events.isEmpty)
+    #expect(journal.documents.isEmpty)
+    let state = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((state["interactions"] as? [Any])?.isEmpty == true)
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
 }
 
 @Test("Operational proposal and full Pet binding fail closed while pause remains available")

@@ -14,7 +14,7 @@ public enum ContractPin {
         "native-request.schema.json": "46244b35bfc09795ca5e5f4ae82f8c89db0231993968fc7dcdd4955b55851a5a",
         "prompt-episode.schema.json": "85d4f66d5c195f92f53991fae415dc0fe2d0105b0f4e6683e2f0c50f584a73eb",
         "resume-capsule.schema.json": "4dd3f13ab51b1cf10e987eb159880631065b803e179de53e22c8ecfefa1a7ed5",
-        "runtime-event.schema.json": "58f5896607a573840f8edbd1f5490d3aadfacc4af078a08c2d1a8d8687a87478",
+        "runtime-event.schema.json": "fc84ea6cfa95079719d52c1adf481566ff19e40e07e824e9b1e232d2e633625c",
         "selection-request.schema.json": "5337114c185b226fe844148b7254bccd2cb7a0c3b1dd839fb3ad0660920aaede",
     ]
 

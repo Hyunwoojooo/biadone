@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseStrictRfc3339DateTime } from "./rfc3339.mjs";
 
 const BINDING_FIELDS = Object.freeze([
@@ -30,6 +31,7 @@ const BOUNDARY_EVENT_TYPES = new Set([
   "continuation_consumed",
   "continuation_transport_completed",
   "continuation_transport_timed_out_unknown",
+  "queued_action_context_claimed",
   "work_outcome_recorded",
   "interaction_expired",
 ]);
@@ -46,6 +48,13 @@ const FORMAT_REPAIR_JOURNAL_FIELDS = Object.freeze([
   "issued_at",
   "expires_at",
   "correlation_token_fingerprint",
+]);
+
+const QUEUED_ACTION_CONTEXT_CLAIM_FIELDS = Object.freeze([
+  "delivery_turn_id",
+  "queued_prompt_sha256",
+  "cwd_sha256",
+  "action_sha256",
 ]);
 
 function failure(errorCode, eventIndex, message) {
@@ -183,6 +192,20 @@ function rawCorrelationTokenPresent(data) {
   return Object.hasOwn(data, "correlation_token") || Object.hasOwn(data, "continuation_token");
 }
 
+function canonicalJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJSON).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJSON(value[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256Fingerprint(value) {
+  return `sha256:${createHash("sha256").update(canonicalJSON(value), "utf8").digest("hex")}`;
+}
+
 function validateRepairJournalTime(wrapperEvent, index) {
   const data = traceEventData(wrapperEvent);
   const issuedAt = parseStrictRfc3339DateTime(data.issued_at);
@@ -225,6 +248,7 @@ export function validateSemanticTrace(trace) {
   const continuationFingerprints = new Map();
   const timedOutBoundaries = new Set();
   const formatRepairReservations = new Map();
+  const queuedActionContextClaims = new Map();
   const restartAfterEventSequence = trace.restart_after_event_sequence;
   if (
     restartAfterEventSequence !== undefined
@@ -307,7 +331,11 @@ export function validateSemanticTrace(trace) {
       if (type === "decision_selection_claimed" && latest && bindingKey(latest) !== key) {
         return failure("stale_decision_boundary", index, "a selection cannot claim an older boundary in the same turn");
       }
-      if (currentBoundary.closed && type !== "decision_boundary_closed") {
+      if (
+        currentBoundary.closed
+        && type !== "decision_boundary_closed"
+        && type !== "queued_action_context_claimed"
+      ) {
         return failure("decision_boundary_closed", index, `${type} cannot follow a closed decision boundary`);
       }
       if (
@@ -509,6 +537,9 @@ export function validateSemanticTrace(trace) {
       continuations.set(id, {
         boundaryKey: key,
         actionId: data.action_id,
+        optionId: data.option_id,
+        packetId: data.packet_id,
+        revision: data.revision,
         terminal: false,
         timedOut: false,
         consumed: false,
@@ -517,6 +548,7 @@ export function validateSemanticTrace(trace) {
         issuedAt: parseStrictRfc3339DateTime(data.issued_at),
         expiresAt: parseStrictRfc3339DateTime(data.expires_at),
         dispatchMode: data.dispatch_mode,
+        queuedActionContextClaimProtocol: data.queued_action_context_claim_protocol ?? null,
       });
       continuationIdentities.set(id, {
         origin: "pet_action",
@@ -582,6 +614,80 @@ export function validateSemanticTrace(trace) {
       continuation.terminal = true;
       continuation.timedOut = true;
       timedOutBoundaries.add(key);
+      continue;
+    }
+
+    if (type === "queued_action_context_claimed") {
+      const id = continuationId(wrapperEvent);
+      const continuation = continuations.get(id);
+      if (!continuation) {
+        return failure("continuation_not_dispatched", index, "queued action context claim requires a prior dispatch");
+      }
+      if (continuation.boundaryKey !== key) {
+        return failure("decision_boundary_binding_mismatch", index, "queued action context claim crossed a decision boundary");
+      }
+      if (continuation.dispatchMode !== "queued_next_turn") {
+        return failure("dispatch_mode_conflict", index, "queued action context claim requires queued_next_turn dispatch");
+      }
+      if (continuation.queuedActionContextClaimProtocol !== "v1") {
+        return failure(
+          "queued_action_context_claim_protocol_missing",
+          index,
+          "legacy continuations without the v1 durable-claim marker must fail closed",
+        );
+      }
+      if (!continuation.consumed) {
+        return failure("continuation_not_consumed", index, "queued action context claim requires a consumed continuation");
+      }
+      if (!continuation.terminal || continuation.timedOut) {
+        return failure("transport_terminal_observation_missing", index, "queued action context claim requires completed transport");
+      }
+      if (!currentBoundary.closed) {
+        return failure("decision_boundary_not_closed", index, "queued action context claim requires a closed decision boundary");
+      }
+
+      const data = traceEventData(wrapperEvent);
+      const existingClaim = queuedActionContextClaims.get(id);
+      if (existingClaim) {
+        return failure(
+          "queued_action_context_already_claimed",
+          index,
+          "a durable queued action context claim may appear in the journal only once",
+        );
+      }
+      const packetDocument = Array.isArray(trace.packet_documents)
+        ? trace.packet_documents.find((document) => (
+          document?.packet_id === continuation.packetId
+          && document?.revision === continuation.revision
+        ))
+        : null;
+      const selectedChoice = packetDocument && Array.isArray(packetDocument.choices)
+        ? packetDocument.choices.find((choice) => (
+          choice?.option_id === continuation.optionId
+          && choice?.action_id === continuation.actionId
+          && choice.action !== null
+          && typeof choice.action === "object"
+          && !Array.isArray(choice.action)
+        ))
+        : null;
+      if (!selectedChoice) {
+        return failure(
+          "continuation_action_mismatch",
+          index,
+          "queued action context claim requires the sealed selected action document",
+        );
+      }
+      if (sha256Fingerprint(selectedChoice.action) !== data.action_sha256) {
+        return failure(
+          "queued_action_context_claim_mismatch",
+          index,
+          "queued action context claim digest must match the sealed selected action",
+        );
+      }
+      const claim = Object.fromEntries(
+        QUEUED_ACTION_CONTEXT_CLAIM_FIELDS.map((field) => [field, data[field]]),
+      );
+      queuedActionContextClaims.set(id, claim);
       continue;
     }
 

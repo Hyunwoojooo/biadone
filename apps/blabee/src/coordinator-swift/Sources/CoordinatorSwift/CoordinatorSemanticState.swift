@@ -1,4 +1,5 @@
 import CoreFoundation
+import CryptoKit
 import Foundation
 
 public struct CoordinatorPacketRevision: Sendable, Hashable {
@@ -122,6 +123,14 @@ public struct CoordinatorWorkOutcome: Sendable, Equatable {
     public let canonicalJSON: Data
 }
 
+public struct CoordinatorQueuedActionContextClaim: Sendable, Equatable {
+    public let deliveryTurnID: String
+    public let queuedPromptSHA256: String
+    public let cwdSHA256: String
+    public let actionSHA256: String
+    public let claimedAt: RFC3339Instant
+}
+
 public struct CoordinatorContinuationState: Sendable, Equatable {
     public let binding: CoordinatorBinding
     public let boundaryKey: CoordinatorBindingKey
@@ -133,12 +142,14 @@ public struct CoordinatorContinuationState: Sendable, Equatable {
     public let optionID: String
     public let actionID: String
     public let dispatchMode: String
+    public let queuedActionContextClaimProtocol: String?
     public let issuedAt: RFC3339Instant
     public let expiresAt: RFC3339Instant
     public let inFlightDeadlineAt: RFC3339Instant
     public internal(set) var consumedAt: RFC3339Instant?
     public internal(set) var transport: CoordinatorTransportState?
     public internal(set) var workOutcome: CoordinatorWorkOutcome?
+    public internal(set) var queuedActionContextClaim: CoordinatorQueuedActionContextClaim?
 }
 
 public struct CoordinatorSemanticState: Sendable, Equatable {
@@ -174,6 +185,25 @@ public struct CoordinatorSemanticState: Sendable, Equatable {
     public func continuation(id: String) -> CoordinatorContinuationState? {
         guard IdentifierNormalization.isNFC(id) else { return nil }
         return continuations[id]
+    }
+
+    func selectedActionJSON(for continuationID: String) throws -> Data {
+        guard IdentifierNormalization.isNFC(continuationID),
+              let continuation = continuations[continuationID]
+        else { throw CoordinatorError("continuation_not_dispatched") }
+        let documentKey = CoordinatorPacketRevision(
+            packetID: continuation.packetID,
+            revision: continuation.revision
+        )
+        guard let packet = packetDocuments[documentKey],
+              let choice = packet.choices.first(where: {
+                  guard let actionID = $0.actionID else { return false }
+                  return IdentifierNormalization.isByteExact($0.optionID, continuation.optionID)
+                      && IdentifierNormalization.isByteExact(actionID, continuation.actionID)
+              }),
+              let actionJSON = choice.actionJSON
+        else { throw CoordinatorError("continuation_action_mismatch") }
+        return actionJSON
     }
 
     public var pendingInteractions: [CoordinatorBoundaryState] {
@@ -271,6 +301,15 @@ public enum CoordinatorSemanticReplay {
 
         if event.type == "decision_boundary_closed" {
             try closeBoundary(&state, boundary: &boundary, key: exactKey, event: event)
+            return
+        }
+
+        // Delivery claims may be committed after the action boundary has
+        // closed. The continuation and its sealed packet remain the durable
+        // authority, so replay validates the claim before applying the normal
+        // closed-boundary gate used by lifecycle mutations.
+        if event.type == "queued_action_context_claimed" {
+            try claimQueuedActionContext(&state, event: event)
             return
         }
 
@@ -564,6 +603,16 @@ public enum CoordinatorSemanticReplay {
             dispatchMode == "queued_next_turn" || dispatchMode == "same_turn_stop",
             "dispatch_mode_conflict"
         )
+        let claimProtocol: String?
+        if let rawClaimProtocol = payload["queued_action_context_claim_protocol"] {
+            guard let value = rawClaimProtocol as? String, value == "v1" else {
+                throw CoordinatorError("queued_action_context_claim_protocol_invalid")
+            }
+            try require(dispatchMode == "queued_next_turn", "queued_action_context_claim_protocol_invalid")
+            claimProtocol = value
+        } else {
+            claimProtocol = nil
+        }
         let interactionID = try SemanticJSON.string(payload, "interaction_id", field: "interaction_id", identifier: true)
         let packetID = try SemanticJSON.string(payload, "packet_id", field: "packet_id", identifier: true)
         let revision = try SemanticJSON.positiveInteger(payload["revision"], code: "packet_revision_invalid")
@@ -608,12 +657,14 @@ public enum CoordinatorSemanticReplay {
             optionID: optionID,
             actionID: actionID,
             dispatchMode: dispatchMode,
+            queuedActionContextClaimProtocol: claimProtocol,
             issuedAt: issuedAt,
             expiresAt: expiresAt,
             inFlightDeadlineAt: deadlineAt,
             consumedAt: nil,
             transport: nil,
-            workOutcome: nil
+            workOutcome: nil,
+            queuedActionContextClaim: nil
         )
         state.continuationIdentities[continuationID] = CoordinatorContinuationIdentity(
             origin: "pet_action",
@@ -714,6 +765,73 @@ public enum CoordinatorSemanticReplay {
         )
         state.continuations[id] = item
     }
+
+    private static func claimQueuedActionContext(
+        _ state: inout CoordinatorSemanticState,
+        event: SemanticEvent
+    ) throws {
+        let (id, original) = try continuation(state, event: event)
+        var item = original
+        let boundaryClosed = state.boundaries[item.binding.fullKey]?.closed == true
+        try require(item.dispatchMode == "queued_next_turn", "dispatch_mode_conflict")
+        try require(
+            item.queuedActionContextClaimProtocol == "v1",
+            "queued_action_context_claim_protocol_missing"
+        )
+        try require(item.consumedAt != nil, "continuation_not_consumed")
+        try require(
+            item.transport?.status == .completed,
+            "transport_terminal_observation_missing"
+        )
+        try require(boundaryClosed, "decision_boundary_not_closed")
+        try require(item.queuedActionContextClaim == nil, "queued_action_context_already_claimed")
+        let deliveryTurnID = try SemanticJSON.string(
+            event.payload,
+            "delivery_turn_id",
+            field: "delivery_turn_id",
+            identifier: true
+        )
+        let queuedPromptSHA256 = try CoordinatorSHA256.fingerprint(
+            event.payload["queued_prompt_sha256"]
+        )
+        let cwdSHA256 = try CoordinatorSHA256.fingerprint(event.payload["cwd_sha256"])
+        let actionSHA256 = try CoordinatorSHA256.fingerprint(event.payload["action_sha256"])
+        let actionJSON = try state.selectedActionJSON(for: id)
+        try require(
+            CoordinatorSHA256.fingerprint(actionJSON) == actionSHA256,
+            "queued_action_context_claim_mismatch"
+        )
+        item.queuedActionContextClaim = CoordinatorQueuedActionContextClaim(
+            deliveryTurnID: deliveryTurnID,
+            queuedPromptSHA256: queuedPromptSHA256,
+            cwdSHA256: cwdSHA256,
+            actionSHA256: actionSHA256,
+            claimedAt: event.occurredAt
+        )
+        state.continuations[id] = item
+    }
+}
+
+enum CoordinatorSHA256 {
+    static func fingerprint(_ data: Data) -> String {
+        "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func fingerprint(_ value: Any?) throws -> String {
+        guard let value = value as? String, value.utf8.count == 71 else {
+            throw CoordinatorError("queued_action_context_digest_invalid")
+        }
+        let bytes = Array(value.utf8)
+        let prefix = Array("sha256:".utf8)
+        try require(
+            bytes.starts(with: prefix)
+                && bytes.dropFirst(prefix.count).allSatisfy {
+                    (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
+                },
+            "queued_action_context_digest_invalid"
+        )
+        return value
+    }
 }
 
 private struct SemanticEvent {
@@ -740,6 +858,7 @@ private enum SemanticJSON {
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
         "continuation_transport_timed_out_unknown": "transport",
+        "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
         "interaction_expired": "decision_lifecycle",
     ]

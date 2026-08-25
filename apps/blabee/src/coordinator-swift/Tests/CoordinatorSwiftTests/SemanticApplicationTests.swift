@@ -94,6 +94,23 @@ private func semanticSeal(packet: [String: Any], suffix: String) throws -> Data 
     ])
 }
 
+private func semanticInitialActivation(
+    binding: [String: Any],
+    packet: [String: Any],
+    suffix: String,
+    occurredAt: String = "2026-08-21T01:00:01Z"
+) throws -> Data {
+    try semanticData([
+        "type": "activate_initial_boundary",
+        "open_event_id": "event_semantic_\(suffix)_open",
+        "seal_event_id": "event_semantic_\(suffix)_seal",
+        "occurred_at": occurredAt,
+        "binding": binding,
+        "proposal_id": "proposal_semantic_\(suffix)",
+        "packet": packet,
+    ])
+}
+
 private func semanticSelection(
     packet: [String: Any],
     slot: Int,
@@ -151,6 +168,7 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
     private let lock = NSLock()
     private var stored: JournalSnapshot
     private var sequenceConflicts = 0
+    private var competingChange: CoordinatorSemanticChange?
     private var loseResponseAfterCommit = false
     private var appendAttemptCount = 0
 
@@ -178,6 +196,19 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
         lock.lock()
         defer { lock.unlock() }
         appendAttemptCount += 1
+        if let competingChange {
+            self.competingChange = nil
+            let competed = JournalSnapshot(
+                events: stored.events + competingChange.events,
+                documents: stored.documents + competingChange.documents,
+                verificationRecords: stored.verificationRecords
+                    + competingChange.verificationRecords,
+                journalSequence: stored.journalSequence
+                    + Int64(competingChange.events.count)
+            )
+            _ = try CoordinatorSemanticReplay.replay(competed)
+            stored = competed
+        }
         if sequenceConflicts > 0 {
             sequenceConflicts -= 1
             throw CoordinatorError("journal_sequence_conflict")
@@ -211,6 +242,12 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
         lock.unlock()
     }
 
+    func installCompetingChange(_ change: CoordinatorSemanticChange) {
+        lock.lock()
+        competingChange = change
+        lock.unlock()
+    }
+
     func loseNextCommittedResponse() {
         lock.lock()
         loseResponseAfterCommit = true
@@ -239,6 +276,429 @@ private final class SemanticTokenCounter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+private func semanticCompletedQueuedAction(
+    suffix: String,
+    journal: SemanticMemoryJournal,
+    app: CoordinatorSemanticApplication,
+    closeBoundary: Bool = true
+) throws -> (binding: [String: Any], actionJSON: Data) {
+    let binding = semanticBinding(suffix: suffix)
+    let packet = try semanticPacket(binding: binding, validAfter: 2, suffix: suffix)
+    _ = try app.execute(command: semanticOpen(binding: binding, suffix: suffix))
+    _ = try app.execute(command: semanticSeal(packet: packet, suffix: suffix))
+    let selected = try app.execute(
+        command: semanticSelection(packet: packet, slot: 1, suffix: suffix)
+    )
+    let envelope = try semanticEnvelope(from: selected)
+    _ = try app.execute(command: semanticData([
+        "type": "consume_pet_action",
+        "event_id": "event_semantic_\(suffix)_consume",
+        "occurred_at": "2026-08-21T01:00:04Z",
+        "envelope": envelope,
+    ]))
+    _ = try app.execute(command: semanticData([
+        "type": "complete_transport",
+        "event_id": "event_semantic_\(suffix)_complete",
+        "occurred_at": "2026-08-21T01:00:05Z",
+        "binding": binding,
+        "continuation_id": "continuation_semantic_\(suffix)",
+    ]))
+    if closeBoundary {
+        _ = try app.execute(command: semanticData([
+            "type": "close_boundary",
+            "event_id": "event_semantic_\(suffix)_close",
+            "occurred_at": "2026-08-21T01:00:06Z",
+            "binding": binding,
+            "close_reason": "queued_transport_completed",
+        ]))
+    }
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    return (
+        binding,
+        try state.selectedActionJSON(for: "continuation_semantic_\(suffix)")
+    )
+}
+
+private func semanticQueuedActionClaim(
+    suffix: String,
+    binding: [String: Any],
+    actionJSON: Data,
+    deliveryTurnID: String = "delivery_turn_semantic",
+    eventID: String? = nil,
+    queuedPromptSHA256: String? = nil,
+    cwdSHA256: String? = nil,
+    actionSHA256: String? = nil
+) throws -> Data {
+    try semanticData([
+        "type": "claim_queued_action_context",
+        "event_id": eventID ?? "event_semantic_\(suffix)_queued_claim",
+        "occurred_at": "2026-08-21T01:00:07Z",
+        "binding": binding,
+        "continuation_id": "continuation_semantic_\(suffix)",
+        "delivery_turn_id": deliveryTurnID,
+        "queued_prompt_sha256": queuedPromptSHA256
+            ?? "sha256:" + String(repeating: "a", count: 64),
+        "cwd_sha256": cwdSHA256
+            ?? "sha256:" + String(repeating: "b", count: 64),
+        "action_sha256": actionSHA256 ?? CoordinatorSHA256.fingerprint(actionJSON),
+    ])
+}
+
+@Test("initial activation commits open seal and packet in one semantic append")
+func semanticInitialActivationIsAtomic() throws {
+    let suffix = "initial_atomic"
+    let binding = semanticBinding(suffix: suffix)
+    let template = try semanticPacket(
+        binding: binding,
+        validAfter: 1,
+        suffix: suffix,
+        sealedAt: "2026-08-21T01:00:01Z",
+        expiresAt: "2026-08-21T01:02:01Z"
+    )
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+
+    let result = try app.execute(
+        command: semanticInitialActivation(
+            binding: binding,
+            packet: template,
+            suffix: suffix
+        )
+    )
+
+    #expect(result.commit.firstSequence == 1)
+    #expect(result.commit.lastSequence == 2)
+    #expect(result.commit.eventCount == 2)
+    #expect(journal.appendAttempts == 1)
+    let snapshot = try journal.load()
+    #expect(snapshot.events.count == 2)
+    #expect(snapshot.documents.count == 1)
+    let state = try CoordinatorSemanticReplay.replay(snapshot)
+    let packet = try #require(
+        state.packet(for: CoordinatorBinding(jsonObject: binding))
+    )
+    #expect(packet.validAfterEventSequence == 2)
+    let effect = try semanticObject(try #require(result.effects.first))
+    #expect(effect["kind"] as? String == "blabee_initial_activation_committed")
+    #expect(
+        ExactJSONInteger.int64(
+            (effect["packet"] as? [String: Any])?["valid_after_event_sequence"]
+        ) == 2
+    )
+}
+
+@Test("initial activation CAS retry keeps identities and recomputes only its sequence")
+func semanticInitialActivationCASRetryIsStable() throws {
+    let competingSuffix = "initial_atomic_competing"
+    let competingBinding = semanticBinding(suffix: competingSuffix)
+    let competingPacket = try semanticPacket(
+        binding: competingBinding,
+        validAfter: 1,
+        suffix: competingSuffix,
+        sealedAt: "2026-08-21T01:00:01Z",
+        expiresAt: "2026-08-21T01:02:01Z"
+    )
+    let competing = try CoordinatorSemanticDecision.decide(
+        state: CoordinatorSemanticState(),
+        command: semanticInitialActivation(
+            binding: competingBinding,
+            packet: competingPacket,
+            suffix: competingSuffix
+        )
+    )
+
+    let suffix = "initial_atomic_retry"
+    let binding = semanticBinding(suffix: suffix)
+    let packetTemplate = try semanticPacket(
+        binding: binding,
+        validAfter: 1,
+        suffix: suffix,
+        sealedAt: "2026-08-21T01:01:01Z",
+        expiresAt: "2026-08-21T01:03:01Z"
+    )
+    let journal = SemanticMemoryJournal()
+    journal.installCompetingChange(competing)
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let result = try app.execute(
+        command: semanticInitialActivation(
+            binding: binding,
+            packet: packetTemplate,
+            suffix: suffix,
+            occurredAt: "2026-08-21T01:01:01Z"
+        )
+    )
+
+    #expect(journal.appendAttempts == 2)
+    #expect(result.commit.firstSequence == 3)
+    #expect(result.commit.lastSequence == 4)
+    let snapshot = try journal.load()
+    let state = try CoordinatorSemanticReplay.replay(snapshot)
+    let packet = try #require(
+        state.packet(for: CoordinatorBinding(jsonObject: binding))
+    )
+    #expect(packet.validAfterEventSequence == 4)
+    #expect(packet.interactionID == packetTemplate["interaction_id"] as? String)
+    #expect(packet.packetID == packetTemplate["packet_id"] as? String)
+    let targetEvents = try snapshot.events.map(semanticObject).filter {
+        ($0["decision_boundary_id"] as? String)
+            == (binding["decision_boundary_id"] as? String)
+    }
+    #expect(targetEvents.count == 2)
+    #expect(targetEvents.map { $0["event_id"] as? String } == [
+        "event_semantic_\(suffix)_open",
+        "event_semantic_\(suffix)_seal",
+    ])
+}
+
+@Test("queued action claim is durable across restart and exact same-turn retry")
+func semanticQueuedActionClaimIsDurableAndIdempotent() throws {
+    let suffix = "queued_claim_durable"
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let prepared = try semanticCompletedQueuedAction(
+        suffix: suffix,
+        journal: journal,
+        app: app
+    )
+    let command = try semanticQueuedActionClaim(
+        suffix: suffix,
+        binding: prepared.binding,
+        actionJSON: prepared.actionJSON
+    )
+    let attemptsBeforeClaim = journal.appendAttempts
+
+    let first = try app.execute(command: command)
+    #expect(first.commit.eventCount == 1)
+    #expect(journal.appendAttempts == attemptsBeforeClaim + 1)
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    let claim = try #require(
+        state.continuation(id: "continuation_semantic_\(suffix)")?
+            .queuedActionContextClaim
+    )
+    #expect(claim.deliveryTurnID == "delivery_turn_semantic")
+    #expect(claim.actionSHA256 == CoordinatorSHA256.fingerprint(prepared.actionJSON))
+
+    let restarted = CoordinatorSemanticApplication(journal: journal)
+    let attemptsBeforeRetry = journal.appendAttempts
+    let retry = try restarted.execute(command: command)
+    #expect(retry.commit.eventCount == 0)
+    #expect(retry.commit.firstSequence == state.eventSequence)
+    #expect(retry.commit.lastSequence == state.eventSequence)
+    #expect(journal.appendAttempts == attemptsBeforeRetry)
+
+    semanticExpectCode("queued_action_context_already_claimed") {
+        _ = try restarted.execute(command: semanticQueuedActionClaim(
+            suffix: suffix,
+            binding: prepared.binding,
+            actionJSON: prepared.actionJSON,
+            deliveryTurnID: "delivery_turn_other",
+            eventID: "event_semantic_\(suffix)_other_turn"
+        ))
+    }
+    semanticExpectCode("queued_action_context_claim_mismatch") {
+        _ = try restarted.execute(command: semanticQueuedActionClaim(
+            suffix: suffix,
+            binding: prepared.binding,
+            actionJSON: prepared.actionJSON,
+            eventID: "event_semantic_\(suffix)_digest_drift",
+            cwdSHA256: "sha256:" + String(repeating: "c", count: 64)
+        ))
+    }
+    #expect(journal.appendAttempts == attemptsBeforeRetry)
+}
+
+@Test("queued action claim recovers a committed response loss without a second event")
+func semanticQueuedActionClaimRecoversLostResponse() throws {
+    let suffix = "queued_claim_lost_response"
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let prepared = try semanticCompletedQueuedAction(
+        suffix: suffix,
+        journal: journal,
+        app: app
+    )
+    let command = try semanticQueuedActionClaim(
+        suffix: suffix,
+        binding: prepared.binding,
+        actionJSON: prepared.actionJSON
+    )
+    journal.loseNextCommittedResponse()
+    semanticExpectCode("simulated_lost_response") {
+        _ = try app.execute(command: command)
+    }
+    let committed = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(
+        committed.continuation(id: "continuation_semantic_\(suffix)")?
+            .queuedActionContextClaim != nil
+    )
+    let attemptsAfterLoss = journal.appendAttempts
+
+    let recovered = try CoordinatorSemanticApplication(journal: journal)
+        .execute(command: command)
+    #expect(recovered.commit.eventCount == 0)
+    #expect(journal.appendAttempts == attemptsAfterLoss)
+}
+
+@Test("queued action claim CAS retry has one durable winner")
+func semanticQueuedActionClaimCASRetryHasOneWinner() throws {
+    let suffix = "queued_claim_cas"
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let prepared = try semanticCompletedQueuedAction(
+        suffix: suffix,
+        journal: journal,
+        app: app
+    )
+    let command = try semanticQueuedActionClaim(
+        suffix: suffix,
+        binding: prepared.binding,
+        actionJSON: prepared.actionJSON
+    )
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    let competing = try CoordinatorSemanticDecision.decide(
+        state: state,
+        command: command
+    )
+    journal.installCompetingChange(competing)
+    let attemptsBefore = journal.appendAttempts
+
+    let result = try app.execute(command: command)
+    #expect(result.commit.eventCount == 0)
+    #expect(journal.appendAttempts == attemptsBefore + 1)
+    let snapshot = try journal.load()
+    let claimEvents = try snapshot.events.map(semanticObject).filter {
+        $0["event_type"] as? String == "queued_action_context_claimed"
+    }
+    #expect(claimEvents.count == 1)
+
+    let differentTurn = try semanticQueuedActionClaim(
+        suffix: suffix,
+        binding: prepared.binding,
+        actionJSON: prepared.actionJSON,
+        deliveryTurnID: "delivery_turn_competing",
+        eventID: "event_semantic_\(suffix)_competing_turn"
+    )
+    semanticExpectCode("queued_action_context_already_claimed") {
+        _ = try app.execute(command: differentTurn)
+    }
+}
+
+@Test("queued action claim requires closed completed v1 authority and exact action digest")
+func semanticQueuedActionClaimPreconditionsFailClosed() throws {
+    do {
+        let suffix = "queued_claim_not_consumed"
+        let binding = semanticBinding(suffix: suffix)
+        let packet = try semanticPacket(binding: binding, validAfter: 2, suffix: suffix)
+        let journal = SemanticMemoryJournal()
+        let app = CoordinatorSemanticApplication(journal: journal)
+        _ = try app.execute(command: semanticOpen(binding: binding, suffix: suffix))
+        _ = try app.execute(command: semanticSeal(packet: packet, suffix: suffix))
+        let selected = try app.execute(
+            command: semanticSelection(packet: packet, slot: 1, suffix: suffix)
+        )
+        let envelope = try semanticEnvelope(from: selected)
+        let selectedState = try CoordinatorSemanticReplay.replay(journal.load())
+        let actionJSON = try selectedState.selectedActionJSON(
+            for: "continuation_semantic_\(suffix)"
+        )
+        let claim = try semanticQueuedActionClaim(
+            suffix: suffix,
+            binding: binding,
+            actionJSON: actionJSON
+        )
+        semanticExpectCode("continuation_not_consumed") {
+            _ = try app.execute(command: claim)
+        }
+
+        _ = try app.execute(command: semanticData([
+            "type": "consume_pet_action",
+            "event_id": "event_semantic_\(suffix)_consume",
+            "occurred_at": "2026-08-21T01:00:04Z",
+            "envelope": envelope,
+        ]))
+        semanticExpectCode("transport_terminal_observation_missing") {
+            _ = try app.execute(command: claim)
+        }
+    }
+
+    do {
+        let suffix = "queued_claim_open_boundary"
+        let journal = SemanticMemoryJournal()
+        let app = CoordinatorSemanticApplication(journal: journal)
+        let prepared = try semanticCompletedQueuedAction(
+            suffix: suffix,
+            journal: journal,
+            app: app,
+            closeBoundary: false
+        )
+        semanticExpectCode("decision_boundary_not_closed") {
+            _ = try app.execute(command: semanticQueuedActionClaim(
+                suffix: suffix,
+                binding: prepared.binding,
+                actionJSON: prepared.actionJSON
+            ))
+        }
+    }
+
+    do {
+        let suffix = "queued_claim_action_digest"
+        let journal = SemanticMemoryJournal()
+        let app = CoordinatorSemanticApplication(journal: journal)
+        let prepared = try semanticCompletedQueuedAction(
+            suffix: suffix,
+            journal: journal,
+            app: app
+        )
+        let attemptsBefore = journal.appendAttempts
+        semanticExpectCode("queued_action_context_claim_mismatch") {
+            _ = try app.execute(command: semanticQueuedActionClaim(
+                suffix: suffix,
+                binding: prepared.binding,
+                actionJSON: prepared.actionJSON,
+                actionSHA256: "sha256:" + String(repeating: "f", count: 64)
+            ))
+        }
+        #expect(journal.appendAttempts == attemptsBefore)
+    }
+
+    do {
+        let suffix = "queued_claim_legacy"
+        let journal = SemanticMemoryJournal()
+        let app = CoordinatorSemanticApplication(journal: journal)
+        let prepared = try semanticCompletedQueuedAction(
+            suffix: suffix,
+            journal: journal,
+            app: app
+        )
+        let snapshot = try journal.load()
+        let migratedEvents = try snapshot.events.map { data -> Data in
+            var event = try semanticObject(data)
+            if event["event_type"] as? String == "continuation_dispatched",
+               var payload = event["payload"] as? [String: Any]
+            {
+                payload.removeValue(forKey: "queued_action_context_claim_protocol")
+                event["payload"] = payload
+                return try semanticData(event)
+            }
+            return data
+        }
+        let legacyJournal = SemanticMemoryJournal(snapshot: JournalSnapshot(
+            events: migratedEvents,
+            documents: snapshot.documents,
+            verificationRecords: snapshot.verificationRecords,
+            journalSequence: snapshot.journalSequence
+        ))
+        let legacyApp = CoordinatorSemanticApplication(journal: legacyJournal)
+        semanticExpectCode("queued_action_context_claim_protocol_missing") {
+            _ = try legacyApp.execute(command: semanticQueuedActionClaim(
+                suffix: suffix,
+                binding: prepared.binding,
+                actionJSON: prepared.actionJSON
+            ))
+        }
     }
 }
 

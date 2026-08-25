@@ -2293,7 +2293,7 @@ test("Swift strict ingress matches the Ajv oracle for supported v1 fixtures", as
     const cases = suite.fixtureManifest.cases.filter((fixtureCase) => (
       supported.has(fixtureCase.schema)
     ));
-    assert.equal(cases.length, 20, "fixture parity scope unexpectedly changed");
+    assert.equal(cases.length, 22, "fixture parity scope unexpectedly changed");
 
     for (const fixtureCase of cases) {
       const validator = fixtureValidator(suite.compiled, fixtureCase);

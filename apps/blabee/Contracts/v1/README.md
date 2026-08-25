@@ -31,6 +31,10 @@ v1 JSON Schema의 `identifier` 정의는 문자열 형태와 길이만 고정한
 
 `continuation_transport_completed`는 봉투가 검증·소비되고 Codex 새 턴 큐가 메시지를 인수해 전달 수명 주기가 끝났다는 뜻일 뿐, 선택한 작업이 시작되었거나 성공했다는 뜻이 아니다. 실제 결과는 새 턴의 별도 `work_outcome_recorded` 이벤트로 기록한다.
 
+`queued_action_context_claimed`는 완료된 `queued_next_turn` 전송과 닫힌 결정 경계에서, 짧은 queue ref가 가리키는 작업 컨텍스트를 특정 Codex 전달 턴에 반환하기 직전에 기록하는 영속 claim이다. 새 dispatch는 `queued_action_context_claim_protocol: "v1"` 마커를 포함해야 하고, 마커가 없는 레거시 continuation은 claim하지 않고 fail-closed로 거부한다. 업그레이드 전에 큐에 남아 있을 수 있는 구형 full-action JSON 프롬프트도 정확한 레거시 접두사를 식별해 사람 프롬프트로 처리하지 않고 거부한다. 이 마커는 이전 저널을 계속 읽으면서도 과거의 이미 전달됐을 수 있는 ref를 새 프로토콜의 첫 전달로 오인하지 않게 하는 마이그레이션 경계다. claim payload는 `continuation_id`, `delivery_turn_id`, `queued_prompt_sha256`, `cwd_sha256`, `action_sha256`만 가지며 세 digest는 `sha256:<64 lowercase hex>` 형식이다. 코디네이터는 컨텍스트를 반환하기 전에 이 이벤트를 원자적으로 저널에 추가해야 한다. 같은 `continuation_id`와 동일한 전달 턴·digest 조합의 재시도는 기존 claim을 그대로 읽어 같은 작업을 반환하되 이벤트를 다시 추가하지 않는다. 재시작 뒤에도 같은 규칙을 적용하고, 다른 전달 턴이나 하나라도 다른 digest로 다시 claim하려는 요청은 fail-closed로 거부한다.
+
+queue receipt는 메시지가 큐에 인수되었다는 증거이고, `queued_action_context_claimed`는 특정 전달 턴에 작업 컨텍스트를 내보내기로 영속 결정했다는 증거다. 어느 쪽도 선택한 작업의 실행 시작이나 성공 증거가 아니며, 실제 작업 결과는 계속 별도 `work_outcome_recorded`로만 기록한다.
+
 `continuation_transport_timed_out_unknown`은 작업 결과가 `unknown`이라는 뜻이다. 취소나 실패를 추론하지 않으며 `automatic_retry`는 항상 `false`다. 중복 실행 위험 때문에 자동 재시도하지 않는다.
 
 새 `pet_action` 봉투는 `dispatch_mode: "queued_next_turn"`만 허용한다. 선택은 완료된 Codex 응답을 다시 열지 않고 같은 세션의 새 사용자 턴으로 큐잉된다. 이전 결정의 binding은 선택이 만들어진 원본 에피소드를 가리키고, 큐 메시지가 `UserPromptSubmit`으로 들어오면 새 turn·prompt·episode·baseline을 만든다. queue receipt는 Codex가 메시지를 인수했다는 전송 증거일 뿐 실행 시작이나 작업 성공 증거가 아니다. 런타임 이벤트 스키마는 기존 로컬 저널 재생을 위해 과거 `same_turn_stop` 값도 읽을 수 있지만 새 봉투를 그 모드로 발급하지 않는다. `internal_format_repair`는 `dispatch_mode: "submitted_envelope"`만 허용하며 같은 결정 경계에서 `repair_attempt = max_repair_attempts = 1`이다. 각 봉투의 필드는 서로 섞을 수 없다.

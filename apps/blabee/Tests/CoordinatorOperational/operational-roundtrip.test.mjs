@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   cp,
@@ -211,6 +212,73 @@ function contextValue(context, key) {
   const match = context.match(new RegExp(`${key}=([^;.]+)`));
   assert.ok(match, `missing ${key} in designated prompt context`);
   return match[1];
+}
+
+const QUEUED_PROMPT_PREFIX =
+  "Blabee 선택 작업을 불러옵니다. Hook 세부 조건이 없으면 실행하지 마세요. ref=";
+const QUEUED_ACTION_CONTEXT_MARKER =
+  "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible ref is transport metadata, and a queue receipt is not proof that the work succeeded.\n";
+
+function queuedPrompt(continuationID, enabledProjectPath) {
+  const normalizedProjectPath = path.resolve(enabledProjectPath);
+  const reference = createHash("sha256")
+    .update(
+      `blabee-next-turn-v2\0${continuationID}\0${normalizedProjectPath}`,
+      "utf8",
+    )
+    .digest("hex")
+    .slice(0, 32);
+  return `${QUEUED_PROMPT_PREFIX}${reference}`;
+}
+
+function canonicalJSONObject(value) {
+  if (Array.isArray(value)) return value.map(canonicalJSONObject);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalJSONObject(value[key])]),
+    );
+  }
+  return value;
+}
+
+function canonicalJSON(value) {
+  return JSON.stringify(canonicalJSONObject(value));
+}
+
+function assertOpaqueQueuedPrompt(
+  message,
+  { action, continuationID, enabledProjectPath, identifiers },
+) {
+  assert.equal(message, queuedPrompt(continuationID, enabledProjectPath));
+  assert.match(message.slice(QUEUED_PROMPT_PREFIX.length), /^[0-9a-f]{32}$/);
+  for (const leakedValue of [
+    canonicalJSON(action),
+    action.title,
+    action.objective,
+    ...action.constraints,
+    ...action.done_when,
+    continuationID,
+    ...Object.values(identifiers).filter(
+      (value) => typeof value === "string" && value.length > 0,
+    ),
+  ]) {
+    assert.equal(
+      message.includes(leakedValue),
+      false,
+      `queued prompt leaked ${leakedValue}`,
+    );
+  }
+  for (const leakedKey of [
+    "{",
+    '"action"',
+    '"binding"',
+    "continuation_id",
+    "correlation_token",
+  ]) {
+    assert.equal(message.includes(leakedKey), false, `queued prompt leaked ${leakedKey}`);
+  }
 }
 
 function proposal(ids, suffix) {
@@ -464,10 +532,11 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     );
     assert.deepEqual(replayedFallbackStop, fallbackStop);
 
+    const firstProposal = proposal(ids, "one");
     const firstMCP = await emitDecision(
       productBuild,
       server.socketPath,
-      proposalWrapper(ids, proposal(ids, "one")),
+      proposalWrapper(ids, firstProposal),
     );
     assert.equal(firstMCP.response.accepted, true);
     assert.equal(firstMCP.response.staged, false);
@@ -517,10 +586,21 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     assert.deepEqual(afterFirstSelection.result.routing.pending, []);
     assert.equal(afterFirstSelection.result.routing.in_flight_count, 0);
 
+    const firstQueuedPrompt = queuedPrompt(
+      firstSelection.result.outcome.continuation_id,
+      server.enabledProjectPath,
+    );
+    assertOpaqueQueuedPrompt(firstQueuedPrompt, {
+      action: firstProposal.recommended_next,
+      continuationID: firstSelection.result.outcome.continuation_id,
+      enabledProjectPath: server.enabledProjectPath,
+      identifiers: { ...ids, ...firstWaiting.interaction },
+    });
+
     const secondUserPromptPayload = hookPayload("UserPromptSubmit", {
       cwd: server.enabledProjectPath,
       turn_id: "turn_operational_roundtrip_queued_two",
-      prompt: "Execute the first queued Blabee action",
+      prompt: firstQueuedPrompt,
     });
     const secondUserPrompt = await runBuiltBinary(
       productBuild,
@@ -567,11 +647,31 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       secondUserPrompt.stdout.split(secondIds.correlation_token).length - 1,
       1,
     );
+    const canonicalFirstAction = canonicalJSON(firstProposal.recommended_next);
+    assert.equal(
+      secondDesignatedContext.endsWith(
+        `${QUEUED_ACTION_CONTEXT_MARKER}${canonicalFirstAction}`,
+      ),
+      true,
+    );
+    const queuedActionOffset = secondDesignatedContext.lastIndexOf(
+      QUEUED_ACTION_CONTEXT_MARKER,
+    );
+    assert.notEqual(queuedActionOffset, -1);
+    const queuedActionJSON = secondDesignatedContext.slice(
+      queuedActionOffset + QUEUED_ACTION_CONTEXT_MARKER.length,
+    );
+    assert.equal(queuedActionJSON, canonicalFirstAction);
+    assert.deepEqual(
+      JSON.parse(queuedActionJSON),
+      canonicalJSONObject(firstProposal.recommended_next),
+    );
 
+    const secondProposal = proposal(secondIds, "two");
     const secondMCP = await emitDecision(
       productBuild,
       server.socketPath,
-      proposalWrapper(secondIds, proposal(secondIds, "two")),
+      proposalWrapper(secondIds, secondProposal),
     );
     assert.equal(secondMCP.response.accepted, true);
     assert.equal(secondMCP.response.staged, false);
@@ -617,6 +717,16 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       secondSelection.result.outcome.queued_submission_id,
       `queued_${secondSelection.result.outcome.continuation_id}`,
     );
+    const secondQueuedPrompt = queuedPrompt(
+      secondSelection.result.outcome.continuation_id,
+      server.enabledProjectPath,
+    );
+    assertOpaqueQueuedPrompt(secondQueuedPrompt, {
+      action: secondProposal.recommended_next,
+      continuationID: secondSelection.result.outcome.continuation_id,
+      enabledProjectPath: server.enabledProjectPath,
+      identifiers: { ...secondIds, ...secondWaiting.interaction },
+    });
     const finalState = await udsRequest(server.socketPath, "get_state");
     assert.equal(finalState.ok, true);
     assert.deepEqual(finalState.result.interactions, []);
@@ -637,6 +747,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       JSON.stringify(firstWaiting.response),
       JSON.stringify(firstFocus),
       JSON.stringify(firstSelection),
+      firstQueuedPrompt,
       firstStop.stdout,
       firstStop.stderr,
       JSON.stringify(afterFirstSelection),
@@ -645,6 +756,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       JSON.stringify(secondWaiting.response),
       JSON.stringify(secondFocus),
       JSON.stringify(secondSelection),
+      secondQueuedPrompt,
       secondStop.stdout,
       secondStop.stderr,
       JSON.stringify(finalState),

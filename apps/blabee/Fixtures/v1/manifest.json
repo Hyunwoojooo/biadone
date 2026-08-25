@@ -68,6 +68,12 @@
       "valid": true
     },
     {
+      "name": "valid_runtime_queued_action_context_claimed",
+      "file": "contracts/valid/runtime-queued-action-context-claimed.json",
+      "schema": "runtime_event",
+      "valid": true
+    },
+    {
       "name": "valid_runtime_work_outcome",
       "file": "contracts/valid/runtime-work-outcome.json",
       "schema": "runtime_event",
@@ -157,6 +163,13 @@
     {
       "name": "invalid_runtime_format_repair_raw_correlation_token",
       "file": "contracts/invalid/runtime-format-repair-raw-correlation-token.json",
+      "schema": "runtime_event",
+      "valid": false,
+      "expected_error_code": "raw_correlation_token_forbidden"
+    },
+    {
+      "name": "invalid_runtime_queued_action_context_claim_raw_correlation_token",
+      "file": "contracts/invalid/runtime-queued-action-context-claim-raw-correlation-token.json",
       "schema": "runtime_event",
       "valid": false,
       "expected_error_code": "raw_correlation_token_forbidden"

@@ -121,6 +121,7 @@ private final class DoctorFixture {
 
     func dependencies(
         daemonProjects: [[String: Any]]? = [["cwd": "/tmp/blabee-doctor-enabled", "enabled": true]],
+        daemonReconciliation: [String: Any]? = nil,
         currentExecutableURL: URL? = nil,
         path: String? = nil
     ) -> DoctorDependencies {
@@ -132,11 +133,15 @@ private final class DoctorFixture {
             processRunner: processes.run,
             daemonRequester: { _ in
                 guard let daemonProjects else { throw CoordinatorError("daemon_unavailable") }
-                return try StrictJSONTransport.data(forJSONObject: [
-                    "schema_version": "1.0",
+                var status: [String: Any] = [
+                    "schema_version": daemonReconciliation == nil ? "1.0" : "1.1",
                     "kind": "blabee_doctor_status",
                     "projects": daemonProjects,
-                ])
+                ]
+                if let daemonReconciliation {
+                    status["reconciliation"] = daemonReconciliation
+                }
+                return try StrictJSONTransport.data(forJSONObject: status)
             }
         )
     }
@@ -221,7 +226,7 @@ private final class DoctorFixture {
                         "command": userPromptCommand,
                         "timeout": 8,
                         "statusMessage": "Blabee 작업 경계 연결 중",
-                        "additionalContextLimit": 1_200,
+                        "additionalContextLimit": 65_536,
                     ]],
                 ]],
                 "Stop": [[
@@ -699,6 +704,71 @@ func doctorProjectScopeAndDaemonStatus() throws {
         "enabled": 1,
     ]])).run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "daemon_status").code == "daemon_status_malformed")
+}
+
+@Test("Doctor accepts legacy status and classifies bounded reconciliation states")
+func doctorReconciliationStatus() throws {
+    let fixture = try DoctorFixture()
+
+    var execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "reconciliation_status").status == .actionRequired)
+    #expect(try doctorCheck(execution, id: "reconciliation_status").code
+        == "reconciliation_status_legacy")
+
+    execution = DoctorApplication(dependencies: fixture.dependencies(
+        daemonReconciliation: [
+            "state": "healthy",
+            "consecutive_failure_count": 0,
+            "quarantined_initial_activation_count": 0,
+            "last_error_code": NSNull(),
+            "milliseconds_until_retry": NSNull(),
+        ]
+    )).run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "reconciliation_status").status == .pass)
+    #expect(try doctorCheck(execution, id: "reconciliation_status").code
+        == "reconciliation_healthy")
+
+    execution = DoctorApplication(dependencies: fixture.dependencies(
+        daemonReconciliation: [
+            "state": "retrying",
+            "consecutive_failure_count": 2,
+            "quarantined_initial_activation_count": 0,
+            "last_error_code": "freshness_anchor_unavailable",
+            "milliseconds_until_retry": 500,
+        ]
+    )).run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "reconciliation_status").status == .actionRequired)
+    #expect(try doctorCheck(execution, id: "reconciliation_status").code
+        == "reconciliation_retrying")
+
+    execution = DoctorApplication(dependencies: fixture.dependencies(
+        daemonReconciliation: [
+            "state": "quarantined",
+            "consecutive_failure_count": 5,
+            "quarantined_initial_activation_count": 1,
+            "last_error_code": "database_integrity_failed",
+            "milliseconds_until_retry": NSNull(),
+        ]
+    )).run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "reconciliation_status").status == .fail)
+    #expect(try doctorCheck(execution, id: "reconciliation_status").code
+        == "reconciliation_quarantined")
+    let output = try #require(String(data: execution.outputData(), encoding: .utf8))
+    #expect(!output.contains("database_integrity_failed"))
+
+    execution = DoctorApplication(dependencies: fixture.dependencies(
+        daemonReconciliation: [
+            "state": "healthy",
+            "consecutive_failure_count": true,
+            "quarantined_initial_activation_count": 0,
+            "last_error_code": NSNull(),
+            "milliseconds_until_retry": NSNull(),
+        ]
+    )).run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "daemon_status").code == "daemon_unavailable")
+    #expect(try doctorCheck(execution, id: "reconciliation_status").code
+        == "reconciliation_status_unavailable")
 }
 
 @Test("Doctor JSON is deterministic redacted and always requires explicit hook review")

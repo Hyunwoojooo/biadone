@@ -327,6 +327,10 @@ public final class SQLiteJournal: @unchecked Sendable {
             let existingEvents = try currentSnapshot.events.map { try prepareRuntimeEvent($0) }
             let existingDocuments = try currentSnapshot.documents.map { try preparePacketDocument($0) }
             try assertSelectionUniqueness(existingEvents: existingEvents, events: preparedEvents)
+            try assertQueuedActionClaimUniqueness(
+                existingEvents: existingEvents,
+                events: preparedEvents
+            )
             try assertAtomicSidecars(
                 events: preparedEvents,
                 existingDocuments: existingDocuments,
@@ -1181,6 +1185,27 @@ public final class SQLiteJournal: @unchecked Sendable {
                 "selection_already_claimed"
             )
             claimedSelections.append(selection)
+        }
+    }
+
+    private func assertQueuedActionClaimUniqueness(
+        existingEvents: [PreparedEvent],
+        events: [PreparedEvent]
+    ) throws {
+        var claimedContinuationIDs = Set<String>()
+        for claim in (existingEvents + events)
+            where claim.type == "queued_action_context_claimed"
+        {
+            guard let continuationID = payloadString(
+                claim.object,
+                "continuation_id"
+            ) else {
+                throw CoordinatorError("queued_action_context_claim_invalid")
+            }
+            try require(
+                claimedContinuationIDs.insert(continuationID).inserted,
+                "queued_action_context_already_claimed"
+            )
         }
     }
 

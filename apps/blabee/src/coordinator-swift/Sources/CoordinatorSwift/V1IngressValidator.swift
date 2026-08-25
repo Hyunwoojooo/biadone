@@ -411,6 +411,7 @@ private enum V {
         "continuation_consumed": "transport",
         "continuation_transport_completed": "transport",
         "continuation_transport_timed_out_unknown": "transport",
+        "queued_action_context_claimed": "transport",
         "work_outcome_recorded": "work_outcome",
         "interaction_expired": "decision_lifecycle",
     ]
@@ -460,12 +461,24 @@ private enum V {
                 "continuation_id", "interaction_id", "packet_id", "revision", "option_id", "action_id",
                 "dispatch_mode", "issued_at", "expires_at", "in_flight_deadline_at",
             ]
-            try exact(payload, required: keys)
+            try exact(
+                payload,
+                required: keys,
+                optional: ["queued_action_context_claim_protocol"]
+            )
             for key in ["continuation_id", "interaction_id", "packet_id", "option_id", "action_id"] {
                 _ = try string(payload, key, identifier: true)
             }
             _ = try positiveInteger(payload, "revision")
-            _ = try oneOf(payload, "dispatch_mode", ["queued_next_turn", "same_turn_stop"])
+            let dispatchMode = try oneOf(
+                payload,
+                "dispatch_mode",
+                ["queued_next_turn", "same_turn_stop"]
+            )
+            if payload["queued_action_context_claim_protocol"] != nil {
+                try constant(payload, "queued_action_context_claim_protocol", "v1")
+                try require(dispatchMode == "queued_next_turn", "contract_validation_failed")
+            }
             try timestamp(payload, "issued_at")
             try timestamp(payload, "expires_at")
             try timestamp(payload, "in_flight_deadline_at")
@@ -497,6 +510,22 @@ private enum V {
             try require(automaticRetry == false, "contract_validation_failed")
             try require(cancellationInferred == false, "contract_validation_failed")
             try require(failureInferred == false, "contract_validation_failed")
+        case "queued_action_context_claimed":
+            let keys: Set<String> = [
+                "continuation_id", "delivery_turn_id", "queued_prompt_sha256", "cwd_sha256",
+                "action_sha256",
+            ]
+            try exact(payload, required: keys)
+            _ = try string(payload, "continuation_id", identifier: true)
+            _ = try string(payload, "delivery_turn_id", identifier: true)
+            for key in ["queued_prompt_sha256", "cwd_sha256", "action_sha256"] {
+                _ = try string(
+                    payload,
+                    key,
+                    maximum: 71,
+                    pattern: "^sha256:[0-9a-f]{64}$"
+                )
+            }
         case "work_outcome_recorded":
             try exact(payload, required: ["continuation_id", "action_id", "work_outcome_status", "summary", "evidence_ids"])
             _ = try string(payload, "continuation_id", identifier: true)

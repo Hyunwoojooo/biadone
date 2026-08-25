@@ -37,6 +37,12 @@ public struct CoordinatorRoutingSnapshot: Sendable, Equatable {
     public let canonicalJSON: Data
 }
 
+struct CoordinatorRoutingRecoveryStatus: Sendable, Equatable {
+    let unsealedBoundaryCount: Int
+
+    var isQuarantined: Bool { unsealedBoundaryCount > 0 }
+}
+
 private struct RoutingInteractionIdentity: Sendable, Equatable {
     let binding: CoordinatorBinding
     let interactionID: String
@@ -119,6 +125,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     private var sealAttemptAnchors: [String: UInt64] = [:]
     private var ambiguousSelections: [CoordinatorBindingKey: RoutingAmbiguousSelection] = [:]
     private var lastClockNanoseconds: UInt64?
+    private var restartUnsealedBoundaryCount = 0
 
     public init(
         journal: any CoordinatorSemanticJournalPort,
@@ -148,13 +155,17 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func executeCommand(_ commandData: Data) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         var command = try StrictJSONTransport.object(from: commandData)
         let commandType = try requiredCommandType(command)
         // An open/seal pair must remain contiguous in the global journal so
         // the packet's valid-after sequence stays exact. A recovered seal may
         // retain an old monotonic anchor; the next routing time gate evaluates
         // it before any snapshot, foreground change, or selection can proceed.
-        if commandType != "open_boundary" && commandType != "seal_packet" {
+        if commandType != "open_boundary"
+            && commandType != "seal_packet"
+            && commandType != "activate_initial_boundary"
+        {
             try processDueLocked()
         }
         switch commandType {
@@ -162,6 +173,8 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             throw CoordinatorError("foreground_selection_required")
         case "consume_pet_action":
             throw CoordinatorError("routing_token_consumption_required")
+        case "claim_queued_action_context":
+            throw CoordinatorError("routing_queued_action_context_claim_required")
         case "expire_interaction", "timeout_transport_unknown":
             throw CoordinatorError("routing_scheduler_command_required")
         default:
@@ -170,10 +183,15 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
         let authorityAnchor = lastClockNanoseconds ?? clock.nowNanoseconds()
         var sealEventID: String?
-        var sealAnchor = authorityAnchor
-        if commandType == "seal_packet" {
+        var sealAnchor = commandType == "activate_initial_boundary"
+            ? clock.nowNanoseconds()
+            : authorityAnchor
+        if commandType == "seal_packet" || commandType == "activate_initial_boundary" {
             try validateRoutedPacketInterval(command)
-            let eventID = try requiredIdentifier(command, "event_id")
+            let eventID = try requiredIdentifier(
+                command,
+                commandType == "seal_packet" ? "event_id" : "seal_event_id"
+            )
             sealEventID = eventID
             if let retained = sealAttemptAnchors[eventID] {
                 sealAnchor = retained
@@ -205,8 +223,14 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         }
         let now = clock.nowNanoseconds()
         lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
-        if commandType == "seal_packet" {
-            try registerSealedPacketLocked(command: command, anchor: sealAnchor)
+        if commandType == "seal_packet" || commandType == "activate_initial_boundary" {
+            let registeredCommand: [String: Any]
+            if commandType == "activate_initial_boundary" {
+                registeredCommand = try activationPacketCommand(from: result)
+            } else {
+                registeredCommand = command
+            }
+            try registerSealedPacketLocked(command: registeredCommand, anchor: sealAnchor)
             if let sealEventID { sealAttemptAnchors.removeValue(forKey: sealEventID) }
         } else if commandType == "reserve_format_repair" {
             try registerFormatRepairLocked(command: command, anchor: authorityAnchor)
@@ -230,6 +254,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     ) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try processDueLocked()
 
         var command = try StrictJSONTransport.object(from: commandData)
@@ -278,12 +303,131 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         return result
     }
 
+    /// Atomically binds one completed queued continuation to the Codex turn
+    /// that is receiving its hidden action context. The semantic journal is
+    /// the delivery authority; process-local routing state is deliberately not
+    /// consulted so an exact same-turn retry can recover after daemon restart.
+    func routeQueuedActionContextClaim(_ commandData: Data) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+
+        let command = try StrictJSONTransport.object(from: commandData)
+        let commandType = try requiredCommandType(command)
+        try require(
+            commandType == "claim_queued_action_context",
+            "route_queued_action_context_claim_command_invalid"
+        )
+        let continuationID = try requiredIdentifier(command, "continuation_id")
+
+        // CoordinatorSemanticApplication exposes no effects until its journal
+        // append is durably accepted. If that response is lost, this method
+        // returns no action; a retry with the same delivery turn is recovered
+        // from the durable claim by the semantic decision layer.
+        do {
+            _ = try semantic.execute(command: commandData)
+        } catch {
+            let originalError = error
+            do {
+                return try claimedQueuedActionJSONLocked(
+                    command: command,
+                    continuationID: continuationID
+                )
+            } catch {
+                // A response loss is recoverable only when authoritative replay
+                // proves the exact claim tuple. Never replace an uncommitted or
+                // mismatched failure with action bytes.
+                throw originalError
+            }
+        }
+        return try claimedQueuedActionJSONLocked(
+            command: command,
+            continuationID: continuationID
+        )
+    }
+
+    private func claimedQueuedActionJSONLocked(
+        command: [String: Any],
+        continuationID: String
+    ) throws -> Data {
+        let state = try authoritativeStateLocked()
+        guard let continuation = state.continuation(id: continuationID),
+              continuation.dispatchMode == "queued_next_turn",
+              continuation.consumedAt != nil,
+              continuation.transport?.status == .completed,
+              state.boundary(for: continuation.binding)?.closed == true,
+              let claim = continuation.queuedActionContextClaim
+        else { throw CoordinatorError("queued_action_context_not_claimable") }
+        let commandBinding = try commandBinding(command)
+        try require(
+            commandBinding == continuation.binding,
+            "decision_boundary_binding_mismatch"
+        )
+        let deliveryTurnID = try requiredIdentifier(command, "delivery_turn_id")
+        guard let queuedPromptSHA256 = command["queued_prompt_sha256"] as? String,
+              let cwdSHA256 = command["cwd_sha256"] as? String,
+              let actionSHA256 = command["action_sha256"] as? String,
+              [queuedPromptSHA256, cwdSHA256, actionSHA256].allSatisfy({
+                  $0.range(
+                      of: "^sha256:[0-9a-f]{64}$",
+                      options: .regularExpression
+                  ) != nil
+              })
+        else { throw CoordinatorError("queued_action_context_digest_invalid") }
+        try require(
+            IdentifierNormalization.isByteExact(
+                claim.deliveryTurnID,
+                deliveryTurnID
+            ),
+            "queued_action_context_already_claimed"
+        )
+        try require(
+            IdentifierNormalization.isByteExact(
+                claim.queuedPromptSHA256,
+                queuedPromptSHA256
+            ) && IdentifierNormalization.isByteExact(
+                claim.cwdSHA256,
+                cwdSHA256
+            ) && IdentifierNormalization.isByteExact(
+                claim.actionSHA256,
+                actionSHA256
+            ),
+            "queued_action_context_claim_mismatch"
+        )
+        let documentKey = CoordinatorPacketRevision(
+            packetID: continuation.packetID,
+            revision: continuation.revision
+        )
+        guard let packet = state.packetDocuments[documentKey],
+              let choice = packet.choices.first(where: {
+                  guard let actionID = $0.actionID else { return false }
+                  return IdentifierNormalization.isByteExact(
+                      $0.optionID,
+                      continuation.optionID
+                  ) && IdentifierNormalization.isByteExact(
+                      actionID,
+                      continuation.actionID
+                  )
+              }),
+              let actionJSON = choice.actionJSON
+        else { throw CoordinatorError("continuation_action_mismatch") }
+        try require(
+            IdentifierNormalization.isByteExact(
+                CoordinatorSHA256.fingerprint(actionJSON),
+                actionSHA256
+            ),
+            "queued_action_context_claim_mismatch"
+        )
+        return actionJSON
+    }
+
     /// Explicitly selects or switches the one process-wide foreground card.
     /// The target must name the exact current pending revision and expected
     /// state; passing a session or packet prefix is never sufficient.
     public func setForeground(_ targetData: Data) throws -> CoordinatorRoutingSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         let target = try routingTarget(from: targetData)
         guard let current = pending[target.binding.fullKey],
@@ -296,6 +440,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func clearForeground() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         foreground = nil
         return try snapshotLocked()
@@ -307,6 +452,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func routeSelection(_ commandData: Data) throws -> CoordinatorSemanticExecutionResult {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try processDueLocked()
 
         var command = try StrictJSONTransport.object(from: commandData)
@@ -416,6 +562,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func processTime() throws -> [Data] {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try reconcileAmbiguousSelectionsLocked()
         try processDueLocked(reconcileTerminalRuntime: false)
         return drainNoticesLocked()
@@ -426,6 +573,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func processTimeKeepingNotices() throws {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try reconcileAmbiguousSelectionsLocked()
         try processDueLocked(reconcileTerminalRuntime: false)
     }
@@ -433,6 +581,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func snapshot() throws -> CoordinatorRoutingSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
         try processDueLocked()
         return try snapshotLocked()
     }
@@ -455,6 +604,14 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         return try authoritativeStateLocked()
     }
 
+    func recoveryStatus() -> CoordinatorRoutingRecoveryStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return CoordinatorRoutingRecoveryStatus(
+            unsealedBoundaryCount: restartUnsealedBoundaryCount
+        )
+    }
+
     public func drainNotices() -> [Data] {
         lock.lock()
         defer { lock.unlock() }
@@ -466,6 +623,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public func millisecondsUntilNextDeadline() -> Int32? {
         lock.lock()
         defer { lock.unlock() }
+        guard restartUnsealedBoundaryCount == 0 else { return nil }
         // Ambiguity reconciliation runs before every other due transition. If
         // its authority read keeps failing, no other zero-deadline work can
         // make progress, so keep a bounded retry instead of falling into the
@@ -520,6 +678,9 @@ private extension CoordinatorRoutingApplication {
         commandType: String,
         command: [String: Any]
     ) throws -> CoordinatorSemanticExecutionResult? {
+        if commandType == "activate_initial_boundary" {
+            return try recoverCommittedInitialActivationLocked(command: command)
+        }
         guard ["open_boundary", "seal_packet"].contains(commandType),
               let eventID = command["event_id"] as? String
         else { return nil }
@@ -589,6 +750,99 @@ private extension CoordinatorRoutingApplication {
                 eventCount: 1
             ),
             effects: []
+        )
+    }
+
+    func recoverCommittedInitialActivationLocked(
+        command: [String: Any]
+    ) throws -> CoordinatorSemanticExecutionResult? {
+        guard let openEventID = command["open_event_id"] as? String,
+              let sealEventID = command["seal_event_id"] as? String,
+              let proposalID = command["proposal_id"] as? String,
+              let occurredAt = command["occurred_at"] as? String,
+              let packetTemplate = command["packet"] as? [String: Any]
+        else { return nil }
+        let binding = try commandBinding(command)
+        let snapshot = try journal.load()
+        let state = try CoordinatorSemanticReplay.replay(snapshot)
+
+        func authorityEvent(
+            id: String,
+            type: String
+        ) throws -> ([String: Any], Int64)? {
+            for data in snapshot.events {
+                let event = try StrictJSONTransport.object(from: data)
+                guard let candidateID = event["event_id"] as? String,
+                      IdentifierNormalization.isByteExact(candidateID, id)
+                else { continue }
+                guard event["event_type"] as? String == type,
+                      (try? CoordinatorBinding(jsonObject: event)) == binding,
+                      let sequence = ExactJSONInteger.int64(
+                          event["event_sequence"],
+                          minimum: 1
+                      )
+                else { return nil }
+                return (event, sequence)
+            }
+            return nil
+        }
+
+        guard let (opened, openSequence) = try authorityEvent(
+                  id: openEventID,
+                  type: "decision_boundary_opened"
+              ),
+              let (sealed, sealSequence) = try authorityEvent(
+                  id: sealEventID,
+                  type: "decision_packet_sealed"
+              ),
+              sealSequence == openSequence + 1,
+              let openPayload = opened["payload"] as? [String: Any],
+              IdentifierNormalization.isByteExact(
+                  openPayload["proposal_id"] as? String ?? "",
+                  proposalID
+              ),
+              IdentifierNormalization.isByteExact(
+                  opened["occurred_at"] as? String ?? "",
+                  occurredAt
+              ),
+              let packet = state.packet(for: binding),
+              packet.validAfterEventSequence == sealSequence,
+              IdentifierNormalization.isByteExact(
+                  packet.sealedAt.rawValue,
+                  occurredAt
+              ),
+              let sealPayload = sealed["payload"] as? [String: Any],
+              IdentifierNormalization.isByteExact(
+                  sealPayload["interaction_id"] as? String ?? "",
+                  packet.interactionID
+              ),
+              IdentifierNormalization.isByteExact(
+                  sealPayload["packet_id"] as? String ?? "",
+                  packet.packetID
+              ),
+              ExactJSONInteger.int64(sealPayload["revision"], minimum: 1)
+                  == packet.revision,
+              IdentifierNormalization.isByteExact(
+                  sealPayload["expires_at"] as? String ?? "",
+                  packet.expiresAt.rawValue
+              )
+        else { return nil }
+        var expectedPacket = packetTemplate
+        expectedPacket["valid_after_event_sequence"] = sealSequence
+        guard try StrictJSON.canonicalData(for: expectedPacket) == packet.canonicalJSON else {
+            return nil
+        }
+        let effect = try StrictJSONTransport.data(forJSONObject: [
+            "kind": "blabee_initial_activation_committed",
+            "packet": try StrictJSONTransport.object(from: packet.canonicalJSON),
+        ])
+        return CoordinatorSemanticExecutionResult(
+            commit: JournalAppendResult(
+                firstSequence: openSequence,
+                lastSequence: sealSequence,
+                eventCount: 2
+            ),
+            effects: [effect]
         )
     }
 
@@ -824,6 +1078,22 @@ private extension CoordinatorRoutingApplication {
         foreground = nil
         let snapshot = try journal.load()
         let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let unsealed = state.boundaries.values.filter {
+            !$0.closed && $0.packet == nil && $0.repair == nil
+        }
+        if !unsealed.isEmpty {
+            // Legacy builds could commit `open_boundary` before the packet.
+            // The journal does not contain enough proposal/packet bytes to
+            // reconstruct that exact seal after restart. Do not append any
+            // other recovery event, because it would permanently consume the
+            // sequence that the missing packet was required to seal against.
+            restartUnsealedBoundaryCount = unsealed.count
+            pending.removeAll()
+            inFlight.removeAll()
+            formatRepairs.removeAll()
+            lastClockNanoseconds = clock.nowNanoseconds()
+            return
+        }
         for boundary in state.pendingInteractions.sorted(by: boundaryOrder) {
             guard let packet = boundary.packet else { continue }
             let command: [String: Any] = [
@@ -868,6 +1138,12 @@ private extension CoordinatorRoutingApplication {
         inFlight.removeAll()
         formatRepairs.removeAll()
         lastClockNanoseconds = clock.nowNanoseconds()
+    }
+
+    func requireRestartRecoveryWritableLocked() throws {
+        guard restartUnsealedBoundaryCount == 0 else {
+            throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
+        }
     }
 
     func processDueLocked(reconcileTerminalRuntime: Bool = true) throws {
@@ -1066,6 +1342,19 @@ private extension CoordinatorRoutingApplication {
             anchorNanoseconds: anchor,
             reminderEmitted: false
         )
+    }
+
+    func activationPacketCommand(
+        from result: CoordinatorSemanticExecutionResult
+    ) throws -> [String: Any] {
+        guard result.effects.count == 1,
+              let effectData = result.effects.first
+        else { throw CoordinatorError("initial_activation_effect_missing") }
+        let effect = try StrictJSONTransport.object(from: effectData)
+        guard effect["kind"] as? String == "blabee_initial_activation_committed",
+              let packet = effect["packet"] as? [String: Any]
+        else { throw CoordinatorError("initial_activation_effect_invalid") }
+        return ["packet": packet]
     }
 
     func validateRoutedPacketInterval(_ command: [String: Any]) throws {

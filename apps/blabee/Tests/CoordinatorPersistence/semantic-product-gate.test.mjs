@@ -204,11 +204,12 @@ test("product adapter accepts semantic commands and rejects raw journal append",
   );
   assert.equal(client.stderrText.includes(envelope.continuation_token), false);
 
+  const nulEventID = "event_semantic_product_gate\u0000suffix";
   const completed = await client.request({
     op: "execute_command",
     command: {
       type: "complete_transport",
-      event_id: "event_semantic_product_gate_complete",
+      event_id: nulEventID,
       occurred_at: envelope.issued_at,
       binding,
       continuation_id: nulContinuationID,
@@ -217,25 +218,6 @@ test("product adapter accepts semantic commands and rejects raw journal append",
   assert.equal(completed.ok, true);
   assert.equal(completed.result.last_sequence, 6);
 
-  const nulBinding = Object.fromEntries(
-    Object.entries(binding).map(([key, value]) => [
-      key,
-      key === "boundary_sequence" ? value : `${value}_nul`,
-    ]),
-  );
-  const nulEventID = "event_semantic_product_gate\u0000suffix";
-  const nulOpen = await client.request({
-    op: "execute_command",
-    command: {
-      type: "open_boundary",
-      event_id: nulEventID,
-      occurred_at: "2026-08-21T01:00:04Z",
-      binding: nulBinding,
-      proposal_id: "proposal_semantic_product_gate_nul",
-    },
-  });
-  assert.equal(nulOpen.ok, true);
-  assert.equal(nulOpen.result.last_sequence, 7);
   await client.close();
   client = await launchProductCoordinator(workspace);
   const replayed = await client.request({ op: "load" });
@@ -253,5 +235,5 @@ test("product adapter accepts semantic commands and rejects raw journal append",
 
   const health = await client.request({ op: "health" });
   assert.equal(health.ok, true);
-  assert.equal(health.result.journal_sequence, 7);
+  assert.equal(health.result.journal_sequence, 6);
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -542,6 +543,194 @@ test("semantic traces enforce same-turn boundary, binding, transport, outcome, a
       failure_inferred: false,
     },
   );
+});
+
+test("queued action context claims are durable, one-event, and fail closed across turns", async (t) => {
+  const suite = await suitePromise;
+  const traces = await loadSemanticTraces();
+  const runtimeValidator = suite.compiled.validatorsByName.get("runtime_event");
+  assert.equal(typeof runtimeValidator, "function");
+  const claimFixture = caseFor(
+    suite,
+    (item) => item.valid && item.name === "valid_runtime_queued_action_context_claimed",
+    "a valid queued-action-context claim event",
+  ).value;
+  const sourceTrace = traces.find(({ trace }) => trace.name === "same_turn_two_boundaries")?.trace;
+  assert.ok(sourceTrace, "same_turn_two_boundaries trace is required");
+
+  const firstCloseIndex = sourceTrace.events.findIndex(
+    (event) => traceEventType(event) === "decision_boundary_closed",
+  );
+  assert.ok(firstCloseIndex > 0, "source trace needs a closed first boundary");
+  const eventsBeforeClaim = sourceTrace.events
+    .slice(0, firstCloseIndex + 1)
+    .filter((event) => traceEventType(event) !== "work_outcome_recorded")
+    .map(clone);
+  const dispatch = eventsBeforeClaim.find((event) => traceEventType(event) === "continuation_dispatched");
+  const consumed = eventsBeforeClaim.find((event) => traceEventType(event) === "continuation_consumed");
+  const opened = eventsBeforeClaim.find((event) => traceEventType(event) === "decision_boundary_opened");
+  const packet = eventsBeforeClaim.find((event) => traceEventType(event) === "decision_packet_sealed");
+  const selection = eventsBeforeClaim.find((event) => traceEventType(event) === "decision_selection_claimed");
+  assert.ok(
+    dispatch && consumed && opened && packet && selection,
+    "source trace needs packet, selection, dispatch, consumption, and boundary binding",
+  );
+  traceEventData(dispatch).dispatch_mode = "queued_next_turn";
+  traceEventData(dispatch).queued_action_context_claim_protocol = "v1";
+  traceEventData(consumed).dispatch_mode = "queued_next_turn";
+
+  const claim = copyTraceBinding(clone(claimFixture), opened);
+  claim.event_id = "event_inline_queued_action_context_claimed";
+  claim.occurred_at = "2026-01-15T10:00:07Z";
+  claim.payload.continuation_id = traceEventData(dispatch).continuation_id;
+  const sealedAction = {
+    constraints: ["Preserve the exact binding"],
+    done_when: ["The selected action is complete"],
+    objective: "Execute the selected durable action",
+    title: "Execute durable action",
+  };
+  claim.payload.action_sha256 = `sha256:${createHash("sha256")
+    .update(JSON.stringify(sealedAction), "utf8")
+    .digest("hex")}`;
+  const packetDocuments = [{
+    packet_id: traceEventData(packet).packet_id,
+    revision: traceEventData(packet).revision,
+    choices: [{
+      option_id: traceEventData(selection).option_id,
+      action_id: traceEventData(dispatch).action_id,
+      action: sealedAction,
+    }],
+  }];
+  const traceFrom = (name, events, extra = {}) => resequenceTrace({
+    trace_version: "1.0",
+    name,
+    valid: true,
+    expected_error_code: null,
+    events: events.map(clone),
+    packet_documents: clone(packetDocuments),
+    ...extra,
+  });
+
+  await t.test("claim digests use prefixed lowercase SHA-256", () => {
+    const uppercaseDigest = clone(claimFixture);
+    uppercaseDigest.payload.action_sha256 = `sha256:${"A".repeat(64)}`;
+    assertSchemaResult(
+      runtimeValidator,
+      uppercaseDigest,
+      false,
+      "queued action context claim uppercase digest",
+    );
+  });
+
+  await t.test("claim protocol marker is only valid for queued next-turn dispatch", () => {
+    const sameTurnDispatch = clone(dispatch);
+    traceEventData(sameTurnDispatch).dispatch_mode = "same_turn_stop";
+    assertSchemaResult(
+      runtimeValidator,
+      sameTurnDispatch,
+      false,
+      "same-turn dispatch carrying queued action claim protocol",
+    );
+  });
+
+  await t.test("first durable claim is valid", () => {
+    const trace = traceFrom("queued_action_context_first_claim", [...eventsBeforeClaim, claim]);
+    assertSemanticValid(trace, runtimeValidator, trace.name);
+  });
+
+  await t.test("first claim action digest must match the sealed selected action", () => {
+    const mismatched = clone(claim);
+    mismatched.payload.action_sha256 = `sha256:${"d".repeat(64)}`;
+    const trace = traceFrom(
+      "queued_action_context_first_claim_action_mismatch",
+      [...eventsBeforeClaim, mismatched],
+    );
+    assertSemanticError(
+      trace,
+      "queued_action_context_claim_mismatch",
+      runtimeValidator,
+      trace.name,
+    );
+  });
+
+  await t.test("same-turn retry reuses the claim instead of appending it", () => {
+    const duplicate = clone(claim);
+    duplicate.event_id = "event_inline_queued_action_context_claimed_duplicate";
+    duplicate.occurred_at = "2026-01-15T10:00:08Z";
+    const trace = traceFrom(
+      "queued_action_context_same_turn_duplicate_after_restart",
+      [...eventsBeforeClaim, claim, duplicate],
+      { restart_after_event_sequence: eventsBeforeClaim.length + 1 },
+    );
+    assertSemanticError(
+      trace,
+      "queued_action_context_already_claimed",
+      runtimeValidator,
+      trace.name,
+    );
+  });
+
+  await t.test("different delivery turn conflicts with the durable claim", () => {
+    const conflicting = clone(claim);
+    conflicting.event_id = "event_inline_queued_action_context_claimed_other_turn";
+    conflicting.occurred_at = "2026-01-15T10:00:08Z";
+    conflicting.payload.delivery_turn_id = "turn_fixture_delivery_other";
+    const trace = traceFrom(
+      "queued_action_context_other_turn_after_restart",
+      [...eventsBeforeClaim, claim, conflicting],
+      { restart_after_event_sequence: eventsBeforeClaim.length + 1 },
+    );
+    assertSemanticError(trace, "queued_action_context_already_claimed", runtimeValidator, trace.name);
+  });
+
+  await t.test("different action digest conflicts with the durable claim", () => {
+    const conflicting = clone(claim);
+    conflicting.event_id = "event_inline_queued_action_context_claimed_other_action";
+    conflicting.occurred_at = "2026-01-15T10:00:08Z";
+    conflicting.payload.action_sha256 = `sha256:${"d".repeat(64)}`;
+    const trace = traceFrom(
+      "queued_action_context_other_action_after_restart",
+      [...eventsBeforeClaim, claim, conflicting],
+      { restart_after_event_sequence: eventsBeforeClaim.length + 1 },
+    );
+    assertSemanticError(trace, "queued_action_context_already_claimed", runtimeValidator, trace.name);
+  });
+
+  await t.test("claim before boundary close is rejected", () => {
+    const withoutClose = eventsBeforeClaim.filter(
+      (event) => traceEventType(event) !== "decision_boundary_closed",
+    );
+    const trace = traceFrom("queued_action_context_before_boundary_close", [...withoutClose, claim]);
+    assertSemanticError(trace, "decision_boundary_not_closed", runtimeValidator, trace.name);
+  });
+
+  await t.test("claim without completed transport is rejected", () => {
+    const withoutCompletion = eventsBeforeClaim.filter(
+      (event) => traceEventType(event) !== "continuation_transport_completed",
+    );
+    const trace = traceFrom("queued_action_context_without_completed_transport", [...withoutCompletion, claim]);
+    assertSemanticError(
+      trace,
+      "transport_terminal_observation_missing",
+      runtimeValidator,
+      trace.name,
+    );
+  });
+
+  await t.test("legacy unmarked continuation fails closed", () => {
+    const legacyEvents = eventsBeforeClaim.map(clone);
+    const legacyDispatch = legacyEvents.find(
+      (event) => traceEventType(event) === "continuation_dispatched",
+    );
+    delete traceEventData(legacyDispatch).queued_action_context_claim_protocol;
+    const trace = traceFrom("queued_action_context_legacy_unmarked", [...legacyEvents, claim]);
+    assertSemanticError(
+      trace,
+      "queued_action_context_claim_protocol_missing",
+      runtimeValidator,
+      trace.name,
+    );
+  });
 });
 
 test("internal format repair journal replay preserves one boundary reservation budget", async (t) => {
