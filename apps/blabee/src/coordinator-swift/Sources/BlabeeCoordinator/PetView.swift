@@ -11,7 +11,8 @@ struct PetRootView: View {
                 .stroke(Color.white.opacity(0.24), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
     }
 
     private var panelBody: some View {

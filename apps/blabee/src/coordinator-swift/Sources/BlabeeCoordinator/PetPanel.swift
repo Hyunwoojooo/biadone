@@ -66,7 +66,7 @@ enum PetFrameClamp {
         size: CGSize,
         statusItemFrame: CGRect,
         in visibleFrame: CGRect,
-        gap: CGFloat = 8
+        gap: CGFloat = 0
     ) -> CGRect {
         clamp(
             CGRect(
@@ -77,6 +77,22 @@ enum PetFrameClamp {
             ),
             to: visibleFrame
         )
+    }
+}
+
+enum PetPanelDismissalPolicy {
+    static func shouldDismiss(
+        panelIsVisible: Bool,
+        clickLocation: CGPoint,
+        panelFrame: CGRect,
+        statusItemFrame: CGRect?
+    ) -> Bool {
+        guard panelIsVisible else { return false }
+        guard !panelFrame.contains(clickLocation) else { return false }
+        if let statusItemFrame, statusItemFrame.contains(clickLocation) {
+            return false
+        }
+        return true
     }
 }
 
@@ -124,6 +140,8 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     private let viewModel: PetViewModel
     private weak var statusItemButton: NSStatusBarButton?
     private var screenObserver: NSObjectProtocol?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
     private var lastScreenID: Int?
 
     init(viewModel: PetViewModel) {
@@ -159,10 +177,12 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     func showWithoutActivation() {
         placeAtStatusItem(display: false)
         panel.orderFrontRegardless()
+        startObservingOutsideClicks()
     }
 
     func hide() {
         panel.orderOut(nil)
+        stopObservingOutsideClicks()
     }
 
     func toggleVisibility() {
@@ -176,6 +196,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     func stopObservingScreenChanges() {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        stopObservingOutsideClicks()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -214,13 +235,9 @@ final class PetPanelController: NSObject, NSWindowDelegate {
 
     private func placeAtStatusItem(display: Bool) {
         let size = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
-        if let statusItemButton,
-           let window = statusItemButton.window,
-           let screen = window.screen
+        if let statusItemFrame = statusItemFrameInScreen(),
+           let screen = statusItemButton?.window?.screen
         {
-            let statusItemFrame = window.convertToScreen(
-                statusItemButton.convert(statusItemButton.bounds, to: nil)
-            )
             lastScreenID = Self.screenID(screen)
             panel.setFrame(
                 PetFrameClamp.belowStatusItemFrame(
@@ -251,6 +268,64 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             activeDisplayID: activeID,
             stableDisplayID: stable ? lastScreenID : nil
         )
+    }
+
+    private func startObservingOutsideClicks() {
+        let mouseDownEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+        ]
+        if localMouseMonitor == nil {
+            localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: mouseDownEvents
+            ) { [weak self] event in
+                let clickLocation = Self.screenLocation(for: event)
+                Task { @MainActor [weak self] in
+                    self?.dismissForOutsideClick(at: clickLocation)
+                }
+                return event
+            }
+        }
+        if globalMouseMonitor == nil {
+            globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: mouseDownEvents
+            ) { [weak self] event in
+                let clickLocation = event.locationInWindow
+                Task { @MainActor [weak self] in
+                    self?.dismissForOutsideClick(at: clickLocation)
+                }
+            }
+        }
+    }
+
+    private func stopObservingOutsideClicks() {
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        localMouseMonitor = nil
+        globalMouseMonitor = nil
+    }
+
+    private func dismissForOutsideClick(at clickLocation: CGPoint) {
+        guard PetPanelDismissalPolicy.shouldDismiss(
+            panelIsVisible: panel.isVisible,
+            clickLocation: clickLocation,
+            panelFrame: panel.frame,
+            statusItemFrame: statusItemFrameInScreen()
+        ) else { return }
+        hide()
+    }
+
+    private func statusItemFrameInScreen() -> CGRect? {
+        guard let statusItemButton, let window = statusItemButton.window else { return nil }
+        return window.convertToScreen(
+            statusItemButton.convert(statusItemButton.bounds, to: nil)
+        )
+    }
+
+    private static func screenLocation(for event: NSEvent) -> CGPoint {
+        guard let window = event.window else { return event.locationInWindow }
+        return window.convertPoint(toScreen: event.locationInWindow)
     }
 
     private static func geometry(_ screen: NSScreen) -> PetDisplayGeometry? {

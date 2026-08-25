@@ -64,7 +64,7 @@ func blabeePetStatusItemPanelAnchor() {
 
     #expect(frame.size == size)
     #expect(frame.midX == statusFrame.midX)
-    #expect(frame.maxY == statusFrame.minY - 8)
+    #expect(frame.maxY == statusFrame.minY)
     #expect(visibleFrame.contains(frame))
 
     let edgeFrame = PetFrameClamp.belowStatusItemFrame(
@@ -74,6 +74,51 @@ func blabeePetStatusItemPanelAnchor() {
     )
     #expect(edgeFrame.maxX == visibleFrame.maxX)
     #expect(visibleFrame.contains(edgeFrame))
+}
+
+@Test("BlabeePet dismisses only for clicks outside the panel and menu-bar item")
+func blabeePetOutsideClickDismissalPolicy() {
+    let panelFrame = CGRect(x: 960, y: 395, width: 460, height: 480)
+    let statusItemFrame = CGRect(x: 1_180, y: 875, width: 28, height: 25)
+
+    #expect(!PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: true,
+        clickLocation: CGPoint(x: 1_100, y: 600),
+        panelFrame: panelFrame,
+        statusItemFrame: statusItemFrame
+    ))
+    #expect(!PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: true,
+        clickLocation: CGPoint(x: 1_194, y: 887),
+        panelFrame: panelFrame,
+        statusItemFrame: statusItemFrame
+    ))
+    #expect(PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: true,
+        clickLocation: CGPoint(x: 700, y: 600),
+        panelFrame: panelFrame,
+        statusItemFrame: statusItemFrame
+    ))
+    #expect(!PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: false,
+        clickLocation: CGPoint(x: 700, y: 600),
+        panelFrame: panelFrame,
+        statusItemFrame: statusItemFrame
+    ))
+
+    let negativePanelFrame = CGRect(x: -900, y: 300, width: 460, height: 480)
+    #expect(!PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: true,
+        clickLocation: CGPoint(x: -700, y: 500),
+        panelFrame: negativePanelFrame,
+        statusItemFrame: nil
+    ))
+    #expect(PetPanelDismissalPolicy.shouldDismiss(
+        panelIsVisible: true,
+        clickLocation: CGPoint(x: -1_200, y: 500),
+        panelFrame: negativePanelFrame,
+        statusItemFrame: nil
+    ))
 }
 
 @Test("BlabeePet loads the bundled SVG and overlays attention inside the icon")
