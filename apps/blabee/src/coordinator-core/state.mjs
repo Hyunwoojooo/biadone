@@ -56,6 +56,18 @@ function assertNoRawToken(value, code = "raw_continuation_token_forbidden") {
   }
 }
 
+function isActionChoice(choice) {
+  return choice?.kind === "recommended_action" || choice?.kind === "alternative_action";
+}
+
+function isPauseSelection(selection) {
+  return selection?.kind === "pause";
+}
+
+function isActionSelection(selection) {
+  return selection?.kind === "recommended_action" || selection?.kind === "alternative_action";
+}
+
 export function validatePacketDocument(packet) {
   invariant(packet?.schema_version === "1.0", "packet_document_schema_version_invalid");
   invariant(packet?.kind === "blabee_decision_packet", "packet_document_kind_invalid");
@@ -73,22 +85,35 @@ export function validatePacketDocument(packet) {
     parseTimestamp(packet.sealed_at) < parseTimestamp(packet.expires_at),
     "decision_packet_time_invalid",
   );
-  invariant(Array.isArray(packet.choices) && packet.choices.length === 4, "packet_choices_invalid");
+  const ranked = packet.decision_layout === "ranked_next_actions";
+  invariant(packet.decision_layout === undefined || ranked, "packet_decision_layout_invalid");
+  invariant(
+    Array.isArray(packet.choices)
+      && (ranked
+        ? packet.choices.length >= 2 && packet.choices.length <= 4
+        : packet.choices.length === 4),
+    "packet_choices_invalid",
+  );
   const optionIds = new Set();
   const actionIds = new Set();
   for (const [index, choice] of packet.choices.entries()) {
     invariant(choice?.slot === index + 1, "packet_slot_order_invalid");
+    const expectedKind = ranked
+      ? (index === 0 ? "recommended_action" : "alternative_action")
+      : ["recommended_action", "alternative_action", "pause", "rollback"][index];
+    invariant(choice.kind === expectedKind, "packet_choice_kind_invalid");
     assertIdentifier(choice.option_id, "option_id");
     invariant(!optionIds.has(choice.option_id), "packet_option_id_duplicate");
     optionIds.add(choice.option_id);
     invariant(typeof choice.enabled === "boolean", "packet_choice_enabled_invalid");
-    if (choice.enabled && (choice.slot === 1 || choice.slot === 2)) {
+    if (choice.enabled && isActionChoice(choice)) {
       assertIdentifier(choice.action_id, "action_id");
       invariant(
         choice.action && typeof choice.action === "object" && !Array.isArray(choice.action),
         "packet_action_missing",
       );
     }
+    if (ranked) invariant(choice.enabled && isActionChoice(choice), "packet_ranked_choice_invalid");
     if (choice.action_id !== null) {
       assertIdentifier(choice.action_id, "action_id");
       invariant(!actionIds.has(choice.action_id), "decision_packet_action_id_not_unique");
@@ -103,7 +128,7 @@ export function validatePacketDocument(packet) {
     packet.checkpoint?.id === packet.episode_baseline_checkpoint_id,
     "decision_packet_checkpoint_mismatch",
   );
-  const rollbackChoice = packet.choices.find((choice) => choice.slot === 4);
+  const rollbackChoice = packet.choices.find((choice) => choice.kind === "rollback");
   if (rollbackChoice?.enabled) {
     invariant(
       rollbackChoice.target_checkpoint_id === packet.episode_baseline_checkpoint_id,
@@ -304,16 +329,16 @@ export function reduce(state, event) {
 
   if (event.event_type === "decision_boundary_closed") {
     invariant(!boundary.closed, "decision_boundary_already_closed");
-    if (boundary.selection?.slot === 3) {
+    if (isPauseSelection(boundary.selection)) {
       invariant(
         event.payload.close_reason === "episode_paused",
         "pause_selection_close_reason_invalid",
       );
     }
     if (event.payload.close_reason === "episode_paused") {
-      invariant(boundary.selection?.slot === 3, "episode_pause_selection_missing");
+      invariant(isPauseSelection(boundary.selection), "episode_pause_selection_missing");
     }
-    if (boundary.selection?.slot === 1 || boundary.selection?.slot === 2) {
+    if (isActionSelection(boundary.selection)) {
       invariant(
         boundary.dispatchedContinuationId,
         "transport_terminal_observation_missing",
@@ -409,6 +434,7 @@ export function reduce(state, event) {
       revision: payload.revision,
       optionId: payload.option_id,
       slot: choice.slot,
+      kind: choice.kind,
       actionId: choice.action_id,
     };
     return deepFreeze(next);
@@ -471,7 +497,7 @@ export function reduce(state, event) {
     invariant(!boundary.expired, "interaction_already_expired");
     invariant(boundary.selection, "selection_not_claimed");
     invariant(
-      boundary.selection.slot === 1 || boundary.selection.slot === 2,
+      isActionSelection(boundary.selection),
       "decision_option_not_pet_action",
     );
     const selectedPacket = next.packetDocuments[boundary.packet.documentKey];

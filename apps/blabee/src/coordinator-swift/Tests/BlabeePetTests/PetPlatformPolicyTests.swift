@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import CoordinatorSwift
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -12,6 +13,32 @@ private let petRepositoryRoot: URL = {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
 }()
+
+@Test("BlabeePet process lease rejects another holder and releases cleanly")
+func blabeePetSingleProcessLease() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blabee-pet-lease-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: root,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    do {
+        let first = try PetProcessLease(runtimeRootURL: root)
+        do {
+            _ = try PetProcessLease(runtimeRootURL: root)
+            Issue.record("a second Pet process lease must be rejected")
+        } catch let error as CoordinatorError {
+            #expect(error.code == "pet_already_running")
+        }
+        withExtendedLifetime(first) {}
+    }
+
+    let replacement = try PetProcessLease(runtimeRootURL: root)
+    withExtendedLifetime(replacement) {}
+}
 
 @Test("BlabeePet clamps frames purely across negative and oversized displays")
 func blabeePetMultiDisplayFrameClamp() {
@@ -641,7 +668,7 @@ func blabeePetActionShortcutPresentation() throws {
         risk: "high"
     )]))
     let highInteraction = try #require(highSnapshot.interactions.first)
-    registry.reconcile(eligibleSlots: [3])
+    registry.reconcile(eligibleSlots: [])
     #expect(viewModel.actionShortcutLabel(
         interaction: highInteraction,
         choice: try #require(highInteraction.choice(slot: 1))
@@ -653,7 +680,7 @@ func blabeePetActionShortcutPresentation() throws {
     #expect(viewModel.actionShortcutLabel(
         interaction: highInteraction,
         choice: try #require(highInteraction.choice(slot: 3))
-    ) == "⌥3")
+    ) == "사용 불가")
 
     let collisionBackend = PetFakeHotKeyBackend()
     collisionBackend.failingShortcuts = [PetShortcutConfiguration.defaults.slot1]

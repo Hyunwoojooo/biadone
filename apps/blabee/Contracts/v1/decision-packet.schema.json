@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.blabee.local/contracts/v1/decision-packet.schema.json",
   "title": "Blabee v1 decision packet",
-  "description": "A coordinator-sealed four-slot decision packet bound to one prompt episode and one decision boundary.",
+  "description": "A coordinator-sealed ranked decision packet bound to one prompt episode and one decision boundary. New packets contain two to four action choices; the legacy fixed four-slot shape remains readable for cached clients and durable replay.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,12 +29,38 @@
     "checkpoint",
     "choices"
   ],
+  "oneOf": [
+    {
+      "required": [
+        "decision_layout"
+      ],
+      "properties": {
+        "decision_layout": {
+          "const": "ranked_next_actions"
+        },
+        "choices": {
+          "$ref": "#/$defs/ranked_action_choices"
+        }
+      }
+    },
+    {
+      "properties": {
+        "decision_layout": false,
+        "choices": {
+          "$ref": "#/$defs/legacy_fixed_choices"
+        }
+      }
+    }
+  ],
   "properties": {
     "schema_version": {
       "const": "1.0"
     },
     "kind": {
       "const": "blabee_decision_packet"
+    },
+    "decision_layout": {
+      "const": "ranked_next_actions"
     },
     "interaction_id": {
       "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
@@ -98,6 +124,73 @@
       "$ref": "#/$defs/checkpoint"
     },
     "choices": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ranked_action_choices"
+        },
+        {
+          "$ref": "#/$defs/legacy_fixed_choices"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "ranked_action_choices": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/ranked_recommended_slot"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_2"
+            }
+          ],
+          "items": false
+        },
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/ranked_recommended_slot"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_2"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_3"
+            }
+          ],
+          "items": false
+        },
+        {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/ranked_recommended_slot"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_2"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_3"
+            },
+            {
+              "$ref": "#/$defs/ranked_alternative_slot_4"
+            }
+          ],
+          "items": false
+        }
+      ]
+    },
+    "legacy_fixed_choices": {
       "type": "array",
       "minItems": 4,
       "maxItems": 4,
@@ -116,9 +209,120 @@
         }
       ],
       "items": false
-    }
-  },
-  "$defs": {
+    },
+    "ranked_action_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "kind",
+        "enabled",
+        "disabled_reason",
+        "option_id",
+        "action_id",
+        "action"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "kind": {
+          "enum": [
+            "recommended_action",
+            "alternative_action"
+          ]
+        },
+        "enabled": {
+          "const": true
+        },
+        "disabled_reason": {
+          "type": "null"
+        },
+        "option_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action_id": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/identifier"
+        },
+        "action": {
+          "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+        }
+      }
+    },
+    "ranked_recommended_slot": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ranked_action_slot"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "slot": {
+              "const": 1
+            },
+            "kind": {
+              "const": "recommended_action"
+            }
+          }
+        }
+      ]
+    },
+    "ranked_alternative_slot_2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ranked_action_slot"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "slot": {
+              "const": 2
+            },
+            "kind": {
+              "const": "alternative_action"
+            }
+          }
+        }
+      ]
+    },
+    "ranked_alternative_slot_3": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ranked_action_slot"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "slot": {
+              "const": 3
+            },
+            "kind": {
+              "const": "alternative_action"
+            }
+          }
+        }
+      ]
+    },
+    "ranked_alternative_slot_4": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ranked_action_slot"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "slot": {
+              "const": 4
+            },
+            "kind": {
+              "const": "alternative_action"
+            }
+          }
+        }
+      ]
+    },
     "evidence_item": {
       "type": "object",
       "additionalProperties": false,

@@ -1,133 +1,588 @@
 import SwiftUI
 
+private enum PetPanelVisualStyle {
+    static let cornerRadius: CGFloat = 30
+    static let rimWidth: CGFloat = 0.75
+    static let contentPadding: CGFloat = 22
+    static let sectionRadius: CGFloat = 20
+    static let rowRadius: CGFloat = 18
+}
+
+private struct PetInsetSurfaceModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+
+    let emphasized: Bool
+    let cornerRadius: CGFloat
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var fill: Color {
+        if colorScheme == .dark {
+            return Color.white.opacity(emphasized ? 0.10 : 0.065)
+        }
+        return Color.white.opacity(emphasized ? 0.58 : 0.38)
+    }
+
+    private var rim: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.13)
+            : Color.white.opacity(0.70)
+    }
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(Color(nsColor: .controlBackgroundColor), in: shape)
+                .overlay(
+                    shape.strokeBorder(
+                        Color(nsColor: .separatorColor),
+                        lineWidth: 1
+                    )
+                )
+        } else {
+            content
+                .background(fill, in: shape)
+                .overlay(shape.strokeBorder(rim, lineWidth: 0.75))
+        }
+    }
+}
+
+private extension View {
+    func petInsetSurface(
+        emphasized: Bool = false,
+        cornerRadius: CGFloat = PetPanelVisualStyle.sectionRadius
+    ) -> some View {
+        modifier(PetInsetSurfaceModifier(
+            emphasized: emphasized,
+            cornerRadius: cornerRadius
+        ))
+    }
+
+    @ViewBuilder
+    func petCapsuleButtonBorder() -> some View {
+        if #available(macOS 14.0, *) {
+            buttonBorderShape(.capsule)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func petCircleButtonBorder() -> some View {
+        if #available(macOS 14.0, *) {
+            buttonBorderShape(.circle)
+        } else {
+            self
+        }
+    }
+}
+
+private struct PetPanelSurfaceModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: PetPanelVisualStyle.cornerRadius,
+            style: .continuous
+        )
+    }
+
+    private var rimGradient: LinearGradient {
+        let colors: [Color]
+        if colorScheme == .dark {
+            colors = [
+                .white.opacity(0.24),
+                .white.opacity(0.08),
+                .black.opacity(0.34),
+            ]
+        } else {
+            colors = [
+                .white.opacity(0.62),
+                .white.opacity(0.16),
+                .black.opacity(0.10),
+            ]
+        }
+        return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content
+                .background(
+                    Color(nsColor: .windowBackgroundColor),
+                    in: shape
+                )
+                .overlay(
+                    shape.strokeBorder(
+                        Color(nsColor: .separatorColor),
+                        lineWidth: 1
+                    )
+                )
+        } else {
+            glassOrFallback(content)
+        }
+    }
+
+    @ViewBuilder
+    private func glassOrFallback<Surface: View>(_ content: Surface) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            content
+                .glassEffect(.regular, in: shape)
+                .overlay(
+                    shape.strokeBorder(
+                        rimGradient,
+                        lineWidth: PetPanelVisualStyle.rimWidth
+                    )
+                )
+        } else {
+            fallbackSurface(content)
+        }
+        #else
+        fallbackSurface(content)
+        #endif
+    }
+
+    private func fallbackSurface<Surface: View>(_ content: Surface) -> some View {
+        content
+            .background {
+                shape
+                    .fill(.regularMaterial)
+                    .overlay(
+                        shape.fill(
+                            (colorScheme == .dark ? Color.black : Color.white)
+                                .opacity(colorScheme == .dark ? 0.08 : 0.05)
+                        )
+                    )
+            }
+            .overlay(
+                shape.strokeBorder(
+                    rimGradient,
+                    lineWidth: PetPanelVisualStyle.rimWidth
+                )
+            )
+    }
+}
+
 struct PetRootView: View {
     @ObservedObject var viewModel: PetViewModel
 
     var body: some View {
         panelBody
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(Color.white.opacity(0.24), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 8)
+            .modifier(PetPanelSurfaceModifier())
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
     }
 
     private var panelBody: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 18) {
             header
-            if viewModel.isShowingOnboarding {
-                ScrollView {
+            if let managedApproval = viewModel.pendingManagedCommandApproval {
+                contentViewport(for: .permission) {
+                    managedCommandApprovalCard(managedApproval)
+                }
+                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                    compactStatusMessages
+                }
+            } else if let permissionRequest = viewModel.pendingPermissionRequest {
+                contentViewport(for: .permission) {
+                    permissionRequestCard(permissionRequest)
+                }
+                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                    compactStatusMessages
+                }
+            } else if viewModel.isShowingOnboarding {
+                contentViewport(for: .projectSettings) {
                     onboardingSettings
                 }
             } else if viewModel.isEditingShortcuts {
-                ScrollView {
+                contentViewport(for: .shortcutSettings) {
                     shortcutSettings
                 }
             } else {
-                if viewModel.hasNewPermissionNotice {
-                    permissionNotice
+                contentViewport(for: screenMode) {
+                    decisionContent
                 }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if viewModel.snapshotInteractions.count > 1 {
-                            fifoQueueStatus
-                        }
-                        if let interaction = viewModel.displayInteraction {
-                            decisionCard(interaction)
-                            if viewModel.isExpanded {
-                                interactionDetails(interaction)
-                            }
-                        } else if viewModel.snapshotInteractions.isEmpty {
-                            emptyState
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if let error = viewModel.lastError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if let diagnostic = viewModel.shortcutDiagnostic {
-                    Text(diagnostic)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                    compactStatusMessages
                 }
             }
         }
-        .padding(18)
+        .padding(PetPanelVisualStyle.contentPadding)
+    }
+
+    private var compactStatusMessages: some View {
+        let hasTwoMessages = viewModel.lastError != nil
+            && viewModel.shortcutDiagnostic != nil
+        return VStack(alignment: .leading, spacing: 2) {
+            if let error = viewModel.lastError {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .lineLimit(hasTwoMessages ? 1 : PetPanelContentPolicy.statusMessageLineLimit)
+                    .truncationMode(.tail)
+                    .help(error)
+            }
+            if let diagnostic = viewModel.shortcutDiagnostic {
+                Text(diagnostic)
+                    .foregroundStyle(.orange)
+                    .lineLimit(hasTwoMessages ? 1 : PetPanelContentPolicy.statusMessageLineLimit)
+                    .truncationMode(.tail)
+                    .help(diagnostic)
+            }
+        }
+        .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var screenMode: PetPanelScreenMode {
+        if viewModel.isShowingOnboarding {
+            return .projectSettings
+        }
+        if viewModel.isEditingShortcuts {
+            return .shortcutSettings
+        }
+        if viewModel.pendingManagedCommandApproval != nil
+            || viewModel.pendingPermissionRequest != nil
+        {
+            return .permission
+        }
+        if viewModel.isExpanded, viewModel.displayInteraction != nil {
+            return .details
+        }
+        if let actionCount = viewModel.displayInteraction?.actionChoices.count {
+            return .decision(actionCount: actionCount)
+        }
+        return .ready
+    }
+
+    @ViewBuilder
+    private func contentViewport<Content: View>(
+        for mode: PetPanelScreenMode,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if PetPanelContentPolicy.allowsScrolling(in: mode) {
+            ScrollView {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+
+    private var decisionContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if viewModel.snapshotInteractions.count > 1 {
+                fifoQueueStatus
+            }
+            if let interaction = viewModel.displayInteraction {
+                decisionCard(interaction)
+                if viewModel.isExpanded {
+                    interactionDetails(interaction)
+                }
+            } else if viewModel.snapshotInteractions.isEmpty {
+                emptyState
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("🐝")
-                .font(.title2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Blabee")
-                    .font(.headline)
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 7, height: 7)
-                    Text(viewModel.presentationState.displayTitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if viewModel.isRecoveryCapable {
-                        Text(PetPresentationState.recoveryCapable.displayTitle)
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.16), in: Capsule())
-                    }
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                Text(viewModel.presentationState.displayTitle)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if viewModel.isRecoveryCapable {
+                    Text(PetPresentationState.recoveryCapable.displayTitle)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.16), in: Capsule())
                 }
             }
+            .accessibilityElement(children: .combine)
             Spacer()
             Button {
                 Task { await viewModel.toggleOnboarding() }
             } label: {
                 Image(systemName: viewModel.isShowingOnboarding ? "shippingbox.fill" : "shippingbox")
-                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .petCircleButtonBorder()
+            .controlSize(.small)
             .accessibilityLabel(
                 viewModel.isShowingOnboarding ? "프로젝트 설정 닫기" : "프로젝트 설정 열기"
             )
             Button(action: viewModel.toggleShortcutSettings) {
                 Image(systemName: viewModel.isEditingShortcuts ? "gearshape.fill" : "gearshape")
-                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .petCircleButtonBorder()
+            .controlSize(.small)
             .accessibilityLabel(
                 viewModel.isEditingShortcuts ? "단축키 설정 닫기" : "단축키 설정 열기"
             )
             Button(action: viewModel.requestPanelToggle) {
                 Image(systemName: "xmark")
-                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .petCircleButtonBorder()
+            .controlSize(.small)
             .accessibilityLabel("Blabee 패널 닫기")
         }
     }
 
-    private var permissionNotice: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Codex 권한 요청이 기다리고 있습니다.", systemImage: "lock.shield")
-                .font(.callout.bold())
-            Text("Blabee는 허용하거나 거부하지 않습니다. 응답 소유권은 Codex에 있습니다.")
-                .font(.caption)
+    private func permissionRequestCard(_ request: PetPermissionRequest) -> some View {
+        let isResolving = viewModel.inFlightPermissionRequestID == request.requestID
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 40, height: 40)
+                    .background(Color.orange.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text("Codex 권한 요청")
+                            .font(.title2.weight(.semibold))
+                        if viewModel.permissionRequestQueueCount > 1 {
+                            Text("1 / \(viewModel.permissionRequestQueueCount)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(projectName(for: request))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(request.cwd)
+                }
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(request.toolName)
+                    .font(.callout.monospaced().bold())
+                Text(request.displaySummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .help(request.displaySummary)
+                Label(request.cwd, systemImage: "folder")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(request.cwd)
+                Text(request.commandPreview)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .help(request.commandPreview)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.primary.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+            }
+
+            VStack(spacing: 9) {
+                permissionChoiceRow(
+                    number: 1,
+                    title: PetPermissionDecision.deny.displayTitle,
+                    icon: "xmark",
+                    tint: .red,
+                    emphasized: true,
+                    disabled: isResolving
+                ) {
+                    await viewModel.resolvePermissionRequest(.deny)
+                }
+                permissionChoiceRow(
+                    number: 2,
+                    title: PetPermissionDecision.deferToCodex.displayTitle,
+                    icon: "arrow.up.forward.app",
+                    tint: .teal,
+                    emphasized: false,
+                    disabled: isResolving
+                ) {
+                    await viewModel.resolvePermissionRequest(.deferToCodex)
+                }
+            }
+
+            Text("일회 허용은 Hook 경로에서 제공하지 않습니다. Codex에서 직접 결정하거나 응답하지 않으면 기존 Codex 승인 화면으로 돌아갑니다.")
+                .font(.caption2)
                 .foregroundStyle(.secondary)
-            Button("권한 요청 화면으로 돌아가기", action: viewModel.openPermissionRequestHost)
-                .buttonStyle(.bordered)
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func managedCommandApprovalCard(
+        _ request: PetManagedCommandApproval
+    ) -> some View {
+        let isResolving = viewModel.inFlightManagedCommandApprovalID
+            == request.managedRequestID
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 40, height: 40)
+                    .background(Color.blue.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text("Codex 권한 요청")
+                            .font(.title2.weight(.semibold))
+                        if viewModel.managedCommandApprovalQueueCount > 1 {
+                            Text("1 / \(viewModel.managedCommandApprovalQueueCount)")
+                                .font(.caption2.monospaced().bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(projectName(forManagedCWD: request.cwd))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(request.cwd)
+                }
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("관리형 Codex App Server")
+                    .font(.callout.monospaced().bold())
+                Label(request.cwd, systemImage: "folder")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(request.cwd)
+                Label(
+                    "환경: \(request.environmentID ?? "기본 환경")",
+                    systemImage: "desktopcomputer"
+                )
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(request.environmentID ?? "기본 환경")
+                Text(request.commandPreview)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .help(request.commandPreview)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.primary.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+            }
+
+            VStack(spacing: 9) {
+                permissionChoiceRow(
+                    number: 1,
+                    title: PetManagedCommandApprovalDecision.acceptOnce.displayTitle,
+                    icon: "checkmark",
+                    tint: .blue,
+                    emphasized: request.allowOnceAvailable,
+                    disabled: isResolving || !request.allowOnceAvailable
+                ) {
+                    await viewModel.resolveManagedCommandApproval(
+                        .acceptOnce,
+                        for: request
+                    )
+                }
+                permissionChoiceRow(
+                    number: 2,
+                    title: PetManagedCommandApprovalDecision.decline.displayTitle,
+                    icon: "xmark",
+                    tint: .red,
+                    emphasized: false,
+                    disabled: isResolving || !request.declineAvailable
+                ) {
+                    await viewModel.resolveManagedCommandApproval(
+                        .decline,
+                        for: request
+                    )
+                }
+                permissionChoiceRow(
+                    number: 3,
+                    title: PetManagedCommandApprovalDecision.decideInCodex.displayTitle,
+                    icon: "arrow.up.forward.app",
+                    tint: .teal,
+                    emphasized: false,
+                    disabled: isResolving
+                ) {
+                    await viewModel.resolveManagedCommandApproval(
+                        .decideInCodex,
+                        for: request
+                    )
+                }
+            }
+
+            Text("세션 동안 허용은 제공하지 않습니다. 응답하지 않으면 Codex의 기존 승인 화면으로 돌아갑니다.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .id(request.managedRequestID)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func permissionChoiceRow(
+        number: Int,
+        title: String,
+        icon: String,
+        tint: Color,
+        emphasized: Bool,
+        disabled: Bool,
+        action: @escaping @MainActor () async -> Void
+    ) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background(tint.opacity(0.13), in: Circle())
+                Text(title)
+                    .font(.body.weight(.semibold))
+                Spacer(minLength: 8)
+                Text("\(number)")
+                    .font(.caption.monospaced().bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        Color.primary.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .petInsetSurface(
+                emphasized: emphasized && !disabled,
+                cornerRadius: PetPanelVisualStyle.rowRadius
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 
     private var fifoQueueStatus: some View {
@@ -150,16 +605,20 @@ struct PetRootView: View {
     }
 
     private func decisionCard(_ interaction: PetInteraction) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(projectName(for: interaction))
-                        .font(.headline.monospaced())
-                        .lineLimit(1)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(PetPanelContentPolicy.projectNameLineLimit)
+                        .truncationMode(.tail)
+                        .help(projectName(for: interaction))
                     Text(interaction.summary)
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(PetPanelContentPolicy.summaryLineLimit)
+                        .truncationMode(.tail)
+                        .help(interaction.summary)
                 }
                 Spacer(minLength: 8)
                 Button {
@@ -171,15 +630,18 @@ struct PetRootView: View {
                     }
                     .font(.callout.bold())
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .controlSize(.small)
             }
 
-            VStack(spacing: 8) {
-                ForEach(interaction.choices) { choice in
+            VStack(spacing: 10) {
+                ForEach(interaction.actionChoices) { choice in
                     choiceRow(interaction: interaction, choice: choice)
                 }
             }
+
+            secondaryControls(interaction: interaction)
         }
     }
 
@@ -194,17 +656,19 @@ struct PetRootView: View {
                 )
             }
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 13) {
                 Image(systemName: choiceIcon(slot: choice.slot))
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(tint)
-                    .frame(width: 34, height: 34)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.13), in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 7) {
                         Text(choice.displayTitle)
-                            .font(.callout.bold())
-                            .lineLimit(2)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(PetPanelContentPolicy.actionTitleLineLimit)
+                            .truncationMode(.tail)
+                            .help(choice.displayTitle)
                         if choice.slot == 1 {
                             Text("권장")
                                 .font(.caption2.bold())
@@ -212,12 +676,19 @@ struct PetRootView: View {
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(Color.accentColor, in: Capsule())
+                        } else {
+                            Text("\(choice.slot)순위")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.secondary)
                         }
                     }
                     if let disabledReason = choice.disabledReason {
                         Text(disabledReason)
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
+                            .lineLimit(PetPanelContentPolicy.disabledReasonLineLimit)
+                            .truncationMode(.tail)
+                            .help(disabledReason)
                     }
                 }
                 Spacer(minLength: 8)
@@ -227,20 +698,64 @@ struct PetRootView: View {
                     .padding(.vertical, 5)
                     .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
-            .padding(11)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                tint.opacity(choice.slot == 1 && enabled ? 0.13 : 0.07),
-                in: RoundedRectangle(cornerRadius: 13)
+            .petInsetSurface(
+                emphasized: choice.slot == 1 && enabled,
+                cornerRadius: PetPanelVisualStyle.rowRadius
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 13)
-                    .stroke(tint.opacity(choice.slot == 1 && enabled ? 0.45 : 0.14), lineWidth: 1)
+                RoundedRectangle(
+                    cornerRadius: PetPanelVisualStyle.rowRadius,
+                    style: .continuous
+                )
+                    .stroke(
+                        choice.slot == 1 && enabled
+                            ? tint.opacity(0.32)
+                            : Color.clear,
+                        lineWidth: 1
+                    )
             )
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.52)
+    }
+
+    private func secondaryControls(interaction: PetInteraction) -> some View {
+        HStack(spacing: 8) {
+            if interaction.usesRankedNextActions {
+                Button(action: viewModel.requestPanelToggle) {
+                    Label("나중에 결정", systemImage: "clock")
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+            } else if interaction.legacyPauseChoice?.enabled == true {
+                Button {
+                    Task { await viewModel.requestLegacyPause() }
+                } label: {
+                    Label("보류", systemImage: "pause.circle")
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+            }
+
+            Button(action: {}) {
+                Label("이전 프롬프트", systemImage: "arrow.uturn.backward")
+            }
+            .buttonStyle(.bordered)
+            .petCapsuleButtonBorder()
+            .disabled(true)
+            .help(
+                interaction.legacyRollbackChoice?.disabledReason
+                    ?? "안전한 롤백 확인 절차가 준비된 뒤 사용할 수 있습니다."
+            )
+
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -331,12 +846,22 @@ struct PetRootView: View {
         return name.isEmpty ? interaction.identity.binding.projectID : name
     }
 
+    private func projectName(for request: PetPermissionRequest) -> String {
+        let name = URL(fileURLWithPath: request.cwd, isDirectory: true).lastPathComponent
+        return name.isEmpty ? request.projectID : name
+    }
+
+    private func projectName(forManagedCWD cwd: String) -> String {
+        let name = URL(fileURLWithPath: cwd, isDirectory: true).lastPathComponent
+        return name.isEmpty ? "Codex" : name
+    }
+
     private func choiceIcon(slot: Int) -> String {
         switch slot {
         case 1: "hand.thumbsup.fill"
-        case 2: "doc.text.magnifyingglass"
-        case 3: "pause.circle.fill"
-        case 4: "arrow.uturn.backward.circle.fill"
+        case 2: "arrow.triangle.branch"
+        case 3: "checkmark.shield.fill"
+        case 4: "safari.fill"
         default: "circle"
         }
     }
@@ -345,8 +870,8 @@ struct PetRootView: View {
         switch slot {
         case 1: .indigo
         case 2: .purple
-        case 3: .orange
-        case 4: .red
+        case 3: .blue
+        case 4: .teal
         default: .gray
         }
     }
@@ -386,117 +911,122 @@ struct PetRootView: View {
     }
 
     private var onboardingSettings: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text("프로젝트 설정")
-                        .font(.headline)
+                        .font(.title2.weight(.semibold))
                     Text("Codex 프로젝트 관찰 범위와 백그라운드 서비스 등록을 관리합니다.")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 if viewModel.isOnboardingOperationInFlight {
                     ProgressView()
-                        .controlSize(.small)
+                        .controlSize(.regular)
+                        .accessibilityLabel("프로젝트 설정 처리 중")
                 }
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text("백그라운드 서비스")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Text(viewModel.onboardingServiceState.displayTitle)
-                    .font(.callout.bold())
+            VStack(alignment: .leading, spacing: 13) {
+                HStack(spacing: 12) {
+                    Image(systemName: onboardingServiceSymbol)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(onboardingServiceColor)
+                        .frame(width: 38, height: 38)
+                        .background(onboardingServiceColor.opacity(0.13), in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("백그라운드 서비스")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(viewModel.onboardingServiceState.displayTitle)
+                            .font(.body.weight(.semibold))
+                    }
+                    Spacer(minLength: 8)
+                    Text(viewModel.onboardingServiceState.displayTitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(onboardingServiceColor)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(onboardingServiceColor.opacity(0.12), in: Capsule())
+                }
                 Text(viewModel.onboardingServiceState.displayDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 onboardingServiceActions
             }
-            .padding(12)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+            .petInsetSurface(emphasized: true)
 
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("관찰할 프로젝트")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("폴더 추가") {
-                        Task { await viewModel.chooseAndEnableProject() }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("관찰할 프로젝트")
+                            .font(.body.weight(.semibold))
+                        Text("등록한 폴더와 그 하위 경로에서 Blabee가 연결됩니다.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button {
+                        Task { await viewModel.chooseAndEnableProject() }
+                    } label: {
+                        Label("폴더 추가", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .petCapsuleButtonBorder()
+                    .controlSize(.small)
                     .disabled(!viewModel.canMutateOnboardingProjects)
                 }
 
                 if !viewModel.configuredProjectPathsAreAuthoritative {
-                    Text("프로젝트 설정을 확인할 수 없습니다.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    projectMessageRow(
+                        "프로젝트 설정을 확인할 수 없습니다.",
+                        systemImage: "questionmark.folder"
+                    )
                 } else if viewModel.configuredProjectPaths.isEmpty {
-                    Text("설정된 프로젝트가 없습니다.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    projectMessageRow(
+                        "설정된 프로젝트가 없습니다.",
+                        systemImage: "folder.badge.plus"
+                    )
                 } else {
                     ForEach(viewModel.configuredProjectPaths, id: \.self) { path in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(path)
-                                        .font(.caption.monospaced())
-                                        .textSelection(.enabled)
-                                    Text(viewModel.activeProjectPaths.contains(path)
-                                         ? "현재 서비스 스냅샷에서 활성"
-                                         : "설정됨 · 현재 스냅샷에는 아직 없음")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                Button("제거") {
-                                    Task { await viewModel.disableConfiguredProject(path) }
-                                }
-                                .disabled(!viewModel.canMutateOnboardingProjects)
-                            }
-                        }
-                        .padding(9)
-                        .background(
-                            Color.primary.opacity(0.04),
-                            in: RoundedRectangle(cornerRadius: 9)
-                        )
+                        configuredProjectRow(path)
                     }
                 }
 
                 ForEach(viewModel.activeOnlyProjectPaths, id: \.self) { path in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(path)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                        Text("현재 서비스에서만 활성 · 재시작 후 비활성")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    .padding(9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        Color.orange.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 9)
-                    )
+                    activeOnlyProjectRow(path)
                 }
 
-                Text("프로젝트 설정 변경은 서비스를 재시작한 후 적용됩니다.")
+                Label(
+                    "프로젝트 설정 변경은 서비스를 재시작한 후 적용됩니다.",
+                    systemImage: "arrow.clockwise.circle"
+                )
                     .font(.caption)
                     .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+            .petInsetSurface()
 
             if let error = viewModel.onboardingError {
-                Text(error)
+                Label {
+                    Text(error)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
                     .font(.caption)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
+                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -507,25 +1037,39 @@ struct PetRootView: View {
         HStack(spacing: 8) {
             switch viewModel.onboardingServiceState {
             case .notRegistered:
-                Button("서비스 등록") {
+                Button {
                     Task { await viewModel.registerOnboardingService() }
+                } label: {
+                    Label("서비스 등록", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
                 .disabled(!viewModel.canRegisterOnboardingService)
             case .enabled:
-                Button("서비스 등록 해제") {
+                Button {
                     Task { await viewModel.unregisterOnboardingService() }
+                } label: {
+                    Label("등록 해제", systemImage: "xmark")
                 }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
                 .disabled(!viewModel.canUnregisterOnboardingService)
             case .requiresApproval:
-                Button("시스템 설정 열기") {
+                Button {
                     Task { await viewModel.openOnboardingSystemSettings() }
+                } label: {
+                    Label("시스템 설정 열기", systemImage: "gear")
                 }
                 .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
                 .disabled(!viewModel.canOpenOnboardingSystemSettings)
-                Button("등록 해제") {
+                Button {
                     Task { await viewModel.unregisterOnboardingService() }
+                } label: {
+                    Text("등록 해제")
                 }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
                 .disabled(!viewModel.canUnregisterOnboardingService)
             case .notFound, .unknown:
                 Text("이 상태에서는 등록 정보를 변경할 수 없습니다.")
@@ -533,10 +1077,122 @@ struct PetRootView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("새로고침") {
+            Button {
                 Task { await viewModel.refreshOnboarding() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
+            .buttonStyle(.bordered)
+            .petCircleButtonBorder()
+            .accessibilityLabel("프로젝트 설정 새로고침")
             .disabled(viewModel.isOnboardingOperationInFlight)
+        }
+    }
+
+    private func configuredProjectRow(_ path: String) -> some View {
+        let isActive = viewModel.activeProjectPaths.contains(path)
+        let name = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
+        return HStack(spacing: 12) {
+            Image(systemName: isActive ? "folder.fill" : "folder")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(isActive ? Color.green : Color.secondary)
+                .frame(width: 34, height: 34)
+                .background(
+                    (isActive ? Color.green : Color.secondary).opacity(0.12),
+                    in: Circle()
+                )
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name.isEmpty ? path : name)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(1)
+                Text(path)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(path)
+                Text(isActive
+                     ? "현재 서비스에서 활성"
+                     : "설정됨 · 서비스 재시작 후 활성")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(path)
+            Spacer(minLength: 8)
+            Button {
+                Task { await viewModel.disableConfiguredProject(path) }
+            } label: {
+                Text("제거")
+            }
+            .buttonStyle(.bordered)
+            .petCapsuleButtonBorder()
+            .controlSize(.small)
+            .disabled(!viewModel.canMutateOnboardingProjects)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .petInsetSurface(cornerRadius: PetPanelVisualStyle.rowRadius)
+    }
+
+    private func activeOnlyProjectRow(_ path: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.orange)
+                .frame(width: 34, height: 34)
+                .background(Color.orange.opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(path)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(path)
+                Text("현재 서비스에서만 활성 · 재시작 후 비활성")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.orange.opacity(0.18), lineWidth: 0.75)
+        )
+    }
+
+    private func projectMessageRow(_ message: String, systemImage: String) -> some View {
+        Label(message, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .petInsetSurface(cornerRadius: PetPanelVisualStyle.rowRadius)
+    }
+
+    private var onboardingServiceSymbol: String {
+        switch viewModel.onboardingServiceState {
+        case .enabled: "checkmark.circle.fill"
+        case .requiresApproval: "exclamationmark.circle.fill"
+        case .notRegistered: "circle.dashed"
+        case .notFound: "questionmark.circle"
+        case .unknown: "ellipsis.circle"
+        }
+    }
+
+    private var onboardingServiceColor: Color {
+        switch viewModel.onboardingServiceState {
+        case .enabled: .green
+        case .requiresApproval: .orange
+        case .notRegistered: .secondary
+        case .notFound, .unknown: .secondary
         }
     }
 
@@ -594,11 +1250,8 @@ struct PetRootView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "sparkles")
-                .font(.title2)
-                .foregroundStyle(.secondary)
             Text(viewModel.presentationState.displayTitle)
-                .font(.headline)
+                .font(.title2.weight(.semibold))
             Text("유효한 결정 카드가 생기면 여기에 표시됩니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -623,7 +1276,7 @@ struct PetRootView: View {
     private var statusColor: Color {
         switch viewModel.presentationState {
         case .malformed, .expired: .red
-        case .reminder: .orange
+        case .reminder, .permission: .orange
         case .waiting: .blue
         case .paused: .yellow
         case .recoveryCapable: .green

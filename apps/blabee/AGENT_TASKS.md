@@ -7,7 +7,7 @@
 | T-001 | 기본 Codex에서 SessionStart 조건부 컨텍스트 검증 | 없음 | 중간 | 활성화한 프로젝트에는 컨텍스트가 전달되고, 비활성 프로젝트는 변경되지 않음 | done |
 | T-002 | 센티널 smoke test 후 로컬 MCP 결정 제안과 턴 연결 검증 | T-001 | 높음 | 센티널로 최소 왕복을 확인하고, 공개 경로에서는 텍스트 파싱 없이 프로젝트 로컬 MCP 제안이 정확한 세션/턴에 연결됨 | done |
 | T-003 | Stop 대기, 반고정 슬롯, 같은 턴 후속 진행 한 사이클 검증 | T-002 | 높음 | 결정 한 번의 1·2가 봉인된 전체 작업을 대기 중인 Stop을 통해 같은 세션·턴·에피소드로 전달하고, 후속 `stop_hook_active` Stop에서 전송 수명 주기 종료를 한 번 관찰하며, 교차 바인딩·중복 종료·형식 보정 제출 토큰의 재사용/만료·2초 fail-open·선택 전 60초 알림/120초 만료를 검증함. 작업 성공과 dispatch 후 in-flight deadline은 별도임 | done |
-| T-004 | PermissionRequest 알림과 원래 Codex UI 위임 검증 | T-001 | 높음 | Pet은 요청을 알리고 원래 화면으로 이동할 수 있지만 허용·거부 결정을 대신 전송하지 않음 | in_progress |
+| T-004 | PermissionRequest 단일 요청 중계와 Codex fallback 검증 | T-001 | 높음 | Hook Pet은 `거절`·`Codex에서 직접 결정`만 제공하고, 관리형 App Server Pet만 `이번만 허용`을 `accept`로 중계하며 `acceptForSession` 없이 exact FIFO 바인딩·timeout·재시작 fallback을 실제 Codex에서 통과함 | in_progress |
 | T-005 | 운영 코디네이터 런타임 측정과 선택 | T-002, T-003 | 높음 | TS/Node, 분리 Swift 헬퍼, 소형 독립형 시스템 바이너리의 시작 시간, 메모리, 장애 복구, 서명, DMG 크기를 비교해 선택 기록을 남김 | done |
 | T-006 | v1 결정 패킷과 프롬프트 경계 스키마 확정 | T-002, T-003 | 중간 | 반고정 슬롯, 선택 요청, 새 `pet_action = queued_next_turn`, 과거 `same_turn_stop` runtime replay 호환, `internal_format_repair = submitted_envelope`, 프롬프트/에피소드/기준선 필드와 dispatch/outcome 골든 픽스처가 통과함 | done |
 | T-007 | 이벤트 저널, 리듀서, 세션 대기열, 원자적 선택 선점 구현 | T-005, T-006 | 높음 | 재시작, 오래된 이벤트, 이중 선택, 형식 보정 예약의 원자적 경계당 1회 소비, CSPRNG 토큰·fingerprint constant-time 검증, 같은 턴의 연속 결정 사이클, 전면 카드, 교차 세션 입력 테스트가 통과함 | done |
@@ -23,7 +23,7 @@
 ## M0 상태 해석
 
 - T-001~T-003은 실제 Codex CLI `0.148.0` 임시 프로젝트 계약 픽스처와 자동 테스트를 기준으로 완료했다.
-- T-004는 PermissionRequest 알림 전용·응답 비중계 계약과 Pet의 best-effort 앱 복귀 코드를 확인했다. 요청에 원래 PID/창 identity가 없어 알림 증가를 polling한 시점의 frontmost 외부 앱만 기억하므로 정확한 원래 Codex 창과 실환경 Pet UX 검증이 남아 `in_progress`다.
+- T-004의 과거 알림 전용 동작은 2026-08-26 process-local PermissionRequest 중계로 대체됐다. Hook 소스와 자동 계약은 deny/native defer, FIFO·response ID 멱등성, 50/55/60초 timeout, 대기 상한 8개와 journal 비영속을 통과했다. Hook allow는 비활성화했다. 별도 관리형 App Server 경로는 Codex `0.149.1` command approval 계약, 인증된 loopback WebSocket TUI↔stdio App Server 브리지, 환경 표시, 사용자 결정 120초·브로커 125초·socket 130초의 순서화된 상한과 8개 FIFO, `accept`·`decline`·원본 TUI 전달까지 구현했으며 `acceptForSession`은 만들지 않는다. 관리형 집중 테스트 30/30과 최종 제품 테스트 310/310이 통과했다. 설치본의 실제 Codex/Pet 왕복과 정확한 앱 복귀가 남아 `in_progress`다.
 - T-005는 Node·Swift의 공통 NDJSON 계약, `fsync`·강제 종료 replay·partial-tail 복구·지속 부하·단조 대기 probe·구조화 진단·ad-hoc 서명·측정용 DMG를 비교해 Swift 네이티브 헬퍼를 제품 런타임으로 선택했다. Node는 계약 참조, C는 health 전용 성능 기준선이다. 유효한 Developer ID identity는 0개였고 공증은 측정하지 않았으므로 공개 서명·공증 DMG는 T-012에 남는다.
 - T-006은 `Contracts/v1`, `Fixtures/v1`, `Tests/Contracts`의 런타임 독립 계약 범위에서 완료했다. 형식 보정의 durable 예약·claim 이벤트와 replay 규칙은 고정했지만 실제 이벤트 저널·원자적 선택·반복 Pet 루프를 구현했다는 뜻은 아니며 그 책임은 T-007에 남는다.
 - T-007a는 JavaScript ESM의 런타임 중립 참조 코어로 순수 `decide`/`reduce`/`replay`, CAS 선택 선점, 같은 턴 경계 1→2, 정확한 패킷·리비전·옵션 해석, CSPRNG 토큰과 constant-time fingerprint 검증을 구현했다.

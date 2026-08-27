@@ -228,7 +228,7 @@ private enum V {
             "valid_after_event_sequence", "sealed_at", "expires_at", "summary", "evidence",
             "risk", "checkpoint", "choices",
         ]).union(bindingKeys)
-        try exact(packet, required: root)
+        try exact(packet, required: root, optional: ["decision_layout"])
         try constant(packet, "schema_version", "1.0")
         try constant(packet, "kind", "blabee_decision_packet")
         try binding(packet)
@@ -238,6 +238,13 @@ private enum V {
         try timestamp(packet, "sealed_at")
         try timestamp(packet, "expires_at")
         _ = try string(packet, "summary")
+        let isRanked: Bool
+        if packet.keys.contains("decision_layout") {
+            try constant(packet, "decision_layout", "ranked_next_actions")
+            isRanked = true
+        } else {
+            isRanked = false
+        }
 
         let evidence = try array(packet, "evidence", maximum: 256)
         for raw in evidence {
@@ -264,12 +271,15 @@ private enum V {
         _ = try string(checkpoint, "id", identifier: true)
         _ = try oneOf(checkpoint, "coverage", ["complete", "partial", "unavailable", "contract_only"])
 
-        let choices = try array(packet, "choices", maximum: 4, minimum: 4)
+        let choices = try array(packet, "choices", maximum: 4, minimum: isRanked ? 2 : 4)
+        if !isRanked {
+            try require(choices.count == 4, "contract_validation_failed")
+        }
         var optionIDs = Set<String>()
         var actionIDs = Set<String>()
         for (index, raw) in choices.enumerated() {
             guard let choice = raw as? [String: Any] else { throw CoordinatorError("contract_validation_failed") }
-            try choiceObject(choice, slot: index + 1)
+            try choiceObject(choice, slot: index + 1, ranked: isRanked)
             let optionID = try string(choice, "option_id", identifier: true)
             try require(optionIDs.insert(optionID).inserted, "contract_validation_failed", "option_id must be unique")
             if let actionID = choice["action_id"] as? String {
@@ -278,13 +288,28 @@ private enum V {
         }
     }
 
-    static func choiceObject(_ choice: [String: Any], slot: Int) throws {
+    static func choiceObject(_ choice: [String: Any], slot: Int, ranked: Bool) throws {
         _ = try positiveInteger(choice, "slot")
         try require((choice["slot"] as? NSNumber)?.intValue == slot, "contract_validation_failed")
-        let expectedKind = [1: "recommended_action", 2: "alternative_action", 3: "pause", 4: "rollback"][slot]!
+        let expectedKind: String
+        if ranked {
+            expectedKind = slot == 1 ? "recommended_action" : "alternative_action"
+        } else {
+            expectedKind = [1: "recommended_action", 2: "alternative_action", 3: "pause", 4: "rollback"][slot]!
+        }
         try constant(choice, "kind", expectedKind)
         let enabled = try bool(choice, "enabled")
         let base: Set<String> = ["slot", "kind", "enabled", "disabled_reason", "option_id", "action_id"]
+
+        if ranked {
+            try require(enabled, "contract_validation_failed")
+            try exact(choice, required: base.union(["action"]))
+            try null(choice, "disabled_reason")
+            _ = try string(choice, "action_id", identifier: true)
+            try action(try object(choice, "action"))
+            _ = try string(choice, "option_id", identifier: true)
+            return
+        }
 
         switch slot {
         case 1:

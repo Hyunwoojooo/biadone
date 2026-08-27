@@ -7,6 +7,7 @@ func blabeePetStrictModelParsing() throws {
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
         cards: [PetTestCard(suffix: "strict", rollbackEnabled: true)],
         foregroundSuffix: "strict",
+        permissionRequests: [PetTestPermissionRequest(suffix: "strict")],
         permissionNoticeCount: 2
     ))
     #expect(snapshot.projects.count == 1)
@@ -17,6 +18,10 @@ func blabeePetStrictModelParsing() throws {
     #expect(snapshot.interactions[0].reportedSideEffects.count == 1)
     #expect(snapshot.interactions[0].evidence.first?.source == "local_verified")
     #expect(snapshot.interactions[0].checkpoint.isRecoveryCapable)
+    #expect(snapshot.permissionRequests.count == 1)
+    #expect(snapshot.permissionRequests[0].toolName == "Bash")
+    #expect(snapshot.permissionRequests[0].commandPreview == "npm test")
+    #expect(PetPermissionRequest.maximumCommandScalars == 120)
 
     var unknownTopLevel = petTestSnapshotObject(cards: [PetTestCard(suffix: "unknown")])
     unknownTopLevel["unexpected"] = true
@@ -39,6 +44,180 @@ func blabeePetStrictModelParsing() throws {
         rejectedRisk = true
     }
     #expect(rejectedRisk)
+}
+
+@Test("BlabeePet strictly joins and orders permission requests")
+func blabeePetPermissionRequestParsing() throws {
+    let first = PetTestPermissionRequest(suffix: "permission_a")
+    let second = PetTestPermissionRequest(
+        suffix: "permission_b",
+        toolName: "mcp__server__tool",
+        requestDescription: nil,
+        commandPreview: "safe command"
+    )
+    let snapshot = try PetSnapshot.parse(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [first, second],
+        permissionNoticeCount: 2
+    ))
+    #expect(snapshot.permissionRequests.map(\.requestID) == [
+        "permission_permission_a", "permission_permission_b",
+    ])
+    #expect(snapshot.permissionRequests[1].displaySummary == "safe command")
+    #expect(PetPermissionDecision.allCases.map(\.displayTitle) == [
+        "거절", "Codex에서 직접 결정",
+    ])
+
+    var mismatched = petTestSnapshotObject(
+        cards: [],
+        permissionRequests: [first]
+    )
+    var requests = try #require(
+        mismatched["permission_requests"] as? [[String: Any]]
+    )
+    requests[0]["turn_id"] = "turn_other"
+    mismatched["permission_requests"] = requests
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(mismatched))
+    }
+
+    var missingCommand = petTestSnapshotObject(
+        cards: [],
+        permissionRequests: [first]
+    )
+    var commandlessRequests = try #require(
+        missingCommand["permission_requests"] as? [[String: Any]]
+    )
+    commandlessRequests[0]["command_preview"] = NSNull()
+    missingCommand["permission_requests"] = commandlessRequests
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(missingCommand))
+    }
+
+    for unsafeCommand in [
+        "printf first\nsecond",
+        "echo safe\u{202e}txt",
+        String(repeating: "x", count: 121),
+    ] {
+        var unsafe = petTestSnapshotObject(
+            cards: [],
+            permissionRequests: [first]
+        )
+        var unsafeRequests = try #require(
+            unsafe["permission_requests"] as? [[String: Any]]
+        )
+        unsafeRequests[0]["command_preview"] = unsafeCommand
+        unsafe["permission_requests"] = unsafeRequests
+        #expect(throws: (any Error).self) {
+            _ = try PetSnapshot.parse(petTestData(unsafe))
+        }
+    }
+}
+
+@Test("BlabeePet parses managed approvals independently from Hook sessions")
+func blabeePetManagedCommandApprovalParsing() throws {
+    let first = PetTestManagedCommandApproval(
+        suffix: "managed_first",
+        jsonRPCRequestID: .string("rpc-managed-first")
+    )
+    let second = PetTestManagedCommandApproval(
+        suffix: "managed_second",
+        jsonRPCRequestID: .integer(Int64.max),
+        approvalID: nil,
+        allowOnceAvailable: false
+    )
+    let snapshot = try PetSnapshot.parse(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [first, second],
+        managedCommandApprovalNoticeCount: 2
+    ))
+    #expect(snapshot.projects.isEmpty)
+    #expect(snapshot.sessions.isEmpty)
+    #expect(snapshot.managedCommandApprovals.map(\.managedRequestID) == [
+        "managed_request_managed_first", "managed_request_managed_second",
+    ])
+    #expect(snapshot.managedCommandApprovals[0].jsonRPCRequestID
+        == .string("rpc-managed-first"))
+    #expect(snapshot.managedCommandApprovals[1].jsonRPCRequestID
+        == .integer(Int64.max))
+    #expect(snapshot.managedCommandApprovals[1].approvalID == nil)
+    #expect(snapshot.managedCommandApprovals[0].environmentID == "local")
+    #expect(!snapshot.managedCommandApprovals[1].allowOnceAvailable)
+    #expect(PetManagedCommandApprovalDecision.allCases.map(\.displayTitle) == [
+        "이번만 허용", "거절", "Codex에서 직접 결정",
+    ])
+    #expect(!PetManagedCommandApprovalDecision.allCases.map(\.rawValue)
+        .contains("acceptForSession"))
+
+    var unsafe = petTestSnapshotObject(
+        cards: [],
+        managedCommandApprovals: [first]
+    )
+    var approvals = try #require(
+        unsafe["managed_command_approvals"] as? [[String: Any]]
+    )
+    approvals[0]["command_preview"] = "echo safe\u{202e}txt"
+    unsafe["managed_command_approvals"] = approvals
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(unsafe))
+    }
+}
+
+@Test("BlabeePet distinguishes ranked actions from the legacy fixed choices")
+func blabeePetRankedAndLegacyChoiceShapes() throws {
+    for count in 2...4 {
+        let snapshot = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(
+            suffix: "ranked_\(count)",
+            rankedActionCount: count
+        )]))
+        let interaction = try #require(snapshot.interactions.first)
+        #expect(interaction.usesRankedNextActions)
+        #expect(interaction.actionChoices.count == count)
+        #expect(interaction.legacyPauseChoice == nil)
+    }
+
+    let legacy = try PetSnapshot.parse(petTestSnapshotData(cards: [PetTestCard(
+        suffix: "legacy_choices"
+    )]))
+    let legacyInteraction = try #require(legacy.interactions.first)
+    #expect(!legacyInteraction.usesRankedNextActions)
+    #expect(legacyInteraction.legacyPauseChoice?.slot == 3)
+    #expect(legacyInteraction.legacyRollbackChoice?.slot == 4)
+
+    var hybrid = petTestSnapshotObject(cards: [PetTestCard(suffix: "hybrid")])
+    var interactions = try #require(hybrid["interactions"] as? [[String: Any]])
+    var choices = try #require(interactions[0]["choices"] as? [[String: Any]])
+    choices.removeLast()
+    interactions[0]["choices"] = choices
+    hybrid["interactions"] = interactions
+    var rejectedHybrid = false
+    do {
+        _ = try PetSnapshot.parse(petTestData(hybrid))
+    } catch {
+        rejectedHybrid = true
+    }
+    #expect(rejectedHybrid)
+
+    var disabledRanked = petTestSnapshotObject(cards: [PetTestCard(
+        suffix: "disabled_ranked",
+        alternativeEnabled: false
+    )])
+    var disabledInteractions = try #require(
+        disabledRanked["interactions"] as? [[String: Any]]
+    )
+    var disabledChoices = try #require(
+        disabledInteractions[0]["choices"] as? [[String: Any]]
+    )
+    disabledChoices.removeLast(2)
+    disabledInteractions[0]["choices"] = disabledChoices
+    disabledRanked["interactions"] = disabledInteractions
+    var rejectedDisabledRanked = false
+    do {
+        _ = try PetSnapshot.parse(petTestData(disabledRanked))
+    } catch {
+        rejectedDisabledRanked = true
+    }
+    #expect(rejectedDisabledRanked)
 }
 
 @Test("BlabeePet rejects routing joins that differ by any immutable identity field")
@@ -123,6 +302,24 @@ func blabeePetRejectsNumericBooleans() throws {
             rejectedSelection = true
         }
         #expect(rejectedSelection)
+
+        var rejectedPermission = false
+        do {
+            try PetTransportResponse.requireResolvedPermission(
+                petTestData([
+                    "resolved": numericBoolean,
+                    "request_id": "permission_numeric",
+                    "response_id": "permission_response_numeric",
+                    "decision": "deny",
+                ]),
+                requestID: "permission_numeric",
+                responseID: "permission_response_numeric",
+                expectedDecision: .deny
+            )
+        } catch {
+            rejectedPermission = true
+        }
+        #expect(rejectedPermission)
     }
 }
 

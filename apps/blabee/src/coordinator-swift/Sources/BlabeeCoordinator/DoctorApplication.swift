@@ -171,9 +171,9 @@ struct DoctorDependencies {
 
 struct DoctorApplication {
     static let alphaBaselineVersion = "0.148.0"
-    static let supportedVersions: Set<String> = []
+    static let supportedVersions: Set<String> = ["0.149.1", "0.150.1"]
     static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
-    static let skillSHA256 = "a6ac83e213cafb755e75f92d63f7a47fe90a8c0bfa7b4e88c42fb02f3dcc4b52"
+    static let skillSHA256 = "75ea8d49729b00f54762a2fbad922f1ebce77c6710208176cbc52bc9d6a38d06"
     static let skillAgentSHA256 = "48f8357783a6f96d1d387501e78ba2ed6785c9945a80d1a45c14dff341ee9520"
     static func expectedHookCommand(event: String) -> String {
         #"if [ -n "${PLUGIN_ROOT:-}" ] && [ -d "$PLUGIN_ROOT" ] && [ ! -L "$PLUGIN_ROOT" ] && [ -d "$PLUGIN_ROOT/scripts" ] && [ ! -L "$PLUGIN_ROOT/scripts" ] && [ -f "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ ! -L "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ -x "$PLUGIN_ROOT/scripts/blabee-launcher" ]; then exec "$PLUGIN_ROOT/scripts/blabee-launcher" hook \#(event); fi; exit 0"#
@@ -760,8 +760,8 @@ private extension DoctorApplication {
             statusMessage: "Blabee 결정 저장 중", additionalContextLimit: nil
         ) && validateHook(
             hooks["PermissionRequest"], event: "PermissionRequest",
-            matcher: nil, timeout: 8,
-            statusMessage: "Blabee에 권한 요청 알림 전송 중", additionalContextLimit: nil
+            matcher: nil, timeout: 60,
+            statusMessage: "Blabee에서 권한 요청 확인 중", additionalContextLimit: nil
         )
     }
 

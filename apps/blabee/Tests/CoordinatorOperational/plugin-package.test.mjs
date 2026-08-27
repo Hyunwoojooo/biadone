@@ -76,7 +76,7 @@ test("four supported hooks call the native coordinator through the plugin launch
     SessionStart: { timeout: 8, nativeBudget: 7 },
     UserPromptSubmit: { timeout: 8, nativeBudget: 7 },
     Stop: { timeout: 8, nativeBudget: 5 },
-    PermissionRequest: { timeout: 8, nativeBudget: 7 },
+    PermissionRequest: { timeout: 60, nativeBudget: 57 },
   };
 
   assert.deepEqual(Object.keys(hookDocument.hooks).sort(), Object.keys(expected).sort());
@@ -99,7 +99,7 @@ test("four supported hooks call the native coordinator through the plugin launch
   }
   assert.match(
     hookDocument.hooks.PermissionRequest[0].hooks[0].statusMessage,
-    /알림/,
+    /확인/,
   );
   assert.equal(
     hookDocument.hooks.Stop[0].hooks[0].statusMessage,
@@ -521,19 +521,22 @@ test("decision skill gates emission and preserves the exact wrapper/proposal con
     "source_turn_id",
   ]);
   assert.deepEqual(Object.keys(payload.proposal).sort(), [
-    "alternative_next",
     "correlation_token",
     "interaction_kind",
+    "next_actions",
     "outcome",
-    "pause_capsule",
     "proposal_id",
-    "recommended_next",
     "reported_side_effects",
     "schema_version",
     "task_goal",
   ]);
   assert.equal(payload.proposal.schema_version, "1.0");
   assert.equal(payload.proposal.interaction_kind, "blabee_decision");
+  assert.equal(payload.proposal.next_actions.length >= 2, true);
+  assert.equal(payload.proposal.next_actions.length <= 4, true);
+  assert.equal(payload.proposal.next_actions.every((action) => (
+    Object.keys(action).sort().join(",") === "constraints,done_when,objective,title"
+  )), true);
   assert.match(skill, /기본적으로 한 번 호출/);
   assert.match(skill, /proposal_source_prompt_mismatch/);
   assert.match(skill, /보정 재시도를 한 번/);
@@ -541,6 +544,9 @@ test("decision skill gates emission and preserves the exact wrapper/proposal con
   assert.match(skill, /설명, 코드 구조 설명, 상태 확인, 일반 질문/);
   assert.match(skill, /권한 승인이나 네이티브 질문/);
   assert.match(skill, /모든 답변을 번호 선택지나 고정된 1~4 형식으로 바꾸지 않는다/);
+  assert.match(skill, /2~4개/);
+  assert.match(skill, /첫 항목이 가장 권장/);
+  assert.match(skill, /보류나 롤백을 이 배열에 넣지 않고/);
   assert.match(skill, /실행하지 않은 테스트/);
   assert.match(skill, /검증되지 않은 롤백 가능성/);
   assert.equal((skill.match(/`emit_decision`/g) ?? []).length, 1);

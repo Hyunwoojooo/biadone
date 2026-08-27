@@ -174,8 +174,12 @@ src/coordinator-swift/
 ├── README.md
 ├── Sources/
 │   ├── BlabeeCoordinator/
-│   │   ├── main.swift                     # legacy/daemon/hook/mcp/pet/service/project-settings 조립
+│   │   ├── main.swift                     # legacy/daemon/hook/mcp/pet/service/project-settings/managed-codex 조립
 │   │   ├── OperationalCLI.swift           # 공식 Hook output과 MCP emit_decision
+│   │   ├── CodexAppServerApprovalAdapter.swift # command approval strict codec
+│   │   ├── ManagedCodexApprovalRuntime.swift # 관리형 승인 UDS adapter와 fallback router
+│   │   ├── ManagedCodexLauncher.swift      # App Server/TUI 자식 수명주기와 JSONL bridge
+│   │   ├── ManagedCodexWebSocket.swift     # 인증된 localhost WebSocket server
 │   │   ├── UnixDomainSocketTransport.swift # single owner, peer UID, allowlist
 │   │   ├── FixtureTransportHandler.swift  # test-harness 전용 transport 격리기
 │   │   ├── OperationalRoundTripTestSupport.swift # harness-only freshness/token audit
@@ -523,13 +527,18 @@ Codex turn
 
 ```text
 PermissionRequest / Codex native request
-  → NativeCodexRequest로 별도 등록
-  → 결정 패킷과 다른 Pet 알림
+  → Hook: process-local permission FIFO로 별도 등록
+  → 결정 패킷과 다른 Pet 2선택 카드(거절 / Codex에서 직접 결정)
   → polling 시점 frontmost 앱으로 best-effort 복귀
-  → 원래 Codex UI가 응답 소유
+  → deny 또는 빈 Hook 응답으로 원래 Codex UI에 반환
+
+관리형 App Server command approval (후속)
+  → 전용 request ID를 소유한 broker
+  → Pet 3선택(이번만 허용 / 거절 / Codex에서 직접 결정)
+  → accept / decline / 원본 TUI 전달
 ```
 
-네이티브 요청은 슬롯 1~4로 변환하지 않는다. 공개 v0.1의 권한 요청은 notification-only이며 Pet이 허용·거부를 전송하지 않는다. 완전 중계는 app-server 관리형 모드의 별도 후속 경계다.
+네이티브 요청은 슬롯 1~4로 변환하지 않는다. 일반 Hook에서는 `allow`를 만들지 않고 거절 또는 Codex 직접 결정만 제공한다. App Server의 `accept`·`decline`·원본 TUI 전달 codec은 구현했지만 live broker와 Pet 관리형 FIFO는 아직 없으므로 진짜 `이번만 허용`은 사용 가능한 기능이 아니다.
 
 ## Stop, timeout, stale 보호
 
@@ -604,7 +613,7 @@ Pet의 1·2는 작업 지시이지 Codex 네이티브 승인이 아니다. `high
 | T-011 operational integration | Plugin install/update/remove, 공식 Hook/MCP shape, 고수준 UDS allowlist, same-UID/single-owner/size·concurrency, full 16-field Pet selection, staged boundary, same-turn Stop 전달·후속 완료, secret 비유출, 2초 connect fail-open |
 | Timeout/stale | 선택 전 60초 재알림·120초 만료·자동 선택 없음, 늦은 키·이전 리비전·중복 선점 거부, submitted-envelope의 교차 바인딩·만료·재사용 거부 |
 | Rollback | clean-worktree 한 episode 복원, recovery snapshot, byte/mode/index 검증, 특수 index/filemode/unknown attestation과 비 Git·제외 경계에서 4 disabled, 1 GiB 보호 정리 |
-| Native requests | 결정 카드와 분리, notification-only permission, 원래 Codex UI가 응답 소유 |
+| Native requests | 결정 카드와 분리, Hook permission은 deny 또는 native defer만 허용하고 allow 금지, 관리형 App Server는 인증된 TUI↔App Server bridge와 별도 FIFO에서 accept/decline/원본 TUI 전달만 생성하며 설치본 live dogfood 전에는 공개 사용 가능하다고 표시하지 않음 |
 | macOS Pet | 항상 위 패널, 활성 카드 하나, disabled 상태, 고위험 단축키 차단, 단축키와 안정적 option ID 매핑 |
 | Compatibility | 고정 alpha Codex fixture, 지원 allowlist, Plugin/Hook trust와 `blabee doctor` 진단 |
 

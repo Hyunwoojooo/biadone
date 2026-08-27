@@ -2,6 +2,17 @@ import CryptoKit
 import Dispatch
 import Foundation
 
+/// Ordered deadlines for one managed Codex command approval round trip.
+///
+/// The coordinator owns the user-visible decision window. The broker and its
+/// socket wait slightly longer so that coordinator expiry can deterministically
+/// return `decide_in_codex` before either transport layer fails open.
+public enum ManagedCodexApprovalTimingPolicy {
+    public static let userDecisionTimeoutNanoseconds: UInt64 = 120_000_000_000
+    public static let brokerDeadlineNanoseconds: UInt64 = 125_000_000_000
+    public static let socketResponseTimeoutMilliseconds: Int32 = 130_000
+}
+
 /// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
 /// Adapters exchange only JSON `Data`; raw continuation envelopes stay inside
 /// this actor and are consumed before any public response is produced.
@@ -54,6 +65,17 @@ public actor CoordinatorOperationalApplication {
     private static let queuedPromptReferenceBytes = 16
     private static let maximumQueuedActionJSONBytes = 60_000
     private static let maximumUserPromptAdditionalContextBytes = 65_536
+    private static let maximumPermissionRequestWaitNanoseconds: UInt64 = 50_000_000_000
+    private static let maximumPendingPermissionRequestLimit = 8
+    private static let maximumResolvedPermissionTombstones = 64
+    private static let maximumManagedCommandApprovalWaitNanoseconds =
+        ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds
+    private static let maximumPendingManagedCommandApprovalLimit = 8
+    private static let maximumResolvedManagedCommandApprovalTombstones = 64
+    private static let maximumPermissionDescriptionScalars = 4_096
+    // Relay only commands that the fixed Pet card can render in full. Longer
+    // or visually ambiguous commands fall back to Codex's native approval UI.
+    private static let maximumPermissionCommandPreviewScalars = 120
     private static let queuedActionContextMarker =
         "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible ref is transport metadata, and a queue receipt is not proof that the work succeeded.\n"
 
@@ -114,6 +136,13 @@ public actor CoordinatorOperationalApplication {
             guard case .verified(let continuationID, _) = self else { return nil }
             return continuationID
         }
+
+        var supersedesPriorSuggestions: Bool {
+            switch self {
+            case .human, .rejected: true
+            case .verified: false
+            }
+        }
     }
 
     private enum BoundaryPhase: String {
@@ -163,6 +192,137 @@ public actor CoordinatorOperationalApplication {
         let errorCode: String
     }
 
+    private struct PendingPermissionRequest {
+        let requestID: String
+        let projectID: String
+        let sessionID: String
+        let turnID: String
+        let cwd: String
+        let toolName: String
+        let description: String?
+        let commandPreview: String?
+        let continuation: CheckedContinuation<Data, any Error>
+        let timeoutTask: Task<Void, Never>
+
+        var snapshotObject: [String: Any] {
+            [
+                "request_id": requestID,
+                "project_id": projectID,
+                "session_id": sessionID,
+                "turn_id": turnID,
+                "cwd": cwd,
+                "tool_name": toolName,
+                "description": description as Any? ?? NSNull(),
+                "command_preview": commandPreview as Any? ?? NSNull(),
+            ]
+        }
+    }
+
+    private struct ResolvedPermissionRequest {
+        let requestID: String
+        let responseID: String
+        let projectID: String
+        let sessionID: String
+        let turnID: String
+        let decision: String
+
+        func matches(
+            responseID: String,
+            projectID: String,
+            sessionID: String,
+            turnID: String,
+            decision: String
+        ) -> Bool {
+            CoordinatorOperationalApplication.byteExact(self.responseID, responseID)
+                && CoordinatorOperationalApplication.byteExact(self.projectID, projectID)
+                && CoordinatorOperationalApplication.byteExact(self.sessionID, sessionID)
+                && CoordinatorOperationalApplication.byteExact(self.turnID, turnID)
+                && CoordinatorOperationalApplication.byteExact(self.decision, decision)
+        }
+    }
+
+    private enum ManagedJSONRPCRequestID: Equatable {
+        case string(String)
+        case integer(Int64)
+
+        var jsonObject: [String: Any] {
+            switch self {
+            case .string(let value):
+                ["type": "string", "value": value]
+            case .integer(let value):
+                ["type": "integer", "value": value]
+            }
+        }
+    }
+
+    private struct ManagedCommandApprovalBinding: Equatable {
+        let brokerEpoch: String
+        let connectionID: String
+        let jsonRPCRequestID: ManagedJSONRPCRequestID
+        let threadID: String
+        let turnID: String
+        let itemID: String
+        let approvalID: String?
+        let environmentID: String?
+        let cwd: String
+        let commandPreview: String
+        let allowOnceAvailable: Bool
+        let declineAvailable: Bool
+
+        var snapshotObject: [String: Any] {
+            [
+                "broker_epoch": brokerEpoch,
+                "connection_id": connectionID,
+                "jsonrpc_request_id": jsonRPCRequestID.jsonObject,
+                "thread_id": threadID,
+                "turn_id": turnID,
+                "item_id": itemID,
+                "approval_id": approvalID as Any? ?? NSNull(),
+                "environment_id": environmentID as Any? ?? NSNull(),
+                "cwd": cwd,
+                "command_preview": commandPreview,
+                "allow_once_available": allowOnceAvailable,
+                "decline_available": declineAvailable,
+            ]
+        }
+
+        func hasSameTransportRequest(as other: Self) -> Bool {
+            CoordinatorOperationalApplication.byteExact(brokerEpoch, other.brokerEpoch)
+                && CoordinatorOperationalApplication.byteExact(connectionID, other.connectionID)
+                && jsonRPCRequestID == other.jsonRPCRequestID
+        }
+    }
+
+    private struct PendingManagedCommandApproval {
+        let managedRequestID: String
+        let binding: ManagedCommandApprovalBinding
+        let continuation: CheckedContinuation<Data, any Error>
+        let timeoutTask: Task<Void, Never>
+
+        var snapshotObject: [String: Any] {
+            var result = binding.snapshotObject
+            result["managed_request_id"] = managedRequestID
+            return result
+        }
+    }
+
+    private struct ResolvedManagedCommandApproval {
+        let managedRequestID: String
+        let responseID: String
+        let binding: ManagedCommandApprovalBinding
+        let decision: String
+
+        func matches(
+            responseID: String,
+            binding: ManagedCommandApprovalBinding,
+            decision: String
+        ) -> Bool {
+            CoordinatorOperationalApplication.byteExact(self.responseID, responseID)
+                && self.binding == binding
+                && CoordinatorOperationalApplication.byteExact(self.decision, decision)
+        }
+    }
+
     private let routing: CoordinatorRoutingApplication
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
@@ -170,6 +330,10 @@ public actor CoordinatorOperationalApplication {
     private let monotonicInstantGenerator: MonotonicInstantGenerator
     private let stopObservationHMACKey: Data
     private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
+    private let permissionRequestTimeoutNanoseconds: UInt64
+    private let maximumPendingPermissionRequests: Int
+    private let managedCommandApprovalTimeoutNanoseconds: UInt64
+    private let maximumPendingManagedCommandApprovals: Int
 
     private var projects: [String: Project] = [:]
     private var sessions: [String: Session] = [:]
@@ -188,6 +352,11 @@ public actor CoordinatorOperationalApplication {
     ] = [:]
     private var generation: UInt64 = 0
     private var permissionNoticeCount: UInt64 = 0
+    private var pendingPermissionRequests: [PendingPermissionRequest] = []
+    private var resolvedPermissionRequests: [ResolvedPermissionRequest] = []
+    private var managedCommandApprovalNoticeCount: UInt64 = 0
+    private var pendingManagedCommandApprovals: [PendingManagedCommandApproval] = []
+    private var resolvedManagedCommandApprovals: [ResolvedManagedCommandApproval] = []
     private var consecutiveReconciliationFailures = 0
     private var reconciliationRetryNotBeforeNanoseconds: UInt64?
     private var lastReconciliationErrorCode: String?
@@ -201,7 +370,12 @@ public actor CoordinatorOperationalApplication {
         wallInstantGenerator: WallInstantGenerator? = nil,
         monotonicInstantGenerator: MonotonicInstantGenerator? = nil,
         stopObservationHMACKey: Data? = nil,
-        nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil
+        nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil,
+        permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
+        maximumPendingPermissionRequests: Int = 8,
+        managedCommandApprovalTimeoutNanoseconds: UInt64 =
+            ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds,
+        maximumPendingManagedCommandApprovals: Int = 8
     ) {
         let ids: IDGenerator = idGenerator ?? { purpose in
             "\(purpose)_\(UUID().uuidString.lowercased())"
@@ -214,6 +388,34 @@ public actor CoordinatorOperationalApplication {
         self.nextTurnDispatcher = nextTurnDispatcher ?? { _ in
             throw CoordinatorError("next_turn_dispatcher_unavailable")
         }
+        self.permissionRequestTimeoutNanoseconds = max(
+            1,
+            min(
+                permissionRequestTimeoutNanoseconds,
+                Self.maximumPermissionRequestWaitNanoseconds
+            )
+        )
+        self.maximumPendingPermissionRequests = max(
+            1,
+            min(
+                maximumPendingPermissionRequests,
+                Self.maximumPendingPermissionRequestLimit
+            )
+        )
+        self.managedCommandApprovalTimeoutNanoseconds = max(
+            1,
+            min(
+                managedCommandApprovalTimeoutNanoseconds,
+                Self.maximumManagedCommandApprovalWaitNanoseconds
+            )
+        )
+        self.maximumPendingManagedCommandApprovals = max(
+            1,
+            min(
+                maximumPendingManagedCommandApprovals,
+                Self.maximumPendingManagedCommandApprovalLimit
+            )
+        )
         self.monotonicInstantGenerator = monotonicInstantGenerator ?? {
             DispatchTime.now().uptimeNanoseconds
         }
@@ -260,10 +462,24 @@ public actor CoordinatorOperationalApplication {
     /// Handles only high-level operational requests. Low-level semantic
     /// commands are deliberately not exposed through this dispatch surface.
     public func handle(type: String, payload: Data) async throws -> Data {
+        // Permission waiters and Pet reads are process-local coordination.
+        // Keep them independent from journal reconciliation, cooldown, and
+        // quarantine so a storage failure cannot strand an approval prompt.
+        switch type {
+        case "permission_request":
+            return try await permissionRequest(payload)
+        case "resolve_permission_request":
+            return try resolvePermissionRequest(payload)
+        case "managed_command_approval":
+            return try await managedCommandApproval(payload)
+        case "resolve_managed_command_approval":
+            return try resolveManagedCommandApproval(payload)
+        case "pet_snapshot", "get_state":
+            return try stateSnapshot()
+        default:
+            break
+        }
         if routing.recoveryStatus().isQuarantined {
-            if type == "pet_snapshot" || type == "get_state" {
-                return try stateSnapshot()
-            }
             throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
         }
         generation = try nextGeneration(generation)
@@ -277,9 +493,6 @@ public actor CoordinatorOperationalApplication {
             {
                 return try emitDecision(payload)
             }
-            if type == "pet_snapshot" || type == "get_state" {
-                return try stateSnapshot()
-            }
             throw Self.reconciliationQuarantinedError
         }
         if reconciliationCooldownIsActive() {
@@ -287,9 +500,6 @@ public actor CoordinatorOperationalApplication {
             // not bypass the same cooldown as the scheduler. This projection
             // is actor/routing memory only and intentionally does not advance
             // time or consult durable authority.
-            if type == "pet_snapshot" || type == "get_state" {
-                return try stateSnapshot()
-            }
             throw Self.reconciliationCooldownError
         }
         // Finish any actor-local durable workflow before another high-level
@@ -330,10 +540,6 @@ public actor CoordinatorOperationalApplication {
             }
         case "stop":
             return try await stop(payload, generation: requestGeneration)
-        case "permission_request":
-            return try permissionRequest(payload)
-        case "pet_snapshot", "get_state":
-            return try stateSnapshot()
         case "focus_interaction":
             return try focusInteraction(payload)
         case "select":
@@ -844,6 +1050,7 @@ private extension CoordinatorOperationalApplication {
                 "identifiers": try publicIdentifiers(session: session),
             ])
         }
+        var promptResolution: QueuedPromptResolution?
         if let previousTurn = session.latestTurnID {
             let key = CoordinatorTurnKey(
                 projectID: session.projectID,
@@ -871,21 +1078,54 @@ private extension CoordinatorOperationalApplication {
                             terminalKey: activeKey
                         )
                         pendingCompletionClosures.remove(activeKey)
+                        promptResolution = try queuedPromptResolution(
+                            prompt: prompt,
+                            sessionID: sessionID,
+                            turnID: turnID,
+                            cwd: cwd
+                        )
+                    } else {
+                        let resolution = try queuedPromptResolution(
+                            prompt: prompt,
+                            sessionID: sessionID,
+                            turnID: turnID,
+                            cwd: cwd
+                        )
+                        promptResolution = resolution
                     }
                 case .closed, .paused, .expired:
                     activeByTurn.removeValue(forKey: key)
-                case .activating, .staged, .sealed, .waiting:
+                case .sealed, .waiting:
+                    let resolution = try queuedPromptResolution(
+                        prompt: prompt,
+                        sessionID: sessionID,
+                        turnID: turnID,
+                        cwd: cwd
+                    )
+                    promptResolution = resolution
+                case .activating, .staged:
                     throw CoordinatorError("session_decision_boundary_active")
                 }
             }
         }
 
-        let queuedResolution = try queuedPromptResolution(
-            prompt: prompt,
-            sessionID: sessionID,
-            turnID: turnID,
-            cwd: cwd
-        )
+        let queuedResolution: QueuedPromptResolution
+        if let promptResolution {
+            queuedResolution = promptResolution
+        } else {
+            queuedResolution = try queuedPromptResolution(
+                prompt: prompt,
+                sessionID: sessionID,
+                turnID: turnID,
+                cwd: cwd
+            )
+        }
+        if queuedResolution.supersedesPriorSuggestions {
+            try supersedeSessionSuggestionsForNewPrompt(
+                projectID: session.projectID,
+                sessionID: sessionID
+            )
+        }
 
         let promptID = try identifier(idGenerator("prompt"), "source_prompt_id")
         let episode = Episode(
@@ -1096,14 +1336,609 @@ private extension CoordinatorOperationalApplication {
         return try requireOperational(boundary.acceptance)
     }
 
-    func permissionRequest(_ data: Data) throws -> Data {
+    func permissionRequest(_ data: Data) async throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
-        _ = try identifier(string(payload, "session_id"), "session_id")
+        try require(
+            payload["hook_event_name"] as? String == "PermissionRequest",
+            "permission_request_invalid"
+        )
+        let sessionID = try identifier(string(payload, "session_id"), "session_id")
+        let turnID = try identifier(string(payload, "turn_id"), "turn_id")
+        let cwd = try Self.normalizedPermissionPath(string(payload, "cwd"))
+        let toolName = try boundedPermissionIdentifier(
+            string(payload, "tool_name"),
+            code: "permission_request_tool_name_invalid"
+        )
+        guard let toolInput = payload["tool_input"] as? [String: Any] else {
+            throw CoordinatorError("permission_request_tool_input_invalid")
+        }
+        let description = try permissionDisplayString(
+            toolInput["description"],
+            maximumScalars: Self.maximumPermissionDescriptionScalars,
+            code: "permission_request_description_invalid"
+        )
+        let commandPreview = try permissionCommandPreview(
+            toolInput["command"]
+        )
+        guard let session = sessions[sessionID],
+              Self.byteExact(session.latestTurnID, turnID),
+              Self.byteExact(session.path, cwd),
+              projects.values.contains(where: {
+                  $0.enabled && Self.byteExact($0.projectID, session.projectID)
+              })
+        else {
+            throw CoordinatorError("permission_request_binding_invalid")
+        }
+        try require(
+            pendingPermissionRequests.count < maximumPendingPermissionRequests,
+            "permission_request_capacity_exceeded"
+        )
+
+        let requestID = try identifier(
+            idGenerator("permission_request"),
+            "permission_request_id"
+        )
+        try require(
+            !pendingPermissionRequests.contains(where: {
+                Self.byteExact($0.requestID, requestID)
+            }) && !resolvedPermissionRequests.contains(where: {
+                Self.byteExact($0.requestID, requestID)
+            }),
+            "permission_request_id_conflict"
+        )
         permissionNoticeCount = try nextGeneration(permissionNoticeCount)
-        return try publicData([
-            "notified": true,
-            "response_owner": "codex_native_ui",
+
+        let timeoutNanoseconds = permissionRequestTimeoutNanoseconds
+        return try await withCheckedThrowingContinuation { continuation in
+            let timeoutTask = Task.detached(priority: .utility) { [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                guard !Task.isCancelled else { return }
+                await self?.expirePermissionRequest(requestID: requestID)
+            }
+            pendingPermissionRequests.append(PendingPermissionRequest(
+                requestID: requestID,
+                projectID: session.projectID,
+                sessionID: sessionID,
+                turnID: turnID,
+                cwd: cwd,
+                toolName: toolName,
+                description: description,
+                commandPreview: commandPreview,
+                continuation: continuation,
+                timeoutTask: timeoutTask
+            ))
+        }
+    }
+
+    func resolvePermissionRequest(_ data: Data) throws -> Data {
+        let payload = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            payload,
+            required: [
+                "schema_version", "kind", "request_id", "response_id", "project_id",
+                "session_id", "turn_id", "decision",
+            ]
+        )
+        try require(
+            payload["schema_version"] as? String == "1.0"
+                && payload["kind"] as? String == "blabee_permission_resolution_request",
+            "permission_resolution_invalid"
+        )
+        let requestID = try identifier(string(payload, "request_id"), "request_id")
+        let responseID = try identifier(string(payload, "response_id"), "response_id")
+        let projectID = try identifier(string(payload, "project_id"), "project_id")
+        let sessionID = try identifier(string(payload, "session_id"), "session_id")
+        let turnID = try identifier(string(payload, "turn_id"), "turn_id")
+        let decision = try string(payload, "decision")
+        try require(
+            ["deny", "defer_to_codex"].contains(decision),
+            "permission_resolution_invalid"
+        )
+        if let resolved = resolvedPermissionRequests.first(where: {
+            Self.byteExact($0.requestID, requestID)
+        }) {
+            guard resolved.matches(
+                responseID: responseID,
+                projectID: projectID,
+                sessionID: sessionID,
+                turnID: turnID,
+                decision: decision
+            ) else {
+                throw CoordinatorError("permission_resolution_conflict")
+            }
+            return try permissionResolutionReceipt(
+                requestID: requestID,
+                responseID: responseID,
+                decision: decision
+            )
+        }
+        try require(
+            !resolvedPermissionRequests.contains(where: {
+                Self.byteExact($0.responseID, responseID)
+            }),
+            "permission_response_id_conflict"
+        )
+        guard let head = pendingPermissionRequests.first else {
+            throw CoordinatorError("permission_request_not_found")
+        }
+        guard Self.byteExact(head.requestID, requestID) else {
+            throw CoordinatorError("permission_request_not_head")
+        }
+        try byteExactRequire(head.projectID, projectID, "permission_request_binding_mismatch")
+        try byteExactRequire(head.sessionID, sessionID, "permission_request_binding_mismatch")
+        try byteExactRequire(head.turnID, turnID, "permission_request_binding_mismatch")
+        guard let currentSession = sessions[head.sessionID],
+              Self.byteExact(currentSession.projectID, head.projectID),
+              Self.byteExact(currentSession.latestTurnID, head.turnID),
+              Self.byteExact(currentSession.path, head.cwd)
+        else {
+            pendingPermissionRequests.removeFirst()
+            head.timeoutTask.cancel()
+            head.continuation.resume(
+                returning: try permissionHookResponse(decision: "defer_to_codex")
+            )
+            throw CoordinatorError("permission_request_binding_invalid")
+        }
+
+        let hookResponse = try permissionHookResponse(decision: decision)
+        pendingPermissionRequests.removeFirst()
+        head.timeoutTask.cancel()
+        head.continuation.resume(returning: hookResponse)
+        resolvedPermissionRequests.append(ResolvedPermissionRequest(
+            requestID: requestID,
+            responseID: responseID,
+            projectID: projectID,
+            sessionID: sessionID,
+            turnID: turnID,
+            decision: decision
+        ))
+        if resolvedPermissionRequests.count > Self.maximumResolvedPermissionTombstones {
+            resolvedPermissionRequests.removeFirst(
+                resolvedPermissionRequests.count - Self.maximumResolvedPermissionTombstones
+            )
+        }
+        return try permissionResolutionReceipt(
+            requestID: requestID,
+            responseID: responseID,
+            decision: decision
+        )
+    }
+
+    func expirePermissionRequest(requestID: String) {
+        guard let index = pendingPermissionRequests.firstIndex(where: {
+            Self.byteExact($0.requestID, requestID)
+        }) else { return }
+        let request = pendingPermissionRequests.remove(at: index)
+        do {
+            request.continuation.resume(
+                returning: try permissionHookResponse(decision: "defer_to_codex")
+            )
+        } catch {
+            request.continuation.resume(throwing: error)
+        }
+    }
+
+    func permissionHookResponse(decision: String) throws -> Data {
+        try require(
+            ["deny", "defer_to_codex"].contains(decision),
+            "permission_resolution_invalid"
+        )
+        return try publicData(["decision": decision])
+    }
+
+    func permissionResolutionReceipt(
+        requestID: String,
+        responseID: String,
+        decision: String
+    ) throws -> Data {
+        try publicData([
+            "resolved": true,
+            "request_id": requestID,
+            "response_id": responseID,
+            "decision": decision,
         ])
+    }
+
+    func managedCommandApproval(_ data: Data) async throws -> Data {
+        let payload = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            payload,
+            required: [
+                "schema_version", "kind", "broker_epoch", "connection_id",
+                "jsonrpc_request_id", "thread_id", "turn_id", "item_id",
+                "approval_id", "environment_id", "cwd", "command_preview", "allow_once_available",
+                "decline_available",
+            ]
+        )
+        try require(
+            payload["schema_version"] as? String == "1.0"
+                && payload["kind"] as? String
+                    == "blabee_managed_command_approval_request",
+            "managed_command_approval_invalid"
+        )
+        let binding = try managedCommandApprovalBinding(payload)
+
+        // Requests with no synthetic decision available do not need to enter
+        // Pet. Capacity and duplicate transport identities fail open to the
+        // official Codex approval surface as a normal blocking-call result.
+        guard binding.allowOnceAvailable || binding.declineAvailable,
+              pendingManagedCommandApprovals.count
+                < maximumPendingManagedCommandApprovals,
+              !pendingManagedCommandApprovals.contains(where: {
+                  $0.binding.hasSameTransportRequest(as: binding)
+              }),
+              !resolvedManagedCommandApprovals.contains(where: {
+                  $0.binding.hasSameTransportRequest(as: binding)
+              })
+        else {
+            return try managedCommandApprovalOutcome(decision: "decide_in_codex")
+        }
+
+        let managedRequestID = try identifier(
+            idGenerator("managed_command_approval"),
+            "managed_request_id"
+        )
+        try require(
+            !pendingManagedCommandApprovals.contains(where: {
+                Self.byteExact($0.managedRequestID, managedRequestID)
+            }) && !resolvedManagedCommandApprovals.contains(where: {
+                Self.byteExact($0.managedRequestID, managedRequestID)
+            }),
+            "managed_command_approval_id_conflict"
+        )
+        managedCommandApprovalNoticeCount = try nextGeneration(
+            managedCommandApprovalNoticeCount
+        )
+
+        let timeoutNanoseconds = managedCommandApprovalTimeoutNanoseconds
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                // Cancellation can arrive after the outer check but before
+                // registration. The actor keeps this check and append atomic;
+                // a later cancellation handler is serialized immediately
+                // after this method suspends.
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let timeoutTask = Task.detached(priority: .utility) { [weak self] in
+                    try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    await self?.expireManagedCommandApproval(
+                        managedRequestID: managedRequestID
+                    )
+                }
+                pendingManagedCommandApprovals.append(PendingManagedCommandApproval(
+                    managedRequestID: managedRequestID,
+                    binding: binding,
+                    continuation: continuation,
+                    timeoutTask: timeoutTask
+                ))
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelManagedCommandApproval(
+                    managedRequestID: managedRequestID
+                )
+            }
+        }
+    }
+
+    func resolveManagedCommandApproval(_ data: Data) throws -> Data {
+        let payload = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            payload,
+            required: [
+                "schema_version", "kind", "managed_request_id", "response_id",
+                "broker_epoch", "connection_id", "jsonrpc_request_id", "thread_id",
+                "turn_id", "item_id", "approval_id", "cwd", "command_preview",
+                "environment_id", "allow_once_available", "decline_available", "decision",
+            ]
+        )
+        try require(
+            payload["schema_version"] as? String == "1.0"
+                && payload["kind"] as? String
+                    == "blabee_managed_command_approval_resolution_request",
+            "managed_command_approval_resolution_invalid"
+        )
+        let managedRequestID = try identifier(
+            string(payload, "managed_request_id"),
+            "managed_request_id"
+        )
+        let responseID = try identifier(string(payload, "response_id"), "response_id")
+        let binding = try managedCommandApprovalBinding(payload)
+        let decision = try string(payload, "decision")
+        try require(
+            ["accept_once", "decline", "decide_in_codex"].contains(decision),
+            "managed_command_approval_resolution_invalid"
+        )
+
+        if let resolved = resolvedManagedCommandApprovals.first(where: {
+            Self.byteExact($0.managedRequestID, managedRequestID)
+        }) {
+            guard resolved.matches(
+                responseID: responseID,
+                binding: binding,
+                decision: decision
+            ) else {
+                throw CoordinatorError("managed_command_approval_resolution_conflict")
+            }
+            return try managedCommandApprovalResolutionReceipt(
+                managedRequestID: managedRequestID,
+                responseID: responseID,
+                decision: decision
+            )
+        }
+        try require(
+            !resolvedManagedCommandApprovals.contains(where: {
+                Self.byteExact($0.responseID, responseID)
+            }),
+            "managed_command_approval_response_id_conflict"
+        )
+        guard let head = pendingManagedCommandApprovals.first else {
+            throw CoordinatorError("managed_command_approval_not_found")
+        }
+        guard Self.byteExact(head.managedRequestID, managedRequestID) else {
+            throw CoordinatorError("managed_command_approval_not_head")
+        }
+        try require(
+            head.binding == binding,
+            "managed_command_approval_binding_mismatch"
+        )
+        if decision == "accept_once" {
+            try require(
+                head.binding.allowOnceAvailable,
+                "managed_command_approval_decision_unavailable"
+            )
+        } else if decision == "decline" {
+            try require(
+                head.binding.declineAvailable,
+                "managed_command_approval_decision_unavailable"
+            )
+        }
+
+        pendingManagedCommandApprovals.removeFirst()
+        head.timeoutTask.cancel()
+        head.continuation.resume(
+            returning: try managedCommandApprovalOutcome(decision: decision)
+        )
+        resolvedManagedCommandApprovals.append(ResolvedManagedCommandApproval(
+            managedRequestID: managedRequestID,
+            responseID: responseID,
+            binding: binding,
+            decision: decision
+        ))
+        if resolvedManagedCommandApprovals.count
+            > Self.maximumResolvedManagedCommandApprovalTombstones
+        {
+            resolvedManagedCommandApprovals.removeFirst(
+                resolvedManagedCommandApprovals.count
+                    - Self.maximumResolvedManagedCommandApprovalTombstones
+            )
+        }
+        return try managedCommandApprovalResolutionReceipt(
+            managedRequestID: managedRequestID,
+            responseID: responseID,
+            decision: decision
+        )
+    }
+
+    func expireManagedCommandApproval(managedRequestID: String) {
+        guard let index = pendingManagedCommandApprovals.firstIndex(where: {
+            Self.byteExact($0.managedRequestID, managedRequestID)
+        }) else { return }
+        let request = pendingManagedCommandApprovals.remove(at: index)
+        do {
+            request.continuation.resume(
+                returning: try managedCommandApprovalOutcome(
+                    decision: "decide_in_codex"
+                )
+            )
+        } catch {
+            request.continuation.resume(throwing: error)
+        }
+    }
+
+    func cancelManagedCommandApproval(managedRequestID: String) {
+        guard let index = pendingManagedCommandApprovals.firstIndex(where: {
+            Self.byteExact($0.managedRequestID, managedRequestID)
+        }) else { return }
+        let request = pendingManagedCommandApprovals.remove(at: index)
+        request.timeoutTask.cancel()
+        request.continuation.resume(throwing: CancellationError())
+    }
+
+    func managedCommandApprovalOutcome(decision: String) throws -> Data {
+        try require(
+            ["accept_once", "decline", "decide_in_codex"].contains(decision),
+            "managed_command_approval_resolution_invalid"
+        )
+        return try publicData(["decision": decision])
+    }
+
+    /// Confirms only that the Pet selection matched the current FIFO head and
+    /// resumed its in-process waiter. App Server delivery and command success
+    /// remain separate downstream evidence.
+    func managedCommandApprovalResolutionReceipt(
+        managedRequestID: String,
+        responseID: String,
+        decision: String
+    ) throws -> Data {
+        try publicData([
+            "resolved": true,
+            "managed_request_id": managedRequestID,
+            "response_id": responseID,
+            "decision": decision,
+        ])
+    }
+
+    private func managedCommandApprovalBinding(
+        _ payload: [String: Any]
+    ) throws -> ManagedCommandApprovalBinding {
+        let brokerEpoch = try boundedPermissionIdentifier(
+            string(payload, "broker_epoch"),
+            code: "managed_command_approval_broker_epoch_invalid"
+        )
+        let connectionID = try boundedPermissionIdentifier(
+            string(payload, "connection_id"),
+            code: "managed_command_approval_connection_id_invalid"
+        )
+        let jsonRPCRequestID = try managedJSONRPCRequestID(
+            payload["jsonrpc_request_id"]
+        )
+        let threadID = try boundedPermissionIdentifier(
+            string(payload, "thread_id"),
+            code: "managed_command_approval_thread_id_invalid"
+        )
+        let turnID = try boundedPermissionIdentifier(
+            string(payload, "turn_id"),
+            code: "managed_command_approval_turn_id_invalid"
+        )
+        let itemID = try boundedPermissionIdentifier(
+            string(payload, "item_id"),
+            code: "managed_command_approval_item_id_invalid"
+        )
+        let approvalID: String?
+        if payload["approval_id"] is NSNull {
+            approvalID = nil
+        } else {
+            approvalID = try boundedPermissionIdentifier(
+                string(payload, "approval_id"),
+                code: "managed_command_approval_approval_id_invalid"
+            )
+        }
+        let environmentID: String?
+        if payload["environment_id"] is NSNull {
+            environmentID = nil
+        } else {
+            environmentID = try boundedPermissionIdentifier(
+                string(payload, "environment_id"),
+                code: "managed_command_approval_environment_id_invalid"
+            )
+        }
+        let rawCWD = try string(payload, "cwd")
+        let cwd = try Self.normalizedManagedCommandApprovalPath(rawCWD)
+        try require(
+            Self.byteExact(rawCWD, cwd),
+            "managed_command_approval_cwd_invalid"
+        )
+        let commandPreview: String
+        do {
+            commandPreview = try permissionCommandPreview(payload["command_preview"])
+        } catch {
+            throw CoordinatorError("managed_command_approval_command_invalid")
+        }
+        let allowOnceAvailable = try managedCommandApprovalBoolean(
+            payload["allow_once_available"]
+        )
+        let declineAvailable = try managedCommandApprovalBoolean(
+            payload["decline_available"]
+        )
+        return ManagedCommandApprovalBinding(
+            brokerEpoch: brokerEpoch,
+            connectionID: connectionID,
+            jsonRPCRequestID: jsonRPCRequestID,
+            threadID: threadID,
+            turnID: turnID,
+            itemID: itemID,
+            approvalID: approvalID,
+            environmentID: environmentID,
+            cwd: cwd,
+            commandPreview: commandPreview,
+            allowOnceAvailable: allowOnceAvailable,
+            declineAvailable: declineAvailable
+        )
+    }
+
+    private func managedJSONRPCRequestID(
+        _ rawValue: Any?
+    ) throws -> ManagedJSONRPCRequestID {
+        guard let object = rawValue as? [String: Any],
+              Set(object.keys) == ["type", "value"],
+              let type = object["type"] as? String
+        else { throw CoordinatorError("managed_command_approval_jsonrpc_id_invalid") }
+        if type == "string",
+           let value = object["value"] as? String
+        {
+            return .string(try boundedPermissionIdentifier(
+                value,
+                code: "managed_command_approval_jsonrpc_id_invalid"
+            ))
+        }
+        if type == "integer",
+           let value = ExactJSONInteger.int64(object["value"])
+        {
+            return .integer(value)
+        }
+        throw CoordinatorError("managed_command_approval_jsonrpc_id_invalid")
+    }
+
+    func managedCommandApprovalBoolean(_ rawValue: Any?) throws -> Bool {
+        guard let number = rawValue as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID()
+        else { throw CoordinatorError("managed_command_approval_boolean_invalid") }
+        return number.boolValue
+    }
+
+    func boundedPermissionIdentifier(_ value: String, code: String) throws -> String {
+        try require(
+            !value.isEmpty
+                && value.unicodeScalars.count <= 512
+                && IdentifierNormalization.isNFC(value)
+                && value.unicodeScalars.allSatisfy(isSafePermissionDisplayScalar),
+            code
+        )
+        return value
+    }
+
+    func permissionDisplayString(
+        _ rawValue: Any?,
+        maximumScalars: Int,
+        code: String
+    ) throws -> String? {
+        guard let rawValue else { return nil }
+        if rawValue is NSNull { return nil }
+        guard let value = rawValue as? String else { throw CoordinatorError(code) }
+        let normalized = value.precomposedStringWithCanonicalMapping
+        var result = ""
+        result.reserveCapacity(min(normalized.utf8.count, maximumScalars * 2))
+        var retainedScalars = 0
+        for scalar in normalized.unicodeScalars {
+            if retainedScalars == maximumScalars { break }
+            if !isSafePermissionDisplayScalar(scalar) {
+                result.append(" ")
+            } else {
+                result.unicodeScalars.append(scalar)
+            }
+            retainedScalars += 1
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func isSafePermissionDisplayScalar(_ scalar: Unicode.Scalar) -> Bool {
+        let category = scalar.properties.generalCategory
+        return !scalar.properties.isDefaultIgnorableCodePoint
+            && category != .control
+            && category != .format
+            && category != .lineSeparator
+            && category != .paragraphSeparator
+    }
+
+    func permissionCommandPreview(_ rawValue: Any?) throws -> String {
+        guard let value = rawValue as? String,
+              !value.isEmpty,
+              value.unicodeScalars.count <= Self.maximumPermissionCommandPreviewScalars,
+              IdentifierNormalization.isNFC(value),
+              !value.trimmingCharacters(in: .whitespaces).isEmpty,
+              value.unicodeScalars.allSatisfy({ scalar in
+                  isSafePermissionDisplayScalar(scalar)
+              })
+        else {
+            throw CoordinatorError("permission_request_command_invalid")
+        }
+        return value
     }
 }
 
@@ -1266,9 +2101,13 @@ private extension CoordinatorOperationalApplication {
         }
         try require(revision == packetRevision, "selection_binding_mismatch")
         try require(choice["enabled"] as? Bool == true, "decision_option_disabled")
-        guard let slot = ExactJSONInteger.int64(choice["slot"], minimum: 1) else {
+        guard ExactJSONInteger.int64(choice["slot"], minimum: 1) != nil,
+              let choiceKind = choice["kind"] as? String
+        else {
             throw CoordinatorError("decision_option_not_found")
         }
+        let isPetAction = choiceKind == "recommended_action" || choiceKind == "alternative_action"
+        let isPause = choiceKind == "pause"
 
         var request = boundary.binding.jsonObject
         request["schema_version"] = "1.0"
@@ -1296,7 +2135,7 @@ private extension CoordinatorOperationalApplication {
         ]
         let routed = try routing.routeSelection(StrictJSONTransport.data(forJSONObject: command))
 
-        if slot == 3 {
+        if isPause {
             boundary.phase = .paused
             boundaries[candidate.key] = boundary
             activeByTurn.removeValue(forKey: boundary.binding.turnKey)
@@ -1310,7 +2149,7 @@ private extension CoordinatorOperationalApplication {
         }
         let envelope = effect?["envelope"] as? [String: Any]
         let effectContinuationID = envelope?["continuation_id"] as? String
-        let continuationID = (slot == 1 || slot == 2)
+        let continuationID = isPetAction
             ? commandContinuationID
             : effectContinuationID
         do {
@@ -1321,7 +2160,7 @@ private extension CoordinatorOperationalApplication {
                     "continuation_binding_mismatch"
                 )
             }
-            guard slot == 1 || slot == 2,
+            guard isPetAction,
                   let envelope,
                   effectContinuationID != nil,
                   envelope["action"] is [String: Any]
@@ -1441,6 +2280,83 @@ private extension CoordinatorOperationalApplication {
         boundaries[boundaryKey] = boundary
     }
 
+    private func supersedeUnselectedBoundaryForNewPrompt(
+        boundaryKey: CoordinatorBindingKey
+    ) throws {
+        guard var boundary = boundaries[boundaryKey],
+              boundary.phase == .sealed || boundary.phase == .waiting
+        else { throw CoordinatorError("session_decision_boundary_active") }
+        do {
+            try closeTerminalBoundaryIdempotently(
+                &boundary,
+                reason: "superseded_by_user_prompt"
+            )
+        } catch {
+            // A journal append can commit even when its response is lost.
+            // Only authoritative replay may convert that ambiguity into
+            // success; an actually open boundary keeps blocking the new turn.
+            let originalError = error
+            guard let authoritative = try? routing.authoritativeState(),
+                  authoritative.boundary(for: boundary.binding)?.closed == true
+            else { throw originalError }
+        }
+        boundary.phase = .closed
+        boundaries[boundaryKey] = boundary
+        if activeByTurn[boundary.binding.turnKey] == boundaryKey {
+            activeByTurn.removeValue(forKey: boundary.binding.turnKey)
+        }
+    }
+
+    private func supersedeSessionSuggestionsForNewPrompt(
+        projectID: String,
+        sessionID: String
+    ) throws {
+        let pendingKeys = boundaries.compactMap { key, boundary in
+            Self.byteExact(boundary.binding.projectID, projectID)
+                && Self.byteExact(boundary.binding.sessionID, sessionID)
+                && (boundary.phase == .sealed || boundary.phase == .waiting)
+                ? key
+                : nil
+        }.sorted { left, right in
+            let leftSequence = boundaries[left]?.binding.boundarySequence ?? 0
+            let rightSequence = boundaries[right]?.binding.boundarySequence ?? 0
+            return leftSequence < rightSequence
+        }
+        let stagedEntries = stagedByTurn.compactMap { turnKey, stagedKey in
+            Self.byteExact(turnKey.projectID, projectID)
+                && Self.byteExact(turnKey.sessionID, sessionID)
+                ? (turnKey, stagedKey)
+                : nil
+        }
+        for (_, stagedKey) in stagedEntries {
+            guard let staged = boundaries[stagedKey], staged.phase == .staged else {
+                throw CoordinatorError("proposal_retry_state_missing")
+            }
+        }
+        for pendingKey in pendingKeys {
+            // A fresh user turn supersedes every unselected proposal still
+            // visible for this session, including a promoted successor whose
+            // binding belongs to an older source turn. Verified Blabee queue
+            // turns never enter this path.
+            try supersedeUnselectedBoundaryForNewPrompt(boundaryKey: pendingKey)
+        }
+        for (turnKey, stagedKey) in stagedEntries {
+            guard let staged = boundaries[stagedKey] else {
+                throw CoordinatorError("proposal_retry_state_missing")
+            }
+            // A staged successor has not opened or sealed any journal
+            // authority yet, so cancellation is deliberately process-local.
+            // Remove its retained acceptance and registration together with
+            // the promotion pointer so neither a dispatch receipt nor an
+            // exact proposal retry can resurrect a stale staged card.
+            stagedByTurn.removeValue(forKey: turnKey)
+            boundaries.removeValue(forKey: stagedKey)
+            if registrations[staged.proposalID]?.boundaryKey == stagedKey {
+                registrations.removeValue(forKey: staged.proposalID)
+            }
+        }
+    }
+
     private func closeTerminalBoundaryIdempotently(
         _ boundary: inout Boundary,
         reason: String
@@ -1524,53 +2440,70 @@ private extension CoordinatorOperationalApplication {
     ) throws -> Data {
         let proposal = boundary.proposalObject
         let outcome = try object(proposal, "outcome")
-        let recommended = try object(proposal, "recommended_next")
-        let alternative = proposal["alternative_next"] as? [String: Any]
-        var choices: [[String: Any]] = [[
-            "slot": 1,
-            "kind": "recommended_action",
-            "enabled": true,
-            "disabled_reason": NSNull(),
-            "option_id": idGenerator("option_recommended"),
-            "action_id": idGenerator("action_recommended"),
-            "action": recommended,
-        ]]
-        if let alternative {
-            choices.append([
-                "slot": 2,
-                "kind": "alternative_action",
+        let rankedActions = proposal["next_actions"] as? [[String: Any]]
+        var choices: [[String: Any]]
+        if let rankedActions {
+            choices = rankedActions.enumerated().map { offset, action in
+                let slot = offset + 1
+                return [
+                    "slot": slot,
+                    "kind": slot == 1 ? "recommended_action" : "alternative_action",
+                    "enabled": true,
+                    "disabled_reason": NSNull(),
+                    "option_id": idGenerator("option_rank_\(slot)"),
+                    "action_id": idGenerator("action_rank_\(slot)"),
+                    "action": action,
+                ]
+            }
+        } else {
+            let recommended = try object(proposal, "recommended_next")
+            let alternative = proposal["alternative_next"] as? [String: Any]
+            choices = [[
+                "slot": 1,
+                "kind": "recommended_action",
                 "enabled": true,
                 "disabled_reason": NSNull(),
-                "option_id": idGenerator("option_alternative"),
-                "action_id": idGenerator("action_alternative"),
-                "action": alternative,
-            ])
-        } else {
+                "option_id": idGenerator("option_recommended"),
+                "action_id": idGenerator("action_recommended"),
+                "action": recommended,
+            ]]
+            if let alternative {
+                choices.append([
+                    "slot": 2,
+                    "kind": "alternative_action",
+                    "enabled": true,
+                    "disabled_reason": NSNull(),
+                    "option_id": idGenerator("option_alternative"),
+                    "action_id": idGenerator("action_alternative"),
+                    "action": alternative,
+                ])
+            } else {
+                choices.append([
+                    "slot": 2,
+                    "kind": "alternative_action",
+                    "enabled": false,
+                    "disabled_reason": "no_safe_meaningful_alternative",
+                    "option_id": idGenerator("option_alternative_disabled"),
+                    "action_id": NSNull(),
+                ])
+            }
             choices.append([
-                "slot": 2,
-                "kind": "alternative_action",
+                "slot": 3,
+                "kind": "pause",
+                "enabled": true,
+                "disabled_reason": NSNull(),
+                "option_id": idGenerator("option_pause"),
+                "action_id": idGenerator("action_pause"),
+            ])
+            choices.append([
+                "slot": 4,
+                "kind": "rollback",
                 "enabled": false,
-                "disabled_reason": "no_safe_meaningful_alternative",
-                "option_id": idGenerator("option_alternative_disabled"),
+                "disabled_reason": "rollback_not_enabled_in_build",
+                "option_id": idGenerator("option_rollback"),
                 "action_id": NSNull(),
             ])
         }
-        choices.append([
-            "slot": 3,
-            "kind": "pause",
-            "enabled": true,
-            "disabled_reason": NSNull(),
-            "option_id": idGenerator("option_pause"),
-            "action_id": idGenerator("action_pause"),
-        ])
-        choices.append([
-            "slot": 4,
-            "kind": "rollback",
-            "enabled": false,
-            "disabled_reason": "rollback_not_enabled_in_build",
-            "option_id": idGenerator("option_rollback"),
-            "action_id": NSNull(),
-        ])
         var packet: [String: Any] = [
             "schema_version": "1.0",
             "kind": "blabee_decision_packet",
@@ -1591,6 +2524,9 @@ private extension CoordinatorOperationalApplication {
             ],
             "choices": choices,
         ]
+        if rankedActions != nil {
+            packet["decision_layout"] = "ranked_next_actions"
+        }
         packet.merge(boundary.binding.jsonObject) { current, _ in current }
         return try StrictJSONTransport.data(forJSONObject: packet)
     }
@@ -1674,7 +2610,12 @@ private extension CoordinatorOperationalApplication {
             "projects": projectObjects,
             "sessions": sessionObjects,
             "interactions": interactionObjects,
+            "permission_requests": pendingPermissionRequests.map(\.snapshotObject),
             "permission_notice_count": permissionNoticeCount,
+            "managed_command_approvals": pendingManagedCommandApprovals.map(
+                \.snapshotObject
+            ),
+            "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
         ])
     }
 }
@@ -1686,14 +2627,21 @@ private extension CoordinatorOperationalApplication {
         _ proposal: [String: Any],
         correlationToken: String
     ) throws -> Data {
-        try exactKeys(
-            proposal,
-            required: [
-                "schema_version", "proposal_id", "correlation_token", "interaction_kind",
-                "task_goal", "outcome", "recommended_next", "alternative_next",
-                "pause_capsule", "reported_side_effects",
-            ]
-        )
+        let commonKeys: Set<String> = [
+            "schema_version", "proposal_id", "correlation_token", "interaction_kind",
+            "task_goal", "outcome", "reported_side_effects",
+        ]
+        let isRanked = proposal["next_actions"] != nil
+        if isRanked {
+            try exactKeys(proposal, required: commonKeys.union(["next_actions"]))
+        } else {
+            try exactKeys(
+                proposal,
+                required: commonKeys.union([
+                    "recommended_next", "alternative_next", "pause_capsule",
+                ])
+            )
+        }
         try require(proposal["schema_version"] as? String == "1.0", "invalid_proposal")
         try require(proposal["interaction_kind"] as? String == "blabee_decision", "invalid_proposal")
         _ = try identifier(string(proposal, "proposal_id"), "proposal_id")
@@ -1709,15 +2657,27 @@ private extension CoordinatorOperationalApplication {
         let outcomeStatus = try string(outcome, "status")
         try require(["completed", "partial", "blocked", "failed"].contains(outcomeStatus), "invalid_proposal")
         _ = try nonEmptyString(outcome, "summary", maximum: 8_192)
-        try validateAction(try object(proposal, "recommended_next"))
-        if proposal["alternative_next"] is NSNull {
-            // Explicit null is the only disabled alternative representation.
+        if isRanked {
+            guard let actions = proposal["next_actions"] as? [[String: Any]],
+                  (2...4).contains(actions.count)
+            else { throw CoordinatorError("invalid_proposal") }
+            var canonicalActions = Set<Data>()
+            for action in actions {
+                try validateAction(action)
+                let canonical = try StrictJSONTransport.data(forJSONObject: action)
+                try require(canonicalActions.insert(canonical).inserted, "invalid_proposal")
+            }
         } else {
-            try validateAction(try object(proposal, "alternative_next"))
+            try validateAction(try object(proposal, "recommended_next"))
+            if proposal["alternative_next"] is NSNull {
+                // Explicit null is the only disabled alternative representation.
+            } else {
+                try validateAction(try object(proposal, "alternative_next"))
+            }
+            let pause = try object(proposal, "pause_capsule")
+            try exactKeys(pause, required: ["resume_first"])
+            _ = try nonEmptyString(pause, "resume_first", maximum: 8_192)
         }
-        let pause = try object(proposal, "pause_capsule")
-        try exactKeys(pause, required: ["resume_first"])
-        _ = try nonEmptyString(pause, "resume_first", maximum: 8_192)
         guard let sideEffects = proposal["reported_side_effects"] as? [[String: Any]],
               sideEffects.count <= 128
         else { throw CoordinatorError("invalid_proposal") }
@@ -2022,6 +2982,34 @@ private extension CoordinatorOperationalApplication {
 
     static func normalizedPath(_ path: String) throws -> String {
         try require(path.hasPrefix("/"), "project_path_invalid")
+        return URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    static func normalizedPermissionPath(_ path: String) throws -> String {
+        try require(
+            path.hasPrefix("/")
+                && path.unicodeScalars.count <= 4_096
+                && !path.contains("\0"),
+            "permission_request_cwd_invalid"
+        )
+        return URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    static func normalizedManagedCommandApprovalPath(_ path: String) throws -> String {
+        try require(
+            path.hasPrefix("/")
+                && path.unicodeScalars.count <= 4_096
+                && IdentifierNormalization.isNFC(path)
+                && path.unicodeScalars.allSatisfy { scalar in
+                    let category = scalar.properties.generalCategory
+                    return !scalar.properties.isDefaultIgnorableCodePoint
+                        && category != .control
+                        && category != .format
+                        && category != .lineSeparator
+                        && category != .paragraphSeparator
+                },
+            "managed_command_approval_cwd_invalid"
+        )
         return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 

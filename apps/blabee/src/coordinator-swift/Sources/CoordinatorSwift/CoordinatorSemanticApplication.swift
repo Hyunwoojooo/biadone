@@ -464,7 +464,7 @@ private extension CoordinatorSemanticDecision {
                 ]
             )
         }
-        if choice.slot == 3 {
+        if choice.isPause {
             guard let eventIDs = command["event_ids"] as? [String: Any] else {
                 throw CoordinatorError("event_id_missing")
             }
@@ -489,8 +489,8 @@ private extension CoordinatorSemanticDecision {
             effect.merge(binding.jsonObject) { current, _ in current }
             return try change(events: [claim, close], effects: [effect])
         }
-        try require(choice.slot != 4, "rollback_not_supported_in_core")
-        guard (choice.slot == 1 || choice.slot == 2),
+        try require(!choice.isRollback, "rollback_not_supported_in_core")
+        guard choice.isPetAction,
               let actionID = choice.actionID,
               let actionData = choice.actionJSON,
               let action = try JSONSerialization.jsonObject(with: actionData) as? [String: Any]
@@ -826,13 +826,13 @@ private extension CoordinatorSemanticDecision {
         let boundary = try boundaryState(state, binding)
         try require(!boundary.closed, "decision_boundary_already_closed")
         let rawReason = command["close_reason"] as? String
-        if boundary.selection?.slot == 3 {
+        if boundary.selection?.isPause == true {
             try require(rawReason == "episode_paused", "pause_selection_close_reason_invalid")
         }
         if rawReason == "episode_paused" {
-            try require(boundary.selection?.slot == 3, "episode_pause_selection_missing")
+            try require(boundary.selection?.isPause == true, "episode_pause_selection_missing")
         }
-        if boundary.selection?.slot == 1 || boundary.selection?.slot == 2 {
+        if boundary.selection?.isPetAction == true {
             try require(boundary.dispatchedContinuationID != nil, "transport_terminal_observation_missing")
         }
         if let continuationID = boundary.dispatchedContinuationID {

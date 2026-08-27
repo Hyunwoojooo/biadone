@@ -25,7 +25,8 @@ private func invocationEnvironment(
 @Test("explicit product commands and legacy flags preserve their original dispatch")
 func productInvocationPreservesExplicitDispatch() {
     for mode in [
-        "daemon", "service", "project-settings", "pet", "doctor", "hook", "mcp", "--database",
+        "daemon", "service", "project-settings", "pet", "doctor", "hook", "mcp",
+        "managed-codex", "--database",
     ] {
         #expect(ProductInvocationResolver.mode(
             commandLineArguments: ["/tmp/Blabee.app/Contents/MacOS/blabee-coordinator", mode],

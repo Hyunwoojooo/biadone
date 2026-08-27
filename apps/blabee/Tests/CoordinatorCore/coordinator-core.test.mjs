@@ -26,6 +26,10 @@ const basePacket = JSON.parse(await readFile(
   new URL("../../Fixtures/v1/contracts/valid/decision-packet-rollback-disabled.json", import.meta.url),
   "utf8",
 ));
+const rankedBasePacket = JSON.parse(await readFile(
+  new URL("../../Fixtures/v1/contracts/valid/decision-packet-ranked-actions.json", import.meta.url),
+  "utf8",
+));
 
 let uniqueId = 0;
 
@@ -164,6 +168,22 @@ async function setupWaiting({
   const packet = packetFor(decisionBoundary, current.eventSequence + 1, { sealedAt, expiresAt });
   await executeCommand(journal, sealCommand(packet));
   return { journal, packet, boundary: decisionBoundary };
+}
+
+function rankedPacketFor(boundary, eventSequence) {
+  const packet = structuredClone(rankedBasePacket);
+  Object.assign(packet, boundary);
+  packet.interaction_id = `interaction_ranked_${boundary.boundary_sequence}`;
+  packet.packet_id = `packet_ranked_${boundary.boundary_sequence}`;
+  packet.valid_after_event_sequence = eventSequence;
+  packet.sealed_at = "2026-08-21T01:00:01Z";
+  packet.expires_at = "2026-08-21T01:02:01Z";
+  packet.checkpoint.id = boundary.episode_baseline_checkpoint_id;
+  for (const choice of packet.choices) {
+    choice.option_id = `option_ranked_${boundary.boundary_sequence}_${choice.slot}`;
+    choice.action_id = `action_ranked_${boundary.boundary_sequence}_${choice.slot}`;
+  }
+  return packet;
 }
 
 function errorCode(expected) {
@@ -336,6 +356,31 @@ test("generated packet, selection, events, and pet envelope satisfy v1 contracts
   assert.equal(persisted.includes(execution.effects[0].envelope.continuation_token), false);
   assert.equal(persisted.includes("continuation_token"), false);
   assert.equal(Object.hasOwn(snapshot.verificationRecords[0], "action"), false);
+});
+
+test("ranked slot four dispatches its sealed alternative action", async () => {
+  const decisionBoundary = binding({
+    projectId: "project_core_ranked",
+    sessionId: "session_core_ranked",
+    episodeId: "episode_core_ranked",
+    boundaryId: "boundary_core_ranked",
+  });
+  const journal = new InMemoryJournal();
+  await executeCommand(journal, openCommand(decisionBoundary));
+  const opened = await stateOf(journal);
+  const packet = rankedPacketFor(decisionBoundary, opened.eventSequence + 1);
+  await executeCommand(journal, sealCommand(packet));
+
+  const execution = await executeCommand(journal, selectCommand(packet, 4));
+  assert.equal(execution.effects.length, 1);
+  assert.equal(execution.effects[0].envelope.option_id, packet.choices[3].option_id);
+  assert.deepEqual(execution.effects[0].envelope.action, packet.choices[3].action);
+
+  const state = await stateOf(journal);
+  const selected = state.boundaries[Object.keys(state.boundaries)[0]].selection;
+  assert.equal(selected.slot, 4);
+  assert.equal(selected.kind, "alternative_action");
+  await assertSnapshotEventsAreV1(await journal.load());
 });
 
 test("command-generated identifiers and stable codes obey v1 scalar bounds", async () => {

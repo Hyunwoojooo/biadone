@@ -42,9 +42,13 @@ private func petString(
     return value
 }
 
-private func petNullableString(_ object: [String: Any], _ key: String) throws -> String? {
+private func petNullableString(
+    _ object: [String: Any],
+    _ key: String,
+    maximum: Int = 512
+) throws -> String? {
     if object[key] is NSNull { return nil }
-    return try petString(object, key, maximum: 512)
+    return try petString(object, key, maximum: maximum)
 }
 
 private func petBoolean(_ object: [String: Any], _ key: String) throws -> Bool {
@@ -157,6 +161,224 @@ struct PetSession: Sendable, Equatable {
         sourceTurnID = try petNullableString(jsonObject, "source_turn_id")
         sourcePromptID = try petNullableString(jsonObject, "source_prompt_id")
         episodeID = try petNullableString(jsonObject, "episode_id")
+    }
+}
+
+enum PetPermissionDecision: String, Sendable, Equatable, CaseIterable {
+    case deny
+    case deferToCodex = "defer_to_codex"
+
+    var displayTitle: String {
+        switch self {
+        case .deny: "거절"
+        case .deferToCodex: "Codex에서 직접 결정"
+        }
+    }
+}
+
+enum PetManagedCommandApprovalDecision: String, Sendable, Equatable, CaseIterable {
+    case acceptOnce = "accept_once"
+    case decline
+    case decideInCodex = "decide_in_codex"
+
+    var displayTitle: String {
+        switch self {
+        case .acceptOnce: "이번만 허용"
+        case .decline: "거절"
+        case .decideInCodex: "Codex에서 직접 결정"
+        }
+    }
+}
+
+enum PetManagedJSONRPCRequestID: Sendable, Equatable, Hashable {
+    case string(String)
+    case integer(Int64)
+
+    init(jsonObject: [String: Any]) throws {
+        try petExactKeys(jsonObject, ["type", "value"], "jsonrpc_request_id")
+        let type = try petString(jsonObject, "type", maximum: 16)
+        if type == "string" {
+            let value = try petString(jsonObject, "value", maximum: 512)
+            try petRequire(
+                value.precomposedStringWithCanonicalMapping.utf8.elementsEqual(value.utf8),
+                "jsonrpc_request_id.value"
+            )
+            self = .string(value)
+            return
+        }
+        if type == "integer",
+           let value = ExactJSONInteger.int64(jsonObject["value"])
+        {
+            self = .integer(value)
+            return
+        }
+        throw PetModelError.invalid("jsonrpc_request_id")
+    }
+
+    var jsonObject: [String: Any] {
+        switch self {
+        case .string(let value): ["type": "string", "value": value]
+        case .integer(let value): ["type": "integer", "value": value]
+        }
+    }
+}
+
+struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
+    let managedRequestID: String
+    let brokerEpoch: String
+    let connectionID: String
+    let jsonRPCRequestID: PetManagedJSONRPCRequestID
+    let threadID: String
+    let turnID: String
+    let itemID: String
+    let approvalID: String?
+    let environmentID: String?
+    let cwd: String
+    let commandPreview: String
+    let allowOnceAvailable: Bool
+    let declineAvailable: Bool
+
+    var id: String { managedRequestID }
+
+    init(jsonObject: [String: Any]) throws {
+        try petExactKeys(
+            jsonObject,
+            [
+                "managed_request_id", "broker_epoch", "connection_id",
+                "jsonrpc_request_id", "thread_id", "turn_id", "item_id",
+                "approval_id", "environment_id", "cwd", "command_preview", "allow_once_available",
+                "decline_available",
+            ],
+            "managed_command_approval"
+        )
+        managedRequestID = try petString(
+            jsonObject,
+            "managed_request_id",
+            maximum: 512
+        )
+        brokerEpoch = try petString(jsonObject, "broker_epoch", maximum: 512)
+        connectionID = try petString(jsonObject, "connection_id", maximum: 512)
+        guard let rawJSONRPCRequestID = jsonObject["jsonrpc_request_id"]
+            as? [String: Any]
+        else { throw PetModelError.invalid("jsonrpc_request_id") }
+        jsonRPCRequestID = try PetManagedJSONRPCRequestID(
+            jsonObject: rawJSONRPCRequestID
+        )
+        threadID = try petString(jsonObject, "thread_id", maximum: 512)
+        turnID = try petString(jsonObject, "turn_id", maximum: 512)
+        itemID = try petString(jsonObject, "item_id", maximum: 512)
+        approvalID = try petNullableString(
+            jsonObject,
+            "approval_id",
+            maximum: 512
+        )
+        environmentID = try petNullableString(
+            jsonObject,
+            "environment_id",
+            maximum: 512
+        )
+        let rawCWD = try petString(jsonObject, "cwd", maximum: 4_096)
+        try petRequire(rawCWD.hasPrefix("/"), "managed_command_approval.cwd")
+        cwd = URL(fileURLWithPath: rawCWD, isDirectory: true).standardizedFileURL.path
+        try petRequire(cwd == rawCWD, "managed_command_approval.cwd")
+        commandPreview = try petString(
+            jsonObject,
+            "command_preview",
+            maximum: PetPermissionRequest.maximumCommandScalars
+        )
+        try petRequire(
+            !commandPreview.trimmingCharacters(in: .whitespaces).isEmpty
+                && commandPreview.precomposedStringWithCanonicalMapping.utf8
+                    .elementsEqual(commandPreview.utf8)
+                && commandPreview.unicodeScalars.allSatisfy({ scalar in
+                    let category = scalar.properties.generalCategory
+                    return !scalar.properties.isDefaultIgnorableCodePoint
+                        && category != .control
+                        && category != .format
+                        && category != .lineSeparator
+                        && category != .paragraphSeparator
+                }),
+            "managed_command_approval.command_preview"
+        )
+        allowOnceAvailable = try petBoolean(jsonObject, "allow_once_available")
+        declineAvailable = try petBoolean(jsonObject, "decline_available")
+    }
+
+    var bindingObject: [String: Any] {
+        [
+            "broker_epoch": brokerEpoch,
+            "connection_id": connectionID,
+            "jsonrpc_request_id": jsonRPCRequestID.jsonObject,
+            "thread_id": threadID,
+            "turn_id": turnID,
+            "item_id": itemID,
+            "approval_id": approvalID as Any? ?? NSNull(),
+            "environment_id": environmentID as Any? ?? NSNull(),
+            "cwd": cwd,
+            "command_preview": commandPreview,
+            "allow_once_available": allowOnceAvailable,
+            "decline_available": declineAvailable,
+        ]
+    }
+}
+
+struct PetPermissionRequest: Sendable, Equatable, Identifiable {
+    static let maximumCommandScalars = 120
+
+    let requestID: String
+    let projectID: String
+    let sessionID: String
+    let turnID: String
+    let cwd: String
+    let toolName: String
+    let requestDescription: String?
+    let commandPreview: String
+
+    var id: String { requestID }
+
+    init(jsonObject: [String: Any]) throws {
+        try petExactKeys(
+            jsonObject,
+            [
+                "request_id", "project_id", "session_id", "turn_id", "cwd",
+                "tool_name", "description", "command_preview",
+            ],
+            "permission_request"
+        )
+        requestID = try petString(jsonObject, "request_id", maximum: 512)
+        projectID = try petString(jsonObject, "project_id", maximum: 512)
+        sessionID = try petString(jsonObject, "session_id", maximum: 512)
+        turnID = try petString(jsonObject, "turn_id", maximum: 512)
+        let rawPath = try petString(jsonObject, "cwd", maximum: 4_096)
+        try petRequire(rawPath.hasPrefix("/"), "permission_request.cwd")
+        cwd = URL(fileURLWithPath: rawPath, isDirectory: true).standardizedFileURL.path
+        toolName = try petString(jsonObject, "tool_name", maximum: 512)
+        requestDescription = try petNullableString(
+            jsonObject,
+            "description",
+            maximum: 4_096
+        )
+        commandPreview = try petString(
+            jsonObject,
+            "command_preview",
+            maximum: Self.maximumCommandScalars
+        )
+        try petRequire(
+            !commandPreview.trimmingCharacters(in: .whitespaces).isEmpty
+                && commandPreview.unicodeScalars.allSatisfy({ scalar in
+                    let category = scalar.properties.generalCategory
+                    return !scalar.properties.isDefaultIgnorableCodePoint
+                        && category != .control
+                        && category != .format
+                        && category != .lineSeparator
+                        && category != .paragraphSeparator
+                }),
+            "permission_request.command_preview"
+        )
+    }
+
+    var displaySummary: String {
+        requestDescription ?? commandPreview
     }
 }
 
@@ -328,19 +550,17 @@ struct PetChoice: Sendable, Equatable, Identifiable {
     let targetCheckpointID: String?
 
     var id: Int { slot }
+    var isAction: Bool { action != nil }
+    var isPause: Bool { kind == "pause" }
+    var isRollback: Bool { kind == "rollback" }
 
     var displayTitle: String {
-        switch slot {
-        case 1:
-            return action?.title ?? "권장 작업"
-        case 2:
-            return action?.title ?? "대안 없음"
-        case 3:
-            return "보류"
-        case 4:
-            return "롤백"
-        default:
-            return "사용할 수 없음"
+        if let action { return action.title }
+        switch kind {
+        case "pause": return "보류"
+        case "rollback": return "롤백"
+        case "alternative_action": return "대안 없음"
+        default: return "사용할 수 없음"
         }
     }
 
@@ -366,34 +586,36 @@ struct PetChoice: Sendable, Equatable, Identifiable {
             actionID = try petString(jsonObject, "action_id", maximum: 512)
         }
 
-        switch expectedSlot {
-        case 1:
+        switch kind {
+        case "recommended_action":
+            try petRequire(expectedSlot == 1, "choices.kind")
             try petExactKeys(
                 jsonObject,
                 ["slot", "kind", "enabled", "disabled_reason", "option_id", "action_id", "action"],
-                "choices[0]"
+                "choices[\(expectedSlot - 1)]"
             )
-            try petRequire(kind == "recommended_action" && enabled, "choices[0]")
-            try petRequire(disabledReason == nil && actionID != nil, "choices[0]")
+            try petRequire(enabled, "choices[\(expectedSlot - 1)]")
+            try petRequire(disabledReason == nil && actionID != nil, "choices[\(expectedSlot - 1)]")
             guard let rawAction = jsonObject["action"] as? [String: Any] else {
-                throw PetModelError.invalid("choices[0].action")
+                throw PetModelError.invalid("choices[\(expectedSlot - 1)].action")
             }
             action = try PetAction(jsonObject: rawAction)
             targetCheckpointID = nil
-        case 2:
-            try petRequire(kind == "alternative_action", "choices[1].kind")
+        case "alternative_action":
+            try petRequire((2...4).contains(expectedSlot), "choices.kind")
             if enabled {
                 try petExactKeys(
                     jsonObject,
                     ["slot", "kind", "enabled", "disabled_reason", "option_id", "action_id", "action"],
-                    "choices[1]"
+                    "choices[\(expectedSlot - 1)]"
                 )
-                try petRequire(disabledReason == nil && actionID != nil, "choices[1]")
+                try petRequire(disabledReason == nil && actionID != nil, "choices[\(expectedSlot - 1)]")
                 guard let rawAction = jsonObject["action"] as? [String: Any] else {
-                    throw PetModelError.invalid("choices[1].action")
+                    throw PetModelError.invalid("choices[\(expectedSlot - 1)].action")
                 }
                 action = try PetAction(jsonObject: rawAction)
             } else {
+                try petRequire(expectedSlot == 2, "choices[1]")
                 try petExactKeys(
                     jsonObject,
                     ["slot", "kind", "enabled", "disabled_reason", "option_id", "action_id"],
@@ -403,18 +625,19 @@ struct PetChoice: Sendable, Equatable, Identifiable {
                 action = nil
             }
             targetCheckpointID = nil
-        case 3:
+        case "pause":
+            try petRequire(expectedSlot == 3, "choices[2].kind")
             try petExactKeys(
                 jsonObject,
                 ["slot", "kind", "enabled", "disabled_reason", "option_id", "action_id"],
                 "choices[2]"
             )
-            try petRequire(kind == "pause" && enabled, "choices[2]")
+            try petRequire(enabled, "choices[2]")
             try petRequire(disabledReason == nil && actionID != nil, "choices[2]")
             action = nil
             targetCheckpointID = nil
-        case 4:
-            try petRequire(kind == "rollback", "choices[3].kind")
+        case "rollback":
+            try petRequire(expectedSlot == 4, "choices[3].kind")
             if enabled {
                 try petExactKeys(
                     jsonObject,
@@ -441,7 +664,7 @@ struct PetChoice: Sendable, Equatable, Identifiable {
             }
             action = nil
         default:
-            throw PetModelError.invalid("choices.slot")
+            throw PetModelError.invalid("choices.kind")
         }
     }
 }
@@ -548,6 +771,22 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
         choices.first(where: { $0.slot == slot })
     }
 
+    var actionChoices: [PetChoice] {
+        choices.filter(\.isAction)
+    }
+
+    var usesRankedNextActions: Bool {
+        choices.count >= 2 && choices.allSatisfy { $0.enabled && $0.isAction }
+    }
+
+    var legacyPauseChoice: PetChoice? {
+        choices.first(where: \.isPause)
+    }
+
+    var legacyRollbackChoice: PetChoice? {
+        choices.first(where: \.isRollback)
+    }
+
     init(jsonObject: [String: Any], fallbackCWD: String?) throws {
         let interactionKeys = petIdentityKeys.union([
             "state", "cwd", "summary", "sealed_at", "expires_at",
@@ -605,18 +844,36 @@ struct PetInteraction: Sendable, Equatable, Identifiable {
               rawEvidence.count <= 256,
               let rawCheckpoint = jsonObject["checkpoint"] as? [String: Any],
               let rawChoices = jsonObject["choices"] as? [[String: Any]],
-              rawChoices.count == 4
+              (2...4).contains(rawChoices.count)
         else { throw PetModelError.invalid("interaction.packet_detail") }
         risk = try PetRisk(jsonObject: rawRisk)
         evidence = try rawEvidence.map(PetEvidence.init(jsonObject:))
+        let rawKinds = rawChoices.compactMap { $0["kind"] as? String }
+        let isLegacyChoiceSet = rawKinds == [
+            "recommended_action", "alternative_action", "pause", "rollback",
+        ]
+        if !isLegacyChoiceSet {
+            try petRequire(
+                rawKinds.count == rawChoices.count
+                    && rawKinds.first == "recommended_action"
+                    && rawKinds.dropFirst().allSatisfy { $0 == "alternative_action" },
+                "choices.kind"
+            )
+        }
         checkpoint = try PetCheckpoint(jsonObject: rawCheckpoint)
         choices = try rawChoices.enumerated().map { index, object in
             try PetChoice(jsonObject: object, expectedSlot: index + 1)
         }
+        if !isLegacyChoiceSet {
+            try petRequire(
+                choices.allSatisfy { $0.enabled && $0.isAction },
+                "choices.ranked_action"
+            )
+        }
         try petRequire(Set(choices.map(\.optionID)).count == choices.count, "choices.option_id")
         let actionIDs = choices.compactMap(\.actionID)
         try petRequire(Set(actionIDs).count == actionIDs.count, "choices.action_id")
-        if let rollback = choices.first(where: { $0.slot == 4 }), rollback.enabled {
+        if let rollback = choices.first(where: \.isRollback), rollback.enabled {
             try petRequire(checkpoint.isRecoveryCapable, "choices[3].checkpoint")
             try petRequire(
                 rollback.targetCheckpointID == checkpoint.id,
@@ -638,7 +895,10 @@ struct PetSnapshot: Sendable, Equatable {
     let sessions: [PetSession]
     let routing: PetRoutingSnapshot
     let interactions: [PetInteraction]
+    let permissionRequests: [PetPermissionRequest]
     let permissionNoticeCount: Int64
+    let managedCommandApprovals: [PetManagedCommandApproval]
+    let managedCommandApprovalNoticeCount: Int64
 
     static func parse(_ data: Data) throws -> PetSnapshot {
         let object = try StrictJSONTransport.object(
@@ -649,7 +909,8 @@ struct PetSnapshot: Sendable, Equatable {
             object,
             [
                 "schema_version", "kind", "routing", "projects", "sessions", "interactions",
-                "permission_notice_count",
+                "permission_requests", "permission_notice_count",
+                "managed_command_approvals", "managed_command_approval_notice_count",
             ],
             "snapshot"
         )
@@ -660,7 +921,10 @@ struct PetSnapshot: Sendable, Equatable {
         guard let rawProjects = object["projects"] as? [[String: Any]],
               let rawSessions = object["sessions"] as? [[String: Any]],
               let rawRouting = object["routing"] as? [String: Any],
-              let rawInteractions = object["interactions"] as? [[String: Any]]
+              let rawInteractions = object["interactions"] as? [[String: Any]],
+              let rawPermissionRequests = object["permission_requests"] as? [[String: Any]],
+              let rawManagedCommandApprovals = object["managed_command_approvals"]
+                as? [[String: Any]]
         else { throw PetModelError.invalid("snapshot") }
 
         let projects = try rawProjects.map(PetProject.init(jsonObject:))
@@ -729,14 +993,55 @@ struct PetSnapshot: Sendable, Equatable {
             )
         }
 
+        let permissionRequests = try rawPermissionRequests.map(
+            PetPermissionRequest.init(jsonObject:)
+        )
+        try petRequire(
+            Set(permissionRequests.map(\.requestID)).count == permissionRequests.count,
+            "permission_requests.request_id"
+        )
+        for request in permissionRequests {
+            guard let project = projectByID[request.projectID],
+                  project.cwd == request.cwd,
+                  let session = sessions.first(where: {
+                      $0.projectID == request.projectID
+                          && $0.sessionID == request.sessionID
+                  }),
+                  session.sourceTurnID == request.turnID
+            else { throw PetModelError.invalid("permission_requests.binding") }
+        }
+        let managedCommandApprovals = try rawManagedCommandApprovals.map(
+            PetManagedCommandApproval.init(jsonObject:)
+        )
+        try petRequire(
+            Set(managedCommandApprovals.map(\.managedRequestID)).count
+                == managedCommandApprovals.count,
+            "managed_command_approvals.managed_request_id"
+        )
+        let managedTransportKeys = managedCommandApprovals.map { request in
+            request.brokerEpoch + "\u{0}" + request.connectionID + "\u{0}"
+                + String(describing: request.jsonRPCRequestID)
+        }
+        try petRequire(
+            Set(managedTransportKeys).count == managedTransportKeys.count,
+            "managed_command_approvals.transport_binding"
+        )
+
         return PetSnapshot(
             projects: projects,
             sessions: sessions,
             routing: routing,
             interactions: interactions,
+            permissionRequests: permissionRequests,
             permissionNoticeCount: try petInteger(
                 object,
                 "permission_notice_count",
+                minimum: 0
+            ),
+            managedCommandApprovals: managedCommandApprovals,
+            managedCommandApprovalNoticeCount: try petInteger(
+                object,
+                "managed_command_approval_notice_count",
                 minimum: 0
             )
         )
@@ -744,6 +1049,71 @@ struct PetSnapshot: Sendable, Equatable {
 
     func interaction(identity: PetInteractionIdentity) -> PetInteraction? {
         interactions.first(where: { $0.identity == identity })
+    }
+}
+
+struct PetManagedCommandApprovalResolutionRequest: Sendable, Equatable {
+    let request: PetManagedCommandApproval
+    let responseID: String
+    let decision: PetManagedCommandApprovalDecision
+
+    init(
+        request: PetManagedCommandApproval,
+        responseID: String,
+        decision: PetManagedCommandApprovalDecision
+    ) throws {
+        try petRequire(!responseID.isEmpty && responseID.count <= 512, "response_id")
+        self.request = request
+        self.responseID = responseID
+        self.decision = decision
+    }
+
+    var jsonObject: [String: Any] {
+        var result = request.bindingObject
+        result["schema_version"] = "1.0"
+        result["kind"] = "blabee_managed_command_approval_resolution_request"
+        result["managed_request_id"] = request.managedRequestID
+        result["response_id"] = responseID
+        result["decision"] = decision.rawValue
+        return result
+    }
+
+    func data() throws -> Data {
+        try StrictJSONTransport.data(forJSONObject: jsonObject)
+    }
+}
+
+struct PetPermissionResolutionRequest: Sendable, Equatable {
+    let request: PetPermissionRequest
+    let responseID: String
+    let decision: PetPermissionDecision
+
+    init(
+        request: PetPermissionRequest,
+        responseID: String,
+        decision: PetPermissionDecision
+    ) throws {
+        try petRequire(!responseID.isEmpty && responseID.count <= 512, "response_id")
+        self.request = request
+        self.responseID = responseID
+        self.decision = decision
+    }
+
+    var jsonObject: [String: Any] {
+        [
+            "schema_version": "1.0",
+            "kind": "blabee_permission_resolution_request",
+            "request_id": request.requestID,
+            "response_id": responseID,
+            "project_id": request.projectID,
+            "session_id": request.sessionID,
+            "turn_id": request.turnID,
+            "decision": decision.rawValue,
+        ]
+    }
+
+    func data() throws -> Data {
+        try StrictJSONTransport.data(forJSONObject: jsonObject)
     }
 }
 

@@ -17,28 +17,37 @@
     "status": "completed",
     "summary": "Codex reports that the fictional parser validation path was added."
   },
-  "recommended_next": {
-    "title": "Review the fictional parser change",
-    "objective": "Inspect the fictional parser change for contract regressions.",
-    "constraints": [
-      "Do not modify files outside the fictional fixture project."
-    ],
-    "done_when": [
-      "The review findings are recorded."
-    ]
-  },
-  "alternative_next": {
-    "title": "Run the fictional compatibility check",
-    "objective": "Validate the fictional parser against the compatibility samples.",
-    "constraints": [
-      "Use only deterministic fixture inputs."
-    ],
-    "done_when": [
-      "Every fictional compatibility sample has a recorded result."
-    ]
-  },
-  "pause_capsule": {
-    "resume_first": "Re-open the fictional parser validation report."
-  },
+  "next_actions": [
+    {
+      "title": "Review the fictional parser change",
+      "objective": "Inspect the fictional parser change for contract regressions.",
+      "constraints": [
+        "Do not modify files outside the fictional fixture project."
+      ],
+      "done_when": [
+        "The review findings are recorded."
+      ]
+    },
+    {
+      "title": "Run the fictional compatibility check",
+      "objective": "Validate the fictional parser against the compatibility samples.",
+      "constraints": [
+        "Use only deterministic fixture inputs."
+      ],
+      "done_when": [
+        "Every fictional compatibility sample has a recorded result."
+      ]
+    },
+    {
+      "title": "Inspect the fictional parser boundary",
+      "objective": "Confirm that the fictional parser keeps unrelated inputs outside its scope.",
+      "constraints": [
+        "Keep the inspection read-only."
+      ],
+      "done_when": [
+        "The parser boundary has a recorded result."
+      ]
+    }
+  ],
   "reported_side_effects": []
 }

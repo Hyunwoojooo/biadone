@@ -193,6 +193,17 @@ function codexWrapper() {
   ].join("\n");
 }
 
+function managedCodexWrapper() {
+  return [
+    ...wrapperPreamble(),
+    "unset BLABEE_SOCKET",
+    'export BLABEE_COORDINATOR_BINARY="$BLABEE_DOGFOOD_ROOT/Blabee.app/Contents/MacOS/blabee-coordinator"',
+    'export PATH="$BLABEE_DOGFOOD_BIN_DIR${PATH:+:$PATH}"',
+    'exec "$BLABEE_COORDINATOR_BINARY" managed-codex -- "$@"',
+    "",
+  ].join("\n");
+}
+
 function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
   const app = join(outputRoot, appRelativePath);
   const coordinator = join(outputRoot, coordinatorRelativePath);
@@ -206,6 +217,7 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
   const marketplacePlugin = join(marketplace, "plugins", "blabee");
   const coordinatorShim = join(outputRoot, "bin", "blabee-coordinator");
   const codexLauncher = join(outputRoot, "bin", "codex-with-blabee");
+  const managedCodexLauncher = join(outputRoot, "bin", "blabee-codex");
   const projectSettingsLauncher = join(outputRoot, "bin", "blabee-project-settings");
   const serviceLauncher = join(outputRoot, "bin", "blabee-service");
   const petLauncher = join(outputRoot, "bin", "blabee-pet");
@@ -259,6 +271,7 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
       coordinator,
       coordinator_shim: coordinatorShim,
       codex_launcher: codexLauncher,
+      managed_codex_launcher: managedCodexLauncher,
       project_settings_launcher: projectSettingsLauncher,
       service_launcher: serviceLauncher,
       pet_launcher: petLauncher,
@@ -280,6 +293,15 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
       },
       launch: {
         argv: [codexLauncher],
+        environment: {
+          BLABEE_COORDINATOR_BINARY: coordinator,
+          BLABEE_SOCKET: "unset_by_launcher",
+          PATH_prepend: join(outputRoot, "bin"),
+        },
+        automatic: false,
+      },
+      managed_launch: {
+        argv: [managedCodexLauncher],
         environment: {
           BLABEE_COORDINATOR_BINARY: coordinator,
           BLABEE_SOCKET: "unset_by_launcher",
@@ -578,6 +600,11 @@ export async function prepareLocalDogfood({
   await writeNewFile(
     join(binDirectory, "codex-with-blabee"),
     codexWrapper(),
+    0o755,
+  );
+  await writeNewFile(
+    join(binDirectory, "blabee-codex"),
+    managedCodexWrapper(),
     0o755,
   );
 

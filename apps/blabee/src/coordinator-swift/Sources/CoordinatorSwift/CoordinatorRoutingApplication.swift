@@ -494,7 +494,7 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
 
         command["occurred_at"] = logicalNow.rawValue
         var inFlightDuration: UInt64?
-        if choice.slot == 1 || choice.slot == 2 {
+        if choice.isPetAction {
             // Pet input never chooses authority duration. The coordinator owns
             // the fixed v0.1 120-second token and 300-second in-flight windows.
             let tokenDuration = Self.continuationValidityNanoseconds
@@ -921,7 +921,7 @@ private extension CoordinatorRoutingApplication {
         else { return nil }
 
         let terminalSequence: Int64
-        if selection.slot == 1 || selection.slot == 2 {
+        if selection.isPetAction {
             guard let duration = inFlightDuration,
                   duration == Self.inFlightDeadlineNanoseconds,
                   let dispatchEventID = eventIDs["continuation_dispatched"] as? String,
@@ -985,7 +985,7 @@ private extension CoordinatorRoutingApplication {
             else { return nil }
             terminalSequence = dispatchSequence
         } else {
-            guard selection.slot == 3,
+            guard selection.isPause,
                   let closeEventID = eventIDs["decision_boundary_closed"] as? String,
                   let (closeEvent, closeSequence) = try authorityEvent(
                       id: closeEventID,
@@ -1025,7 +1025,7 @@ private extension CoordinatorRoutingApplication {
                 pending.removeValue(forKey: key)
                 if foreground?.binding.fullKey == key { foreground = nil }
 
-                if selection.slot == 1 || selection.slot == 2 {
+                if selection.isPetAction {
                     guard let duration = record.inFlightDuration,
                           let continuationID = command["continuation_id"] as? String,
                           let issuedAtText = command["issued_at"] as? String,

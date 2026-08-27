@@ -931,6 +931,16 @@ do {
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":
         try runMCPCommand(arguments: Array(commandLine.dropFirst(2)))
+    case "managed-codex":
+        let status: Int32
+        do {
+            status = try ManagedCodexLauncher().run(
+                arguments: Array(commandLine.dropFirst(2))
+            )
+        } catch {
+            throw managedCodexCoordinatorError(error)
+        }
+        if status != 0 { exit(status) }
     #if BLABEE_JOURNAL_TEST_HARNESS
     case "transport-test-server":
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))

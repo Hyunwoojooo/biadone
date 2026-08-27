@@ -241,8 +241,8 @@ private final class DoctorFixture {
                     "hooks": [[
                         "type": "command",
                         "command": DoctorApplication.expectedHookCommand(event: "PermissionRequest"),
-                        "timeout": 8,
-                        "statusMessage": "Blabee에 권한 요청 알림 전송 중",
+                        "timeout": 60,
+                        "statusMessage": "Blabee에서 권한 요청 확인 중",
                     ]],
                 ]],
             ],
@@ -322,11 +322,20 @@ func doctorArgumentsFailClosed() throws {
 @Test("Doctor keeps the alpha baseline pending and rejects every unapproved Codex version")
 func doctorCodexVersionPolicy() throws {
     let fixture = try DoctorFixture()
-    #expect(DoctorApplication.supportedVersions.isEmpty)
+    #expect(DoctorApplication.supportedVersions == ["0.149.1", "0.150.1"])
     var execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "codex_version").status == .actionRequired)
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_alpha_qualification_required")
+
+    for supportedVersion in ["0.149.1", "0.150.1"] {
+        fixture.processes.versionOutput = "codex-cli \(supportedVersion)\n"
+        execution = DoctorApplication(dependencies: fixture.dependencies())
+            .run(arguments: try fixture.arguments())
+        #expect(try doctorCheck(execution, id: "codex_version").status == .pass)
+        #expect(try doctorCheck(execution, id: "codex_version").code
+            == "codex_version_supported")
+    }
 
     fixture.processes.versionOutput = "codex-cli 0.149.0\n"
     execution = DoctorApplication(dependencies: fixture.dependencies())

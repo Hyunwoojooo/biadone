@@ -1285,7 +1285,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "packet_document_integrity_mismatch",
                     "dispatch action does not match the selected sealed packet choice"
                 )
-            } else if ExactJSONInteger.int64(choice["slot"], minimum: 1) == 3 {
+            } else if choice["kind"] as? String == "pause" {
                 let closes = events.filter {
                     $0.type == "decision_boundary_closed"
                         && sameTopBinding(selection.object, $0.object)
@@ -1617,7 +1617,7 @@ public final class SQLiteJournal: @unchecked Sendable {
                     "packet_document_integrity_mismatch",
                     "persisted dispatch action does not match its selected packet choice"
                 )
-            } else if ExactJSONInteger.int64(choice["slot"], minimum: 1) == 3 {
+            } else if choice["kind"] as? String == "pause" {
                 let closes = events.filter {
                     $0.type == "decision_boundary_closed"
                         && sameTopBinding(selection.object, $0.object)

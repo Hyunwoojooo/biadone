@@ -12,7 +12,9 @@ private func blabeePetViewModel(
         transport: transport,
         externalApplicationOpener: opener,
         processIdentifier: 999,
-        selectionIDGenerator: selectionIDGenerator
+        selectionIDGenerator: selectionIDGenerator,
+        permissionResponseIDGenerator: { "permission_response_test" },
+        managedApprovalResponseIDGenerator: { "managed_approval_response_test" }
     )
 }
 
@@ -659,7 +661,7 @@ func blabeePetFreshSelectionIDPerCard() async throws {
     #expect(selectionIDs == ["selection_fresh_1", "selection_fresh_2"])
 }
 
-@Test("BlabeePet gates high-risk action slots but leaves pause globally available")
+@Test("BlabeePet gates high-risk actions and preserves legacy pause as a secondary control")
 @MainActor
 func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     let transport = PetFakeTransport()
@@ -682,11 +684,7 @@ func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     )
     #expect(hotKeyRegistry.statuses[.slot1] == .inactive)
     #expect(hotKeyRegistry.statuses[.slot2] == .inactive)
-    if case .registered = hotKeyRegistry.statuses[.slot3] {
-        // Pause remains available because packet risk applies to action slots.
-    } else {
-        Issue.record("high-risk packet must not consume or disable pause")
-    }
+    #expect(hotKeyRegistry.statuses[.slot3] == .inactive)
 
     await viewModel.handleGlobalSlot(1)
     #expect(await transport.requestCount(type: "select") == 0)
@@ -713,10 +711,41 @@ func blabeePetHighRiskGateAndExplicitConfirmation() async throws {
     )
     await pauseTransport.enqueue(type: "select", response: try petTestSelectionResponse(kind: "pause"))
     await pauseTransport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
-    await pauseViewModel.handleGlobalSlot(3)
+    await pauseViewModel.requestLegacyPause()
     #expect(await pauseTransport.requestCount(type: "select") == 1)
     #expect(pauseViewModel.riskConfirmation == nil)
     #expect(pauseViewModel.presentationState == .paused)
+}
+
+@Test("BlabeePet treats ranked slots three and four as executable next actions")
+@MainActor
+func blabeePetRankedTrailingActions() async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    let card = PetTestCard(suffix: "ranked_four", rankedActionCount: 4)
+    _ = try await blabeePetFocus(
+        "ranked_four",
+        card: card,
+        viewModel: viewModel,
+        transport: transport
+    )
+    let interaction = try #require(viewModel.focusedInteraction)
+    #expect(interaction.usesRankedNextActions)
+    #expect(interaction.actionChoices.map(\.slot) == [1, 2, 3, 4])
+    #expect(interaction.legacyPauseChoice == nil)
+
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await viewModel.handleGlobalSlot(4)
+
+    let payload = try #require(await transport.requestPayloads(type: "select").first)
+    let selection = try petTestObject(payload)
+    #expect(selection["option_id"] as? String == "option_rank_4_ranked_four")
+    #expect(viewModel.riskConfirmation == nil)
+    #expect(viewModel.presentationState == .ready)
 }
 
 @Test("BlabeePet treats ambiguous selection failure as stale until refocused")
@@ -825,7 +854,7 @@ func blabeePetGlobalSelectionSingleFlight() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet permission notice remains Codex-owned and ignores initial baseline")
+@Test("BlabeePet resolves an authoritative permission request exactly once")
 @MainActor
 func blabeePetPermissionNotificationOwnership() async throws {
     let transport = PetFakeTransport()
@@ -835,22 +864,304 @@ func blabeePetPermissionNotificationOwnership() async throws {
 
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
-        permissionNoticeCount: 7
-    ))
-    #expect(viewModel.hasNewPermissionNotice == false)
-    #expect(opener.captureCalls == 1)
-
-    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
-        cards: [],
-        permissionNoticeCount: 8
+        permissionRequests: [PetTestPermissionRequest(suffix: "permission")],
+        permissionNoticeCount: 1
     ))
     #expect(viewModel.hasNewPermissionNotice)
     #expect(opener.captureCalls == 2)
-    viewModel.openPermissionRequestHost()
+    #expect(viewModel.permissionRequestQueueCount == 1)
+
+    await transport.enqueue(
+        type: "resolve_permission_request",
+        response: try petTestPermissionResolutionResponse(
+            .deny,
+            requestID: "permission_permission"
+        )
+    )
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(cards: [], permissionNoticeCount: 1)
+    )
+    await viewModel.resolvePermissionRequest(.deny)
+
     #expect(opener.opened.count == 1)
     #expect(viewModel.hasNewPermissionNotice == false)
     #expect(await transport.requestCount(type: "select") == 0)
-    #expect(await transport.requestCount(type: "permission_request") == 0)
+    #expect(await transport.requestCount(type: "resolve_permission_request") == 1)
+    let payload = try #require(
+        await transport.requestPayloads(type: "resolve_permission_request").first
+    )
+    let payloadObject = try petTestObject(payload)
+    #expect(Set(payloadObject.keys) == [
+        "schema_version", "kind", "request_id", "project_id", "session_id",
+        "turn_id", "response_id", "decision",
+    ])
+    #expect(payloadObject["schema_version"] as? String == "1.0")
+    #expect(payloadObject["kind"] as? String == "blabee_permission_resolution_request")
+    #expect(payloadObject["request_id"] as? String == "permission_permission")
+    #expect(payloadObject["response_id"] as? String == "permission_response_test")
+    #expect(payloadObject["project_id"] as? String == "project_permission")
+    #expect(payloadObject["session_id"] as? String == "session_permission")
+    #expect(payloadObject["turn_id"] as? String == "turn_permission")
+    #expect(payloadObject["decision"] as? String == "deny")
+}
+
+@Test("BlabeePet emits a dedicated presentation event for each permission FIFO head")
+@MainActor
+func blabeePetPermissionPresentationCallbacks() throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    var permissionHeads: [String?] = []
+    viewModel.onPermissionRequestChanged = { request in
+        permissionHeads.append(request?.requestID)
+    }
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+    let first = PetTestPermissionRequest(suffix: "present_first")
+    let second = PetTestPermissionRequest(suffix: "present_second")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [first, second],
+        permissionNoticeCount: 2
+    ))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [first, second],
+        permissionNoticeCount: 2
+    ))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [second],
+        permissionNoticeCount: 2
+    ))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionNoticeCount: 2
+    ))
+
+    #expect(permissionHeads == [
+        "permission_present_first",
+        "permission_present_second",
+        nil,
+    ])
+}
+
+@Test("BlabeePet prioritizes and resolves managed command approvals")
+@MainActor
+func blabeePetManagedCommandApprovalOwnership() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let hotKeyRegistry = try PetHotKeyRegistry(
+        backend: PetFakeHotKeyBackend(),
+        configuration: .defaults
+    ) { _ in }
+    viewModel.attachHotKeyRegistry(hotKeyRegistry)
+    var attentionEvents = 0
+    viewModel.onAttentionEvent = { attentionEvents += 1 }
+    let card = PetTestCard(suffix: "managed_priority")
+    let managed = PetTestManagedCommandApproval(
+        suffix: "managed_priority",
+        jsonRPCRequestID: .integer(Int64.max)
+    )
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [card],
+        foregroundSuffix: "managed_priority",
+        permissionRequests: [PetTestPermissionRequest(suffix: "managed_priority")],
+        permissionNoticeCount: 1,
+        managedCommandApprovals: [managed],
+        managedCommandApprovalNoticeCount: 1
+    ))
+
+    #expect(viewModel.pendingManagedCommandApproval?.managedRequestID
+        == "managed_request_managed_priority")
+    #expect(viewModel.pendingPermissionRequest != nil)
+    #expect(viewModel.presentationState == .permission)
+    #expect(viewModel.hasAttention)
+    #expect(attentionEvents == 1)
+    #expect(hotKeyRegistry.statuses[.slot1] == .inactive)
+    await viewModel.handleGlobalSlot(1)
+    #expect(await transport.requestCount(type: "select") == 0)
+
+    await transport.enqueue(
+        type: "resolve_managed_command_approval",
+        response: try petTestManagedCommandApprovalResolutionResponse(
+            .acceptOnce,
+            managedRequestID: "managed_request_managed_priority"
+        )
+    )
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [],
+            permissionRequests: [PetTestPermissionRequest(suffix: "managed_priority")],
+            permissionNoticeCount: 1,
+            managedCommandApprovalNoticeCount: 1
+        )
+    )
+    let displayedRequest = try #require(viewModel.pendingManagedCommandApproval)
+    await viewModel.resolveManagedCommandApproval(
+        .acceptOnce,
+        for: displayedRequest
+    )
+
+    #expect(viewModel.pendingManagedCommandApproval == nil)
+    #expect(viewModel.pendingPermissionRequest != nil)
+    #expect(await transport.requestCount(type: "resolve_managed_command_approval") == 1)
+    let payload = try #require(
+        await transport.requestPayloads(type: "resolve_managed_command_approval").first
+    )
+    let object = try petTestObject(payload)
+    #expect(Set(object.keys) == [
+        "schema_version", "kind", "managed_request_id", "response_id",
+        "broker_epoch", "connection_id", "jsonrpc_request_id", "thread_id",
+        "turn_id", "item_id", "approval_id", "environment_id", "cwd", "command_preview",
+        "allow_once_available", "decline_available", "decision",
+    ])
+    #expect(object["kind"] as? String
+        == "blabee_managed_command_approval_resolution_request")
+    #expect(object["managed_request_id"] as? String
+        == "managed_request_managed_priority")
+    #expect(object["decision"] as? String == "accept_once")
+    let requestID = try #require(object["jsonrpc_request_id"] as? [String: Any])
+    #expect(requestID["type"] as? String == "integer")
+    #expect((requestID["value"] as? NSNumber)?.int64Value == Int64.max)
+    #expect(String(describing: object).contains("acceptForSession") == false)
+}
+
+@Test("BlabeePet ignores a stale managed approval click after the FIFO head changes")
+@MainActor
+func blabeePetManagedCommandApprovalRejectsStaleDisplayedRequest() async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    let first = PetTestManagedCommandApproval(suffix: "managed_stale_first")
+    let second = PetTestManagedCommandApproval(suffix: "managed_stale_second")
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [first, second],
+        managedCommandApprovalNoticeCount: 2
+    ))
+    let staleDisplayedRequest = try #require(
+        viewModel.pendingManagedCommandApproval
+    )
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [second],
+        managedCommandApprovalNoticeCount: 2
+    ))
+
+    await viewModel.resolveManagedCommandApproval(
+        .acceptOnce,
+        for: staleDisplayedRequest
+    )
+
+    #expect(await transport.requestCount(
+        type: "resolve_managed_command_approval"
+    ) == 0)
+    #expect(viewModel.pendingManagedCommandApproval?.managedRequestID
+        == "managed_request_managed_stale_second")
+
+    let currentDisplayedRequest = try #require(
+        viewModel.pendingManagedCommandApproval
+    )
+    await transport.enqueue(
+        type: "resolve_managed_command_approval",
+        response: try petTestManagedCommandApprovalResolutionResponse(
+            .decline,
+            managedRequestID: currentDisplayedRequest.managedRequestID
+        )
+    )
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [],
+            managedCommandApprovalNoticeCount: 2
+        )
+    )
+    await viewModel.resolveManagedCommandApproval(
+        .decline,
+        for: currentDisplayedRequest
+    )
+
+    #expect(await transport.requestCount(
+        type: "resolve_managed_command_approval"
+    ) == 1)
+    let payload = try #require(
+        await transport.requestPayloads(
+            type: "resolve_managed_command_approval"
+        ).first
+    )
+    #expect(try petTestObject(payload)["decision"] as? String == "decline")
+}
+
+@Test("BlabeePet auto-presents every new managed approval FIFO head")
+@MainActor
+func blabeePetManagedCommandApprovalPresentationCallbacks() throws {
+    let viewModel = blabeePetViewModel(
+        transport: PetFakeTransport(),
+        opener: PetFakeApplicationOpener()
+    )
+    var attentionEvents = 0
+    viewModel.onAttentionEvent = { attentionEvents += 1 }
+    let first = PetTestManagedCommandApproval(suffix: "managed_present_first")
+    let second = PetTestManagedCommandApproval(suffix: "managed_present_second")
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: []))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [first, second],
+        managedCommandApprovalNoticeCount: 2
+    ))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [second],
+        managedCommandApprovalNoticeCount: 2
+    ))
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovalNoticeCount: 2
+    ))
+    #expect(attentionEvents == 2)
+}
+
+@Test("BlabeePet permission head blocks hidden decision actions and shortcuts")
+@MainActor
+func blabeePetPermissionBlocksDecisionActions() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let hotKeyRegistry = try PetHotKeyRegistry(
+        backend: PetFakeHotKeyBackend(),
+        configuration: .defaults
+    ) { _ in }
+    viewModel.attachHotKeyRegistry(hotKeyRegistry)
+    let card = PetTestCard(suffix: "permission_blocks")
+    _ = try await blabeePetFocus(
+        "permission_blocks",
+        card: card,
+        viewModel: viewModel,
+        transport: transport
+    )
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [card],
+        foregroundSuffix: "permission_blocks",
+        permissionRequests: [PetTestPermissionRequest(suffix: "permission_blocks")],
+        permissionNoticeCount: 1
+    ))
+
+    #expect(viewModel.presentationState == .permission)
+    #expect(hotKeyRegistry.statuses[.slot1] == .inactive)
+    #expect(hotKeyRegistry.statuses[.slot2] == .inactive)
+    #expect(hotKeyRegistry.statuses[.slot3] == .inactive)
+    await viewModel.handleGlobalSlot(1)
+    await viewModel.requestPanelSelection(1)
+    #expect(await transport.requestCount(type: "select") == 0)
 }
 
 @Test("BlabeePet keeps permission and successful-selection return targets separate")
@@ -878,9 +1189,25 @@ func blabeePetReturnTargetOwnership() async throws {
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [card],
         foregroundSuffix: "return_targets",
+        permissionRequests: [PetTestPermissionRequest(suffix: "return_targets")],
         permissionNoticeCount: 1
     ))
-    viewModel.openPermissionRequestHost()
+    await transport.enqueue(
+        type: "resolve_permission_request",
+        response: try petTestPermissionResolutionResponse(
+            .deferToCodex,
+            requestID: "permission_return_targets"
+        )
+    )
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [card],
+            foregroundSuffix: "return_targets",
+            permissionNoticeCount: 1
+        )
+    )
+    await viewModel.resolvePermissionRequest(.deferToCodex)
 
     await transport.enqueue(type: "select", response: try petTestSelectionResponse())
     await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))

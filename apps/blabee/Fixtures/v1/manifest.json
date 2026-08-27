@@ -20,6 +20,12 @@
       "valid": true
     },
     {
+      "name": "valid_decision_proposal_legacy",
+      "file": "contracts/valid/decision-proposal-legacy.json",
+      "schema": "decision_proposal",
+      "valid": true
+    },
+    {
       "name": "valid_decision_packet_rollback_disabled",
       "file": "contracts/valid/decision-packet-rollback-disabled.json",
       "schema": "decision_packet",
@@ -28,6 +34,12 @@
     {
       "name": "valid_decision_packet_alternative_disabled",
       "file": "contracts/valid/decision-packet-alternative-disabled.json",
+      "schema": "decision_packet",
+      "valid": true
+    },
+    {
+      "name": "valid_decision_packet_ranked_actions",
+      "file": "contracts/valid/decision-packet-ranked-actions.json",
       "schema": "decision_packet",
       "valid": true
     },

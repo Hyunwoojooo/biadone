@@ -27,7 +27,24 @@ const proposal = JSON.parse(await readFile(
   new URL("../../Fixtures/v1/contracts/valid/decision-proposal.json", import.meta.url),
   "utf8",
 ));
+const legacyProposal = JSON.parse(await readFile(
+  new URL("../../Fixtures/v1/contracts/valid/decision-proposal-legacy.json", import.meta.url),
+  "utf8",
+));
 const operationalProposalKeys = [
+  "schema_version",
+  "interaction_kind",
+  "proposal_id",
+  "correlation_token",
+  "task_goal",
+  "outcome",
+  "next_actions",
+  "reported_side_effects",
+];
+const operationalProposal = Object.fromEntries(
+  operationalProposalKeys.map((key) => [key, proposal[key]]),
+);
+const legacyOperationalProposalKeys = [
   "schema_version",
   "interaction_kind",
   "proposal_id",
@@ -39,8 +56,8 @@ const operationalProposalKeys = [
   "pause_capsule",
   "reported_side_effects",
 ];
-const operationalProposal = Object.fromEntries(
-  operationalProposalKeys.map((key) => [key, proposal[key]]),
+const legacyOperationalProposal = Object.fromEntries(
+  legacyOperationalProposalKeys.map((key) => [key, legacyProposal[key]]),
 );
 
 function hookPayload(hook_event_name, eventFields = {}) {
@@ -299,6 +316,39 @@ function openHoldingConnection(socketPath) {
   });
 }
 
+function sendRequestThenDisconnect(socketPath, type, payload, holdMs = 250) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("error", fail);
+    socket.once("connect", () => {
+      socket.write(`${JSON.stringify({
+        request_id: `request_disconnect_${Math.random().toString(16).slice(2)}`,
+        type,
+        payload,
+      })}\n`, (error) => {
+        if (error) {
+          fail(error);
+          return;
+        }
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          socket.off("error", fail);
+          socket.destroy();
+          resolve();
+        }, holdMs);
+      });
+    });
+  });
+}
+
 function waitForSocketClose(socket, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
     if (socket.destroyed) {
@@ -383,9 +433,17 @@ test("all Hook events forward official-shaped payloads and map exact public outp
     UserPromptSubmit: hookPayload("UserPromptSubmit", {
       prompt: "Continue the fictional implementation.",
     }),
-    PermissionRequest: hookPayload("PermissionRequest", {
+    PermissionAllow: hookPayload("PermissionRequest", {
       tool_name: "Bash",
-      tool_input: { cmd: "fictional-read-only-command" },
+      tool_input: { command: "fictional-allow-command" },
+    }),
+    PermissionDeny: hookPayload("PermissionRequest", {
+      tool_name: "Bash",
+      tool_input: { command: "fictional-deny-command" },
+    }),
+    PermissionDefer: hookPayload("PermissionRequest", {
+      tool_name: "Bash",
+      tool_input: { command: "fictional-defer-command" },
     }),
     StopBlock: hookPayload("Stop", {
       turn_id: "turn_hook_block",
@@ -405,7 +463,10 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       return { enabled: true, additionalContext: "Prompt episode bound." };
     }
     if (request.type === "permission_request") {
-      return { enabled: true, decision: "block", reason: "must remain hidden" };
+      const command = request.payload.tool_input.command;
+      if (command === "fictional-allow-command") return { decision: "allow" };
+      if (command === "fictional-deny-command") return { decision: "deny" };
+      return { decision: "defer_to_codex" };
     }
     if (request.type === "stop" && request.payload.turn_id === "turn_hook_block") {
       return { enabled: true, decision: "block", reason: "Run the reviewed next action." };
@@ -424,12 +485,43 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       },
     });
 
-    const permission = await runBinary(
+    const permissionUnsupportedAllow = await runBinary(
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
-      { input: JSON.stringify(payloads.PermissionRequest) },
+      { input: JSON.stringify(payloads.PermissionAllow) },
     );
     assert.deepEqual(
-      { code: permission.code, stderr: permission.stderr, stdout: permission.stdout },
+      {
+        code: permissionUnsupportedAllow.code,
+        stderr: permissionUnsupportedAllow.stderr,
+        stdout: permissionUnsupportedAllow.stdout,
+      },
+      { code: 0, stderr: "", stdout: "" },
+    );
+
+    const permissionDeny = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      { input: JSON.stringify(payloads.PermissionDeny) },
+    );
+    assert.deepEqual(JSON.parse(permissionDeny.stdout), {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "deny",
+          message: "Blabee에서 사용자가 거절했습니다.",
+        },
+      },
+    });
+
+    const permissionDefer = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      { input: JSON.stringify(payloads.PermissionDefer) },
+    );
+    assert.deepEqual(
+      {
+        code: permissionDefer.code,
+        stderr: permissionDefer.stderr,
+        stdout: permissionDefer.stdout,
+      },
       { code: 0, stderr: "", stdout: "" },
     );
 
@@ -457,11 +549,16 @@ test("all Hook events forward official-shaped payloads and map exact public outp
 
     assert.deepEqual(received, [
       { type: "user_prompt_submit", payload: payloads.UserPromptSubmit },
-      { type: "permission_request", payload: payloads.PermissionRequest },
+      { type: "permission_request", payload: payloads.PermissionAllow },
+      { type: "permission_request", payload: payloads.PermissionDeny },
+      { type: "permission_request", payload: payloads.PermissionDefer },
       { type: "stop", payload: payloads.StopBlock },
       { type: "stop", payload: payloads.StopNoDecision },
     ]);
-    for (const result of [userPrompt, permission, stopBlock, stopNoDecision]) {
+    for (const result of [
+      userPrompt, permissionUnsupportedAllow, permissionDeny, permissionDefer,
+      stopBlock, stopNoDecision,
+    ]) {
       assert.equal(result.stdout.includes(assistantMessage), false);
       assert.equal(result.stderr.includes(assistantMessage), false);
     }
@@ -481,6 +578,33 @@ test("Hook transport failure exits zero with empty stdout and stderr", async () 
     assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
   } finally {
     await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("managed App Server ownership makes PermissionRequest Hook defer without IPC", async () => {
+  let forwardedCalls = 0;
+  const fake = await startFakeCoordinator(() => {
+    forwardedCalls += 1;
+    return { decision: "deny" };
+  });
+  try {
+    const result = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      {
+        environment: { BLABEE_MANAGED_APPROVALS: "1" },
+        input: JSON.stringify(hookPayload("PermissionRequest", {
+          tool_name: "Bash",
+          tool_input: { command: "fictional-managed-command" },
+        })),
+      },
+    );
+    assert.deepEqual(
+      { code: result.code, stderr: result.stderr, stdout: result.stdout },
+      { code: 0, stderr: "", stdout: "" },
+    );
+    assert.equal(forwardedCalls, 0);
+  } finally {
+    await fake.close();
   }
 });
 
@@ -532,10 +656,11 @@ test("Hook accepted by a silent daemon still fails open within the command budge
 
 test("MCP exposes the complete proposal schema and never echoes correlation tokens", async () => {
   let forwardedCalls = 0;
+  const expectedForwardedProposals = [operationalProposal, legacyOperationalProposal];
   const fake = await startFakeCoordinator((request) => {
-    forwardedCalls += 1;
     assert.equal(request.type, "emit_decision");
-    assert.deepEqual(request.payload.proposal, operationalProposal);
+    assert.deepEqual(request.payload.proposal, expectedForwardedProposals[forwardedCalls]);
+    forwardedCalls += 1;
     return { accepted: true, status: "waiting_for_selection" };
   });
   const arguments_ = {
@@ -546,6 +671,15 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
     episode_id: proposal.episode_id,
     correlation_token: proposal.correlation_token,
     proposal: operationalProposal,
+  };
+  const legacyArguments = {
+    project_id: legacyProposal.project_id,
+    session_id: legacyProposal.session_id,
+    source_turn_id: legacyProposal.source_turn_id,
+    source_prompt_id: legacyProposal.source_prompt_id,
+    episode_id: legacyProposal.episode_id,
+    correlation_token: legacyProposal.correlation_token,
+    proposal: legacyOperationalProposal,
   };
   const messages = [
     {
@@ -570,6 +704,12 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
+      params: { name: "emit_decision", arguments: legacyArguments },
+    },
+    {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
       params: {
         name: "emit_decision",
         arguments: {
@@ -587,7 +727,7 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
     assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
     assert.equal(result.stderr, "");
     const responses = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
-    assert.equal(responses.length, 4);
+    assert.equal(responses.length, 5);
     assert.equal(responses[0].result.protocolVersion, "2025-06-18");
     const tool = responses[1].result.tools[0];
     assert.equal(tool.name, "emit_decision");
@@ -595,8 +735,7 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
     assert.equal(tool.inputSchema.properties.proposal.additionalProperties, false);
     for (const required of [
       "proposal_id",
-      "alternative_next",
-      "pause_capsule",
+      "next_actions",
       "reported_side_effects",
     ]) {
       assert.equal(tool.inputSchema.properties.proposal.required.includes(required), true);
@@ -606,20 +745,32 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
       ["status", "summary"],
     );
     assert.deepEqual(
-      tool.inputSchema.properties.proposal.properties.recommended_next.required,
+      tool.inputSchema.properties.proposal.properties.next_actions.items.required,
       ["title", "objective", "constraints", "done_when"],
     );
+    assert.equal(tool.inputSchema.properties.proposal.properties.next_actions.minItems, 2);
+    assert.equal(tool.inputSchema.properties.proposal.properties.next_actions.maxItems, 4);
+    for (const legacyField of ["recommended_next", "alternative_next", "pause_capsule"]) {
+      assert.equal(
+        Object.hasOwn(tool.inputSchema.properties.proposal.properties, legacyField),
+        false,
+      );
+    }
     assert.deepEqual(responses[2].result.structuredContent, {
       accepted: true,
       status: "waiting_for_selection",
     });
-    assert.equal(responses[3].result.isError, true);
     assert.deepEqual(responses[3].result.structuredContent, {
+      accepted: true,
+      status: "waiting_for_selection",
+    });
+    assert.equal(responses[4].result.isError, true);
+    assert.deepEqual(responses[4].result.structuredContent, {
       accepted: false,
       error_code: "coordinator_unavailable_or_rejected",
       retryable: false,
     });
-    assert.equal(forwardedCalls, 1, "invalid exact-key wrappers must not reach UDS");
+    assert.equal(forwardedCalls, 2, "invalid exact-key wrappers must not reach UDS");
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
   } finally {
     await fake.close();
@@ -756,12 +907,44 @@ test("UDS server enforces one owner, secure modes, and the high-level allowlist"
     assert.equal(focusAccepted.ok, true);
     assert.equal(focusAccepted.result.handled_type, "focus_interaction");
 
+    const permissionResolutionAccepted = await udsRequest(
+      fixture.socketPath,
+      "resolve_permission_request",
+      {},
+    );
+    assert.equal(permissionResolutionAccepted.ok, true);
+    assert.equal(
+      permissionResolutionAccepted.result.handled_type,
+      "resolve_permission_request",
+    );
+
     const rejected = await udsRequest(fixture.socketPath, "execute_command", {
       command: { op: "unsafe_low_level" },
     });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.error.code, "operational_request_invalid");
     assert.equal(rejected.error.message, "request failed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("managed approval peer disconnect cancels waiters and releases UDS admission", async () => {
+  const fixture = await startFixtureTransportServer();
+  try {
+    await Promise.all(Array.from({ length: 64 }, (_, index) =>
+      sendRequestThenDisconnect(
+        fixture.socketPath,
+        "managed_command_approval",
+        { fixture_delay_ms: 2_000, fixture_index: index },
+      )));
+
+    // Peer liveness uses a bounded 100 ms poll. Leave enough margin for all
+    // detached handlers to observe EOF and release their admission leases.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const response = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(response.ok, true);
+    assert.equal(response.result.fixture, "ok");
   } finally {
     await fixture.close();
   }

@@ -46,8 +46,8 @@
           {
             "type": "command",
             "command": "if [ -n \"${PLUGIN_ROOT:-}\" ] && [ -d \"$PLUGIN_ROOT\" ] && [ ! -L \"$PLUGIN_ROOT\" ] && [ -d \"$PLUGIN_ROOT/scripts\" ] && [ ! -L \"$PLUGIN_ROOT/scripts\" ] && [ -f \"$PLUGIN_ROOT/scripts/blabee-launcher\" ] && [ ! -L \"$PLUGIN_ROOT/scripts/blabee-launcher\" ] && [ -x \"$PLUGIN_ROOT/scripts/blabee-launcher\" ]; then exec \"$PLUGIN_ROOT/scripts/blabee-launcher\" hook PermissionRequest; fi; exit 0",
-            "timeout": 8,
-            "statusMessage": "Blabee에 권한 요청 알림 전송 중"
+            "timeout": 60,
+            "statusMessage": "Blabee에서 권한 요청 확인 중"
           }
         ]
       }

@@ -33,8 +33,8 @@ enum PetShortcutIntent: String, Codable, Sendable, CaseIterable, Hashable {
         case .toggle: "Pet 열기/닫기"
         case .slot1: "1번 선택"
         case .slot2: "2번 선택"
-        case .slot3: "3번 보류"
-        case .slot4: "4번 롤백"
+        case .slot3: "3번 선택"
+        case .slot4: "4번 선택"
         }
     }
 }

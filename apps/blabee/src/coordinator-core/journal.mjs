@@ -65,7 +65,7 @@ function validateAtomicRuntimeBatch(currentSnapshot, events, documents, verifica
     if (choice.action) {
       const matching = dispatches.filter((dispatch) => matchingDispatch(selection, dispatch));
       invariant(matching.length === 1, "selection_dispatch_atomic_batch_required");
-    } else if (choice.slot === 3) {
+    } else if (choice.kind === "pause") {
       const closes = events.filter(
         (event) => event.event_type === "decision_boundary_closed"
           && sameBinding(selection, event)

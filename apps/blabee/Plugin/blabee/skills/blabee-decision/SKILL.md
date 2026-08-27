@@ -39,22 +39,26 @@ description: Codex 작업이 의미 있는 완료, 부분 완료, 실패, 차단
       "status": "completed | partial | blocked | failed",
       "summary": "<observed outcome>"
     },
-    "recommended_next": {
-      "title": "<recommended action>",
-      "objective": "<complete objective>",
-      "constraints": ["<real constraint>"],
-      "done_when": ["<verifiable completion condition>"]
-    },
-    "alternative_next": null,
-    "pause_capsule": {
-      "resume_first": "<first concrete resume action>"
-    },
+    "next_actions": [
+      {
+        "title": "<most recommended action>",
+        "objective": "<complete objective>",
+        "constraints": ["<real constraint>"],
+        "done_when": ["<verifiable completion condition>"]
+      },
+      {
+        "title": "<second-best action>",
+        "objective": "<complete alternative objective>",
+        "constraints": ["<real constraint>"],
+        "done_when": ["<verifiable completion condition>"]
+      }
+    ],
     "reported_side_effects": []
   }
 }
 ```
 
-`alternative_next`는 안전하고 의미 있는 대안이 있을 때만 `recommended_next`와 같은 완전한 행동 구조로 채우고, 아니면 `null`로 둔다. `reported_side_effects`에는 실제로 발생한 영향만 `{ "kind", "summary", "reversibility" }` 형태로 기록한다.
+`next_actions`에는 서로 구분되는 의미 있는 다음 작업을 2~4개 넣는다. 첫 항목이 가장 권장하는 작업이고 배열 뒤로 갈수록 현재 목표에 대한 차선이다. 보류나 롤백을 이 배열에 넣지 않고, 개수를 맞추기 위한 모호하거나 중복된 작업도 만들지 않는다. 각 항목은 독립적으로 실행할 수 있는 완전한 `title`, `objective`, `constraints`, `done_when`을 가진다. `reported_side_effects`에는 실제로 발생한 영향만 `{ "kind", "summary", "reversibility" }` 형태로 기록한다.
 
 실행하지 않은 테스트를 통과했다고 쓰거나, 확인하지 않은 위험 수준을 단정하거나, 검증되지 않은 롤백 가능성을 약속하지 않는다.
 

@@ -17,6 +17,14 @@ func runHookCommand(arguments: [String]) {
         guard let eventName = arguments.first,
               let requestType = hookEvents[eventName]
         else { return }
+        // A managed App Server broker owns command approval request IDs and
+        // responses. Its child Codex process marks that ownership explicitly
+        // so the Hook path cannot race a second approval decision.
+        if eventName == "PermissionRequest",
+           ProcessInfo.processInfo.environment["BLABEE_MANAGED_APPROVALS"] == "1"
+        {
+            return
+        }
         let socketFlag = try optionalSocketFlag(Array(arguments.dropFirst()))
         let socketPath = try OperationalSocketPath.resolve(explicitPath: socketFlag)
         let inputData = try readStandardInput(maximumBytes: 1_048_576)
@@ -29,11 +37,32 @@ func runHookCommand(arguments: [String]) {
             type: requestType,
             payload: payload,
             connectTimeoutMilliseconds: 2_000,
-            responseTimeoutMilliseconds: 5_000
+            responseTimeoutMilliseconds: eventName == "PermissionRequest" ? 55_000 : 5_000
         )
         guard result["enabled"] as? Bool != false else { return }
 
-        if eventName == "PermissionRequest" { return }
+        if eventName == "PermissionRequest" {
+            guard Set(result.keys) == ["decision"],
+                  let decision = result["decision"] as? String
+            else { return }
+            switch decision {
+            case "deny":
+                try writeStandardOutputJSON([
+                    "hookSpecificOutput": [
+                        "hookEventName": "PermissionRequest",
+                        "decision": [
+                            "behavior": "deny",
+                            "message": "Blabee에서 사용자가 거절했습니다.",
+                        ],
+                    ],
+                ])
+            case "defer_to_codex":
+                return
+            default:
+                return
+            }
+            return
+        }
         if eventName == "Stop" {
             guard result["decision"] as? String == "block",
                   let reason = result["reason"] as? String,
@@ -204,19 +233,27 @@ private func validateEmitDecisionWrapper(_ wrapper: [String: Any]) throws {
           let proposal = wrapper["proposal"] as? [String: Any]
     else { throw CoordinatorError("operational_request_invalid") }
 
-    let proposalKeys: Set<String> = [
+    let commonProposalKeys: Set<String> = [
         "schema_version",
         "interaction_kind",
         "proposal_id",
         "correlation_token",
         "task_goal",
         "outcome",
+        "reported_side_effects",
+    ]
+    let rankedProposalKeys = commonProposalKeys.union(["next_actions"])
+    let legacyProposalKeys = commonProposalKeys.union([
         "recommended_next",
         "alternative_next",
         "pause_capsule",
-        "reported_side_effects",
-    ]
-    guard Set(proposal.keys) == proposalKeys,
+    ])
+    let suppliedProposalKeys = Set(proposal.keys)
+    let rankedActions = proposal["next_actions"] as? [[String: Any]]
+    let hasValidProposalShape = suppliedProposalKeys == legacyProposalKeys
+        || (suppliedProposalKeys == rankedProposalKeys
+            && rankedActions.map { (2...4).contains($0.count) } == true)
+    guard hasValidProposalShape,
           proposal["schema_version"] as? String == "1.0",
           proposal["interaction_kind"] as? String == "blabee_decision",
           let proposalID = proposal["proposal_id"] as? String,
@@ -233,7 +270,7 @@ private func emitDecisionTool() -> [String: Any] {
     [
         "name": "emit_decision",
         "title": "Emit Blabee decision",
-        "description": "Send one structured Blabee decision proposal for the exact active project, session, prompt episode, and turn.",
+        "description": "Send two to four ranked next actions for the exact active project, session, prompt episode, and turn.",
         "inputSchema": [
             "type": "object",
             "additionalProperties": false,
@@ -263,9 +300,7 @@ private func emitDecisionTool() -> [String: Any] {
                         "correlation_token",
                         "task_goal",
                         "outcome",
-                        "recommended_next",
-                        "alternative_next",
-                        "pause_capsule",
+                        "next_actions",
                         "reported_side_effects",
                     ],
                     "properties": [
@@ -285,15 +320,11 @@ private func emitDecisionTool() -> [String: Any] {
                                 "summary": nonEmptyStringSchema(),
                             ],
                         ] as [String: Any],
-                        "recommended_next": actionSchema(),
-                        "alternative_next": [
-                            "oneOf": [actionSchema(), ["type": "null"]],
-                        ],
-                        "pause_capsule": [
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": ["resume_first"],
-                            "properties": ["resume_first": nonEmptyStringSchema()],
+                        "next_actions": [
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 4,
+                            "items": actionSchema(),
                         ] as [String: Any],
                         "reported_side_effects": [
                             "type": "array",

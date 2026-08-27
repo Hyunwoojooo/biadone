@@ -78,4 +78,21 @@ enum PetTransportResponse {
         }
         return kind
     }
+
+    static func requireResolvedPermission(
+        _ data: Data,
+        requestID: String,
+        responseID: String,
+        expectedDecision: PetPermissionDecision
+    ) throws {
+        let object = try StrictJSONTransport.object(from: data)
+        guard Set(object.keys) == [
+            "resolved", "request_id", "response_id", "decision",
+        ],
+              petStrictBooleanValue(object["resolved"]) == true,
+              object["request_id"] as? String == requestID,
+              object["response_id"] as? String == responseID,
+              object["decision"] as? String == expectedDecision.rawValue
+        else { throw PetModelError.invalid("permission_resolution_response") }
+    }
 }

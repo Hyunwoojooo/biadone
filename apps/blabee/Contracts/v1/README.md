@@ -2,6 +2,8 @@
 
 이 디렉터리는 Codex, 로컬 코디네이터, Pet이 주고받는 런타임 독립 JSON 계약이다. 모든 최상위 메시지는 `schema_version: "1.0"`으로 고정하며, `common`과 `action`은 메시지 안에서 참조하는 공용 정의다. 모든 객체는 알 수 없는 필드를 거부한다.
 
+`native-request.schema.json` v1은 notification-only 메시지로 계속 유지한다. 현재 PermissionRequest 중계는 같은 설치본의 Hook·coordinator·Pet 사이에서만 사용하는 process-local operational IPC이며, 이 동결된 v1 메시지를 확장하지 않는다. 권한 요청과 응답 tombstone은 journal에 기록하거나 daemon 재시작 뒤 복구하지 않는다. 외부 클라이언트 호환 또는 durable replay를 제공할 때는 v1을 수정하지 않고 새 계약 버전을 도입한다.
+
 ## 경계와 선택
 
 `decision_boundary_id`와 `boundary_sequence`는 같은 Codex 턴에서 이어지는 여러 결정 경계를 구분한다. `revision`은 한 경계 안에서 봉인된 패킷의 리비전이므로 경계 순서와 다른 개념이다. 패킷, 선택, 연속 진행 봉투, 결정 런타임 이벤트는 프로젝트·세션·턴·프롬프트·에피소드·결정 경계 바인딩을 모두 가진다.
@@ -16,16 +18,20 @@ T-006은 이 문서 형태와 패킷 내부 의미를 고정한다. T-007a 참�
 
 v1 JSON Schema의 `identifier` 정의는 문자열 형태와 길이만 고정한다. 코디네이터 의미 계층에서 새로 생성·저장하는 식별자는 NFC 정규형이어야 하고, 이미 저장된 식별자를 가리키는 값은 UTF-8 바이트가 정확히 같아야 한다. 이는 Swift `String`의 canonical-equivalence 비교가 서로 다른 wire ID를 같은 키로 취급하지 못하게 하는 의미 불변식이며, 고정된 v1 스키마 해시를 변경하지 않는다.
 
-결정 패킷은 네 슬롯을 정확히 이 순서로 가진다.
+새 결정 제안은 `next_actions`에 실제로 실행할 수 있는 다음 작업을 우선순위 순서대로 2~4개 담는다. 배열의 첫 항목이 가장 권장하는 작업이고 뒤로 갈수록 현재 우선순위가 낮아진다. 의미 없는 작업을 개수만 맞추기 위해 추가할 수 없다. 이미 열린 Codex 세션이 캐시한 `recommended_next`·`alternative_next`·`pause_capsule` 제안 형태도 계속 읽지만, 새 도구 스키마는 `next_actions`만 발행한다.
+
+새 결정 패킷은 `decision_layout: "ranked_next_actions"`를 명시하고, `choices`에 2~4개의 실행 작업만 정확한 순위 순서로 가진다. 슬롯 1은 `recommended_action`, 슬롯 2~4는 `alternative_action`이며 모든 항목이 활성 상태와 봉인된 `action` 본문을 가진다. 숫자 1~4는 이 작업 배열에만 대응한다. 새 패킷에서 Pet 패널을 닫거나 바깥을 클릭하는 동작은 선택 요청이나 저널 이벤트를 만들지 않는 로컬 표시 동작이다.
+
+업그레이드 전 패킷은 durable journal 재생과 캐시된 클라이언트를 위해 아래의 고정 네 슬롯 형태로 계속 읽는다.
 
 1. 동적 권장 작업
 2. 동적 대안 작업 또는 안정적인 사유 코드가 있는 비활성 슬롯
 3. 보류
 4. 롤백 또는 안정적인 사유 코드가 있는 비활성 슬롯
 
-비활성 슬롯은 `action_id: null`이고 실행 본문을 가질 수 없다. 활성 슬롯은 `disabled_reason: null`이다.
+레거시 비활성 슬롯은 `action_id: null`이고 실행 본문을 가질 수 없다. 모든 활성 작업 선택은 `disabled_reason: null`이다.
 
-한 패킷 안의 `option_id`는 네 슬롯에서 모두 유일해야 하고, `null`이 아닌 `action_id`도 서로 달라야 한다. JSON Schema만으로 이 교차 항목 유일성을 표현하지 않으므로 계약 의미 테스트와 이후 코디네이터의 원자적 검증에서 강제한다.
+한 패킷 안의 `option_id`는 모든 선택에서 유일해야 하고, `null`이 아닌 `action_id`도 서로 달라야 한다. JSON Schema만으로 이 교차 항목 유일성을 표현하지 않으므로 계약 의미 테스트와 이후 코디네이터의 원자적 검증에서 강제한다.
 
 ## 전달 완료와 작업 결과
 
@@ -47,7 +53,7 @@ queue receipt는 메시지가 큐에 인수되었다는 증거이고, `queued_ac
 
 ## M1 롤백 정책
 
-현재 M1 계약·픽스처 빌드에서는 실제 사용자 저장소 롤백을 연결하지 않는다. 슬롯 4와 에피소드·재개 캡슐의 롤백 정책은 `enabled: false`, `disabled_reason: "rollback_not_enabled_in_build"`로 발행해야 한다. 스키마가 미래의 활성 롤백 형태를 표현할 수 있더라도 M1 구현에서 활성화할 수 있다는 뜻은 아니다.
+현재 M1 계약·픽스처 빌드에서는 실제 사용자 저장소 롤백을 연결하지 않는다. 새 ranked 패킷은 롤백을 숫자 선택지로 발행하지 않는다. 레거시 패킷의 슬롯 4와 에피소드·재개 캡슐의 롤백 정책은 `enabled: false`, `disabled_reason: "rollback_not_enabled_in_build"`로 유지한다. 스키마가 과거의 활성 롤백 형태를 읽을 수 있더라도 M1 구현에서 활성화할 수 있다는 뜻은 아니다.
 
 ## 오프라인 로딩
 

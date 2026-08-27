@@ -14,11 +14,19 @@ public struct CoordinatorPacketRevision: Sendable, Hashable {
 
 public struct CoordinatorPacketChoice: Sendable, Equatable {
     public let slot: Int
+    public let kind: String
     public let optionID: String
     public let enabled: Bool
     public let actionID: String?
     public let actionJSON: Data?
     public let targetCheckpointID: String?
+
+    public var isPetAction: Bool {
+        kind == "recommended_action" || kind == "alternative_action"
+    }
+
+    public var isPause: Bool { kind == "pause" }
+    public var isRollback: Bool { kind == "rollback" }
 }
 
 public struct CoordinatorPacketDocument: Sendable, Equatable {
@@ -52,7 +60,15 @@ public struct CoordinatorSelectionState: Sendable, Equatable {
     public let revision: Int64
     public let optionID: String
     public let slot: Int
+    public let kind: String
     public let actionID: String?
+
+    public var isPetAction: Bool {
+        kind == "recommended_action" || kind == "alternative_action"
+    }
+
+    public var isPause: Bool { kind == "pause" }
+    public var isRollback: Bool { kind == "rollback" }
 }
 
 public struct CoordinatorRepairState: Sendable, Equatable {
@@ -395,13 +411,13 @@ public enum CoordinatorSemanticReplay {
     ) throws {
         try require(!boundary.closed, "decision_boundary_already_closed")
         let reason = event.payload["close_reason"] as? String ?? ""
-        if boundary.selection?.slot == 3 {
+        if boundary.selection?.isPause == true {
             try require(reason == "episode_paused", "pause_selection_close_reason_invalid")
         }
         if reason == "episode_paused" {
-            try require(boundary.selection?.slot == 3, "episode_pause_selection_missing")
+            try require(boundary.selection?.isPause == true, "episode_pause_selection_missing")
         }
-        if boundary.selection?.slot == 1 || boundary.selection?.slot == 2 {
+        if boundary.selection?.isPetAction == true {
             try require(boundary.dispatchedContinuationID != nil, "transport_terminal_observation_missing")
         }
         if let continuationID = boundary.dispatchedContinuationID {
@@ -526,6 +542,7 @@ public enum CoordinatorSemanticReplay {
             revision: revision,
             optionID: optionID,
             slot: choice.slot,
+            kind: choice.kind,
             actionID: choice.actionID
         )
         state.boundaries[key] = boundary
@@ -588,7 +605,7 @@ public enum CoordinatorSemanticReplay {
     ) throws {
         try require(!boundary.expired, "interaction_already_expired")
         guard let selection = boundary.selection else { throw CoordinatorError("selection_not_claimed") }
-        try require(selection.slot == 1 || selection.slot == 2, "decision_option_not_pet_action")
+        try require(selection.isPetAction, "decision_option_not_pet_action")
         guard let packetReference = boundary.packet,
               let packet = state.packetDocuments[packetReference.documentKey],
               let choice = packet.choices.first(where: { $0.optionID == selection.optionID }),
@@ -905,7 +922,14 @@ private enum SemanticJSON {
         let sealedAt = try RFC3339Instant(try string(object, "sealed_at", field: "sealed_at"), code: "decision_packet_time_invalid")
         let expiresAt = try RFC3339Instant(try string(object, "expires_at", field: "expires_at"), code: "decision_packet_time_invalid")
         try require(sealedAt < expiresAt, "decision_packet_time_invalid")
-        guard let rawChoices = object["choices"] as? [Any], rawChoices.count == 4 else {
+        let layout = object["decision_layout"] as? String
+        try require(
+            layout == nil || layout == "ranked_next_actions",
+            "packet_decision_layout_invalid"
+        )
+        guard let rawChoices = object["choices"] as? [Any],
+              (layout == nil ? rawChoices.count == 4 : (2...4).contains(rawChoices.count))
+        else {
             throw CoordinatorError("packet_choices_invalid")
         }
         var optionIDs = Set<String>()
@@ -915,6 +939,14 @@ private enum SemanticJSON {
             guard let choice = raw as? [String: Any] else { throw CoordinatorError("packet_choices_invalid") }
             let slotValue = try positiveInteger(choice["slot"], code: "packet_slot_order_invalid")
             try require(slotValue == Int64(offset + 1), "packet_slot_order_invalid")
+            let kind = try string(choice, "kind", field: "kind")
+            if layout == "ranked_next_actions" {
+                let expectedKind = offset == 0 ? "recommended_action" : "alternative_action"
+                try require(kind == expectedKind, "packet_choice_kind_invalid")
+            } else {
+                let legacyKinds = ["recommended_action", "alternative_action", "pause", "rollback"]
+                try require(kind == legacyKinds[offset], "packet_choice_kind_invalid")
+            }
             let optionID = try string(choice, "option_id", field: "option_id", identifier: true)
             try require(optionIDs.insert(optionID).inserted, "packet_option_id_duplicate")
             let enabled: Bool
@@ -933,9 +965,13 @@ private enum SemanticJSON {
             } else {
                 actionJSON = nil
             }
-            if enabled && (slotValue == 1 || slotValue == 2) {
+            let isPetAction = kind == "recommended_action" || kind == "alternative_action"
+            if enabled && isPetAction {
                 try require(actionID != nil, "action_id_missing")
                 try require(actionJSON != nil, "packet_action_missing")
+            }
+            if layout == "ranked_next_actions" {
+                try require(enabled && isPetAction, "packet_ranked_choice_invalid")
             }
             if !enabled {
                 try require(actionID == nil, "disabled_option_action_id_present")
@@ -944,6 +980,7 @@ private enum SemanticJSON {
             let target = choice["target_checkpoint_id"] as? String
             choices.append(CoordinatorPacketChoice(
                 slot: Int(slotValue),
+                kind: kind,
                 optionID: optionID,
                 enabled: enabled,
                 actionID: actionID,
@@ -963,7 +1000,7 @@ private enum SemanticJSON {
             } == true,
             "decision_packet_checkpoint_mismatch"
         )
-        if let rollback = choices.first(where: { $0.slot == 4 }), rollback.enabled {
+        if let rollback = choices.first(where: \.isRollback), rollback.enabled {
             try require(
                 rollback.targetCheckpointID.map {
                     IdentifierNormalization.isByteExact(

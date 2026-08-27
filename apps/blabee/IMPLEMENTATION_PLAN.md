@@ -3,6 +3,10 @@
 상태: M0·T-005·T-006·T-007·T-015 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 실제 macOS 1차 qualification 통과 및 환경 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
 업데이트: 2026-08-23
 
+## 2026-08-26 PermissionRequest 후속 변경
+
+아래의 과거 알림 전용 M0/T-010 기록과 달리, 현재 제품 소스는 안전하게 표시 가능한 command형 `PermissionRequest`를 별도 process-local FIFO로 중계한다. 일반 Hook 경로의 Pet 선택은 `거절`, `Codex에서 직접 결정` 두 가지다. Hook은 `allow`를 출력하지 않으며 coordinator 50초, CLI 55초, Hook 60초 안에 선택되지 않거나 연결 실패·서비스 재시작·상한 초과가 발생하면 빈 Hook 응답으로 Codex 네이티브 승인 체계에 반환한다. 진짜 `이번만 허용`은 후속 관리형 App Server 경로의 `accept`로만 구현하고 `acceptForSession`은 제품에서 노출하지 않는다. 요청과 응답 tombstone은 journal에 기록하거나 재시작 뒤 복구하지 않는다. 동결된 `native-request` v1 notification-only 계약은 이 내부 운영 IPC와 별개로 유지한다.
+
 ## 마일스톤 0 — 연동 계약 검증 스파이크
 
 목표: Pet을 만들기 전에 Codex 연동 가능성을 입증한다.
@@ -123,13 +127,16 @@
 - open/seal, 선택, completion/close, expiry/timeout의 pre-commit 실패와 commit 뒤 응답 유실을 fault injection으로 검증했다. open→seal journal 인접성과 최초 seal의 monotonic anchor를 유지하고, 선택 commit이 모호하면 authoritative journal을 250 ms backoff로 재조정하되 원문 continuation token은 재발급하지 않는다. terminal notice와 staged promotion은 exactly-once로 수렴한다.
 - 실제 사용자 local marketplace/Plugin 설치, 프로젝트 활성화, 네 Hook 개별 신뢰와 legacy primary login Keychain foreground service·Pet은 로컬 도그푸딩에서 실행했다. foreground service 재시작 fail-closed와 live prompt-only correction도 통과했다. 실제 sleep/복귀는 T-011/T-010에, signed Data Protection Keychain, PATH/launchd/DMG/터미널 매트릭스는 T-012에 남는다.
 
-### T-011 auto-attach 보강 결과 — 2026-08-23
+### T-011 auto-attach·Plugin cache 회전 보강 결과 — 2026-08-23~24
 
 - 활성 프로젝트의 `UserPromptSubmit`이 `SessionStart`보다 먼저 도착해도 해당 프롬프트 경계를 기준으로 세션을 지연 등록한다. 뒤늦은 start/resume는 기존 prompt/episode identity를 보존하고, 비활성 프로젝트와 교차 프로젝트 session ID는 fail-closed한다.
 - Hook과 MCP는 둘 다 Plugin-local launcher를 사용한다. 로컬 dogfood marketplace 복사본에만 앱 내장 coordinator의 절대 경로 locator를 생성하며, 서명된 앱 번들은 수정하지 않는다. locator가 없을 때만 `/Applications/Blabee.app`를 사용하고, 존재하지만 잘못된 locator는 Hook fail-open/MCP unavailable로 닫힌다.
+- Plugin 교체 전 열린 Codex 세션이 삭제된 이전 `PLUGIN_ROOT`를 계속 참조해도 네 Hook 명령은 cache root와 `scripts`가 symlink 아닌 실제 directory이고 launcher가 symlink 아닌 regular executable인지 먼저 확인하고 조용히 fail-open한다. 이 보강은 shell code 127과 입력 노출을 막을 뿐, 해당 세션을 최신 Plugin에 자동 재연결하지는 않는다.
 - Pet 자동 focus는 동일 poll에서 재귀 호출을 막지만, 일시 실패나 응답 유실 후 코디네이터 foreground가 없거나 이미 같은 FIFO 선두면 다음 poll에서 재시도한다. 다른 authoritative foreground가 있으면 자동 focus하지 않는다.
-- `npm run test:t011` 26/26, `npm run test:dogfood` 4/4, `npm run test:t012` 8/8, T-015 최종 Swift Testing 189/189+XCTest 5/5가 통과했다. 현재 `build/local-dogfood-async-next-turn-v1`의 app·service·Plugin을 설치·재시작했고 `blabee@blabee-local-dogfood-8462d0eca28a` 하나만 활성화했다.
-- 신규 세션과 제품 설치본의 실제 두 Codex TUI에서 FIFO A→B 선택과 같은 session의 새 사용자 턴 실행을 통과했다. 설치 전부터 열려 있다가 닫힌 실제 사용자 thread의 resume, `/hooks` 세션별 해시 검토와 비활성 메뉴바 패널의 WindowServer 시각·포커스·badge·자동 열림/닫힘 캡처는 수동 실환경 게이트로 남긴다.
+- `npm run test:t011` 28/28, `npm run test:dogfood` 4/4, `npm run test:t012` 8/8, T-015 최종 Swift Testing 189/189+XCTest 5/5가 통과했다. `build/local-dogfood-hook-guard-v1`을 새 marketplace `blabee-local-dogfood-dbc4be6d1786`로 조립했고 source·app·marketplace·설치 cache의 Hook SHA-256 `76ad962b…c66e`가 모두 일치한다. 현재 활성 selector는 `blabee@blabee-local-dogfood-dbc4be6d1786` 하나이며 service PID 15492와 Pet PID 15853도 같은 빌드에서 실행한다.
+- 새 Codex 세션 `01a03216-…`에서 Blabee SessionStart가 한 번만 로드되고 UserPromptSubmit이 새 경계를 생성한 뒤 원래 답변이 code 127 없이 종료됐다. 이 세션이 guarded command를 보유한 상태에서 설치 cache root를 제거해도 다음 턴은 `CACHE_ROTATION_SESSION_OK`로 정상 종료됐다. 보존한 설치 명령 네 개를 삭제된 exact `PLUGIN_ROOT`로 직접 실행한 결과도 각각 exit 0, signal 없음, stdout/stderr 빈 값, private stdin 비노출이었다.
+- 같은 selector를 재설치한 뒤 source·설치 cache 해시를 다시 일치시켰고, 별도 새 세션 `01a03218-…`에서 Blabee 경계와 `RESTORED_PLUGIN_SESSION_OK`를 확인해 최신 Plugin 자동 연결을 오류 억제 결과와 분리해 닫았다. 수정 전 selector는 설정에서 제거했지만 그 명령을 이미 메모리에 보유한 다른 열린 세션 보호를 위해 이전 cache root 자체는 보존했다.
+- 신규 세션과 제품 설치본의 실제 두 Codex TUI에서 FIFO A→B 선택과 같은 session의 새 사용자 턴 실행도 앞서 통과했다. 설치 전부터 열려 있다가 닫힌 실제 사용자 thread의 resume와 비활성 메뉴바 패널의 WindowServer 시각·포커스·badge·자동 열림/닫힘 캡처는 수동 실환경 게이트로 남긴다.
 
 ## 마일스톤 2 — 증거, 체크포인트, 진행 중인 프로젝트 도입
 
@@ -264,7 +271,25 @@ T-012b-3b 실행 결과:
 
 이 단계는 Hook MVP에 필수적이지 않다.
 
-1. 로컬 JSON-RPC 브로커의 프로토타입을 만들거나 안전한 다중 클라이언트 요청 소유권을 입증한다.
+2026-08-26 현재 `item/commandExecution/requestApproval` 전용 codec과 관리형 실행
+slice를 구현했다. `blabee-codex`가 공식 TUI를 인증된 loopback WebSocket으로,
+`codex app-server --listen stdio://`를 JSONL로 실행하고 둘 사이의 요청을 중계한다.
+Pet에는 Hook 큐와 분리한 process-local FIFO를 표시하며 `이번만 허용`은 `accept`,
+`거절`은 `decline`, 직접 결정과 오류·timeout은 원본 요청의 TUI 전달로만 변환한다.
+문자열·정수 request ID와 원본 바이트를 보존하고 `acceptForSession`, 추가 권한,
+네트워크·실행 정책 변경은 생성하지 않는다. 소스·가짜 transport 자격과 별개로,
+설치본에서 실제 Codex App Server/Pet 왕복은 아직 검증하지 않았으므로 공개 사용
+가능 상태로 표시하지 않는다.
+
+현재 계약 기준은 Codex `0.149.1`이다. 관리형 대기는 도착 시점부터 사용자 결정
+120초, 브로커 125초, socket 130초의 순서화된 상한과 동시 8개로 제한하며 Pet에는
+원본 환경 ID도 표시한다. 한 연결에서 기억한 승인 request
+ID가 256개에 도달하면 오래된 ID를 버리지 않고 이후 요청을 전부 공식 TUI에 맡기는
+단방향 native-only 모드로 전환한다. Pet 선택 접수, App Server 응답 전달, 실제 명령
+실행 결과는 각각 별도 증거다. 관리형 집중 테스트 30/30과 최종 제품 테스트 310/310이
+통과했지만 설치본 live dogfood는 수행하지 않았다.
+
+1. 설치본의 격리된 실제 Codex 세션에서 `accept`·`decline`·원본 TUI 전달과 두 요청 FIFO를 검증한다.
 2. 공식 TUI 동작을 유지하면서 네이티브 질문과 승인을 Pet에도 표시하고, 명시적인 별도 릴리스 게이트를 통과한 뒤에만 응답 중계를 검토한다.
 3. 정확한 스레드 목록 조회, 재개, 전체 `requestUserInput`, app-server 스레드 구독 및 네이티브 요청 대기열을 추가한다. 이는 Hook v0.1의 로컬 결정 카드 대기열과 별도다.
 4. Codex 버전별 프로토콜 호환성 픽스처를 고정한다.

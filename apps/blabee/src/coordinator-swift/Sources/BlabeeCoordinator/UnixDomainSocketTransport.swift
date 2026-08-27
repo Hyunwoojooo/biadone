@@ -119,6 +119,9 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "emit_decision",
         "stop",
         "permission_request",
+        "resolve_permission_request",
+        "managed_command_approval",
+        "resolve_managed_command_approval",
         "doctor_status",
         "pet_snapshot",
         "get_state",
@@ -316,6 +319,12 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let resultData: Data
             if type == "doctor_status" {
                 resultData = try await application.doctorStatus(payload: payloadData)
+            } else if type == "managed_command_approval" {
+                resultData = try await handleManagedCommandApproval(
+                    descriptor: descriptor,
+                    application: application,
+                    payload: payloadData
+                )
             } else {
                 resultData = try await application.handle(type: type, payload: payloadData)
             }
@@ -356,6 +365,93 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             secretCorpus: secretCorpus,
             requestSecretCorpus: requestSecretCorpus)
         }
+    }
+
+    private enum ManagedCommandApprovalConnectionRace: Sendable {
+        case application(Data)
+        case peerUnavailable
+        case cancelled
+    }
+
+    /// A managed approval exists only while its broker request is alive. The
+    /// normal UDS request path can wait for Pet, but it must not leave a card
+    /// behind when the broker exits before receiving that selection.
+    private static func handleManagedCommandApproval(
+        descriptor: Int32,
+        application: any CoordinatorOperationalHandling,
+        payload: Data
+    ) async throws -> Data {
+        try await withThrowingTaskGroup(
+            of: ManagedCommandApprovalConnectionRace.self
+        ) { group in
+            group.addTask {
+                .application(try await application.handle(
+                    type: "managed_command_approval",
+                    payload: payload
+                ))
+            }
+            group.addTask(priority: .utility) {
+                await waitForManagedApprovalPeerAvailability(descriptor)
+            }
+
+            do {
+                guard let first = try await group.next() else {
+                    throw CoordinatorError("operational_transport_closed")
+                }
+                group.cancelAll()
+                switch first {
+                case .application(let result):
+                    return result
+                case .peerUnavailable:
+                    throw CoordinatorError("operational_transport_closed")
+                case .cancelled:
+                    throw CancellationError()
+                }
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private static func waitForManagedApprovalPeerAvailability(
+        _ descriptor: Int32
+    ) async -> ManagedCommandApprovalConnectionRace {
+        let intervalMilliseconds: Int32 = 100
+        while !Task.isCancelled {
+            var state = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let result = Darwin.poll(&state, 1, intervalMilliseconds)
+            if result < 0 {
+                if errno == EINTR { continue }
+                return .peerUnavailable
+            }
+            if result == 0 { continue }
+            if state.revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 {
+                return .peerUnavailable
+            }
+            if state.revents & Int16(POLLIN) != 0 {
+                var byte: UInt8 = 0
+                let count = withUnsafeMutablePointer(to: &byte) { pointer in
+                    Darwin.recv(
+                        descriptor,
+                        UnsafeMutableRawPointer(pointer),
+                        1,
+                        MSG_PEEK | MSG_DONTWAIT
+                    )
+                }
+                if count == 0 { return .peerUnavailable }
+                if count > 0 {
+                    // One request is allowed per connection. Late bytes are a
+                    // protocol violation, so they cannot keep a Pet card alive.
+                    return .peerUnavailable
+                }
+                if errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK {
+                    continue
+                }
+                return .peerUnavailable
+            }
+        }
+        return .cancelled
     }
 
     private static func startScheduler(application: any CoordinatorOperationalHandling) {
@@ -419,7 +515,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         }
     }
 
-    fileprivate static func openSecureRuntimeDirectory(_ directoryURL: URL) throws -> Int32 {
+    static func openSecureRuntimeDirectory(_ directoryURL: URL) throws -> Int32 {
         let standardized = normalizedSystemAlias(directoryURL.standardizedFileURL.path)
         guard standardized.hasPrefix("/") else {
             throw CoordinatorError("operational_runtime_directory_unsafe")
@@ -467,7 +563,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         }
     }
 
-    fileprivate static func openAndAcquireOwnerLease(
+    static func openAndAcquireOwnerLease(
         parentDescriptor: Int32,
         name: String
     ) throws -> Int32 {
@@ -489,8 +585,12 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             else {
                 throw CoordinatorError("operational_owner_lock_unsafe")
             }
-            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-                throw CoordinatorError("operational_owner_active")
+            if flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+                let lockError = errno
+                if lockError == EWOULDBLOCK {
+                    throw CoordinatorError("operational_owner_active")
+                }
+                throw CoordinatorError("operational_owner_lock_unavailable")
             }
             return descriptor
         } catch {

@@ -21,10 +21,33 @@
     "boundary_sequence",
     "task_goal",
     "outcome",
-    "recommended_next",
-    "alternative_next",
-    "pause_capsule",
     "reported_side_effects"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "next_actions"
+      ],
+      "properties": {
+        "next_actions": {},
+        "recommended_next": false,
+        "alternative_next": false,
+        "pause_capsule": false
+      }
+    },
+    {
+      "required": [
+        "recommended_next",
+        "alternative_next",
+        "pause_capsule"
+      ],
+      "properties": {
+        "recommended_next": {},
+        "alternative_next": {},
+        "pause_capsule": {},
+        "next_actions": false
+      }
+    }
   ],
   "properties": {
     "schema_version": {
@@ -90,10 +113,22 @@
         }
       }
     },
+    "next_actions": {
+      "description": "Two to four meaningful next actions ordered from strongest recommendation to lowest current priority.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
+      }
+    },
     "recommended_next": {
+      "description": "Legacy proposal field accepted for cached v1 clients.",
       "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
     },
     "alternative_next": {
+      "description": "Legacy proposal field accepted for cached v1 clients.",
       "oneOf": [
         {
           "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"

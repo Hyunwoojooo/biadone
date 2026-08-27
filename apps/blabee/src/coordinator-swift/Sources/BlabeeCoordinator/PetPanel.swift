@@ -15,6 +15,91 @@ struct PetPanelPolicy {
     static let canBecomeMain = false
 }
 
+struct PetPanelLayoutState: Sendable, Equatable {
+    let isExpanded: Bool
+    let isEditingShortcuts: Bool
+    let isShowingOnboarding: Bool
+    let actionCount: Int?
+    let fifoQueueCount: Int
+    let hasPermissionNotice: Bool
+    let hasStatusMessage: Bool
+}
+
+enum PetPanelScreenMode: Sendable, Equatable {
+    case ready
+    case permission
+    case decision(actionCount: Int)
+    case details
+    case shortcutSettings
+    case projectSettings
+}
+
+enum PetPanelContentPolicy {
+    static let projectNameLineLimit = 1
+    static let summaryLineLimit = 2
+    static let actionTitleLineLimit = 1
+    static let disabledReasonLineLimit = 1
+    static let statusMessageLineLimit = 2
+
+    static func allowsScrolling(in mode: PetPanelScreenMode) -> Bool {
+        switch mode {
+        case .details, .projectSettings:
+            true
+        case .ready, .permission, .decision, .shortcutSettings:
+            false
+        }
+    }
+}
+
+enum PetPanelSizePolicy {
+    static let width: CGFloat = 460
+    static let compactHeight: CGFloat = 240
+    static let expandedHeight: CGFloat = 680
+    static let minimumDecisionHeight: CGFloat = 300
+    static let decisionBaseHeight: CGFloat = 214
+    static let actionHeight: CGFloat = 70
+    static let fifoQueueHeight: CGFloat = 44
+    static let permissionRequestHeight: CGFloat = 520
+    static let statusMessageHeight: CGFloat = 48
+
+    static let compactSize = CGSize(width: width, height: compactHeight)
+    static let expandedSize = CGSize(width: width, height: expandedHeight)
+
+    static func preferredSize(for state: PetPanelLayoutState) -> CGSize {
+        if state.hasPermissionNotice {
+            let height = permissionRequestHeight
+                + (state.hasStatusMessage ? statusMessageHeight : 0)
+            return CGSize(width: width, height: min(height, expandedHeight))
+        }
+
+        if state.isEditingShortcuts || state.isShowingOnboarding {
+            return expandedSize
+        }
+
+        var height: CGFloat
+        if let actionCount = state.actionCount {
+            if state.isExpanded {
+                return expandedSize
+            }
+            height = max(
+                minimumDecisionHeight,
+                decisionBaseHeight + CGFloat(max(actionCount, 0)) * actionHeight
+            )
+            if state.fifoQueueCount > 1 {
+                height += fifoQueueHeight
+            }
+        } else {
+            // A stale detail flag must not keep an idle Pet unnecessarily tall.
+            height = compactHeight
+        }
+
+        if state.hasStatusMessage {
+            height += statusMessageHeight
+        }
+        return CGSize(width: width, height: min(height, expandedHeight))
+    }
+}
+
 enum PetFrameClamp {
     static func clamp(_ frame: CGRect, to visibleFrame: CGRect) -> CGRect {
         guard visibleFrame.width > 0, visibleFrame.height > 0 else { return frame }
@@ -133,11 +218,12 @@ final class PetNonactivatingPanel: NSPanel {
 
 @MainActor
 final class PetPanelController: NSObject, NSWindowDelegate {
-    static let collapsedSize = CGSize(width: 460, height: 480)
-    static let expandedSize = CGSize(width: 460, height: 680)
+    static let collapsedSize = PetPanelSizePolicy.compactSize
+    static let expandedSize = PetPanelSizePolicy.expandedSize
 
     let panel: PetNonactivatingPanel
     private let viewModel: PetViewModel
+    private var lastRequestedSize: CGSize
     private weak var statusItemButton: NSStatusBarButton?
     private var screenObserver: NSObjectProtocol?
     private var localMouseMonitor: Any?
@@ -146,8 +232,12 @@ final class PetPanelController: NSObject, NSWindowDelegate {
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
+        let initialSize = PetPanelSizePolicy.preferredSize(
+            for: Self.layoutState(for: viewModel)
+        )
+        lastRequestedSize = initialSize
         panel = PetNonactivatingPanel(
-            contentRect: CGRect(origin: .zero, size: Self.collapsedSize),
+            contentRect: CGRect(origin: .zero, size: initialSize),
             styleMask: PetPanelPolicy.styleMask,
             backing: .buffered,
             defer: false
@@ -157,8 +247,8 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: PetRootView(viewModel: viewModel))
         placeInitially()
-        viewModel.onExpansionChanged = { [weak self] expanded in
-            self?.resize(expanded: expanded)
+        viewModel.onPanelLayoutChanged = { [weak self] in
+            self?.refreshContentSize()
         }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -223,7 +313,9 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         placeAtStatusItem(display: false)
     }
 
-    private func resize(expanded: Bool) {
+    private func refreshContentSize() {
+        let requestedSize = preferredSize
+        guard requestedSize != lastRequestedSize else { return }
         placeAtStatusItem(display: true)
         if panel.isVisible { panel.orderFrontRegardless() }
     }
@@ -234,7 +326,8 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     private func placeAtStatusItem(display: Bool) {
-        let size = viewModel.isExpanded ? Self.expandedSize : Self.collapsedSize
+        let size = preferredSize
+        lastRequestedSize = size
         if let statusItemFrame = statusItemFrameInScreen(),
            let screen = statusItemButton?.window?.screen
         {
@@ -255,6 +348,23 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         panel.setFrame(
             PetFrameClamp.lowerTrailingFrame(size: size, in: targetDisplay.visibleFrame),
             display: display
+        )
+    }
+
+    private var preferredSize: CGSize {
+        PetPanelSizePolicy.preferredSize(for: Self.layoutState(for: viewModel))
+    }
+
+    private static func layoutState(for viewModel: PetViewModel) -> PetPanelLayoutState {
+        PetPanelLayoutState(
+            isExpanded: viewModel.isExpanded,
+            isEditingShortcuts: viewModel.isEditingShortcuts,
+            isShowingOnboarding: viewModel.isShowingOnboarding,
+            actionCount: viewModel.displayInteraction?.actionChoices.count,
+            fifoQueueCount: viewModel.fifoQueueCount,
+            hasPermissionNotice: viewModel.hasNewPermissionNotice,
+            hasStatusMessage: viewModel.lastError != nil
+                || viewModel.shortcutDiagnostic != nil
         )
     }
 
@@ -418,12 +528,17 @@ final class PetMenuBarController: NSObject {
         viewModel.onAttentionEvent = { [weak self] in
             self?.presentForAttention()
         }
+        viewModel.onPermissionRequestChanged = { [weak self] request in
+            guard request != nil else { return }
+            self?.presentForAttention()
+        }
     }
 
     func stop() {
         viewModel.onPanelToggleRequested = nil
         viewModel.onAttentionChanged = nil
         viewModel.onAttentionEvent = nil
+        viewModel.onPermissionRequestChanged = nil
         panelController.stopObservingScreenChanges()
         panelController.hide()
         NSStatusBar.system.removeStatusItem(statusItem)

@@ -202,7 +202,7 @@ function decideSelectOption(state, command) {
     command.request,
     command.occurred_at,
   );
-  if (choice.slot === 3) {
+  if (choice.kind === "pause") {
     const claimEvent = eventFor(state, {
       eventType: "decision_selection_claimed",
       eventId: command.event_ids?.selection_claimed,
@@ -238,9 +238,10 @@ function decideSelectOption(state, command) {
       }],
     });
   }
-  invariant(choice.slot !== 4, "rollback_not_supported_in_core");
+  invariant(choice.kind !== "rollback", "rollback_not_supported_in_core");
   invariant(
-    (choice.slot === 1 || choice.slot === 2) && choice.action_id && choice.action,
+    (choice.kind === "recommended_action" || choice.kind === "alternative_action")
+      && choice.action_id && choice.action,
     "decision_option_not_pet_action",
   );
   const tokenMaterial = assertGeneratedTokenMaterial(command.token_material);
@@ -465,16 +466,17 @@ function decideCloseBoundary(state, command) {
   const binding = bindingFrom(command.binding);
   const { boundary } = boundaryFor(state, binding);
   invariant(!boundary.closed, "decision_boundary_already_closed");
-  if (boundary.selection?.slot === 3) {
+  if (boundary.selection?.kind === "pause") {
     invariant(
       command.close_reason === "episode_paused",
       "pause_selection_close_reason_invalid",
     );
   }
   if (command.close_reason === "episode_paused") {
-    invariant(boundary.selection?.slot === 3, "episode_pause_selection_missing");
+    invariant(boundary.selection?.kind === "pause", "episode_pause_selection_missing");
   }
-  if (boundary.selection?.slot === 1 || boundary.selection?.slot === 2) {
+  if (boundary.selection?.kind === "recommended_action"
+      || boundary.selection?.kind === "alternative_action") {
     invariant(
       boundary.dispatchedContinuationId,
       "transport_terminal_observation_missing",

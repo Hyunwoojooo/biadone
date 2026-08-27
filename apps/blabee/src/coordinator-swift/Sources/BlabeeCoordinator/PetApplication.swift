@@ -1,5 +1,6 @@
 import AppKit
 import CoordinatorSwift
+import Darwin
 import Foundation
 
 struct PetArguments: Sendable, Equatable {
@@ -24,6 +25,54 @@ struct PetArguments: Sendable, Equatable {
             explicitPath: explicitSocketPath,
             environment: environment
         )
+    }
+}
+
+/// Process-lifetime authority for the one user-visible Pet. Every dogfood and
+/// installed app build shares this fixed per-user lease, so opening a second
+/// bundle cannot create another menu-bar icon.
+final class PetProcessLease: @unchecked Sendable {
+    private let descriptor: Int32
+
+    init() throws {
+        descriptor = try Self.acquire(runtimeRootURL: Self.defaultRuntimeRootURL)
+    }
+
+    init(runtimeRootURL: URL) throws {
+        descriptor = try Self.acquire(runtimeRootURL: runtimeRootURL)
+    }
+
+    deinit {
+        _ = flock(descriptor, LOCK_UN)
+        close(descriptor)
+    }
+
+    private static var defaultRuntimeRootURL: URL {
+        // HOME is intentionally ignored so independently launched builds for
+        // the same macOS account still contend on one user-visible Pet lease.
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(
+                "Library/Application Support/Blabee/runtime/pet",
+                isDirectory: true
+            )
+    }
+
+    private static func acquire(runtimeRootURL: URL) throws -> Int32 {
+        let parent = try UnixDomainSocketServer.openSecureRuntimeDirectory(
+            runtimeRootURL.standardizedFileURL
+        )
+        defer { close(parent) }
+        do {
+            return try UnixDomainSocketServer.openAndAcquireOwnerLease(
+                parentDescriptor: parent,
+                name: "instance-v1.lock"
+            )
+        } catch let error as CoordinatorError where error.code == "operational_owner_active" {
+            throw CoordinatorError(
+                "pet_already_running",
+                "another Blabee Pet is already running"
+            )
+        }
     }
 }
 
@@ -125,11 +174,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 func runPet(arguments rawArguments: [String]) throws {
     let arguments = try PetArguments(rawArguments)
+    let processLease = try PetProcessLease()
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     let delegate = PetApplicationDelegate(arguments: arguments)
     application.delegate = delegate
     application.run()
-    withExtendedLifetime(delegate) {}
+    withExtendedLifetime((delegate, processLease)) {}
     try delegate.rethrowStartupError()
 }

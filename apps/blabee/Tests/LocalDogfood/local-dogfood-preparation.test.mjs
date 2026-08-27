@@ -61,6 +61,7 @@ async function makeWorkspace(t, prefix = "blabee-local-dogfood-") {
     [
       "#!/bin/sh",
       "if [ \"${1-}\" = doctor ]; then printf 'path=%s\\n' \"$PATH\"; fi",
+      "if [ \"${1-}\" = managed-codex ]; then printf 'coordinator=%s;path=%s\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"$PATH\"; fi",
       "printf 'socket=%s;args=%s\\n' \"${BLABEE_SOCKET-unset}\" \"$*\"",
       "",
     ].join("\n"),
@@ -167,6 +168,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   );
   const coordinatorShim = join(canonicalOutput, "bin", "blabee-coordinator");
   const codexLauncher = join(canonicalOutput, "bin", "codex-with-blabee");
+  const managedCodexLauncher = join(canonicalOutput, "bin", "blabee-codex");
   const projectSettingsLauncher = join(
     canonicalOutput,
     "bin",
@@ -179,6 +181,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     marketplaceManifestPath,
     coordinatorShim,
     codexLauncher,
+    managedCodexLauncher,
     projectSettingsLauncher,
     serviceLauncher,
     petLauncher,
@@ -191,6 +194,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   }
   assert.equal((await lstat(coordinatorShim)).mode & 0o777, 0o755);
   assert.equal((await lstat(codexLauncher)).mode & 0o777, 0o755);
+  assert.equal((await lstat(managedCodexLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(projectSettingsLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(serviceLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(petLauncher)).mode & 0o777, 0o755);
@@ -296,6 +300,16 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal(summary.codex.hook_trust.bypass_hook_trust, false);
   assert.equal(summary.codex.marketplace_identity_suffix, expectedMarketplaceSuffix);
   assert.equal(summary.codex.launch.environment.BLABEE_SOCKET, "unset_by_launcher");
+  assert.equal(summary.paths.managed_codex_launcher, managedCodexLauncher);
+  assert.deepEqual(summary.codex.managed_launch, {
+    argv: [managedCodexLauncher],
+    environment: {
+      BLABEE_COORDINATOR_BINARY: bundledCoordinator,
+      BLABEE_SOCKET: "unset_by_launcher",
+      PATH_prepend: join(canonicalOutput, "bin"),
+    },
+    automatic: false,
+  });
   assert.deepEqual(summary.runtime.project_enable.argv_prefix, [
     projectSettingsLauncher,
     "enable",
@@ -421,9 +435,24 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal(launchLines[2], "unset");
   assert.equal(launchLines[3], "resume session-id");
 
+  const managedLaunch = await execFile(
+    managedCodexLauncher,
+    ["resume", "managed-session-id"],
+    { env: { PATH: fakeBin, BLABEE_SOCKET: "/tmp/stale-blabee.sock" } },
+  );
+  assert.equal(
+    managedLaunch.stdout,
+    [
+      `coordinator=${bundledCoordinator};path=${join(canonicalOutput, "bin")}:${fakeBin}`,
+      "socket=unset;args=managed-codex -- resume managed-session-id",
+      "",
+    ].join("\n"),
+  );
+
   const generatedText = await Promise.all([
     readFile(coordinatorShim, "utf8"),
     readFile(codexLauncher, "utf8"),
+    readFile(managedCodexLauncher, "utf8"),
     readFile(projectSettingsLauncher, "utf8"),
     readFile(serviceLauncher, "utf8"),
     readFile(petLauncher, "utf8"),

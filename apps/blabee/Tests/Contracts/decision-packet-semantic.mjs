@@ -27,7 +27,12 @@ function duplicateIndices(choices, field, { ignoreNull = false } = {}) {
 // single property (option_id/action_id) to be unique across otherwise distinct
 // choice objects, so this cross-item rule belongs in the semantic validator.
 export function validateDecisionPacketSemantics(packet) {
-  if (!Array.isArray(packet?.choices) || packet.choices.length !== 4) {
+  const ranked = packet?.decision_layout === "ranked_next_actions";
+  const choicesValid = Array.isArray(packet?.choices)
+    && (ranked
+      ? packet.choices.length >= 2 && packet.choices.length <= 4
+      : packet.choices.length === 4);
+  if (!choicesValid) {
     return Object.freeze({ valid: false, errorCode: "decision_packet_choices_invalid", choiceIndices: null });
   }
 
@@ -41,7 +46,7 @@ export function validateDecisionPacketSemantics(packet) {
     return Object.freeze({ valid: false, errorCode: "decision_packet_checkpoint_mismatch", choiceIndices: null });
   }
 
-  const rollbackChoice = packet.choices.find((choice) => choice?.slot === 4);
+  const rollbackChoice = packet.choices.find((choice) => choice?.kind === "rollback");
   if (
     rollbackChoice?.enabled === true
     && rollbackChoice.target_checkpoint_id !== packet.episode_baseline_checkpoint_id

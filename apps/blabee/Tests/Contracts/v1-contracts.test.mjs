@@ -194,12 +194,65 @@ test("selection requests contain identifiers only and cannot smuggle action mean
   }
 });
 
-test("decision packets preserve fixed slots and fail closed for disabled choices", async () => {
+test("decision proposal supports ranked next actions while keeping the cached legacy shape", async () => {
+  const suite = await suitePromise;
+  const proposalCases = suite.fixtureManifest.cases.filter(
+    (item) => item.valid && schemaIs(item, "decision_proposal"),
+  );
+  const rankedCase = caseFor(
+    suite,
+    (item) => item.name === "valid_decision_proposal",
+    "the ranked decision proposal",
+  );
+  const legacyCase = caseFor(
+    suite,
+    (item) => item.name === "valid_decision_proposal_legacy",
+    "the cached legacy decision proposal",
+  );
+  assert.equal(proposalCases.length >= 2, true);
+  assert.equal(rankedCase.value.next_actions.length, 3);
+  assert.equal(Object.hasOwn(rankedCase.value, "recommended_next"), false);
+  assert.equal(Object.hasOwn(rankedCase.value, "alternative_next"), false);
+  assert.equal(Object.hasOwn(rankedCase.value, "pause_capsule"), false);
+  assert.equal(Object.hasOwn(legacyCase.value, "next_actions"), false);
+  assert.equal(Object.hasOwn(legacyCase.value, "recommended_next"), true);
+  assert.equal(Object.hasOwn(legacyCase.value, "pause_capsule"), true);
+
+  const validator = fixtureValidator(suite.compiled, rankedCase);
+  const twoActions = clone(rankedCase.value);
+  twoActions.next_actions = twoActions.next_actions.slice(0, 2);
+  assertSchemaResult(validator, twoActions, true, "two ranked actions");
+
+  const oneAction = clone(rankedCase.value);
+  oneAction.next_actions = oneAction.next_actions.slice(0, 1);
+  assertSchemaResult(validator, oneAction, false, "one ranked action");
+
+  const fiveActions = clone(rankedCase.value);
+  fiveActions.next_actions.push(
+    clone(fiveActions.next_actions[0]),
+    clone(fiveActions.next_actions[1]),
+  );
+  assertSchemaResult(validator, fiveActions, false, "five ranked actions");
+
+  const duplicateActions = clone(rankedCase.value);
+  duplicateActions.next_actions[1] = clone(duplicateActions.next_actions[0]);
+  assertSchemaResult(validator, duplicateActions, false, "duplicate ranked actions");
+
+  const mixed = clone(rankedCase.value);
+  mixed.recommended_next = clone(mixed.next_actions[0]);
+  mixed.alternative_next = clone(mixed.next_actions[1]);
+  assertSchemaResult(validator, mixed, false, "ranked and cached fields cannot be mixed");
+});
+
+test("decision packets preserve legacy fixed slots and accept two to four ranked actions", async () => {
   const suite = await suitePromise;
   const packetCases = suite.fixtureManifest.cases.filter((item) => item.valid && schemaIs(item, "decision_packet"));
-  assert.ok(packetCases.length >= 2, "valid decision-packet fixtures must cover disabled alternative and rollback");
+  const legacyCases = packetCases.filter((item) => item.value.decision_layout === undefined);
+  const rankedCases = packetCases.filter((item) => item.value.decision_layout === "ranked_next_actions");
+  assert.ok(legacyCases.length >= 2, "legacy packets must cover disabled alternative and rollback");
+  assert.ok(rankedCases.length >= 1, "ranked packets must be covered by a fixture");
 
-  for (const fixtureCase of packetCases) {
+  for (const fixtureCase of legacyCases) {
     const packet = fixtureCase.value;
     const validator = fixtureValidator(suite.compiled, fixtureCase);
     assert.deepEqual(packet.choices.map((choice) => choice.slot), [1, 2, 3, 4]);
@@ -224,7 +277,48 @@ test("decision packets preserve fixed slots and fail closed for disabled choices
 
     const repurposed = clone(packet);
     repurposed.choices[2].kind = "alternative_action";
-    assertSchemaResult(validator, repurposed, false, "slot 3 cannot be repurposed");
+    assertSchemaResult(validator, repurposed, false, "legacy slot 3 cannot be repurposed");
+  }
+
+  for (const fixtureCase of rankedCases) {
+    const packet = fixtureCase.value;
+    const validator = fixtureValidator(suite.compiled, fixtureCase);
+    assert.equal(packet.decision_layout, "ranked_next_actions");
+    assert.equal(packet.choices.length >= 2 && packet.choices.length <= 4, true);
+    assert.deepEqual(packet.choices.map((choice) => choice.slot), [1, 2, 3, 4]);
+    assert.deepEqual(
+      packet.choices.map((choice) => choice.kind),
+      ["recommended_action", "alternative_action", "alternative_action", "alternative_action"],
+    );
+    assert.equal(packet.choices.every((choice) => (
+      choice.enabled === true
+        && choice.disabled_reason === null
+        && typeof choice.action_id === "string"
+        && typeof choice.action === "object"
+    )), true);
+
+    const twoActions = clone(packet);
+    twoActions.choices = twoActions.choices.slice(0, 2);
+    assertSchemaResult(validator, twoActions, true, "ranked packet with two actions");
+
+    const oneAction = clone(packet);
+    oneAction.choices = oneAction.choices.slice(0, 1);
+    assertSchemaResult(validator, oneAction, false, "ranked packet with one action");
+
+    const wrongSlot = clone(packet);
+    wrongSlot.choices[2].slot = 4;
+    assertSchemaResult(validator, wrongSlot, false, "ranked slots must remain contiguous");
+
+    const disabledAction = clone(packet);
+    disabledAction.choices[1].enabled = false;
+    disabledAction.choices[1].disabled_reason = "not_available";
+    disabledAction.choices[1].action_id = null;
+    delete disabledAction.choices[1].action;
+    assertSchemaResult(validator, disabledAction, false, "ranked actions cannot be placeholders");
+
+    const withoutLayout = clone(packet);
+    delete withoutLayout.decision_layout;
+    assertSchemaResult(validator, withoutLayout, false, "ranked packet needs an explicit layout");
   }
 });
 
@@ -283,18 +377,21 @@ test("decision packet identifiers are unique across choices by semantic validati
       choiceIndices: null,
     });
 
-    const mismatchedRollbackTarget = clone(fixtureCase.value);
-    const rollback = mismatchedRollbackTarget.choices.find((choice) => choice.slot === 4);
-    rollback.enabled = true;
-    rollback.disabled_reason = null;
-    rollback.action_id = "action_fixture_inline_rollback";
-    rollback.target_checkpoint_id = `${mismatchedRollbackTarget.episode_baseline_checkpoint_id}_cross`;
-    assertSchemaResult(validator, mismatchedRollbackTarget, true, "enabled rollback target mutation remains schema-valid");
-    assert.deepEqual(validateDecisionPacketSemantics(mismatchedRollbackTarget), {
-      valid: false,
-      errorCode: "rollback_target_checkpoint_mismatch",
-      choiceIndices: null,
-    });
+    const rollback = fixtureCase.value.choices.find((choice) => choice.kind === "rollback");
+    if (rollback) {
+      const mismatchedRollbackTarget = clone(fixtureCase.value);
+      const mutatedRollback = mismatchedRollbackTarget.choices.find((choice) => choice.kind === "rollback");
+      mutatedRollback.enabled = true;
+      mutatedRollback.disabled_reason = null;
+      mutatedRollback.action_id = "action_fixture_inline_rollback";
+      mutatedRollback.target_checkpoint_id = `${mismatchedRollbackTarget.episode_baseline_checkpoint_id}_cross`;
+      assertSchemaResult(validator, mismatchedRollbackTarget, true, "enabled rollback target mutation remains schema-valid");
+      assert.deepEqual(validateDecisionPacketSemantics(mismatchedRollbackTarget), {
+        valid: false,
+        errorCode: "rollback_target_checkpoint_mismatch",
+        choiceIndices: null,
+      });
+    }
   }
 });
 
@@ -302,13 +399,19 @@ test("M1 fixtures keep rollback unavailable in packets, prompt episodes, and res
   const suite = await suitePromise;
   const expectedPolicy = { enabled: false, disabled_reason: "rollback_not_enabled_in_build" };
   const packets = suite.fixtureManifest.cases.filter((item) => item.valid && schemaIs(item, "decision_packet"));
-  for (const fixtureCase of packets) {
+  const legacyPackets = packets.filter((item) => item.value.decision_layout === undefined);
+  const rankedPackets = packets.filter((item) => item.value.decision_layout === "ranked_next_actions");
+  for (const fixtureCase of legacyPackets) {
     const slot4 = fixtureCase.value.choices.find((choice) => choice.slot === 4);
     assert.ok(slot4, `${fixtureCase.name} needs slot 4`);
     assert.equal(slot4.kind, "rollback");
     assert.equal(slot4.enabled, false);
     assert.equal(slot4.disabled_reason, expectedPolicy.disabled_reason);
     assert.equal(slot4.action_id, null);
+  }
+  for (const fixtureCase of rankedPackets) {
+    assert.equal(fixtureCase.value.choices.some((choice) => choice.kind === "rollback"), false);
+    assert.equal(fixtureCase.value.choices.some((choice) => choice.kind === "pause"), false);
   }
 
   for (const schemaName of ["prompt_episode", "resume_capsule"]) {

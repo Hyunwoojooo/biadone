@@ -267,7 +267,11 @@ private struct OperationalFixture {
 }
 
 private func operationalFixture(
-    dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed
+    dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed,
+    permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
+    maximumPendingPermissionRequests: Int = 8,
+    managedCommandApprovalTimeoutNanoseconds: UInt64 = 30_000_000_000,
+    maximumPendingManagedCommandApprovals: Int = 8
 ) throws -> OperationalFixture {
     let journal = OperationalMemoryJournal()
     let clock = OperationalClock()
@@ -290,7 +294,12 @@ private func operationalFixture(
         stopObservationHMACKey: Data(repeating: 0xA5, count: 32),
         nextTurnDispatcher: { request in
             try await nextTurnDispatcher.dispatch(request)
-        }
+        },
+        permissionRequestTimeoutNanoseconds: permissionRequestTimeoutNanoseconds,
+        maximumPendingPermissionRequests: maximumPendingPermissionRequests,
+        managedCommandApprovalTimeoutNanoseconds:
+            managedCommandApprovalTimeoutNanoseconds,
+        maximumPendingManagedCommandApprovals: maximumPendingManagedCommandApprovals
     )
     return OperationalFixture(
         app: app,
@@ -377,6 +386,32 @@ private func operationalProposal(
             "done_when": ["The alternative is recorded"],
         ] : NSNull(),
         "pause_capsule": ["resume_first": "Re-open the operational report"],
+        "reported_side_effects": [],
+    ]
+}
+
+private func operationalRankedProposal(
+    _ ids: [String: String],
+    suffix: String,
+    count: Int = 4
+) -> [String: Any] {
+    precondition((2...4).contains(count))
+    let actions: [[String: Any]] = (1...count).map { rank in
+        [
+            "title": "Rank \(rank) \(suffix)",
+            "objective": "Run ranked work \(rank) for \(suffix)",
+            "constraints": ["Keep ranked action \(rank) exact"],
+            "done_when": ["Ranked action \(rank) is recorded"],
+        ]
+    }
+    return [
+        "schema_version": "1.0",
+        "proposal_id": "proposal_ranked_\(suffix)",
+        "correlation_token": ids["correlation_token"]!,
+        "interaction_kind": "blabee_decision",
+        "task_goal": "Ranked operational goal \(suffix)",
+        "outcome": ["status": "completed", "summary": "Ranked summary \(suffix)"],
+        "next_actions": actions,
         "reported_side_effects": [],
     ]
 }
@@ -510,7 +545,7 @@ private func operationalStop(
     ])
 }
 
-@Test("Operational state requests perform one routing reconciliation tick")
+@Test("Operational state requests stay journal-free and do not advance routing time")
 func operationalStateRequestsUseSingleRoutingTick() async throws {
     let idleFixture = try operationalFixture()
 
@@ -543,8 +578,17 @@ func operationalStateRequestsUseSingleRoutingTick() async throws {
     let activeInteraction = try #require(
         (activeState["interactions"] as? [[String: Any]])?.first
     )
-    #expect(activeInteraction["reminder_due"] as? Bool == true)
+    #expect(activeInteraction["reminder_due"] as? Bool == false)
     #expect(activeFixture.journal.loadCount() - loadCountBeforeRequest == 0)
+
+    _ = try await activeFixture.app.processTime()
+    let processedState = try operationalObject(
+        await activeFixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let processedInteraction = try #require(
+        (processedState["interactions"] as? [[String: Any]])?.first
+    )
+    #expect(processedInteraction["reminder_due"] as? Bool == true)
 }
 
 @Test("Operational reconciliation failures share a bounded cooldown across scheduler and Pet requests")
@@ -1210,6 +1254,362 @@ func operationalProposalDoesNotHoldStopOpen() async throws {
         )
     )
     #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "next_turn")
+}
+
+@Test("Operational manual prompt supersedes a waiting proposal")
+func operationalManualPromptSupersedesWaitingProposal() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "manual_prompt_supersedes")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "manual_prompt_supersedes")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "The previous proposal is waiting"
+        )
+    )
+    let previousInteraction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+
+    let nextPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_manual_prompt_supersedes_next",
+                "cwd": ids["cwd"]!,
+                "prompt": "Ignore the previous choices and handle this new request",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(nextPrompt["prompt_origin"] as? String == "human")
+    let nextIdentifiers = try #require(nextPrompt["identifiers"] as? [String: Any])
+    #expect(
+        nextIdentifiers["source_turn_id"] as? String
+            == "turn_operational_manual_prompt_supersedes_next"
+    )
+    #expect(nextIdentifiers["episode_id"] as? String != ids["episode_id"])
+    #expect(nextIdentifiers["source_prompt_id"] as? String != ids["source_prompt_id"])
+
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    await expectOperationalError("interaction_not_waiting") {
+        _ = try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(previousInteraction, slot: 1))
+        )
+    }
+
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let previousBoundary = try #require(state.boundaries.values.first)
+    #expect(previousBoundary.closed)
+    #expect(previousBoundary.closeReason == "superseded_by_user_prompt")
+    #expect(state.continuations.isEmpty)
+
+    let lateStop = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: false,
+                message: "A late Stop must not restore the old proposal"
+            )
+        )
+    )
+    #expect(lateStop["status"] as? String == "no_proposal")
+
+    let nextPromptRetry = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_manual_prompt_supersedes_next",
+                "cwd": ids["cwd"]!,
+                "prompt": "Ignore the previous choices and handle this new request",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    let retryIdentifiers = try #require(nextPromptRetry["identifiers"] as? [String: Any])
+    for key in [
+        "project_id", "session_id", "source_turn_id", "source_prompt_id",
+        "episode_id", "episode_root_prompt_id", "episode_baseline_checkpoint_id",
+    ] {
+        #expect(retryIdentifiers[key] as? String == nextIdentifiers[key] as? String)
+    }
+    let closeEvents = try fixture.journal.load().events.filter {
+        try operationalObject($0)["event_type"] as? String
+            == "decision_boundary_closed"
+    }
+    #expect(closeEvents.count == 1)
+}
+
+@Test("Operational manual prompt supersedes a sealed proposal before Stop")
+func operationalManualPromptSupersedesSealedProposal() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "manual_prompt_sealed")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "manual_prompt_sealed")
+        ))
+    )
+    var snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let sealedInteraction = try #require(
+        (snapshot["interactions"] as? [[String: Any]])?.first
+    )
+    #expect(sealedInteraction["state"] as? String == "sealed")
+
+    _ = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_manual_prompt_sealed_next",
+            "cwd": ids["cwd"]!,
+            "prompt": "Start a new request before the previous Stop arrives",
+            "hook_event_name": "UserPromptSubmit",
+        ])
+    )
+    snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+
+    let lateStop = try operationalObject(
+        await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(
+                ids: ids,
+                active: false,
+                message: "The late Stop cannot revive a superseded proposal"
+            )
+        )
+    )
+    #expect(lateStop["status"] as? String == "no_proposal")
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.boundaries.values.first?.closeReason == "superseded_by_user_prompt")
+}
+
+@Test("Operational manual prompt recovers a committed supersession response loss")
+func operationalManualPromptRecoversCommittedSupersession() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "manual_prompt_close_loss")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "manual_prompt_close_loss")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "Waiting before response loss")
+    )
+    _ = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    fixture.journal.loseNextCommittedResponse(eventType: "decision_boundary_closed")
+
+    let prompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_manual_prompt_close_loss_next",
+                "cwd": ids["cwd"]!,
+                "prompt": "This prompt must survive a lost close response",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(prompt["prompt_origin"] as? String == "human")
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    let closeEvents = try fixture.journal.load().events.filter {
+        try operationalObject($0)["event_type"] as? String
+            == "decision_boundary_closed"
+    }
+    #expect(closeEvents.count == 1)
+}
+
+@Test("Operational manual prompt retries safely after supersession append failure")
+func operationalManualPromptRetriesSupersessionAppendFailure() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "manual_prompt_close_retry")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "manual_prompt_close_retry")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "Waiting before close failure")
+    )
+    _ = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let nextPromptPayload = try operationalData([
+        "session_id": ids["session_id"]!,
+        "turn_id": "turn_operational_manual_prompt_close_retry_next",
+        "cwd": ids["cwd"]!,
+        "prompt": "Retry this prompt after the durable close becomes available",
+        "hook_event_name": "UserPromptSubmit",
+    ])
+    fixture.journal.failNextAppend(eventType: "decision_boundary_closed")
+
+    await expectOperationalError("injected_append_failure") {
+        _ = try await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: nextPromptPayload
+        )
+    }
+    var snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.count == 1)
+    #expect(
+        try CoordinatorSemanticReplay.replay(fixture.journal.load())
+            .boundaries.values.first?.closed == false
+    )
+
+    let retried = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: nextPromptPayload
+        )
+    )
+    #expect(retried["prompt_origin"] as? String == "human")
+    snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    let closeEvents = try fixture.journal.load().events.filter {
+        try operationalObject($0)["event_type"] as? String
+            == "decision_boundary_closed"
+    }
+    #expect(closeEvents.count == 1)
+}
+
+@Test("Operational manual prompt supersedes only its own session proposal")
+func operationalManualPromptSupersessionIsSessionScoped() async throws {
+    let fixture = try operationalFixture()
+    let first = try await operationalBegin(fixture, suffix: "manual_prompt_scope_first")
+    let second = try await operationalBegin(fixture, suffix: "manual_prompt_scope_second")
+    for (ids, suffix) in [
+        (first, "manual_prompt_scope_first"),
+        (second, "manual_prompt_scope_second"),
+    ] {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: suffix)
+            ))
+        )
+        _ = try await fixture.app.handle(
+            type: "stop",
+            payload: operationalStop(ids: ids, active: false, message: "Scoped proposal")
+        )
+    }
+    var snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.count == 2)
+
+    _ = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": first["session_id"]!,
+            "turn_id": "turn_operational_manual_prompt_scope_first_next",
+            "cwd": first["cwd"]!,
+            "prompt": "Replace only the first session suggestion",
+            "hook_event_name": "UserPromptSubmit",
+        ])
+    )
+    snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let remaining = try #require(snapshot["interactions"] as? [[String: Any]])
+    #expect(remaining.count == 1)
+    #expect(remaining[0]["session_id"] as? String == second["session_id"])
+
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let firstBoundary = try #require(state.boundaries.values.first(where: {
+        $0.binding.sessionID == first["session_id"]
+    }))
+    let secondBoundary = try #require(state.boundaries.values.first(where: {
+        $0.binding.sessionID == second["session_id"]
+    }))
+    #expect(firstBoundary.closed)
+    #expect(firstBoundary.closeReason == "superseded_by_user_prompt")
+    #expect(!secondBoundary.closed)
+}
+
+@Test("Operational ranked slot four queues its sealed next action")
+func operationalRankedSlotFourQueuesNextTurn() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "ranked_four")
+    let proposal = operationalRankedProposal(ids, suffix: "ranked_four")
+    var duplicateProposal = proposal
+    let rankedActions = try #require(proposal["next_actions"] as? [[String: Any]])
+    duplicateProposal["next_actions"] = [rankedActions[0], rankedActions[0]]
+    await expectOperationalError("invalid_proposal") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(ids, proposal: duplicateProposal))
+        )
+    }
+    let accepted = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(ids, proposal: proposal))
+        )
+    )
+    let packet = try #require(accepted["packet"] as? [String: Any])
+    #expect(packet["decision_layout"] as? String == "ranked_next_actions")
+    let choices = try #require(packet["choices"] as? [[String: Any]])
+    #expect(choices.count == 4)
+    #expect(choices.map { $0["kind"] as? String } == [
+        "recommended_action", "alternative_action", "alternative_action", "alternative_action",
+    ])
+
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "ranked actions ready")
+    )
+    let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
+    let selected = try operationalObject(
+        await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(interaction, slot: 4))
+        )
+    )
+    let outcome = try #require(selected["outcome"] as? [String: Any])
+    #expect(outcome["kind"] as? String == "next_turn")
+
+    let dispatch = try #require(await fixture.nextTurnDispatcher.recordedRequests().first)
+    #expect(dispatch.sessionID == ids["session_id"])
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let selection = try #require(state.boundaries.values.first?.selection)
+    #expect(selection.slot == 4)
+    #expect(selection.kind == "alternative_action")
+    #expect(selection.isPetAction)
 }
 
 @Test("Operational selection queues one exact next-turn action and closes transport")
@@ -2129,9 +2529,11 @@ func operationalInitialActivationRetry() async throws {
     )
     #expect(restartedAfterFailure.recoveryStatus().isQuarantined == false)
 
-    // Pet polling is also a reconciliation tick. It must retry the exact
-    // retained identities and commit open + seal + packet as one batch.
+    // The scheduler owns reconciliation. Pet polling remains journal-free.
+    // Retrying must retain the exact identities and commit open + seal +
+    // packet as one batch.
     fixture.cooldownClock.advance(milliseconds: 250)
+    _ = try await fixture.app.processTime()
     let snapshot = try operationalObject(
         await fixture.app.handle(type: "get_state", payload: operationalData([:]))
     )
@@ -2581,6 +2983,180 @@ func operationalTwoBoundariesRejectOldStopReplay() async throws {
     #expect(state.continuations.values.allSatisfy {
         $0.consumedAt != nil && $0.transport?.status == .completed
     })
+}
+
+@Test("Operational verified queued prompt retains a promoted staged successor")
+func operationalVerifiedQueuedPromptRetainsPromotedSuccessor() async throws {
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "queued_retains_successor")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "queued_retains_successor_first")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "First queued action")
+    )
+    let firstInteraction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+    let firstSelection = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
+        )
+    }
+    let dispatch = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    let staged = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(
+                ids,
+                proposal: operationalProposal(ids, suffix: "queued_retains_successor_second")
+            ))
+        )
+    )
+    #expect(staged["staged"] as? Bool == true)
+
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    _ = try await firstSelection.value
+    _ = try await waitForOperationalInteraction(
+        fixture.app,
+        boundarySequence: 2,
+        state: "waiting"
+    )
+
+    let queuedPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_queued_retains_successor_delivery",
+                "cwd": ids["cwd"]!,
+                "prompt": dispatch.message,
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(queuedPrompt["prompt_origin"] as? String == "blabee_next_turn")
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let remaining = try #require(snapshot["interactions"] as? [[String: Any]])
+    #expect(remaining.count == 1)
+    #expect(ExactJSONInteger.int64(remaining[0]["boundary_sequence"]) == 2)
+    #expect(remaining[0]["state"] as? String == "waiting")
+
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let firstBoundary = try #require(state.boundaries.values.first(where: {
+        $0.binding.boundarySequence == 1
+    }))
+    let secondBoundary = try #require(state.boundaries.values.first(where: {
+        $0.binding.boundarySequence == 2
+    }))
+    #expect(firstBoundary.closed)
+    #expect(firstBoundary.closeReason == "transport_terminal_observed")
+    #expect(!secondBoundary.closed)
+
+    let manualFollowUp = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_queued_retains_successor_manual_follow_up",
+                "cwd": ids["cwd"]!,
+                "prompt": "Now replace the retained suggestion with this manual request",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(manualFollowUp["prompt_origin"] as? String == "human")
+    let finalSnapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((finalSnapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    let finalState = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    let closedSuccessor = try #require(finalState.boundaries.values.first(where: {
+        $0.binding.boundarySequence == 2
+    }))
+    #expect(closedSuccessor.closed)
+    #expect(closedSuccessor.closeReason == "superseded_by_user_prompt")
+}
+
+@Test("Operational manual prompt discards a staged successor without completing dispatch")
+func operationalManualPromptDiscardsStagedSuccessor() async throws {
+    let fixture = try operationalFixture(dispatchMode: .suspendThenSucceed)
+    let ids = try await operationalBegin(fixture, suffix: "human_discards_successor")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "human_discards_successor_first")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(ids: ids, active: false, message: "First queued action")
+    )
+    let firstInteraction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+    let firstSelection = Task {
+        try await fixture.app.handle(
+            type: "select",
+            payload: operationalData(operationalSelection(firstInteraction, slot: 1))
+        )
+    }
+    _ = try await waitForRecordedDispatch(fixture.nextTurnDispatcher)
+    let stagedProposal = operationalProposal(ids, suffix: "human_discards_successor_second")
+    let stagedWrapper = operationalWrapper(ids, proposal: stagedProposal)
+    let staged = try operationalObject(
+        await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(stagedWrapper)
+        )
+    )
+    #expect(staged["staged"] as? Bool == true)
+
+    let manualPrompt = try operationalObject(
+        await fixture.app.handle(
+            type: "user_prompt_submit",
+            payload: operationalData([
+                "session_id": ids["session_id"]!,
+                "turn_id": "turn_operational_human_discards_successor_next",
+                "cwd": ids["cwd"]!,
+                "prompt": "Use this manual request instead of any pending suggestion",
+                "hook_event_name": "UserPromptSubmit",
+            ])
+        )
+    )
+    #expect(manualPrompt["prompt_origin"] as? String == "human")
+    var state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.count == 1)
+    #expect(state.boundaries.values.first?.closed == false)
+    #expect(state.continuations.values.first?.transport == nil)
+
+    await fixture.nextTurnDispatcher.resumeSuspendedDispatches()
+    _ = try await firstSelection.value
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["interactions"] as? [[String: Any]])?.isEmpty == true)
+    state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.boundaries.count == 1)
+    #expect(state.boundaries.values.first?.closed == true)
+
+    await expectOperationalError("proposal_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(stagedWrapper)
+        )
+    }
 }
 
 @Test("Operational queued completion and staged activation recover after partial appends")
@@ -3274,4 +3850,664 @@ func operationalSchedulerCommittedResponseLoss() async throws {
             == "continuation_transport_timed_out_unknown"
     }
     #expect(timeoutEvents.count == 1)
+}
+
+private func operationalPermissionPayload(
+    _ ids: [String: String],
+    command: String,
+    description: String? = nil
+) throws -> Data {
+    var toolInput: [String: Any] = [
+        "command": command,
+        "ignored_private_argument": "must-not-be-projected",
+    ]
+    toolInput["description"] = description as Any? ?? NSNull()
+    return try operationalData([
+        "session_id": ids["session_id"]!,
+        "turn_id": ids["source_turn_id"]!,
+        "cwd": ids["cwd"]!,
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_input": toolInput,
+    ])
+}
+
+private func operationalPermissionResolution(
+    _ request: [String: Any],
+    decision: String,
+    responseID: String
+) throws -> Data {
+    try operationalData([
+        "schema_version": "1.0",
+        "kind": "blabee_permission_resolution_request",
+        "request_id": request["request_id"]!,
+        "response_id": responseID,
+        "project_id": request["project_id"]!,
+        "session_id": request["session_id"]!,
+        "turn_id": request["turn_id"]!,
+        "decision": decision,
+    ])
+}
+
+private func waitForOperationalPermissionRequests(
+    _ app: CoordinatorOperationalApplication,
+    count: Int
+) async throws -> [[String: Any]] {
+    for _ in 0..<200 {
+        let snapshot = try operationalObject(
+            await app.handle(type: "get_state", payload: operationalData([:]))
+        )
+        if let requests = snapshot["permission_requests"] as? [[String: Any]],
+           requests.count == count
+        {
+            return requests
+        }
+        try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    throw CoordinatorError("test_permission_request_timeout")
+}
+
+@Test("Operational PermissionRequest relays deny and native defer without journal writes")
+func operationalPermissionRequestDecisions() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_decisions")
+    let loadCountBefore = fixture.journal.loadCount()
+
+    for (index, decision) in ["deny", "defer_to_codex"].enumerated() {
+        let waiter = Task {
+            try await fixture.app.handle(
+                type: "permission_request",
+                payload: operationalPermissionPayload(
+                    ids,
+                    command: "printf first second",
+                    description: "Review this command"
+                )
+            )
+        }
+        let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+        let request = try #require(requests.first)
+        #expect(Set(request.keys) == [
+            "request_id", "project_id", "session_id", "turn_id", "cwd",
+            "tool_name", "description", "command_preview",
+        ])
+        #expect(request["project_id"] as? String == ids["project_id"])
+        #expect(request["session_id"] as? String == ids["session_id"])
+        #expect(request["turn_id"] as? String == ids["source_turn_id"])
+        #expect(request["description"] as? String == "Review this command")
+        #expect(request["command_preview"] as? String == "printf first second")
+        #expect(!String(describing: request).contains("must-not-be-projected"))
+
+        let responseID = "permission_response_decisions_\(index)"
+        let receipt = try operationalObject(
+            await fixture.app.handle(
+                type: "resolve_permission_request",
+                payload: operationalPermissionResolution(
+                    request,
+                    decision: decision,
+                    responseID: responseID
+                )
+            )
+        )
+        #expect(receipt["resolved"] as? Bool == true)
+        #expect(receipt["request_id"] as? String == request["request_id"] as? String)
+        #expect(receipt["response_id"] as? String == responseID)
+        #expect(receipt["decision"] as? String == decision)
+        let hookResult = try operationalObject(await waiter.value)
+        #expect(Set(hookResult.keys) == ["decision"])
+        #expect(hookResult["decision"] as? String == decision)
+        _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+    }
+    #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational Hook PermissionRequest rejects allow without consuming its FIFO head")
+func operationalHookPermissionRequestRejectsAllow() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_reject_allow")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf safe")
+        )
+    }
+    let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+    let request = try #require(requests.first)
+
+    await expectOperationalError("permission_resolution_invalid") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                request,
+                decision: "allow",
+                responseID: "permission_response_rejected_allow"
+            )
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+    _ = try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: operationalPermissionResolution(
+            request,
+            decision: "defer_to_codex",
+            responseID: "permission_response_rejected_allow_cleanup"
+        )
+    )
+    #expect(
+        try operationalObject(await waiter.value)["decision"] as? String
+            == "defer_to_codex"
+    )
+}
+
+@Test("Operational PermissionRequest enforces FIFO head and idempotent resolution receipts")
+func operationalPermissionRequestFIFOAndIdempotency() async throws {
+    let fixture = try operationalFixture()
+    let firstIDs = try await operationalBegin(fixture, suffix: "permission_fifo_first")
+    let secondIDs = try await operationalBegin(fixture, suffix: "permission_fifo_second")
+
+    let firstWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(firstIDs, command: "first command")
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+    let secondWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(secondIDs, command: "second command")
+        )
+    }
+    let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 2)
+    let first = requests[0]
+    let second = requests[1]
+
+    var wrongBinding = try operationalObject(operationalPermissionResolution(
+        first,
+        decision: "deny",
+        responseID: "permission_response_wrong_binding"
+    ))
+    wrongBinding["session_id"] = second["session_id"]
+    await expectOperationalError("permission_request_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalData(wrongBinding)
+        )
+    }
+
+    await expectOperationalError("permission_request_not_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                second,
+                decision: "deny",
+                responseID: "permission_response_fifo_second"
+            )
+        )
+    }
+    let firstResolution = try operationalPermissionResolution(
+        first,
+        decision: "deny",
+        responseID: "permission_response_fifo_first"
+    )
+    let firstReceipt = try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: firstResolution
+    )
+    #expect(try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: firstResolution
+    ) == firstReceipt)
+    #expect(try operationalObject(await firstWaiter.value)["decision"] as? String == "deny")
+
+    await expectOperationalError("permission_resolution_conflict") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                first,
+                decision: "defer_to_codex",
+                responseID: "permission_response_fifo_first_conflict"
+            )
+        )
+    }
+    await expectOperationalError("permission_response_id_conflict") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                second,
+                decision: "deny",
+                responseID: "permission_response_fifo_first"
+            )
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: operationalPermissionResolution(
+            second,
+            decision: "deny",
+            responseID: "permission_response_fifo_second"
+        )
+    )
+    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String == "deny")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("Operational PermissionRequest times out to native Codex and preserves UDS headroom")
+func operationalPermissionRequestTimeoutAndCapacity() async throws {
+    let fixture = try operationalFixture(
+        permissionRequestTimeoutNanoseconds: 300_000_000,
+        maximumPendingPermissionRequests: 1
+    )
+    let firstIDs = try await operationalBegin(fixture, suffix: "permission_timeout_first")
+    let secondIDs = try await operationalBegin(fixture, suffix: "permission_timeout_second")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(firstIDs, command: "wait for user")
+        )
+    }
+    let timedOutRequests = try await waitForOperationalPermissionRequests(
+        fixture.app,
+        count: 1
+    )
+    let timedOutRequest = try #require(timedOutRequests.first)
+    await expectOperationalError("permission_request_capacity_exceeded") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(secondIDs, command: "must use native UI")
+        )
+    }
+    #expect(try operationalObject(await waiter.value)["decision"] as? String == "defer_to_codex")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+    await expectOperationalError("permission_request_not_found") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                timedOutRequest,
+                decision: "deny",
+                responseID: "permission_response_too_late"
+            )
+        )
+    }
+}
+
+@Test("Operational PermissionRequest rejects unsupported or altered command previews")
+func operationalPermissionRequestRejectsUnsupportedCommand() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_invalid_command")
+    let common: [String: Any] = [
+        "session_id": ids["session_id"]!,
+        "turn_id": ids["source_turn_id"]!,
+        "cwd": ids["cwd"]!,
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+    ]
+    for toolInput in [
+        ["cmd": "legacy aliases must use native Codex UI"],
+        ["command": ""],
+        ["command": "printf first\nsecond"],
+        ["command": "echo safe\u{202e}txt"],
+        ["command": String(repeating: "x", count: 121)],
+    ] {
+        var payload = common
+        payload["tool_input"] = toolInput
+        await expectOperationalError("permission_request_command_invalid") {
+            _ = try await fixture.app.handle(
+                type: "permission_request",
+                payload: operationalData(payload)
+            )
+        }
+    }
+    var unknownSession = common
+    unknownSession["session_id"] = "session_permission_unknown"
+    unknownSession["tool_input"] = ["command": "echo safe"]
+    await expectOperationalError("permission_request_binding_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(unknownSession)
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("Operational PermissionRequest sanitizes display text and rejects spoofed tool names")
+func operationalPermissionRequestSanitizesDisplayText() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_display_safety")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                ids,
+                command: "printf safe",
+                description: "Review\u{200b}hidden\u{2028}command"
+            )
+        )
+    }
+    let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+    let request = try #require(requests.first)
+    #expect(request["description"] as? String == "Review hidden command")
+    _ = try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: operationalPermissionResolution(
+            request,
+            decision: "defer_to_codex",
+            responseID: "permission_response_display_safety"
+        )
+    )
+    #expect(try operationalObject(await waiter.value)["decision"] as? String == "defer_to_codex")
+
+    var spoofedTool = try operationalObject(
+        operationalPermissionPayload(ids, command: "printf safe")
+    )
+    spoofedTool["tool_name"] = "Ba\u{200b}sh"
+    await expectOperationalError("permission_request_tool_name_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(spoofedTool)
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+private func operationalManagedCommandApprovalPayload(
+    suffix: String,
+    jsonRPCRequestID: Any,
+    approvalID: String? = nil,
+    environmentID: String? = "local",
+    allowOnceAvailable: Bool = true,
+    declineAvailable: Bool = true,
+    commandPreview: String = "swift test"
+) throws -> Data {
+    try operationalData([
+        "schema_version": "1.0",
+        "kind": "blabee_managed_command_approval_request",
+        "broker_epoch": "broker_epoch_\(suffix)",
+        "connection_id": "connection_\(suffix)",
+        "jsonrpc_request_id": jsonRPCRequestID,
+        "thread_id": "thread_\(suffix)",
+        "turn_id": "turn_\(suffix)",
+        "item_id": "item_\(suffix)",
+        "approval_id": approvalID as Any? ?? NSNull(),
+        "environment_id": environmentID as Any? ?? NSNull(),
+        "cwd": "/tmp/blabee-managed-\(suffix)",
+        "command_preview": commandPreview,
+        "allow_once_available": allowOnceAvailable,
+        "decline_available": declineAvailable,
+    ])
+}
+
+private func operationalManagedCommandApprovalResolution(
+    _ request: [String: Any],
+    decision: String,
+    responseID: String
+) throws -> Data {
+    var result = request
+    result["schema_version"] = "1.0"
+    result["kind"] = "blabee_managed_command_approval_resolution_request"
+    result["response_id"] = responseID
+    result["decision"] = decision
+    return try operationalData(result)
+}
+
+private func waitForOperationalManagedCommandApprovals(
+    _ app: CoordinatorOperationalApplication,
+    count: Int
+) async throws -> [[String: Any]] {
+    for _ in 0..<200 {
+        let snapshot = try operationalObject(
+            await app.handle(type: "get_state", payload: operationalData([:]))
+        )
+        if let requests = snapshot["managed_command_approvals"] as? [[String: Any]],
+           requests.count == count
+        {
+            return requests
+        }
+        try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    throw CoordinatorError("test_managed_command_approval_timeout")
+}
+
+@Test("Operational managed command approvals are a process-local global FIFO")
+func operationalManagedCommandApprovalFIFO() async throws {
+    let fixture = try operationalFixture()
+    let loadCountBefore = fixture.journal.loadCount()
+    let firstWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "fifo_first",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-first"],
+                approvalID: "approval-first"
+            )
+        )
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+    let secondWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "fifo_second",
+                jsonRPCRequestID: ["type": "integer", "value": Int64.max]
+            )
+        )
+    }
+    let requests = try await waitForOperationalManagedCommandApprovals(
+        fixture.app,
+        count: 2
+    )
+    let first = requests[0]
+    let second = requests[1]
+    #expect(Set(first.keys) == [
+        "managed_request_id", "broker_epoch", "connection_id",
+        "jsonrpc_request_id", "thread_id", "turn_id", "item_id", "approval_id",
+        "environment_id", "cwd", "command_preview", "allow_once_available", "decline_available",
+    ])
+    #expect(first["approval_id"] as? String == "approval-first")
+    #expect((second["jsonrpc_request_id"] as? [String: Any])?["type"] as? String
+        == "integer")
+
+    await expectOperationalError("managed_command_approval_not_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                second,
+                decision: "decline",
+                responseID: "managed_response_second_early"
+            )
+        )
+    }
+    var wrongBinding = try operationalObject(
+        operationalManagedCommandApprovalResolution(
+            first,
+            decision: "accept_once",
+            responseID: "managed_response_wrong_binding"
+        )
+    )
+    wrongBinding["item_id"] = "item-other"
+    await expectOperationalError("managed_command_approval_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalData(wrongBinding)
+        )
+    }
+
+    let firstResolution = try operationalManagedCommandApprovalResolution(
+        first,
+        decision: "accept_once",
+        responseID: "managed_response_first"
+    )
+    let firstReceipt = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: firstResolution
+    )
+    #expect(try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: firstResolution
+    ) == firstReceipt)
+    #expect(try operationalObject(await firstWaiter.value)["decision"] as? String
+        == "accept_once")
+
+    _ = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: operationalManagedCommandApprovalResolution(
+            second,
+            decision: "decide_in_codex",
+            responseID: "managed_response_second"
+        )
+    )
+    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String
+        == "decide_in_codex")
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+    #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Cancelling a managed approval removes its Pet card and advances FIFO")
+func operationalManagedCommandApprovalCancellationAdvancesFIFO() async throws {
+    let fixture = try operationalFixture()
+    let loadCountBefore = fixture.journal.loadCount()
+    let firstWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "cancel_first",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-cancel-first"]
+            )
+        )
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+    let secondWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "cancel_second",
+                jsonRPCRequestID: ["type": "integer", "value": 41]
+            )
+        )
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 2)
+
+    firstWaiter.cancel()
+    do {
+        _ = try await firstWaiter.value
+        Issue.record("cancelled managed approval unexpectedly returned a decision")
+    } catch is CancellationError {
+        // Expected: a disconnected broker owns no synthetic fallback result.
+    } catch {
+        Issue.record("cancelled managed approval failed with \(error)")
+    }
+
+    let remaining = try await waitForOperationalManagedCommandApprovals(
+        fixture.app,
+        count: 1
+    )
+    let nextHead = try #require(remaining.first)
+    #expect(nextHead["item_id"] as? String == "item_cancel_second")
+
+    _ = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: operationalManagedCommandApprovalResolution(
+            nextHead,
+            decision: "decline",
+            responseID: "managed_response_cancel_second"
+        )
+    )
+    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String
+        == "decline")
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+    #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational managed approvals time out and overflow to Codex")
+func operationalManagedCommandApprovalTimeoutAndCapacity() async throws {
+    let fixture = try operationalFixture(
+        managedCommandApprovalTimeoutNanoseconds: 200_000_000,
+        maximumPendingManagedCommandApprovals: 1
+    )
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "timeout",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-timeout"]
+            )
+        )
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+    let overflow = try operationalObject(
+        await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "overflow",
+                jsonRPCRequestID: ["type": "integer", "value": 7]
+            )
+        )
+    )
+    #expect(Set(overflow.keys) == ["decision"])
+    #expect(overflow["decision"] as? String == "decide_in_codex")
+    #expect(try operationalObject(await waiter.value)["decision"] as? String
+        == "decide_in_codex")
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+}
+
+@Test("Operational managed approvals never accept unavailable or session decisions")
+func operationalManagedCommandApprovalDecisionGating() async throws {
+    let fixture = try operationalFixture()
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "gating",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-gating"],
+                allowOnceAvailable: false,
+                declineAvailable: true
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    await expectOperationalError("managed_command_approval_decision_unavailable") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                request,
+                decision: "accept_once",
+                responseID: "managed_response_unavailable"
+            )
+        )
+    }
+    await expectOperationalError("managed_command_approval_resolution_invalid") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                request,
+                decision: "accept_for_session",
+                responseID: "managed_response_session"
+            )
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: operationalManagedCommandApprovalResolution(
+            request,
+            decision: "decline",
+            responseID: "managed_response_decline"
+        )
+    )
+    #expect(try operationalObject(await waiter.value)["decision"] as? String
+        == "decline")
+
+    let noSyntheticDecision = try operationalObject(
+        await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "native_only",
+                jsonRPCRequestID: ["type": "integer", "value": 9],
+                allowOnceAvailable: false,
+                declineAvailable: false
+            )
+        )
+    )
+    #expect(Set(noSyntheticDecision.keys) == ["decision"])
+    #expect(noSyntheticDecision["decision"] as? String == "decide_in_codex")
 }

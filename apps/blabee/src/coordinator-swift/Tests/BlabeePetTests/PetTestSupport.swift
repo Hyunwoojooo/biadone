@@ -29,7 +29,37 @@ struct PetTestCard: Sendable, Equatable {
     var risk: String = "low"
     var alternativeEnabled: Bool = true
     var rollbackEnabled: Bool = false
+    var rankedActionCount: Int? = nil
     var state: String = "waiting"
+}
+
+struct PetTestPermissionRequest: Sendable, Equatable {
+    var suffix: String
+    var toolName: String = "Bash"
+    var requestDescription: String? = "테스트 명령 실행 권한이 필요합니다."
+    var commandPreview: String? = "npm test"
+}
+
+struct PetTestManagedCommandApproval: Sendable, Equatable {
+    var suffix: String
+    var jsonRPCRequestID: AnySendableJSONRPCID = .string("request-managed")
+    var approvalID: String? = "approval-managed"
+    var environmentID: String? = "local"
+    var commandPreview: String = "swift test"
+    var allowOnceAvailable: Bool = true
+    var declineAvailable: Bool = true
+}
+
+enum AnySendableJSONRPCID: Sendable, Equatable {
+    case string(String)
+    case integer(Int64)
+
+    var object: [String: Any] {
+        switch self {
+        case .string(let value): ["type": "string", "value": value]
+        case .integer(let value): ["type": "integer", "value": value]
+        }
+    }
 }
 
 func petTestData(_ object: Any) throws -> Data {
@@ -73,6 +103,20 @@ private func petTestAction(_ title: String) -> [String: Any] {
 }
 
 private func petTestChoices(_ card: PetTestCard) -> [[String: Any]] {
+    if let rankedActionCount = card.rankedActionCount {
+        precondition((2...4).contains(rankedActionCount))
+        return (1...rankedActionCount).map { slot in
+            [
+                "slot": slot,
+                "kind": slot == 1 ? "recommended_action" : "alternative_action",
+                "enabled": true,
+                "disabled_reason": NSNull(),
+                "option_id": "option_rank_\(slot)_\(card.suffix)",
+                "action_id": "action_rank_\(slot)_\(card.suffix)",
+                "action": petTestAction("Rank \(slot) \(card.suffix)"),
+            ]
+        }
+    }
     var alternative: [String: Any] = [
         "slot": 2,
         "kind": "alternative_action",
@@ -125,22 +169,26 @@ private func petTestChoices(_ card: PetTestCard) -> [[String: Any]] {
 func petTestSnapshotObject(
     cards: [PetTestCard],
     foregroundSuffix: String? = nil,
-    permissionNoticeCount: Int64 = 0
+    permissionRequests: [PetTestPermissionRequest] = [],
+    permissionNoticeCount: Int64 = 0,
+    managedCommandApprovals: [PetTestManagedCommandApproval] = [],
+    managedCommandApprovalNoticeCount: Int64 = 0
 ) -> [String: Any] {
-    let projects: [[String: Any]] = cards.map { card in
+    let suffixes = Array(Set(cards.map(\.suffix) + permissionRequests.map(\.suffix))).sorted()
+    let projects: [[String: Any]] = suffixes.map { suffix in
         [
-            "project_id": "project_\(card.suffix)",
-            "cwd": "/tmp/blabee-pet-\(card.suffix)",
+            "project_id": "project_\(suffix)",
+            "cwd": "/tmp/blabee-pet-\(suffix)",
             "enabled": true,
         ]
     }
-    let sessions: [[String: Any]] = cards.map { card in
+    let sessions: [[String: Any]] = suffixes.map { suffix in
         [
-            "project_id": "project_\(card.suffix)",
-            "session_id": "session_\(card.suffix)",
-            "source_turn_id": "turn_\(card.suffix)",
-            "source_prompt_id": "prompt_\(card.suffix)",
-            "episode_id": "episode_\(card.suffix)",
+            "project_id": "project_\(suffix)",
+            "session_id": "session_\(suffix)",
+            "source_turn_id": "turn_\(suffix)",
+            "source_prompt_id": "prompt_\(suffix)",
+            "episode_id": "episode_\(suffix)",
         ]
     }
     let pending: [[String: Any]] = cards.map { card in
@@ -186,6 +234,35 @@ func petTestSnapshotObject(
 
     let foregroundCard = cards.first(where: { $0.suffix == foregroundSuffix })
     let foregroundObject: Any = foregroundCard.map { petTestIdentityObject($0) } ?? NSNull()
+    let permissionObjects: [[String: Any]] = permissionRequests.map { request in
+        [
+            "request_id": "permission_\(request.suffix)",
+            "project_id": "project_\(request.suffix)",
+            "session_id": "session_\(request.suffix)",
+            "turn_id": "turn_\(request.suffix)",
+            "cwd": "/tmp/blabee-pet-\(request.suffix)",
+            "tool_name": request.toolName,
+            "description": request.requestDescription ?? NSNull(),
+            "command_preview": request.commandPreview ?? NSNull(),
+        ]
+    }
+    let managedApprovalObjects: [[String: Any]] = managedCommandApprovals.map { request in
+        [
+            "managed_request_id": "managed_request_\(request.suffix)",
+            "broker_epoch": "broker_epoch_\(request.suffix)",
+            "connection_id": "connection_\(request.suffix)",
+            "jsonrpc_request_id": request.jsonRPCRequestID.object,
+            "thread_id": "thread_\(request.suffix)",
+            "turn_id": "managed_turn_\(request.suffix)",
+            "item_id": "item_\(request.suffix)",
+            "approval_id": request.approvalID as Any? ?? NSNull(),
+            "environment_id": request.environmentID as Any? ?? NSNull(),
+            "cwd": "/tmp/blabee-managed-\(request.suffix)",
+            "command_preview": request.commandPreview,
+            "allow_once_available": request.allowOnceAvailable,
+            "decline_available": request.declineAvailable,
+        ]
+    }
     return [
         "schema_version": "1.0",
         "kind": "blabee_operational_snapshot",
@@ -200,19 +277,28 @@ func petTestSnapshotObject(
         "projects": projects,
         "sessions": sessions,
         "interactions": interactions,
+        "permission_requests": permissionObjects,
         "permission_notice_count": permissionNoticeCount,
+        "managed_command_approvals": managedApprovalObjects,
+        "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
     ]
 }
 
 func petTestSnapshotData(
     cards: [PetTestCard],
     foregroundSuffix: String? = nil,
-    permissionNoticeCount: Int64 = 0
+    permissionRequests: [PetTestPermissionRequest] = [],
+    permissionNoticeCount: Int64 = 0,
+    managedCommandApprovals: [PetTestManagedCommandApproval] = [],
+    managedCommandApprovalNoticeCount: Int64 = 0
 ) throws -> Data {
     try petTestData(petTestSnapshotObject(
         cards: cards,
         foregroundSuffix: foregroundSuffix,
-        permissionNoticeCount: permissionNoticeCount
+        permissionRequests: permissionRequests,
+        permissionNoticeCount: permissionNoticeCount,
+        managedCommandApprovals: managedCommandApprovals,
+        managedCommandApprovalNoticeCount: managedCommandApprovalNoticeCount
     ))
 }
 
@@ -229,6 +315,32 @@ func petTestSelectionResponse(kind: String = "next_turn") throws -> Data {
             "queued_submission_id": "queued_submission_test",
         ]
     return try petTestData(["accepted": true, "outcome": outcome])
+}
+
+func petTestPermissionResolutionResponse(
+    _ decision: PetPermissionDecision,
+    requestID: String,
+    responseID: String = "permission_response_test"
+) throws -> Data {
+    try petTestData([
+        "resolved": true,
+        "request_id": requestID,
+        "response_id": responseID,
+        "decision": decision.rawValue,
+    ])
+}
+
+func petTestManagedCommandApprovalResolutionResponse(
+    _ decision: PetManagedCommandApprovalDecision,
+    managedRequestID: String,
+    responseID: String = "managed_approval_response_test"
+) throws -> Data {
+    try petTestData([
+        "resolved": true,
+        "managed_request_id": managedRequestID,
+        "response_id": responseID,
+        "decision": decision.rawValue,
+    ])
 }
 
 actor PetFakeTransport: PetCoordinatorTransport {
