@@ -319,7 +319,7 @@ struct PetRootView: View {
             .petCircleButtonBorder()
             .controlSize(.small)
             .accessibilityLabel(
-                viewModel.isShowingOnboarding ? "프로젝트 설정 닫기" : "프로젝트 설정 열기"
+                viewModel.isShowingOnboarding ? "Blabee 설정 닫기" : "Blabee 설정 열기"
             )
             Button(action: viewModel.toggleShortcutSettings) {
                 Image(systemName: viewModel.isEditingShortcuts ? "gearshape.fill" : "gearshape")
@@ -922,18 +922,20 @@ struct PetRootView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("프로젝트 설정")
+                    Text("Blabee 설정")
                         .font(.title2.weight(.semibold))
-                    Text("Codex 프로젝트 관찰 범위와 백그라운드 서비스 등록을 관리합니다.")
+                    Text("프로젝트 관찰 범위, 백그라운드 서비스, Codex 터미널 연결을 관리합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if viewModel.isOnboardingOperationInFlight {
+                if viewModel.isOnboardingOperationInFlight
+                    || viewModel.isCodexAutoConnectOperationInFlight
+                {
                     ProgressView()
                         .controlSize(.regular)
-                        .accessibilityLabel("프로젝트 설정 처리 중")
+                        .accessibilityLabel("Blabee 설정 처리 중")
                 }
             }
 
@@ -969,6 +971,8 @@ struct PetRootView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .petInsetSurface(emphasized: true)
+
+            codexAutoConnectCard
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -1092,8 +1096,165 @@ struct PetRootView: View {
             }
             .buttonStyle(.bordered)
             .petCircleButtonBorder()
-            .accessibilityLabel("프로젝트 설정 새로고침")
-            .disabled(viewModel.isOnboardingOperationInFlight)
+            .accessibilityLabel("Blabee 설정 새로고침")
+            .disabled(
+                viewModel.isOnboardingOperationInFlight
+                    || viewModel.isCodexAutoConnectOperationInFlight
+            )
+        }
+    }
+
+    private var codexAutoConnectCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 12) {
+                Image(systemName: codexAutoConnectSymbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(codexAutoConnectColor)
+                    .frame(width: 38, height: 38)
+                    .background(codexAutoConnectColor.opacity(0.13), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Codex 자동 연결")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.codexAutoConnectState.displayTitle)
+                        .font(.body.weight(.semibold))
+                }
+                Spacer(minLength: 8)
+                Text(viewModel.codexAutoConnectState.displayTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(codexAutoConnectColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(codexAutoConnectColor.opacity(0.12), in: Capsule())
+            }
+
+            Text(codexAutoConnectVisibleDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(viewModel.codexAutoConnectState.displayDescription)
+
+            codexAutoConnectActions
+
+            VStack(alignment: .leading, spacing: 5) {
+                Label("새 zsh 터미널부터 적용됩니다.", systemImage: "terminal")
+                Text("실행 중인 Codex는 한 번 /exit한 뒤 새 터미널에서 평소처럼 codex resume을 실행하세요.")
+                Text("기존 codex alias나 함수가 있으면 Blabee가 덮어쓰지 않습니다.")
+                Text("Hook 신뢰 설정은 Codex 자동 연결과 별도입니다.")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if let error = viewModel.codexAutoConnectError {
+                Label {
+                    Text("터미널 연결을 변경하지 못했습니다. 세부 내용은 도움말에서 확인하세요.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .help(error)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Codex 자동 연결 설정")
+    }
+
+    @ViewBuilder
+    private var codexAutoConnectActions: some View {
+        HStack(spacing: 8) {
+            switch viewModel.codexAutoConnectState {
+            case .disabled:
+                Button {
+                    Task { await viewModel.enableCodexAutoConnect() }
+                } label: {
+                    Label("연결 켜기", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .disabled(
+                    !viewModel.canEnableCodexAutoConnect
+                        || viewModel.isCodexAutoConnectOperationInFlight
+                )
+            case .enabled:
+                Button {
+                    Task { await viewModel.disableCodexAutoConnect() }
+                } label: {
+                    Label("연결 끄기", systemImage: "link")
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .disabled(
+                    !viewModel.canDisableCodexAutoConnect
+                        || viewModel.isCodexAutoConnectOperationInFlight
+                )
+            case .repairRequired:
+                if viewModel.canRepairCodexAutoConnect {
+                    Button {
+                        Task { await viewModel.enableCodexAutoConnect() }
+                    } label: {
+                        Label("다시 연결", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .petCapsuleButtonBorder()
+                    .disabled(viewModel.isCodexAutoConnectOperationInFlight)
+                }
+                Button {
+                    Task { await viewModel.disableCodexAutoConnect() }
+                } label: {
+                    Label("연결 끄기", systemImage: "link")
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .disabled(
+                    !viewModel.canDisableCodexAutoConnect
+                        || viewModel.isCodexAutoConnectOperationInFlight
+                )
+            case .conflict, .unavailable:
+                EmptyView()
+            }
+            Spacer()
+            if viewModel.isCodexAutoConnectOperationInFlight {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Codex 자동 연결 처리 중")
+            }
+        }
+    }
+
+    private var codexAutoConnectVisibleDescription: String {
+        switch viewModel.codexAutoConnectState {
+        case .disabled, .enabled:
+            viewModel.codexAutoConnectState.displayDescription
+        case .repairRequired:
+            "자동 연결 상태를 안전하게 복구하거나 연결을 끌 수 있습니다."
+        case .conflict:
+            "기존 셸 설정 또는 codex 명령과 충돌하여 아무것도 변경하지 않았습니다."
+        case .unavailable:
+            "공식 Codex 또는 지원되는 zsh 환경을 확인할 수 없어 연결을 변경할 수 없습니다."
+        }
+    }
+
+    private var codexAutoConnectSymbol: String {
+        switch viewModel.codexAutoConnectState {
+        case .disabled: "link"
+        case .enabled: "checkmark.circle.fill"
+        case .repairRequired: "arrow.triangle.2.circlepath"
+        case .conflict: "exclamationmark.triangle.fill"
+        case .unavailable: "slash.circle"
+        }
+    }
+
+    private var codexAutoConnectColor: Color {
+        switch viewModel.codexAutoConnectState {
+        case .disabled, .unavailable: .secondary
+        case .enabled: .green
+        case .repairRequired, .conflict: .orange
         }
     }
 

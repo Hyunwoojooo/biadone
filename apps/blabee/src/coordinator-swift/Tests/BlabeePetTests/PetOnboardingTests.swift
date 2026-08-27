@@ -1,3 +1,5 @@
+import CoordinatorSwift
+import Dispatch
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -84,6 +86,81 @@ private final class PetFakeOnboardingAdapter: PetOnboardingAdapting {
 }
 
 @MainActor
+private final class PetFakeCodexAutoConnectAdapter: PetCodexAutoConnectAdapting {
+    var canEnable = true
+    var currentState: CodexAutoConnectState = .disabled
+    var stateAfterEnable: CodexAutoConnectState?
+    var stateAfterDisable: CodexAutoConnectState?
+    var enableError: Error?
+    var disableError: Error?
+    var blocksEnable = false
+
+    private(set) var stateCalls = 0
+    private(set) var enableCalls = 0
+    private(set) var disableCalls = 0
+    private var enableWaiter: CheckedContinuation<Void, Never>?
+
+    func state() -> CodexAutoConnectState {
+        stateCalls += 1
+        return currentState
+    }
+
+    func enable() async throws {
+        enableCalls += 1
+        if blocksEnable {
+            await withCheckedContinuation { continuation in
+                enableWaiter = continuation
+            }
+        }
+        if let stateAfterEnable { currentState = stateAfterEnable }
+        if let enableError { throw enableError }
+    }
+
+    func disable() async throws {
+        disableCalls += 1
+        if let stateAfterDisable { currentState = stateAfterDisable }
+        if let disableError { throw disableError }
+    }
+
+    func resumeEnable() {
+        blocksEnable = false
+        let waiter = enableWaiter
+        enableWaiter = nil
+        waiter?.resume()
+    }
+}
+
+private final class PetCodexAutoConnectThreadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enableThreadWasMainStorage: Bool?
+    private var disableStartedStorage = false
+
+    var enableStarted: Bool {
+        lock.withLock { enableThreadWasMainStorage != nil }
+    }
+
+    var enableThreadWasMain: Bool? {
+        lock.withLock { enableThreadWasMainStorage }
+    }
+
+    var disableStarted: Bool {
+        lock.withLock { disableStartedStorage }
+    }
+
+    func markEnableStarted() {
+        lock.withLock {
+            enableThreadWasMainStorage = Thread.isMainThread
+        }
+    }
+
+    func markDisableStarted() {
+        lock.withLock {
+            disableStartedStorage = true
+        }
+    }
+}
+
+@MainActor
 private final class PetFakeProjectFolderChooser: PetProjectFolderChoosing {
     var result: URL?
     private(set) var calls = 0
@@ -101,6 +178,8 @@ private final class PetFakeProjectFolderChooser: PetProjectFolderChoosing {
 @MainActor
 private func petOnboardingViewModel(
     adapter: PetFakeOnboardingAdapter,
+    autoConnectAdapter: any PetCodexAutoConnectAdapting =
+        PetUnavailableCodexAutoConnectAdapter(),
     chooser: PetFakeProjectFolderChooser = PetFakeProjectFolderChooser()
 ) -> (PetViewModel, PetFakeTransport) {
     let transport = PetFakeTransport()
@@ -109,11 +188,215 @@ private func petOnboardingViewModel(
             transport: transport,
             externalApplicationOpener: PetFakeApplicationOpener(),
             onboardingAdapter: adapter,
+            codexAutoConnectAdapter: autoConnectAdapter,
             projectFolderChooser: chooser,
             processIdentifier: 999
         ),
         transport
     )
+}
+
+@Test("Pet live Codex auto-connect rejects non-product bundles")
+@MainActor
+func petLiveCodexAutoConnectRequiresExactProductBundle() {
+    do {
+        _ = try PetLiveCodexAutoConnectAdapter()
+        Issue.record("the test bundle must not enable live Codex auto-connect")
+    } catch let error as CoordinatorError {
+        #expect(error.code == "pet_codex_auto_connect_unavailable")
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+}
+
+@Test("Pet Codex auto-connect file mutations stay serial and off MainActor")
+@MainActor
+func petCodexAutoConnectMutationWorkerKeepsMainActorResponsive() async throws {
+    let releaseEnable = DispatchSemaphore(value: 0)
+    let probe = PetCodexAutoConnectThreadProbe()
+    let worker = PetCodexAutoConnectMutationWorker(
+        enableOperation: {
+            probe.markEnableStarted()
+            releaseEnable.wait()
+        },
+        disableOperation: {
+            probe.markDisableStarted()
+        }
+    )
+
+    let enableTask = Task {
+        try await worker.enable()
+    }
+    for _ in 0..<1_000 where !probe.enableStarted {
+        await Task.yield()
+    }
+    #expect(probe.enableStarted)
+    #expect(probe.enableThreadWasMain == false)
+
+    let disableTask = Task {
+        try await worker.disable()
+    }
+    for _ in 0..<20 {
+        await Task.yield()
+    }
+    #expect(!probe.disableStarted)
+
+    var mainActorTurnCompleted = false
+    await Task { @MainActor in
+        mainActorTurnCompleted = true
+    }.value
+    #expect(mainActorTurnCompleted)
+
+    releaseEnable.signal()
+    try await enableTask.value
+    try await disableTask.value
+    #expect(probe.disableStarted)
+}
+
+@Test("Pet settings refreshes Codex auto-connect state without mutating it")
+@MainActor
+func petCodexAutoConnectPassiveRefreshDoesNotMutate() async {
+    let onboarding = PetFakeOnboardingAdapter()
+    let autoConnect = PetFakeCodexAutoConnectAdapter()
+    autoConnect.currentState = .disabled
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: onboarding,
+        autoConnectAdapter: autoConnect
+    )
+
+    #expect(autoConnect.stateCalls == 0)
+    await viewModel.beginOnboarding()
+    #expect(viewModel.codexAutoConnectState == .disabled)
+    #expect(autoConnect.stateCalls == 1)
+
+    autoConnect.currentState = .repairRequired("앱 경로가 변경되었습니다.")
+    await viewModel.refreshCodexAutoConnect()
+    #expect(viewModel.codexAutoConnectState == .repairRequired("앱 경로가 변경되었습니다."))
+    #expect(autoConnect.stateCalls == 2)
+    #expect(autoConnect.enableCalls == 0)
+    #expect(autoConnect.disableCalls == 0)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet Codex auto-connect changes only from explicit enabled actions")
+@MainActor
+func petCodexAutoConnectExplicitActionsAndIdempotentGating() async {
+    let onboarding = PetFakeOnboardingAdapter()
+    let autoConnect = PetFakeCodexAutoConnectAdapter()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: onboarding,
+        autoConnectAdapter: autoConnect
+    )
+    await viewModel.refreshCodexAutoConnect()
+
+    autoConnect.stateAfterEnable = .enabled
+    await viewModel.enableCodexAutoConnect()
+    #expect(autoConnect.enableCalls == 1)
+    #expect(viewModel.codexAutoConnectState == .enabled)
+    #expect(viewModel.codexAutoConnectError == nil)
+
+    await viewModel.enableCodexAutoConnect()
+    #expect(autoConnect.enableCalls == 1)
+
+    autoConnect.stateAfterDisable = .disabled
+    await viewModel.disableCodexAutoConnect()
+    #expect(autoConnect.disableCalls == 1)
+    #expect(viewModel.codexAutoConnectState == .disabled)
+
+    await viewModel.disableCodexAutoConnect()
+    #expect(autoConnect.disableCalls == 1)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet Codex auto-connect exposes fail-closed UI eligibility")
+@MainActor
+func petCodexAutoConnectEligibilityIsFailClosed() async {
+    let onboarding = PetFakeOnboardingAdapter()
+    let autoConnect = PetFakeCodexAutoConnectAdapter()
+    let (viewModel, _) = petOnboardingViewModel(
+        adapter: onboarding,
+        autoConnectAdapter: autoConnect
+    )
+    let expectations: [(CodexAutoConnectState, Bool, Bool, Bool, Bool)] = [
+        (.disabled, true, true, false, false),
+        (.enabled, true, false, true, false),
+        (.repairRequired("오래된 연결"), true, true, true, true),
+        (.repairRequired("공식 Codex 없음"), false, false, true, false),
+        (.conflict("관리하지 않는 설정"), true, false, false, false),
+        (.unavailable("공식 Codex 없음"), false, false, false, false),
+    ]
+
+    for (state, capability, canEnable, canDisable, canRepair) in expectations {
+        autoConnect.canEnable = capability
+        autoConnect.currentState = state
+        await viewModel.refreshCodexAutoConnect()
+        #expect(viewModel.canEnableCodexAutoConnect == canEnable)
+        #expect(viewModel.canDisableCodexAutoConnect == canDisable)
+        #expect(viewModel.canRepairCodexAutoConnect == canRepair)
+        #expect(viewModel.canMutateCodexAutoConnect == (canEnable || canDisable))
+    }
+}
+
+@Test("Pet Codex auto-connect re-reads actual state after an operation error")
+@MainActor
+func petCodexAutoConnectRefreshesAfterError() async {
+    let onboarding = PetFakeOnboardingAdapter()
+    let autoConnect = PetFakeCodexAutoConnectAdapter()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: onboarding,
+        autoConnectAdapter: autoConnect
+    )
+    await viewModel.refreshCodexAutoConnect()
+    let stateCallsBeforeMutation = autoConnect.stateCalls
+    autoConnect.stateAfterEnable = .repairRequired("부분 설치 상태")
+    autoConnect.enableError = PetOnboardingTestError.injected
+
+    await viewModel.enableCodexAutoConnect()
+
+    #expect(autoConnect.enableCalls == 1)
+    #expect(autoConnect.stateCalls == stateCallsBeforeMutation + 1)
+    #expect(viewModel.codexAutoConnectState == .repairRequired("부분 설치 상태"))
+    #expect(viewModel.codexAutoConnectError?.contains("injected") == true)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet settings mutations share one single-flight boundary")
+@MainActor
+func petCodexAutoConnectSingleFlightBlocksAllSettingsMutations() async {
+    let onboarding = PetFakeOnboardingAdapter()
+    onboarding.state = .notRegistered
+    let autoConnect = PetFakeCodexAutoConnectAdapter()
+    autoConnect.blocksEnable = true
+    autoConnect.stateAfterEnable = .enabled
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: onboarding,
+        autoConnectAdapter: autoConnect
+    )
+    await viewModel.refreshOnboarding()
+
+    let first = Task { @MainActor in
+        await viewModel.enableCodexAutoConnect()
+    }
+    for _ in 0..<100 where autoConnect.enableCalls == 0 {
+        await Task.yield()
+    }
+    #expect(viewModel.isCodexAutoConnectOperationInFlight)
+
+    await viewModel.enableCodexAutoConnect()
+    await viewModel.registerOnboardingService()
+    let onboardingStatusCalls = onboarding.statusCalls
+    let autoConnectStateCalls = autoConnect.stateCalls
+    await viewModel.refreshOnboarding()
+    #expect(autoConnect.enableCalls == 1)
+    #expect(onboarding.registerCalls == 0)
+    #expect(onboarding.statusCalls == onboardingStatusCalls)
+    #expect(autoConnect.stateCalls == autoConnectStateCalls)
+
+    autoConnect.resumeEnable()
+    await first.value
+    #expect(!viewModel.isCodexAutoConnectOperationInFlight)
+    #expect(viewModel.codexAutoConnectState == .enabled)
+    #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
 @Test("Pet onboarding exposes all service states and refresh never mutates")

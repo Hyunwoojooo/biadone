@@ -906,6 +906,96 @@ private func runTransportFixture(arguments: [String]) throws {
 }
 #endif
 
+enum CodexAutoConnectCommandOperation: String, Sendable {
+    case status
+    case enable
+    case disable
+
+    init(arguments: [String]) throws {
+        guard arguments.count == 1,
+              let operation = Self(rawValue: arguments[0])
+        else {
+            throw CoordinatorError(
+                "invalid_arguments",
+                "codex-auto-connect requires exactly one of: status, enable, disable"
+            )
+        }
+        self = operation
+    }
+}
+
+struct CodexAutoConnectCommandResponse: Equatable, Sendable {
+    let operation: CodexAutoConnectCommandOperation
+    let state: CodexAutoConnectState
+
+    func outputData() throws -> Data {
+        let stateValue: String
+        let detail: Any
+        switch state {
+        case .disabled:
+            stateValue = "disabled"
+            detail = NSNull()
+        case .enabled:
+            stateValue = "enabled"
+            detail = NSNull()
+        case let .repairRequired(message):
+            stateValue = "repair_required"
+            detail = message
+        case let .conflict(message):
+            stateValue = "conflict"
+            detail = message
+        case let .unavailable(message):
+            stateValue = "unavailable"
+            detail = message
+        }
+        var data = try JSONSerialization.data(
+            withJSONObject: [
+                "detail": detail,
+                "ok": true,
+                "operation": operation.rawValue,
+                "schema_version": "1.0",
+                "state": stateValue,
+            ],
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        data.append(0x0A)
+        return data
+    }
+}
+
+struct CodexAutoConnectCommandApplication: Sendable {
+    let manager: CodexAutoConnectManager
+
+    func run(arguments: [String]) throws -> CodexAutoConnectCommandResponse {
+        let operation = try CodexAutoConnectCommandOperation(arguments: arguments)
+        switch operation {
+        case .status:
+            break
+        case .enable:
+            try manager.enable()
+        case .disable:
+            try manager.disable()
+        }
+        return CodexAutoConnectCommandResponse(
+            operation: operation,
+            state: manager.state()
+        )
+    }
+}
+
+private func runCodexAutoConnectCommand(arguments: [String]) throws {
+    do {
+        let manager = try CodexAutoConnectManager.live()
+        let response = try CodexAutoConnectCommandApplication(manager: manager)
+            .run(arguments: arguments)
+        try FileHandle.standardOutput.write(contentsOf: response.outputData())
+    } catch let error as CoordinatorError {
+        throw error
+    } catch {
+        throw CoordinatorError("codex_auto_connect_failed", error.localizedDescription)
+    }
+}
+
 do {
     let commandLine = CommandLine.arguments
     let mode = ProductInvocationResolver.mode(
@@ -941,6 +1031,8 @@ do {
             throw managedCodexCoordinatorError(error)
         }
         if status != 0 { exit(status) }
+    case "codex-auto-connect":
+        try runCodexAutoConnectCommand(arguments: Array(commandLine.dropFirst(2)))
     #if BLABEE_JOURNAL_TEST_HARNESS
     case "transport-test-server":
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))

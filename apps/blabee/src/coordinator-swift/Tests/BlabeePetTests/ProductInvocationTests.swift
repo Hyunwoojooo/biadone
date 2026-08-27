@@ -26,7 +26,7 @@ private func invocationEnvironment(
 func productInvocationPreservesExplicitDispatch() {
     for mode in [
         "daemon", "service", "project-settings", "pet", "doctor", "hook", "mcp",
-        "managed-codex", "--database",
+        "managed-codex", "codex-auto-connect", "--database",
     ] {
         #expect(ProductInvocationResolver.mode(
             commandLineArguments: ["/tmp/Blabee.app/Contents/MacOS/blabee-coordinator", mode],

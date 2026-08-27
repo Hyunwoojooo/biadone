@@ -175,6 +175,30 @@ Codex가 이를 소비했거나 명령이 실행됐다는 증거가 아니다.
 
 `blabee-codex`는 같은 관리형 경로를 실행하는 호환 별칭으로 유지한다.
 
+Pet의 `Blabee 설정`에서 **Codex 자동 연결**을 명시적으로 켜면 macOS 기본
+zsh의 `~/.zshrc`에는 Blabee가 소유한 versioned source 블록 하나만 추가된다.
+실제 함수는 `~/Library/Application Support/Blabee/shell/v1/` 아래의 별도 관리
+파일에 두며, 다음 대화형 명령만 위 관리형 실행기로 보낸다.
+
+```sh
+codex
+codex resume
+codex resume <thread-id>
+```
+
+`codex plugin`, `codex exec`, `codex --version` 같은 다른 호출은 발견·검증한
+공식 Codex 절대 경로로 그대로 전달한다. 관리 함수는 공식 Codex 경로를
+`--codex`로 고정해 자기 자신을 다시 찾는 PATH 재귀를 막고, 관리형 실행을 시작하기
+전에 Blabee 실행 파일이 사라진 경우에만 공식 Codex를 정확히 한 번 실행한다. 관리형
+실행이 시작된 뒤의 모호한 실패에서는 두 번째 Codex를 자동 실행하지 않는다.
+
+자동 연결은 기본 비활성이고 설정 화면 조회만으로 셸 파일을 변경하지 않는다. 켜기와
+끄기는 명시적인 버튼에서만 수행하며, 해제할 때도 Blabee marker와 Blabee가 생성한
+관리 파일만 제거한다. 적용과 해제는 새 zsh 터미널부터 반영된다. 이미 실행 중인
+Codex에는 사후 연결할 수 없으므로 한 번 `/exit`한 뒤 새 터미널에서 평소처럼
+`codex resume <thread-id>`를 실행해야 한다. Hook 신뢰 여부는 이 자동 연결과 별개의
+Codex 보안 경계다.
+
 이 wrapper로 새로 시작하거나 재개한 세션만 관리하며 이미 독립 실행 중인 TUI에는
 연결하지 않는다. App Server WebSocket 계약은 Codex 버전 의존 실험 경로이므로
 설치본 실제 왕복과 지원 버전 자격을 통과하기 전 공개 기능으로 간주하지 않는다.
