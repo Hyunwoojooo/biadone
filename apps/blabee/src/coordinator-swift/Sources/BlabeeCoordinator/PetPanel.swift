@@ -363,8 +363,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             actionCount: viewModel.displayInteraction?.actionChoices.count,
             fifoQueueCount: viewModel.fifoQueueCount,
             hasPermissionNotice: viewModel.hasNewPermissionNotice,
-            hasStatusMessage: viewModel.lastError != nil
-                || viewModel.shortcutDiagnostic != nil
+            hasStatusMessage: viewModel.hasVisibleStatusMessage
         )
     }
 

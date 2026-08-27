@@ -261,6 +261,17 @@ final class PetViewModel: ObservableObject {
         pendingManagedCommandApproval != nil || pendingPermissionRequest != nil
     }
 
+    /// Shortcut registration diagnostics are not actionable while a permission
+    /// card owns the panel. Keep the diagnostic for the normal and settings
+    /// screens, but do not let it compete with a time-sensitive approval.
+    var visibleShortcutDiagnostic: String? {
+        hasNewPermissionNotice ? nil : shortcutDiagnostic
+    }
+
+    var hasVisibleStatusMessage: Bool {
+        lastError != nil || visibleShortcutDiagnostic != nil
+    }
+
     var hasAttention: Bool {
         hasNewPermissionNotice || fifoHeadInteraction?.isSelectionReady == true
     }
@@ -1110,15 +1121,15 @@ final class PetViewModel: ObservableObject {
             return
         }
         let internalCollisions = statuses.compactMap { intent, status in
-            status == .internalCollision ? intent.rawValue : nil
+            status == .internalCollision ? intent.displayName : nil
         }.sorted()
         let systemCollisions = statuses.compactMap { intent, status in
-            status == .systemCollision ? intent.rawValue : nil
+            status == .systemCollision ? intent.displayName : nil
         }.sorted()
         let registrationFailures = statuses.compactMap { intent, status -> String? in
             guard case .registrationFailure(let osStatus) = status else { return nil }
-            if let osStatus { return "\(intent.rawValue)(\(osStatus))" }
-            return intent.rawValue
+            if let osStatus { return "\(intent.displayName)(\(osStatus))" }
+            return intent.displayName
         }.sorted()
         if !internalCollisions.isEmpty {
             shortcutDiagnostic = "단축키 설정 충돌: " + internalCollisions.joined(separator: ", ")

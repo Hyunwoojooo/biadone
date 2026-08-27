@@ -145,14 +145,16 @@ daemon은 `CoordinatorOperationalApplication` 하나를 UDS owner에 연결하�
 운영 IPC다. 일반 Hook 경로는 `deny`, `defer_to_codex`만 받으며 Pet에는
 각각 `거절`, `Codex에서 직접 결정`으로 표시한다. Hook에서 `allow`를 출력하지
 않는다. 계약상 진짜 `이번만 허용`은 관리형 App Server 요청의 `accept` 응답으로만
-제공하며 `acceptForSession`은 표시·저장·전송하지 않는다. `blabee-codex`는 공식
-TUI를 인증된 loopback WebSocket으로, App Server를 stdio JSONL로 실행해 command
+제공하며 `acceptForSession`은 표시·저장·전송하지 않는다. 기본
+`codex-with-blabee` 실행기는 공식 TUI를 인증된 loopback WebSocket으로, App Server를
+stdio JSONL로 실행해 command
 approval만 별도의 process-local Pet FIFO에 연결한다. 120초 안에 선택하지 않거나
 daemon·transport 오류가 나면 원본 request를 공식 TUI로 전달한다. Pet이 손실 없이 전부
 표시할 수 있는 120 Unicode scalar 이하의
 안전한 단일 행 명령만 중계하며, 더 길거나 제어·방향성 문자가 포함된 명령은 즉시
 Codex 네이티브 승인 체계로 돌려준다. 코디네이터는 최대 8개 요청을 도착 순서로 보관하고 FIFO 선두의
-request/project/session/turn 바인딩과 response ID가 정확히 일치할 때만 한 번
+broker/connection/thread/turn/item/approval/environment/cwd/command 바인딩과
+response ID가 정확히 일치할 때만 한 번
 응답한다. 요청과 bounded tombstone은 journal에 쓰지 않으며 daemon 재시작 뒤
 복구하지 않는다. 시간 예산은 coordinator 50초, CLI 55초, Hook 60초다. 실패,
 만료, 재시작, 상한 초과에서는 Hook이 빈 stdout으로 끝나 Codex 네이티브 승인
@@ -166,9 +168,12 @@ Codex가 이를 소비했거나 명령이 실행됐다는 증거가 아니다.
 관리형 로컬 dogfood 실행:
 
 ```sh
-/absolute/path/to/local-dogfood/bin/blabee-codex [Codex TUI arguments]
-# 예: blabee-codex resume <thread-id>
+/absolute/path/to/local-dogfood/bin/codex-with-blabee [Codex TUI arguments]
+# 예: codex-with-blabee resume <thread-id>
+# 호환 별칭: /absolute/path/to/local-dogfood/bin/blabee-codex
 ```
+
+`blabee-codex`는 같은 관리형 경로를 실행하는 호환 별칭으로 유지한다.
 
 이 wrapper로 새로 시작하거나 재개한 세션만 관리하며 이미 독립 실행 중인 TUI에는
 연결하지 않는다. App Server WebSocket 계약은 Codex 버전 의존 실험 경로이므로
@@ -177,8 +182,9 @@ Pet의 관리형 승인 receipt는 코디네이터가 해당 선택을 브로커
 App Server가 응답을 소비했거나 명령이 실행·성공했다는 증거는 아니며, 브로커 연결이
 먼저 끊기면 대기 카드를 취소하고 자동 재시도하지 않는다.
 
-현재 관리형 계약 기준은 Codex `0.149.1`이다. Pet은 요청의 `environmentId`를 함께
-표시하고, FIFO는 도착 시점부터 사용자 결정 120초·브로커 125초·socket 130초의
+현재 관리형 계약 지원 버전은 Codex `0.149.1`, `0.150.1`이다. Pet은 요청의
+`environmentId`를 함께
+표시하고, FIFO는 도착 시점부터 사용자 결정 120초·브로커 130초·socket 135초의
 순서화된 상한과 동시 8개로 제한한다. 연결별 request ID 기억이
 256개에 도달하면 이후 승인 가로채기를 중지하고 공식 TUI로만 전달한다. 이는 오래된
 ID를 버려 중복 관리 승인을 허용하지 않기 위한 안전 경계다.

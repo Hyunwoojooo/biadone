@@ -163,6 +163,81 @@ func blabeePetManagedCommandApprovalParsing() throws {
     }
 }
 
+@Test("BlabeePet preserves private tmp cwd through managed approval resolution")
+func blabeePetManagedCommandApprovalPreservesPrivateTmpCWD() throws {
+    let request = PetTestManagedCommandApproval(suffix: "private_tmp")
+    let directoryName = "blabee-pet-private-tmp-\(UUID().uuidString.lowercased())"
+    let canonicalCWD = "/tmp/\(directoryName)"
+    let privateCWD = "/private\(canonicalCWD)"
+    try FileManager.default.createDirectory(
+        atPath: canonicalCWD,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(atPath: canonicalCWD) }
+    #expect(
+        URL(fileURLWithPath: privateCWD).standardizedFileURL.path
+            == canonicalCWD
+    )
+
+    var object = petTestSnapshotObject(
+        cards: [],
+        managedCommandApprovals: [request],
+        managedCommandApprovalNoticeCount: 1
+    )
+    var approvals = try #require(
+        object["managed_command_approvals"] as? [[String: Any]]
+    )
+    approvals[0]["cwd"] = privateCWD
+    object["managed_command_approvals"] = approvals
+
+    let snapshot = try PetSnapshot.parse(petTestData(object))
+    let parsedRequest = try #require(snapshot.managedCommandApprovals.first)
+    #expect(parsedRequest.cwd == privateCWD)
+    let resolution = try PetManagedCommandApprovalResolutionRequest(
+        request: parsedRequest,
+        responseID: "response_private_tmp",
+        decision: .acceptOnce
+    )
+    #expect(resolution.jsonObject["cwd"] as? String == privateCWD)
+
+    approvals[0]["cwd"] = "/"
+    object["managed_command_approvals"] = approvals
+    #expect(
+        try PetSnapshot.parse(petTestData(object))
+            .managedCommandApprovals.first?.cwd == "/"
+    )
+}
+
+@Test("BlabeePet rejects unsafe managed approval cwd values")
+func blabeePetManagedCommandApprovalRejectsUnsafeCWD() throws {
+    let request = PetTestManagedCommandApproval(suffix: "unsafe_cwd")
+    let unsafePaths = [
+        "/tmp/blabee-managed/./cwd",
+        "/tmp/blabee-managed/../cwd",
+        "tmp/blabee-managed-relative",
+        "/tmp/blabee-managed//cwd",
+        "/tmp/blabee-managed/cwd/",
+        "/tmp/blabee-managed\nspoofed",
+        "/tmp/cafe\u{301}",
+        "/tmp/blabee\u{200b}hidden",
+    ]
+    for cwd in unsafePaths {
+        var object = petTestSnapshotObject(
+            cards: [],
+            managedCommandApprovals: [request],
+            managedCommandApprovalNoticeCount: 1
+        )
+        var approvals = try #require(
+            object["managed_command_approvals"] as? [[String: Any]]
+        )
+        approvals[0]["cwd"] = cwd
+        object["managed_command_approvals"] = approvals
+        #expect(throws: (any Error).self) {
+            _ = try PetSnapshot.parse(petTestData(object))
+        }
+    }
+}
+
 @Test("BlabeePet distinguishes ranked actions from the legacy fixed choices")
 func blabeePetRankedAndLegacyChoiceShapes() throws {
     for count in 2...4 {

@@ -4091,43 +4091,57 @@ func operationalPermissionRequestFIFOAndIdempotency() async throws {
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
-@Test("Operational PermissionRequest times out to native Codex and preserves UDS headroom")
-func operationalPermissionRequestTimeoutAndCapacity() async throws {
+@Test("Operational PermissionRequest capacity preserves UDS headroom")
+func operationalPermissionRequestCapacity() async throws {
     let fixture = try operationalFixture(
-        permissionRequestTimeoutNanoseconds: 300_000_000,
         maximumPendingPermissionRequests: 1
     )
-    let firstIDs = try await operationalBegin(fixture, suffix: "permission_timeout_first")
-    let secondIDs = try await operationalBegin(fixture, suffix: "permission_timeout_second")
+    let firstIDs = try await operationalBegin(fixture, suffix: "permission_capacity_first")
+    let secondIDs = try await operationalBegin(fixture, suffix: "permission_capacity_second")
     let waiter = Task {
         try await fixture.app.handle(
             type: "permission_request",
             payload: operationalPermissionPayload(firstIDs, command: "wait for user")
         )
     }
-    let timedOutRequests = try await waitForOperationalPermissionRequests(
+    let requests = try await waitForOperationalPermissionRequests(
         fixture.app,
         count: 1
     )
-    let timedOutRequest = try #require(timedOutRequests.first)
+    let request = try #require(requests.first)
     await expectOperationalError("permission_request_capacity_exceeded") {
         _ = try await fixture.app.handle(
             type: "permission_request",
             payload: operationalPermissionPayload(secondIDs, command: "must use native UI")
         )
     }
+    _ = try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: operationalPermissionResolution(
+            request,
+            decision: "defer_to_codex",
+            responseID: "permission_response_capacity_first"
+        )
+    )
     #expect(try operationalObject(await waiter.value)["decision"] as? String == "defer_to_codex")
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
-    await expectOperationalError("permission_request_not_found") {
-        _ = try await fixture.app.handle(
-            type: "resolve_permission_request",
-            payload: operationalPermissionResolution(
-                timedOutRequest,
-                decision: "deny",
-                responseID: "permission_response_too_late"
-            )
+}
+
+@Test("Operational PermissionRequest times out to native Codex")
+func operationalPermissionRequestTimeout() async throws {
+    let fixture = try operationalFixture(
+        permissionRequestTimeoutNanoseconds: 300_000_000
+    )
+    let ids = try await operationalBegin(fixture, suffix: "permission_timeout")
+    let response = try operationalObject(
+        await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "wait for timeout")
         )
-    }
+    )
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "defer_to_codex")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
 @Test("Operational PermissionRequest rejects unsupported or altered command previews")
@@ -4216,7 +4230,8 @@ private func operationalManagedCommandApprovalPayload(
     environmentID: String? = "local",
     allowOnceAvailable: Bool = true,
     declineAvailable: Bool = true,
-    commandPreview: String = "swift test"
+    commandPreview: String = "swift test",
+    cwd: String? = nil
 ) throws -> Data {
     try operationalData([
         "schema_version": "1.0",
@@ -4229,7 +4244,7 @@ private func operationalManagedCommandApprovalPayload(
         "item_id": "item_\(suffix)",
         "approval_id": approvalID as Any? ?? NSNull(),
         "environment_id": environmentID as Any? ?? NSNull(),
-        "cwd": "/tmp/blabee-managed-\(suffix)",
+        "cwd": cwd ?? "/tmp/blabee-managed-\(suffix)",
         "command_preview": commandPreview,
         "allow_once_available": allowOnceAvailable,
         "decline_available": declineAvailable,
@@ -4265,6 +4280,84 @@ private func waitForOperationalManagedCommandApprovals(
         try await Task.sleep(nanoseconds: 5_000_000)
     }
     throw CoordinatorError("test_managed_command_approval_timeout")
+}
+
+@Test("Operational managed approvals preserve valid macOS private tmp paths")
+func operationalManagedCommandApprovalPreservesPrivateTmpPath() async throws {
+    let fixture = try operationalFixture()
+    let directoryName = "blabee-managed-private-tmp-\(UUID().uuidString.lowercased())"
+    let canonicalCWD = "/tmp/\(directoryName)"
+    let privateCWD = "/private\(canonicalCWD)"
+    try FileManager.default.createDirectory(
+        atPath: canonicalCWD,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(atPath: canonicalCWD) }
+    #expect(
+        URL(fileURLWithPath: privateCWD).standardizedFileURL.path
+            == canonicalCWD
+    )
+
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "private_tmp",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-private-tmp"],
+                cwd: privateCWD
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    // The Pet receives the validated wire value, not a filesystem-dependent
+    // reinterpretation, so its resolution can preserve the exact binding.
+    #expect(request["cwd"] as? String == privateCWD)
+    let resolution = try operationalManagedCommandApprovalResolution(
+        request,
+        decision: "accept_once",
+        responseID: "managed_response_private_tmp"
+    )
+    let receipt = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: resolution
+    )
+    #expect(try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: resolution
+    ) == receipt)
+    #expect(try operationalObject(await waiter.value)["decision"] as? String
+        == "accept_once")
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+}
+
+@Test("Operational managed approvals reject noncanonical or unsafe cwd values")
+func operationalManagedCommandApprovalRejectsUnsafeCWD() async throws {
+    let fixture = try operationalFixture()
+    let invalidPaths = [
+        "/tmp/blabee-managed-dot/./target",
+        "/tmp/blabee-managed-dot/../target",
+        "tmp/blabee-managed-relative",
+        "/tmp/blabee-managed//duplicate",
+        "/tmp/blabee-managed/trailing/",
+        "/tmp/blabee-managed-control\nspoofed",
+        "/tmp/cafe\u{301}",
+        "/tmp/blabee\u{200b}hidden",
+    ]
+    for (index, cwd) in invalidPaths.enumerated() {
+        await expectOperationalError("managed_command_approval_cwd_invalid") {
+            _ = try await fixture.app.handle(
+                type: "managed_command_approval",
+                payload: operationalManagedCommandApprovalPayload(
+                    suffix: "invalid_cwd_\(index)",
+                    jsonRPCRequestID: ["type": "integer", "value": index],
+                    cwd: cwd
+                )
+            )
+        }
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
 }
 
 @Test("Operational managed command approvals are a process-local global FIFO")
@@ -4417,22 +4510,22 @@ func operationalManagedCommandApprovalCancellationAdvancesFIFO() async throws {
     #expect(fixture.journal.loadCount() == loadCountBefore)
 }
 
-@Test("Operational managed approvals time out and overflow to Codex")
-func operationalManagedCommandApprovalTimeoutAndCapacity() async throws {
+@Test("Operational managed approval capacity overflows to Codex")
+func operationalManagedCommandApprovalCapacity() async throws {
     let fixture = try operationalFixture(
-        managedCommandApprovalTimeoutNanoseconds: 200_000_000,
         maximumPendingManagedCommandApprovals: 1
     )
     let waiter = Task {
         try await fixture.app.handle(
             type: "managed_command_approval",
             payload: operationalManagedCommandApprovalPayload(
-                suffix: "timeout",
-                jsonRPCRequestID: ["type": "string", "value": "rpc-timeout"]
+                suffix: "capacity",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-capacity"]
             )
         )
     }
-    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+    let requests = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+    let request = try #require(requests.first)
     let overflow = try operationalObject(
         await fixture.app.handle(
             type: "managed_command_approval",
@@ -4444,8 +4537,35 @@ func operationalManagedCommandApprovalTimeoutAndCapacity() async throws {
     )
     #expect(Set(overflow.keys) == ["decision"])
     #expect(overflow["decision"] as? String == "decide_in_codex")
+    _ = try await fixture.app.handle(
+        type: "resolve_managed_command_approval",
+        payload: operationalManagedCommandApprovalResolution(
+            request,
+            decision: "decide_in_codex",
+            responseID: "managed_response_capacity"
+        )
+    )
     #expect(try operationalObject(await waiter.value)["decision"] as? String
         == "decide_in_codex")
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+}
+
+@Test("Operational managed approvals time out to Codex")
+func operationalManagedCommandApprovalTimeout() async throws {
+    let fixture = try operationalFixture(
+        managedCommandApprovalTimeoutNanoseconds: 200_000_000
+    )
+    let response = try operationalObject(
+        await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "timeout",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-timeout"]
+            )
+        )
+    )
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "decide_in_codex")
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
 }
 

@@ -351,6 +351,8 @@ actor PetFakeTransport: PetCoordinatorTransport {
     private var focusWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockSelection = false
     private var selectionWaiters: [CheckedContinuation<Void, Never>] = []
+    private var blockNextManagedApprovalResolution = false
+    private var managedApprovalResolutionWaiters: [CheckedContinuation<Void, Never>] = []
 
     func enqueue(type: String, response: Data) {
         responses[type, default: []].append(response)
@@ -378,6 +380,15 @@ actor PetFakeTransport: PetCoordinatorTransport {
         }
     }
 
+    func setNextManagedApprovalResolutionBlocked(_ blocked: Bool) {
+        blockNextManagedApprovalResolution = blocked
+        if !blocked {
+            let waiters = managedApprovalResolutionWaiters
+            managedApprovalResolutionWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
     func request(type: String, payload: Data) async throws -> Data {
         requests.append((type, payload))
         if type == "focus_interaction", blockFocus {
@@ -388,6 +399,14 @@ actor PetFakeTransport: PetCoordinatorTransport {
         if type == "select", blockSelection {
             await withCheckedContinuation { continuation in
                 selectionWaiters.append(continuation)
+            }
+        }
+        if type == "resolve_managed_command_approval",
+           blockNextManagedApprovalResolution
+        {
+            blockNextManagedApprovalResolution = false
+            await withCheckedContinuation { continuation in
+                managedApprovalResolutionWaiters.append(continuation)
             }
         }
         if var queuedFailures = failures[type], !queuedFailures.isEmpty {

@@ -183,14 +183,10 @@ function productRuntimeWrapper(prefixArguments) {
 }
 
 function codexWrapper() {
-  return [
-    ...wrapperPreamble(),
-    "unset BLABEE_SOCKET",
-    'export BLABEE_COORDINATOR_BINARY="$BLABEE_DOGFOOD_ROOT/Blabee.app/Contents/MacOS/blabee-coordinator"',
-    'export PATH="$BLABEE_DOGFOOD_BIN_DIR${PATH:+:$PATH}"',
-    'exec codex "$@"',
-    "",
-  ].join("\n");
+  // The primary Blabee launcher must use the managed App Server bridge.
+  // Launching the official TUI directly still installs Hooks, but command
+  // approvals then remain native to Codex and cannot appear in the Pet.
+  return managedCodexWrapper();
 }
 
 function managedCodexWrapper() {
@@ -594,7 +590,7 @@ export async function prepareLocalDogfood({
   );
   await writeNewFile(
     join(binDirectory, "blabee-pet"),
-    productRuntimeWrapper([]),
+    productRuntimeWrapper(["pet"]),
     0o755,
   );
   await writeNewFile(

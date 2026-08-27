@@ -1129,6 +1129,118 @@ func blabeePetManagedCommandApprovalPresentationCallbacks() throws {
     #expect(attentionEvents == 2)
 }
 
+@Test("BlabeePet keeps shortcut collisions out of permission cards")
+@MainActor
+func blabeePetPermissionCardSuppressesShortcutDiagnostic() throws {
+    let viewModel = blabeePetViewModel(
+        transport: PetFakeTransport(),
+        opener: PetFakeApplicationOpener()
+    )
+    let backend = PetFakeHotKeyBackend()
+    backend.failingShortcuts = [PetShortcutConfiguration.defaults.toggle]
+    let registry = try PetHotKeyRegistry(
+        backend: backend,
+        configuration: .defaults
+    ) { _ in }
+    viewModel.attachHotKeyRegistry(registry)
+
+    #expect(viewModel.shortcutDiagnostic
+        == "macOS 단축키 등록 충돌: Pet 열기/닫기")
+    #expect(viewModel.visibleShortcutDiagnostic == viewModel.shortcutDiagnostic)
+    #expect(viewModel.hasVisibleStatusMessage)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [
+            PetTestManagedCommandApproval(suffix: "managed_hides_shortcut")
+        ],
+        managedCommandApprovalNoticeCount: 1
+    ))
+    #expect(viewModel.pendingManagedCommandApproval != nil)
+    #expect(viewModel.visibleShortcutDiagnostic == nil)
+    #expect(!viewModel.hasVisibleStatusMessage)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(suffix: "hook_hides_shortcut")],
+        permissionNoticeCount: 1,
+        managedCommandApprovalNoticeCount: 1
+    ))
+    #expect(viewModel.pendingManagedCommandApproval == nil)
+    #expect(viewModel.pendingPermissionRequest != nil)
+    #expect(viewModel.visibleShortcutDiagnostic == nil)
+    #expect(!viewModel.hasVisibleStatusMessage)
+
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionNoticeCount: 1,
+        managedCommandApprovalNoticeCount: 1
+    ))
+    #expect(viewModel.pendingManagedCommandApproval == nil)
+    #expect(viewModel.visibleShortcutDiagnostic == viewModel.shortcutDiagnostic)
+    #expect(viewModel.hasVisibleStatusMessage)
+}
+
+@Test("BlabeePet sends one managed approval resolution while a click is in flight")
+@MainActor
+func blabeePetManagedApprovalResolutionIsSingleFlight() async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    let managed = PetTestManagedCommandApproval(suffix: "managed_single_flight")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        managedCommandApprovals: [managed],
+        managedCommandApprovalNoticeCount: 1
+    ))
+    let displayed = try #require(viewModel.pendingManagedCommandApproval)
+    await transport.enqueue(
+        type: "resolve_managed_command_approval",
+        response: try petTestManagedCommandApprovalResolutionResponse(
+            .acceptOnce,
+            managedRequestID: displayed.managedRequestID
+        )
+    )
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [],
+            managedCommandApprovalNoticeCount: 1
+        )
+    )
+    await transport.setNextManagedApprovalResolutionBlocked(true)
+
+    let first = Task { @MainActor in
+        await viewModel.resolveManagedCommandApproval(.acceptOnce, for: displayed)
+    }
+    var firstRequestStarted = false
+    for _ in 0..<200 {
+        if await transport.requestCount(type: "resolve_managed_command_approval") == 1 {
+            firstRequestStarted = true
+            break
+        }
+        try await Task.sleep(nanoseconds: 5_000_000)
+    }
+    if !firstRequestStarted {
+        await transport.setNextManagedApprovalResolutionBlocked(false)
+        await first.value
+        Issue.record("managed approval resolution never entered the transport")
+        return
+    }
+    let second = Task { @MainActor in
+        await viewModel.resolveManagedCommandApproval(.acceptOnce, for: displayed)
+    }
+    await second.value
+    #expect(await transport.requestCount(type: "resolve_managed_command_approval") == 1)
+
+    await transport.setNextManagedApprovalResolutionBlocked(false)
+    await first.value
+    #expect(await transport.requestCount(type: "resolve_managed_command_approval") == 1)
+    #expect(viewModel.pendingManagedCommandApproval == nil)
+}
+
 @Test("BlabeePet permission head blocks hidden decision actions and shortcuts")
 @MainActor
 func blabeePetPermissionBlocksDecisionActions() async throws {

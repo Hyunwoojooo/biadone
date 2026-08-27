@@ -86,6 +86,35 @@ private func petStableCode(_ value: String, field: String) throws -> String {
     return value
 }
 
+private func petManagedCommandApprovalPath(_ path: String) throws -> String {
+    let components = path.split(
+        separator: "/",
+        omittingEmptySubsequences: false
+    )
+    try petRequire(
+        path.hasPrefix("/")
+            && path.unicodeScalars.count <= 4_096
+            && path.precomposedStringWithCanonicalMapping.utf8
+                .elementsEqual(path.utf8)
+            && (path == "/" || !components.dropFirst().contains(where: {
+                $0.isEmpty || $0 == "." || $0 == ".."
+            }))
+            && path.unicodeScalars.allSatisfy { scalar in
+                let category = scalar.properties.generalCategory
+                return !scalar.properties.isDefaultIgnorableCodePoint
+                    && category != .control
+                    && category != .format
+                    && category != .lineSeparator
+                    && category != .paragraphSeparator
+            },
+        "managed_command_approval.cwd"
+    )
+    // Keep the coordinator's validated wire value exact. Foundation can
+    // rewrite valid macOS aliases such as /private/tmp to /tmp based on
+    // filesystem state, which would otherwise break the resolution binding.
+    return path
+}
+
 struct PetInteractionIdentity: Sendable, Hashable {
     let interactionID: String
     let packetID: String
@@ -277,10 +306,9 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
             "environment_id",
             maximum: 512
         )
-        let rawCWD = try petString(jsonObject, "cwd", maximum: 4_096)
-        try petRequire(rawCWD.hasPrefix("/"), "managed_command_approval.cwd")
-        cwd = URL(fileURLWithPath: rawCWD, isDirectory: true).standardizedFileURL.path
-        try petRequire(cwd == rawCWD, "managed_command_approval.cwd")
+        cwd = try petManagedCommandApprovalPath(
+            petString(jsonObject, "cwd", maximum: 4_096)
+        )
         commandPreview = try petString(
             jsonObject,
             "command_preview",

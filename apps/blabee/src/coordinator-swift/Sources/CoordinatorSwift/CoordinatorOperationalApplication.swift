@@ -9,8 +9,8 @@ import Foundation
 /// return `decide_in_codex` before either transport layer fails open.
 public enum ManagedCodexApprovalTimingPolicy {
     public static let userDecisionTimeoutNanoseconds: UInt64 = 120_000_000_000
-    public static let brokerDeadlineNanoseconds: UInt64 = 125_000_000_000
-    public static let socketResponseTimeoutMilliseconds: Int32 = 130_000
+    public static let brokerDeadlineNanoseconds: UInt64 = 130_000_000_000
+    public static let socketResponseTimeoutMilliseconds: Int32 = 135_000
 }
 
 /// Product-level coordinator boundary used by Hook, MCP, and Pet adapters.
@@ -1817,11 +1817,8 @@ private extension CoordinatorOperationalApplication {
                 code: "managed_command_approval_environment_id_invalid"
             )
         }
-        let rawCWD = try string(payload, "cwd")
-        let cwd = try Self.normalizedManagedCommandApprovalPath(rawCWD)
-        try require(
-            Self.byteExact(rawCWD, cwd),
-            "managed_command_approval_cwd_invalid"
+        let cwd = try Self.validatedManagedCommandApprovalPath(
+            string(payload, "cwd")
         )
         let commandPreview: String
         do {
@@ -2995,11 +2992,18 @@ private extension CoordinatorOperationalApplication {
         return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
-    static func normalizedManagedCommandApprovalPath(_ path: String) throws -> String {
+    static func validatedManagedCommandApprovalPath(_ path: String) throws -> String {
+        let components = path.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
         try require(
             path.hasPrefix("/")
                 && path.unicodeScalars.count <= 4_096
                 && IdentifierNormalization.isNFC(path)
+                && (path == "/" || !components.dropFirst().contains(where: {
+                    $0.isEmpty || $0 == "." || $0 == ".."
+                }))
                 && path.unicodeScalars.allSatisfy { scalar in
                     let category = scalar.properties.generalCategory
                     return !scalar.properties.isDefaultIgnorableCodePoint
@@ -3010,7 +3014,13 @@ private extension CoordinatorOperationalApplication {
                 },
             "managed_command_approval_cwd_invalid"
         )
-        return URL(fileURLWithPath: path).standardizedFileURL.path
+        // Preserve the exact, lexically canonical App Server cwd in the
+        // binding and Pet snapshot. Foundation's filesystem-aware
+        // standardization can rewrite valid macOS aliases such as
+        // /private/tmp to /tmp, and its result can change with filesystem
+        // state. Returning the validated wire value keeps registration,
+        // resolution, and idempotent retries byte-stable.
+        return path
     }
 
     static func byteExact(_ left: String?, _ right: String?) -> Bool {

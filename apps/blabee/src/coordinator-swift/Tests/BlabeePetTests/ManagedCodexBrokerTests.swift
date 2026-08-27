@@ -304,8 +304,8 @@ func managedCodexApprovalProductionDeadlinesAreOrdered() {
     let minimumFallbackMarginNanoseconds: UInt64 = 5_000_000_000
 
     #expect(policy.userDecisionTimeoutNanoseconds == 120_000_000_000)
-    #expect(policy.brokerDeadlineNanoseconds == 125_000_000_000)
-    #expect(policy.socketResponseTimeoutMilliseconds == 130_000)
+    #expect(policy.brokerDeadlineNanoseconds == 130_000_000_000)
+    #expect(policy.socketResponseTimeoutMilliseconds == 135_000)
     #expect(
         policy.brokerDeadlineNanoseconds - policy.userDecisionTimeoutNanoseconds
             >= minimumFallbackMarginNanoseconds

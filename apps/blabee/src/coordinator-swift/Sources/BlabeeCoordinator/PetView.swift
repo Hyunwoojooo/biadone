@@ -186,14 +186,14 @@ struct PetRootView: View {
                 contentViewport(for: .permission) {
                     managedCommandApprovalCard(managedApproval)
                 }
-                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                if viewModel.hasVisibleStatusMessage {
                     compactStatusMessages
                 }
             } else if let permissionRequest = viewModel.pendingPermissionRequest {
                 contentViewport(for: .permission) {
                     permissionRequestCard(permissionRequest)
                 }
-                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                if viewModel.hasVisibleStatusMessage {
                     compactStatusMessages
                 }
             } else if viewModel.isShowingOnboarding {
@@ -208,7 +208,7 @@ struct PetRootView: View {
                 contentViewport(for: screenMode) {
                     decisionContent
                 }
-                if viewModel.lastError != nil || viewModel.shortcutDiagnostic != nil {
+                if viewModel.hasVisibleStatusMessage {
                     compactStatusMessages
                 }
             }
@@ -218,7 +218,7 @@ struct PetRootView: View {
 
     private var compactStatusMessages: some View {
         let hasTwoMessages = viewModel.lastError != nil
-            && viewModel.shortcutDiagnostic != nil
+            && viewModel.visibleShortcutDiagnostic != nil
         return VStack(alignment: .leading, spacing: 2) {
             if let error = viewModel.lastError {
                 Text(error)
@@ -227,7 +227,7 @@ struct PetRootView: View {
                     .truncationMode(.tail)
                     .help(error)
             }
-            if let diagnostic = viewModel.shortcutDiagnostic {
+            if let diagnostic = viewModel.visibleShortcutDiagnostic {
                 Text(diagnostic)
                     .foregroundStyle(.orange)
                     .lineLimit(hasTwoMessages ? 1 : PetPanelContentPolicy.statusMessageLineLimit)
@@ -431,8 +431,7 @@ struct PetRootView: View {
     private func managedCommandApprovalCard(
         _ request: PetManagedCommandApproval
     ) -> some View {
-        let isResolving = viewModel.inFlightManagedCommandApprovalID
-            == request.managedRequestID
+        let isResolving = viewModel.inFlightManagedCommandApprovalID != nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
@@ -442,7 +441,7 @@ struct PetRootView: View {
                     .background(Color.blue.opacity(0.14), in: Circle())
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
-                        Text("Codex 권한 요청")
+                        Text("Blabee 관리형 권한 요청")
                             .font(.title2.weight(.semibold))
                         if viewModel.managedCommandApprovalQueueCount > 1 {
                             Text("1 / \(viewModel.managedCommandApprovalQueueCount)")
@@ -478,6 +477,15 @@ struct PetRootView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(request.environmentID ?? "기본 환경")
+                Label(
+                    "세션: \(request.threadID)",
+                    systemImage: "link"
+                )
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(request.threadID)
                 Text(request.commandPreview)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)

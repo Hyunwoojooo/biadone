@@ -413,27 +413,21 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   const petRun = await execFile(petLauncher, [], {
     env: staleSocketEnvironment,
   });
-  assert.equal(petRun.stdout, "socket=unset;args=\n");
+  assert.equal(petRun.stdout, "socket=unset;args=pet\n");
 
   const fakeBin = join(fixture.root, "fake-bin");
   await mkdir(fakeBin);
-  const fakeCodex = join(fakeBin, "codex");
-  await writeFile(fakeCodex, [
-    "#!/bin/sh",
-    "printf '%s\\n' \"$BLABEE_COORDINATOR_BINARY\"",
-    "printf '%s\\n' \"$PATH\"",
-    "printf '%s\\n' \"${BLABEE_SOCKET-unset}\"",
-    "printf '%s\\n' \"$*\"",
-    "",
-  ].join("\n"), { mode: 0o700 });
   const launched = await execFile(codexLauncher, ["resume", "session-id"], {
     env: { PATH: fakeBin, BLABEE_SOCKET: "/tmp/stale-blabee.sock" },
   });
-  const launchLines = launched.stdout.trimEnd().split("\n");
-  assert.equal(launchLines[0], bundledCoordinator);
-  assert.equal(launchLines[1], `${join(canonicalOutput, "bin")}:${fakeBin}`);
-  assert.equal(launchLines[2], "unset");
-  assert.equal(launchLines[3], "resume session-id");
+  assert.equal(
+    launched.stdout,
+    [
+      `coordinator=${bundledCoordinator};path=${join(canonicalOutput, "bin")}:${fakeBin}`,
+      "socket=unset;args=managed-codex -- resume session-id",
+      "",
+    ].join("\n"),
+  );
 
   const managedLaunch = await execFile(
     managedCodexLauncher,
