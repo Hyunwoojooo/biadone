@@ -18,8 +18,45 @@ private struct ManagedCodexFakeDecider: ManagedCodexApprovalDeciding {
     }
 }
 
-private enum ManagedCodexTestError: Error {
+private enum ManagedCodexTestError: Error, Equatable, Sendable {
     case failed(String)
+}
+
+private final class ManagedCodexExecutableSequence<Failure: Error & Sendable>:
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var outcomes: [Result<URL, Failure>]
+    private var count = 0
+    private let beforeOutcome: @Sendable (Int) -> Void
+
+    init(
+        _ outcomes: [Result<URL, Failure>],
+        beforeOutcome: @escaping @Sendable (Int) -> Void = { _ in }
+    ) {
+        self.outcomes = outcomes
+        self.beforeOutcome = beforeOutcome
+    }
+
+    func next() throws -> URL {
+        lock.lock()
+        count += 1
+        let call = count
+        guard !outcomes.isEmpty else {
+            lock.unlock()
+            throw ManagedCodexTestError.failed("exhausted")
+        }
+        let outcome = outcomes.removeFirst()
+        lock.unlock()
+        beforeOutcome(call)
+        return try outcome.get()
+    }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
 }
 
 private final class ManagedCodexSequenceDecider: @unchecked Sendable,
@@ -572,6 +609,89 @@ func managedCodexLauncherArgumentsAreBounded() throws {
     }
 }
 
+@Test("Managed launcher rejects an explicit Codex path when approval owns resolution")
+func managedCodexLauncherRejectsExplicitCodexWithApprovalProvider() {
+    let provider = ManagedCodexExecutableSequence<CoordinatorError>([
+        .success(URL(fileURLWithPath: "/usr/bin/false")),
+    ])
+
+    #expect(throws: (any Error).self) {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--codex", "/usr/bin/false",
+                "--coordinator-socket", "/tmp/blabee-managed-explicit.sock",
+                "--",
+            ],
+            approvedExecutableProvider: provider.next
+        )
+    }
+    #expect(provider.callCount == 0)
+}
+
+@Test("Managed launcher resolves approval before starting App Server")
+func managedCodexLauncherChecksApprovalBeforeAppServer() {
+    let provider = ManagedCodexExecutableSequence<ManagedCodexTestError>([
+        .failure(.failed("first-check")),
+    ])
+
+    #expect(throws: ManagedCodexTestError.failed("first-check")) {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-first.sock",
+                "--",
+            ],
+            approvedExecutableProvider: provider.next
+        )
+    }
+    #expect(provider.callCount == 1)
+}
+
+@Test("Managed launcher revalidates before TUI and cleans up App Server on failure")
+func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
+    let fixture = try managedCodexLauncherExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>(
+        [
+            .success(fixture.executable),
+            .failure(.approvalDrift),
+        ],
+        beforeOutcome: { call in
+            guard call == 2 else { return }
+            let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+            while !FileManager.default.fileExists(atPath: fixture.pidFile.path),
+                  DispatchTime.now().uptimeNanoseconds < deadline
+            {
+                usleep(10_000)
+            }
+        }
+    )
+
+    #expect(throws: CodexRuntimeTrustError.approvalDrift) {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-second.sock",
+                "--",
+            ],
+            environment: [
+                "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
+                "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+            ],
+            approvedExecutableProvider: provider.next
+        )
+    }
+
+    #expect(provider.callCount == 2)
+    let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
+    #expect(marker == "app-server\n")
+    let pidText = try String(contentsOf: fixture.pidFile, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let pid = try #require(pid_t(pidText))
+    let killResult = kill(pid, 0)
+    let killError = errno
+    #expect(killResult == -1)
+    #expect(killError == ESRCH)
+}
+
 @Test("Managed launcher propagates the resolved coordinator socket to both children")
 func managedCodexLauncherPropagatesCoordinatorSocket() {
     let inherited = [
@@ -1020,6 +1140,60 @@ func managedCodexBridgeSocketPipeRoundTrip() throws {
         Issue.record("bridge.stop() did not release both blocking read loops")
     }
     #expect(result.error == nil)
+}
+
+private struct ManagedCodexLauncherExecutableFixture {
+    let directory: URL
+    let executable: URL
+    let markerFile: URL
+    let pidFile: URL
+}
+
+private func managedCodexLauncherExecutableFixture(
+) throws -> ManagedCodexLauncherExecutableFixture {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "blabee-managed-launcher-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    let executable = directory.appendingPathComponent(
+        "fake-codex",
+        isDirectory: false
+    )
+    let markerFile = directory.appendingPathComponent(
+        "children.log",
+        isDirectory: false
+    )
+    let pidFile = directory.appendingPathComponent(
+        "app-server.pid",
+        isDirectory: false
+    )
+    let script = #"""
+    #!/bin/sh
+    if [ "$1" = "app-server" ]; then
+      printf 'app-server\n' >> "$BLABEE_TEST_MARKER_FILE"
+      printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
+      trap 'exit 0' TERM INT
+      while :; do /bin/sleep 1; done
+    fi
+    printf 'tui\n' >> "$BLABEE_TEST_MARKER_FILE"
+    exit 0
+    """#
+    try Data(script.utf8).write(to: executable, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: NSNumber(value: Int16(0o700))],
+        ofItemAtPath: executable.path
+    )
+    return ManagedCodexLauncherExecutableFixture(
+        directory: directory,
+        executable: executable,
+        markerFile: markerFile,
+        pidFile: pidFile
+    )
 }
 
 private func managedCodexApprovalData(

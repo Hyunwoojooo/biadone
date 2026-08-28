@@ -37,64 +37,150 @@ extension CodexAutoConnectState {
 
 @MainActor
 protocol PetCodexAutoConnectAdapting: AnyObject {
-    var canEnable: Bool { get }
-    func state() -> CodexAutoConnectState
+    var snapshot: PetCodexAutoConnectSnapshot { get }
+    func refresh() async
     func enable() async throws
     func disable() async throws
 }
 
-/// Serializes the small shell-integration mutations away from MainActor. The
-/// underlying manager uses bounded file IO and `flock`, so even legitimate lock
-/// contention must never freeze Pet rendering or input handling.
+struct PetCodexAutoConnectSnapshot: Sendable, Equatable {
+    let state: CodexAutoConnectState
+    let canEnable: Bool
+
+    static func unavailable(_ reason: String) -> Self {
+        Self(state: .unavailable(reason), canEnable: false)
+    }
+
+    fileprivate init(manager: CodexAutoConnectManager) {
+        let inspection = manager.inspection()
+        state = inspection.state
+        canEnable = inspection.canEnable
+    }
+
+    init(state: CodexAutoConnectState, canEnable: Bool) {
+        self.state = state
+        self.canEnable = canEnable
+    }
+}
+
+struct PetCodexAutoConnectMutationOutcome: Sendable, Equatable {
+    let snapshot: PetCodexAutoConnectSnapshot
+    let errorDescription: String?
+}
+
+/// Serializes discovery, inspection, and shell-integration mutations away from
+/// MainActor. The underlying manager uses bounded file IO and `flock`, so even
+/// legitimate lock contention must never freeze Pet rendering or input handling.
 final class PetCodexAutoConnectMutationWorker: @unchecked Sendable {
     private let queue = DispatchQueue(
         label: "com.biadone.blabee.pet.codex-auto-connect-mutations",
         qos: .userInitiated
     )
-    private let enableOperation: @Sendable () throws -> Void
-    private let disableOperation: @Sendable () throws -> Void
+    private let refreshOperation: @Sendable () -> PetCodexAutoConnectSnapshot
+    private let enableOperation: @Sendable () -> PetCodexAutoConnectMutationOutcome
+    private let disableOperation: @Sendable () -> PetCodexAutoConnectMutationOutcome
 
-    init(manager: CodexAutoConnectManager) {
-        enableOperation = { try manager.enable() }
-        disableOperation = { try manager.disable() }
+    init(
+        managerFactory: @escaping @Sendable () throws -> CodexAutoConnectManager
+    ) {
+        refreshOperation = {
+            do {
+                return PetCodexAutoConnectSnapshot(manager: try managerFactory())
+            } catch {
+                return .unavailable(String(describing: error))
+            }
+        }
+        enableOperation = {
+            Self.mutate(managerFactory: managerFactory) { manager in
+                try manager.enable()
+            }
+        }
+        disableOperation = {
+            Self.mutate(managerFactory: managerFactory) { manager in
+                try manager.disable()
+            }
+        }
     }
 
     init(
-        enableOperation: @escaping @Sendable () throws -> Void,
-        disableOperation: @escaping @Sendable () throws -> Void
+        refreshOperation: @escaping @Sendable () -> PetCodexAutoConnectSnapshot,
+        enableOperation: @escaping @Sendable () -> PetCodexAutoConnectMutationOutcome,
+        disableOperation: @escaping @Sendable () -> PetCodexAutoConnectMutationOutcome
     ) {
+        self.refreshOperation = refreshOperation
         self.enableOperation = enableOperation
         self.disableOperation = disableOperation
     }
 
-    func enable() async throws {
-        try await perform(enableOperation)
+    func refresh() async -> PetCodexAutoConnectSnapshot {
+        await perform(refreshOperation)
     }
 
-    func disable() async throws {
-        try await perform(disableOperation)
+    func enable() async -> PetCodexAutoConnectMutationOutcome {
+        await perform(enableOperation)
     }
 
-    private func perform(
-        _ operation: @escaping @Sendable () throws -> Void
-    ) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+    func disable() async -> PetCodexAutoConnectMutationOutcome {
+        await perform(disableOperation)
+    }
+
+    private func perform<Result: Sendable>(
+        _ operation: @escaping @Sendable () -> Result
+    ) async -> Result {
+        await withCheckedContinuation { continuation in
             queue.async {
-                do {
-                    try operation()
-                    continuation.resume(returning: ())
-                } catch {
-                    continuation.resume(throwing: error)
-                }
+                continuation.resume(returning: operation())
             }
+        }
+    }
+
+    private static func mutate(
+        managerFactory: @Sendable () throws -> CodexAutoConnectManager,
+        operation: @Sendable (CodexAutoConnectManager) throws -> Void
+    ) -> PetCodexAutoConnectMutationOutcome {
+        do {
+            let manager = try managerFactory()
+            let operationError: Error?
+            do {
+                try operation(manager)
+                operationError = nil
+            } catch {
+                operationError = error
+            }
+
+            // Discovery and compatibility can change while the mutation is
+            // running. Never derive the UI result from the stale manager that
+            // authorized the operation; rebuild after both success and failure.
+            do {
+                let snapshot = PetCodexAutoConnectSnapshot(manager: try managerFactory())
+                return PetCodexAutoConnectMutationOutcome(
+                    snapshot: snapshot,
+                    errorDescription: operationError.map { String(describing: $0) }
+                )
+            } catch {
+                let refreshDescription = String(describing: error)
+                return PetCodexAutoConnectMutationOutcome(
+                    snapshot: .unavailable(refreshDescription),
+                    errorDescription: operationError.map { String(describing: $0) }
+                        ?? refreshDescription
+                )
+            }
+        } catch {
+            let description = String(describing: error)
+            return PetCodexAutoConnectMutationOutcome(
+                snapshot: .unavailable(description),
+                errorDescription: description
+            )
         }
     }
 }
 
 @MainActor
 final class PetLiveCodexAutoConnectAdapter: PetCodexAutoConnectAdapting {
-    private let manager: CodexAutoConnectManager
     private let mutationWorker: PetCodexAutoConnectMutationWorker
+    private(set) var snapshot = PetCodexAutoConnectSnapshot.unavailable(
+        "상태를 새로고침하지 않았습니다."
+    )
 
     init() throws {
         guard ProductInvocationResolver.isExpectedAppBundle(
@@ -105,44 +191,57 @@ final class PetLiveCodexAutoConnectAdapter: PetCodexAutoConnectAdapting {
                 "Codex 자동 연결은 정확한 Blabee 앱 번들에서만 사용할 수 있습니다."
             )
         }
-        let manager = try CodexAutoConnectManager.live()
-        self.manager = manager
-        mutationWorker = PetCodexAutoConnectMutationWorker(manager: manager)
+        mutationWorker = PetCodexAutoConnectMutationWorker {
+            try CodexAutoConnectManager.live()
+        }
     }
 
-    init(manager: CodexAutoConnectManager) {
-        self.manager = manager
-        mutationWorker = PetCodexAutoConnectMutationWorker(manager: manager)
+    init(
+        managerFactory: @escaping @Sendable () throws -> CodexAutoConnectManager
+    ) {
+        mutationWorker = PetCodexAutoConnectMutationWorker(
+            managerFactory: managerFactory
+        )
     }
 
-    var canEnable: Bool { manager.canEnable }
-
-    func state() -> CodexAutoConnectState {
-        manager.state()
+    func refresh() async {
+        snapshot = await mutationWorker.refresh()
     }
 
     func enable() async throws {
-        try await mutationWorker.enable()
+        let outcome = await mutationWorker.enable()
+        snapshot = outcome.snapshot
+        if let errorDescription = outcome.errorDescription {
+            throw CoordinatorError(
+                "pet_codex_auto_connect_enable_failed",
+                errorDescription
+            )
+        }
     }
 
     func disable() async throws {
-        try await mutationWorker.disable()
+        let outcome = await mutationWorker.disable()
+        snapshot = outcome.snapshot
+        if let errorDescription = outcome.errorDescription {
+            throw CoordinatorError(
+                "pet_codex_auto_connect_disable_failed",
+                errorDescription
+            )
+        }
     }
 }
 
 @MainActor
 final class PetUnavailableCodexAutoConnectAdapter: PetCodexAutoConnectAdapting {
     private let reason: String
+    let snapshot: PetCodexAutoConnectSnapshot
 
     init(reason: String = "제품 앱 환경에서만 Codex 자동 연결을 설정할 수 있습니다.") {
         self.reason = reason
+        snapshot = .unavailable(reason)
     }
 
-    var canEnable: Bool { false }
-
-    func state() -> CodexAutoConnectState {
-        .unavailable(reason)
-    }
+    func refresh() async {}
 
     func enable() async throws {
         throw CoordinatorError("pet_codex_auto_connect_unavailable", reason)

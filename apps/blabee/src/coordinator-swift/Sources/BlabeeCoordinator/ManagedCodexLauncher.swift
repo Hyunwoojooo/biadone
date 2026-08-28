@@ -4,6 +4,8 @@ import Dispatch
 import Foundation
 import Security
 
+typealias ManagedCodexExecutableProvider = @Sendable () throws -> URL
+
 struct ManagedCodexLauncherArguments: Equatable {
     let explicitCodexURL: URL?
     let coordinatorSocketPath: String
@@ -723,16 +725,25 @@ struct ManagedCodexLauncher {
 
     func run(
         arguments rawArguments: [String],
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        approvedExecutableProvider: ManagedCodexExecutableProvider? = nil
     ) throws -> Int32 {
         let arguments = try ManagedCodexLauncherArguments(
             rawArguments,
             environment: environment
         )
-        let executable = try CodexQueueExecutableResolver.resolve(
-            explicitURL: arguments.explicitCodexURL,
-            environment: environment
-        )
+        let executable: URL
+        if let approvedExecutableProvider {
+            guard arguments.explicitCodexURL == nil else {
+                throw CoordinatorError("managed_codex_arguments_invalid")
+            }
+            executable = try approvedExecutableProvider()
+        } else {
+            executable = try CodexQueueExecutableResolver.resolve(
+                explicitURL: arguments.explicitCodexURL,
+                environment: environment
+            )
+        }
         let token = try Self.authenticationToken()
         let listener = try ManagedCodexWebSocketListener(expectedToken: token)
         let appServerInput = Pipe()
@@ -773,6 +784,18 @@ struct ManagedCodexLauncher {
             throw CoordinatorError("managed_codex_app_server_unavailable")
         }
 
+        if let approvedExecutableProvider {
+            do {
+                let revalidated = try approvedExecutableProvider()
+                guard revalidated == executable else {
+                    throw CoordinatorError("managed_codex_executable_changed")
+                }
+            } catch {
+                listener.close()
+                Self.terminate(appServer)
+                throw error
+            }
+        }
         do {
             try tui.run()
         } catch {

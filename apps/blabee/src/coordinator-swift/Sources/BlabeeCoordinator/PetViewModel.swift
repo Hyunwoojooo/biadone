@@ -148,6 +148,7 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var codexAutoConnectState: CodexAutoConnectState = .unavailable(
         "상태를 확인하지 않았습니다."
     )
+    @Published private(set) var codexAutoConnectCanEnable = false
     @Published private(set) var codexAutoConnectError: String? {
         didSet {
             if (oldValue == nil) != (codexAutoConnectError == nil) {
@@ -351,7 +352,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var canEnableCodexAutoConnect: Bool {
-        guard !isSettingsOperationInFlight, codexAutoConnectAdapter.canEnable else {
+        guard !isSettingsOperationInFlight, codexAutoConnectCanEnable else {
             return false
         }
         return switch codexAutoConnectState {
@@ -373,7 +374,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var canRepairCodexAutoConnect: Bool {
-        guard !isSettingsOperationInFlight, codexAutoConnectAdapter.canEnable else {
+        guard !isSettingsOperationInFlight, codexAutoConnectCanEnable else {
             return false
         }
         if case .repairRequired = codexAutoConnectState { return true }
@@ -445,14 +446,14 @@ final class PetViewModel: ObservableObject {
         guard !isSettingsOperationInFlight else { return }
         isOnboardingOperationInFlight = true
         reloadOnboardingState()
-        reloadCodexAutoConnectState()
+        await reloadCodexAutoConnectState()
         isOnboardingOperationInFlight = false
     }
 
     func refreshCodexAutoConnect() async {
         guard !isSettingsOperationInFlight else { return }
         isCodexAutoConnectOperationInFlight = true
-        reloadCodexAutoConnectState()
+        await reloadCodexAutoConnectState()
         isCodexAutoConnectOperationInFlight = false
     }
 
@@ -466,7 +467,10 @@ final class PetViewModel: ObservableObject {
         } catch {
             operationError = String(describing: error)
         }
-        reloadCodexAutoConnectState(operationError: operationError)
+        applyCodexAutoConnectSnapshot(
+            codexAutoConnectAdapter.snapshot,
+            operationError: operationError
+        )
         isCodexAutoConnectOperationInFlight = false
     }
 
@@ -480,7 +484,10 @@ final class PetViewModel: ObservableObject {
         } catch {
             operationError = String(describing: error)
         }
-        reloadCodexAutoConnectState(operationError: operationError)
+        applyCodexAutoConnectSnapshot(
+            codexAutoConnectAdapter.snapshot,
+            operationError: operationError
+        )
         isCodexAutoConnectOperationInFlight = false
     }
 
@@ -1253,8 +1260,20 @@ final class PetViewModel: ObservableObject {
         }
     }
 
-    private func reloadCodexAutoConnectState(operationError: String? = nil) {
-        codexAutoConnectState = codexAutoConnectAdapter.state()
+    private func reloadCodexAutoConnectState(operationError: String? = nil) async {
+        await codexAutoConnectAdapter.refresh()
+        applyCodexAutoConnectSnapshot(
+            codexAutoConnectAdapter.snapshot,
+            operationError: operationError
+        )
+    }
+
+    private func applyCodexAutoConnectSnapshot(
+        _ snapshot: PetCodexAutoConnectSnapshot,
+        operationError: String? = nil
+    ) {
+        codexAutoConnectState = snapshot.state
+        codexAutoConnectCanEnable = snapshot.canEnable
         codexAutoConnectError = operationError
     }
 

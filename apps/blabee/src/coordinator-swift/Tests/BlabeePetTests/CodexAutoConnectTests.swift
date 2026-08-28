@@ -4,6 +4,8 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
+private let supportedCodexVersionReader: @Sendable (URL) -> String? = { _ in "0.150.1" }
+
 @Suite("Codex auto-connect")
 struct CodexAutoConnectTests {
     @Test("command mode has stable status, enable, and disable JSON")
@@ -61,7 +63,105 @@ struct CodexAutoConnectTests {
         }
         #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
         try manager.disable()
-        #expect(!FileManager.default.fileExists(atPath: fixture.applicationSupport.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+        #expect(FileManager.default.fileExists(
+            atPath: fixture.applicationSupport
+                .appendingPathComponent("shell/v1/.codex-auto-connect.lock")
+                .path
+        ))
+    }
+
+    @Test("unsupported Codex versions fail closed before user shell files are written")
+    func unsupportedVersionCannotEnable() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: { _ in "0.147.0" }
+        )
+
+        #expect(!manager.canEnable)
+        guard case let .unavailable(reason) = manager.state() else {
+            Issue.record("unsupported Codex must be unavailable")
+            return
+        }
+        #expect(reason.contains("0.147.0"))
+        #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+    }
+
+    @Test("enable requalifies Codex after an earlier supported snapshot")
+    func enableRequalifiesVersionBeforeWriting() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let versions = CodexVersionSequenceProbe(["0.150.1", "0.147.0"])
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: { url in versions.read(for: url) }
+        )
+
+        #expect(manager.canEnable)
+        #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
+        #expect(versions.callCount == 2)
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+    }
+
+    @Test("one inspection uses one Codex qualification for state and availability")
+    func inspectionUsesOneQualification() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let versions = CodexVersionSequenceProbe(["0.150.1", "0.147.0"])
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: { url in versions.read(for: url) }
+        )
+
+        let inspection = manager.inspection()
+        #expect(inspection.state == .disabled)
+        #expect(inspection.canEnable)
+        #expect(versions.callCount == 1)
+    }
+
+    @Test("installed state skips version checks and reports later identity drift generically")
+    func installedStateUsesFastIdentityCheck() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        let versions = CodexVersionSequenceProbe(["0.147.0"])
+        let restarted = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: { url in versions.read(for: url) }
+        )
+
+        #expect(restarted.state() == .enabled)
+        #expect(versions.callCount == 0)
+
+        try fixture.writeExecutable(fixture.official, body: "exit 0")
+        guard case let .repairRequired(reason) = restarted.state() else {
+            Issue.record("changed installed Codex must require repair")
+            return
+        }
+        #expect(reason.contains("마지막 승인 이후 변경"))
+        #expect(!reason.contains("0.147.0"))
+        #expect(versions.callCount == 0)
+        try restarted.disable()
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
     }
 
     @Test("enable and disable are idempotent for a previously missing zshrc")
@@ -277,17 +377,18 @@ struct CodexAutoConnectTests {
         #expect(try fixture.runCodex(["--version"], environment: environment) == 0)
 
         let lines = try String(contentsOf: log, encoding: .utf8)
-        #expect(lines.contains("coordinator:<managed-codex><--codex><\(fixture.official.path)><-->"))
-        #expect(lines.contains("coordinator:<managed-codex><--codex><\(fixture.official.path)><--><resume><thread id><*[x]>") )
-        #expect(lines.contains("official:<exec><two words>"))
-        #expect(lines.contains("official:<plugin><list>"))
-        #expect(lines.contains("official:<--version>"))
+        #expect(lines.contains("coordinator:<codex-launch><-->") )
+        #expect(lines.contains("coordinator:<codex-launch><--><resume><thread id><*[x]>") )
+        #expect(lines.contains("coordinator:<codex-launch><--><exec><two words>"))
+        #expect(lines.contains("coordinator:<codex-launch><--><plugin><list>"))
+        #expect(lines.contains("coordinator:<codex-launch><--><--version>"))
+        #expect(!lines.contains("official:"))
         #expect(lines.contains("socket:unset"))
-        #expect(lines.components(separatedBy: "official-socket:unset").count - 1 == 3)
+        #expect(lines.components(separatedBy: "coordinator-env:<unset><unset><unset>").count - 1 == 5)
     }
 
-    @Test("missing coordinator falls back once, but a started failure never reruns Codex")
-    func fallbackBoundary() throws {
+    @Test("missing or failed coordinator never falls back to an unverified Codex")
+    func failClosedCoordinatorBoundary() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
         try fixture.manager.enable()
@@ -300,22 +401,20 @@ struct CodexAutoConnectTests {
         ]
 
         try FileManager.default.removeItem(at: fixture.coordinator)
-        #expect(try fixture.runCodex(["resume"], environment: environment) == 0)
-        var text = try String(contentsOf: log, encoding: .utf8)
-        #expect(text.components(separatedBy: "official:").count - 1 == 1)
-        #expect(text.contains("official-socket:unset"))
+        #expect(try fixture.runCodex(["resume"], environment: environment) == 127)
+        #expect(!FileManager.default.fileExists(atPath: log.path))
 
         try fixture.writeExecutable(
             fixture.coordinator,
             body: "printf 'coordinator-failed:' >> \"$BLABEE_TEST_LOG\"\nexit 17"
         )
         #expect(try fixture.runCodex([], environment: environment) == 17)
-        text = try String(contentsOf: log, encoding: .utf8)
-        #expect(text.components(separatedBy: "official:").count - 1 == 1)
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(!text.contains("official:"))
         #expect(text.contains("coordinator-failed:"))
     }
 
-    @Test("all managed runtime variables are cleared on managed direct and fallback paths")
+    @Test("all managed runtime variables are cleared and coordinator failure stays closed")
     func clearsAllManagedRuntimeVariables() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
@@ -331,11 +430,11 @@ struct CodexAutoConnectTests {
         #expect(try fixture.runCodex([], environment: environment) == 0)
         #expect(try fixture.runCodex(["--version"], environment: environment) == 0)
         try FileManager.default.removeItem(at: fixture.coordinator)
-        #expect(try fixture.runCodex(["resume"], environment: environment) == 0)
+        #expect(try fixture.runCodex(["resume"], environment: environment) == 127)
 
         let text = try String(contentsOf: log, encoding: .utf8)
-        #expect(text.components(separatedBy: "coordinator-env:<unset><unset><unset>").count - 1 == 1)
-        #expect(text.components(separatedBy: "official-env:<unset><unset><unset>").count - 1 == 2)
+        #expect(text.components(separatedBy: "coordinator-env:<unset><unset><unset>").count - 1 == 2)
+        #expect(!text.contains("official-env:"))
         #expect(!text.contains("stale-approvals"))
         #expect(!text.contains("stale-token"))
         #expect(!text.contains("/stale/socket"))
@@ -363,6 +462,7 @@ struct CodexAutoConnectTests {
             applicationSupportURL: fixture.applicationSupport,
             coordinatorURL: fixture.coordinator,
             officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
             lockAttemptLimit: 3,
             lockRetryMicroseconds: 1_000
         )
@@ -399,6 +499,7 @@ struct CodexAutoConnectTests {
             applicationSupportURL: fixture.applicationSupport,
             coordinatorURL: fixture.coordinator,
             officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
             lockAttemptLimit: 3,
             lockRetryMicroseconds: 1_000
         )
@@ -411,6 +512,41 @@ struct CodexAutoConnectTests {
         }
         #expect(try Data(contentsOf: fixture.zshRC) == zshRCBefore)
         #expect(try Data(contentsOf: fixture.managed) == managedBefore)
+    }
+
+    @Test("clean disable is serialized behind the same persistent lock")
+    func cleanDisableUsesPersistentLock() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.disable()
+        let lockURL = fixture.applicationSupport
+            .appendingPathComponent("shell/v1/.codex-auto-connect.lock")
+        let holder = open(lockURL.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard holder >= 0 else { throw AutoConnectFixtureError.raceSetup }
+        defer {
+            _ = flock(holder, LOCK_UN)
+            close(holder)
+        }
+        guard flock(holder, LOCK_EX | LOCK_NB) == 0 else {
+            throw AutoConnectFixtureError.raceSetup
+        }
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: nil,
+            lockAttemptLimit: 3,
+            lockRetryMicroseconds: 1_000
+        )
+
+        do {
+            try manager.disable()
+            Issue.record("clean disable must wait for the stable lock")
+        } catch let error as CodexAutoConnectError {
+            #expect(error.localizedDescription.contains("시간이 초과"))
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
     }
 
     @Test("a restarted manager can disable after the official Codex moved")
@@ -441,6 +577,35 @@ struct CodexAutoConnectTests {
         }
     }
 
+    @Test(arguments: ["v1", "v2"])
+    func legacyMetadataRequiresRepairButRemainsRemovable(schema: String) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let original = Data("export LEGACY=kept\n".utf8)
+        try original.write(to: fixture.zshRC)
+        try fixture.manager.enable()
+        let legacy = legacyManagedData(
+            schema: schema,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: URL(fileURLWithPath: normalizedStablePath(fixture.official)),
+            zshRCURL: fixture.zshRC,
+            zshRCWasMissing: false
+        )
+        try legacy.write(to: fixture.managed, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.managed.path
+        )
+
+        guard case .repairRequired = fixture.manager.state() else {
+            Issue.record("legacy \(schema) installation must require a v3 repair")
+            return
+        }
+        try fixture.manager.disable()
+        #expect(try Data(contentsOf: fixture.zshRC) == original)
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+    }
+
     @Test("an in-place destination change is detected immediately before replacement")
     func detectsExistingDestinationRace() throws {
         let fixture = try AutoConnectFixture()
@@ -452,6 +617,7 @@ struct CodexAutoConnectTests {
             applicationSupportURL: fixture.applicationSupport,
             coordinatorURL: fixture.coordinator,
             officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
             beforeDestinationReplace: { destination in
                 guard destination.lastPathComponent == ".zshrc" else { return }
                 let descriptor = open(destination.path, O_WRONLY | O_TRUNC)
@@ -470,6 +636,216 @@ struct CodexAutoConnectTests {
         #expect(try Data(contentsOf: fixture.zshRC) == raced)
     }
 
+    @Test("a second save during mismatch is quarantined and the pre-exchange save is restored")
+    func mismatchPreservesBothSavesWithRecoveryPath() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try Data("export ORIGINAL=1\n".utf8).write(to: fixture.zshRC)
+        let raced = Data("export RACED=1\n".utf8)
+        let later = Data("export LATER=1\n".utf8)
+        let zshRC = fixture.zshRC
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            beforeDestinationReplace: { destination in
+                guard destination == zshRC else { return }
+                try raced.write(to: destination, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: destination.path
+                )
+            },
+            afterPathMutation: { destination in
+                guard destination == zshRC else { return }
+                try later.write(to: destination, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: destination.path
+                )
+            }
+        )
+
+        do {
+            try manager.enable()
+            Issue.record("two overlapping saves must fail closed")
+        } catch let error as CodexAutoConnectError {
+            #expect(error.localizedDescription.contains(fixture.home.path))
+            #expect(error.localizedDescription.contains(".tmp"))
+        }
+        #expect(try Data(contentsOf: fixture.zshRC) == raced)
+        let recoveryFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.home,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("..zshrc.")
+                && $0.lastPathComponent.hasSuffix(".tmp")
+        }
+        #expect(recoveryFiles.count == 1)
+        if let recovery = recoveryFiles.first {
+            #expect(try Data(contentsOf: recovery) == later)
+        }
+    }
+
+    @Test("a replacement of the prepared temporary path cannot be installed")
+    func preparedTemporaryReplacementFailsClosed() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let original = Data("export ORIGINAL=1\n".utf8)
+        let substitute = Data("export SUBSTITUTE=must-be-preserved\n".utf8)
+        try original.write(to: fixture.zshRC)
+        let zshRC = fixture.zshRC
+        let home = fixture.home
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            beforeDestinationReplace: { destination in
+                guard destination == zshRC else { return }
+                let temporaryFiles = try FileManager.default.contentsOfDirectory(
+                    at: home,
+                    includingPropertiesForKeys: nil
+                ).filter {
+                    $0.lastPathComponent.hasPrefix("..zshrc.")
+                        && $0.lastPathComponent.hasSuffix(".tmp")
+                }
+                guard temporaryFiles.count == 1, let temporary = temporaryFiles.first else {
+                    throw AutoConnectFixtureError.raceSetup
+                }
+                try FileManager.default.removeItem(at: temporary)
+                try substitute.write(to: temporary)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: temporary.path
+                )
+            }
+        )
+
+        var errorDescription = ""
+        do {
+            try manager.enable()
+            Issue.record("a substituted prepared path must never install successfully")
+        } catch let error as CodexAutoConnectError {
+            errorDescription = error.localizedDescription
+        }
+
+        #expect(try Data(contentsOf: fixture.zshRC) == original)
+        let recoveryFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.home,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("..zshrc.")
+                && $0.lastPathComponent.hasSuffix(".tmp")
+        }
+        #expect(recoveryFiles.count == 1)
+        if let recovery = recoveryFiles.first {
+            #expect(try Data(contentsOf: recovery) == substitute)
+            #expect(errorDescription.contains(fixture.home.path))
+            #expect(errorDescription.contains(recovery.lastPathComponent))
+        }
+    }
+
+    @Test(arguments: ["symlink", "oversize"])
+    func unsafeDisplacedDestinationIsRestoredByRawIdentity(kind: String) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let original = Data("export ORIGINAL=1\n".utf8)
+        let symlinkTargetData = Data("export SYMLINK_TARGET=1\n".utf8)
+        let symlinkTarget = fixture.root.appendingPathComponent("symlink target")
+        try original.write(to: fixture.zshRC)
+        try symlinkTargetData.write(to: symlinkTarget)
+        let zshRC = fixture.zshRC
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            beforeDestinationReplace: { destination in
+                guard destination == zshRC else { return }
+                switch kind {
+                case "symlink":
+                    try FileManager.default.removeItem(at: destination)
+                    try FileManager.default.createSymbolicLink(
+                        at: destination,
+                        withDestinationURL: symlinkTarget
+                    )
+                case "oversize":
+                    try Data(repeating: 0x41, count: 256 * 1_024 + 1)
+                        .write(to: destination, options: .atomic)
+                default:
+                    throw AutoConnectFixtureError.raceSetup
+                }
+            }
+        )
+
+        #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
+        switch kind {
+        case "symlink":
+            var info = stat()
+            #expect(lstat(fixture.zshRC.path, &info) == 0)
+            #expect(info.st_mode & mode_t(S_IFMT) == mode_t(S_IFLNK))
+            #expect(try Data(contentsOf: fixture.zshRC) == symlinkTargetData)
+        case "oversize":
+            #expect(try Data(contentsOf: fixture.zshRC).count == 256 * 1_024 + 1)
+        default:
+            Issue.record("unknown fixture")
+        }
+        let recoveryFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.home,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("..zshrc.")
+                && $0.lastPathComponent.hasSuffix(".tmp")
+        }
+        #expect(recoveryFiles.isEmpty)
+    }
+
+    @Test("metadata changed immediately before exchange is copied from the captured old inode")
+    func latestMetadataAtExchangeIsPreserved() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let attributeName = "com.biadone.blabee.auto-connect-late-metadata"
+        let initialAttribute = Data("initial".utf8)
+        let lateAttribute = Data("late".utf8)
+        try Data("export METADATA=1\n".utf8).write(to: fixture.zshRC)
+        try setExtendedAttribute(attributeName, value: initialAttribute, at: fixture.zshRC)
+        try replaceAccessControlList(
+            with: "user:\(NSUserName()) allow read",
+            at: fixture.zshRC
+        )
+        let initialACL = try accessControlList(at: fixture.zshRC)
+        let lateACL = AccessControlListProbe()
+        let zshRC = fixture.zshRC
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            beforeDestinationReplace: { destination in
+                guard destination == zshRC else { return }
+                try setExtendedAttribute(attributeName, value: lateAttribute, at: destination)
+                try replaceAccessControlList(
+                    with: "user:\(NSUserName()) allow read,write",
+                    at: destination
+                )
+                lateACL.value = try accessControlList(at: destination)
+            }
+        )
+
+        try manager.enable()
+
+        #expect(try extendedAttribute(attributeName, at: fixture.zshRC) == lateAttribute)
+        #expect(lateACL.value != nil)
+        #expect(lateACL.value != initialACL)
+        #expect(try accessControlList(at: fixture.zshRC) == lateACL.value)
+    }
+
     @Test("no-replace rename preserves a concurrently created destination")
     func newDestinationUsesExclusiveRename() throws {
         let fixture = try AutoConnectFixture()
@@ -480,6 +856,7 @@ struct CodexAutoConnectTests {
             applicationSupportURL: fixture.applicationSupport,
             coordinatorURL: fixture.coordinator,
             officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
             beforeDestinationReplace: { destination in
                 guard destination.lastPathComponent == "codex-auto-connect.zsh" else { return }
                 try foreign.write(to: destination)
@@ -489,6 +866,80 @@ struct CodexAutoConnectTests {
         #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
         #expect(try Data(contentsOf: fixture.managed) == foreign)
         #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+    }
+
+    @Test("a save after the atomic exchange is quarantined while the original is restored")
+    func laterSaveAfterAtomicExchangeIsQuarantined() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try Data("export ORIGINAL=1\n".utf8).write(to: fixture.zshRC)
+        let laterSave = Data("export LATER_SAVE=1\n".utf8)
+        let zshRC = fixture.zshRC
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            afterPathMutation: { destination in
+                guard destination == zshRC else { return }
+                try laterSave.write(to: destination, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: destination.path
+                )
+            }
+        )
+
+        var errorDescription = ""
+        do {
+            try manager.enable()
+            Issue.record("a post-exchange save must fail closed")
+        } catch let error as CodexAutoConnectError {
+            errorDescription = error.localizedDescription
+        }
+        #expect(try Data(contentsOf: fixture.zshRC) == Data("export ORIGINAL=1\n".utf8))
+        let recoveryFiles = try FileManager.default.contentsOfDirectory(
+            at: fixture.home,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("..zshrc.")
+                && $0.lastPathComponent.hasSuffix(".tmp")
+        }
+        #expect(recoveryFiles.count == 1)
+        if let recovery = recoveryFiles.first {
+            #expect(try Data(contentsOf: recovery) == laterSave)
+            #expect(errorDescription.contains(fixture.home.path))
+            #expect(errorDescription.contains(recovery.lastPathComponent))
+        }
+    }
+
+    @Test("unlink removes only the captured inode and preserves a later same-name save")
+    func unlinkPreservesLaterSameNameSave() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        let laterSave = Data("export USER_SAVE=kept\n".utf8)
+        let zshRC = fixture.zshRC
+        let manager = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: fixture.applicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: fixture.official,
+            codexVersionReader: supportedCodexVersionReader,
+            afterPathMutation: { original in
+                guard original == zshRC else { return }
+                try laterSave.write(to: original)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: original.path
+                )
+            }
+        )
+
+        try manager.disable()
+        #expect(try Data(contentsOf: fixture.zshRC) == laterSave)
+        #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
     }
 
     @Test("an existing codex alias is preserved and exposed as a runtime conflict")
@@ -557,8 +1008,8 @@ struct CodexAutoConnectTests {
         #expect(fixture.manager.state() == .disabled)
     }
 
-    @Test("live discovery ignores recursive entries and stores a stable Codex symlink")
-    func liveDiscoveryUsesStableEntry() throws {
+    @Test("live discovery ignores recursive entries and stores the normalized stable source")
+    func liveDiscoveryUsesNormalizedStableSource() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
         let recursiveDirectory = fixture.root.appendingPathComponent("recursive", isDirectory: true)
@@ -574,14 +1025,558 @@ struct CodexAutoConnectTests {
         let manager = try CodexAutoConnectManager.live(
             homeURL: fixture.home,
             coordinatorURL: fixture.coordinator,
-            environment: ["PATH": "relative:\(recursiveDirectory.path):\(officialDirectory.path)"]
+            environment: ["PATH": "relative:\(recursiveDirectory.path):\(officialDirectory.path)"],
+            versionReader: supportedCodexVersionReader
         )
 
         try manager.enable()
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        #expect(try String(contentsOf: managed, encoding: .utf8).contains(stableEntry.path))
+        let contents = try String(contentsOf: managed, encoding: .utf8)
+        #expect(contents.contains(normalizedStablePath(stableEntry)))
+        #expect(!contents.contains(fixture.official.path))
+    }
+
+    @Test("live discovery skips an earlier unsupported Codex candidate")
+    func liveDiscoverySkipsUnsupportedCandidate() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let unsupportedDirectory = fixture.root.appendingPathComponent("unsupported", isDirectory: true)
+        let supportedDirectory = fixture.root.appendingPathComponent("supported", isDirectory: true)
+        try FileManager.default.createDirectory(at: unsupportedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: supportedDirectory, withIntermediateDirectories: true)
+        let unsupportedEntry = unsupportedDirectory.appendingPathComponent("codex")
+        let supportedEntry = supportedDirectory.appendingPathComponent("codex")
+        try fixture.writeExecutable(unsupportedEntry, body: "exit 0")
+        try fixture.writeExecutable(supportedEntry, body: "exit 0")
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": "\(unsupportedDirectory.path):\(supportedDirectory.path)"],
+            versionReader: { candidate in
+                candidate.standardizedFileURL == unsupportedEntry.standardizedFileURL
+                    ? "0.147.0" : "0.150.1"
+            }
+        )
+
+        try manager.enable()
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+        let contents = try String(contentsOf: managed, encoding: .utf8)
+        #expect(contents.contains(supportedEntry.path))
+        #expect(!contents.contains(unsupportedEntry.path))
+    }
+
+    @Test("absolute ZDOTDIR is persisted and reused when a later process lacks the environment")
+    func absoluteZDOTDIRRoundTrip() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let zDotDirectory = fixture.home.appendingPathComponent("zsh config", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: zDotDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let discoveryDirectory = fixture.root.appendingPathComponent("zdot-codex-bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: discoveryDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createSymbolicLink(
+            at: discoveryDirectory.appendingPathComponent("codex"),
+            withDestinationURL: fixture.official
+        )
+        let environment = [
+            "PATH": discoveryDirectory.path,
+            "ZDOTDIR": zDotDirectory.path,
+        ]
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: environment,
+            versionReader: supportedCodexVersionReader
+        )
+        let selectedZshRC = zDotDirectory.appendingPathComponent(".zshrc")
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+
+        try manager.enable()
+        #expect(FileManager.default.fileExists(atPath: selectedZshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.zshRC.path))
+        #expect(try String(contentsOf: managed, encoding: .utf8).contains(
+            Data(selectedZshRC.path.utf8).base64EncodedString()
+        ))
+
+        try Data("export ZDOTDIR=$HOME/unknown-at-runtime\n".utf8).write(
+            to: fixture.home.appendingPathComponent(".zshenv")
+        )
+        let restarted = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": discoveryDirectory.path],
+            versionReader: supportedCodexVersionReader
+        )
+        #expect(restarted.state() == .enabled)
+        try restarted.disable()
+        #expect(!FileManager.default.fileExists(atPath: selectedZshRC.path))
+        #expect(!FileManager.default.fileExists(atPath: managed.path))
+    }
+
+    @Test("relative ZDOTDIR or indirect zshenv configuration fails closed")
+    func unsupportedZDOTDIRFailsClosed() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let relative = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": fixture.official.deletingLastPathComponent().path, "ZDOTDIR": "relative"],
+            versionReader: supportedCodexVersionReader
+        )
+        guard case .unavailable = relative.state() else {
+            Issue.record("relative ZDOTDIR must be unavailable")
+            return
+        }
+        #expect(throws: CodexAutoConnectError.self) { try relative.enable() }
+
+        try Data("source \"$HOME/.config/zsh/environment\"\n".utf8).write(
+            to: fixture.home.appendingPathComponent(".zshenv")
+        )
+        let dynamic = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": fixture.official.deletingLastPathComponent().path],
+            versionReader: supportedCodexVersionReader
+        )
+        guard case .unavailable = dynamic.state() else {
+            Issue.record("indirect .zshenv configuration must be unavailable without installed metadata")
+            return
+        }
+        #expect(throws: CodexAutoConnectError.self) { try dynamic.enable() }
+    }
+
+    @Test("explicit ZDOTDIR still rejects executable initial zshenv content")
+    func explicitZDOTDIRStartupFileFailsClosed() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let zDotDirectory = fixture.home.appendingPathComponent("explicit-zdot", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: zDotDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data("source /tmp/dynamic-zdotdir\n".utf8).write(
+            to: zDotDirectory.appendingPathComponent(".zshenv")
+        )
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: [
+                "PATH": fixture.official.deletingLastPathComponent().path,
+                "ZDOTDIR": zDotDirectory.path,
+            ],
+            versionReader: supportedCodexVersionReader
+        )
+
+        guard case let .unavailable(reason) = manager.state() else {
+            Issue.record("explicit ZDOTDIR with executable .zshenv must be unavailable")
+            return
+        }
+        #expect(reason.contains("초기 ZDOTDIR"))
+        #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
+        #expect(!FileManager.default.fileExists(
+            atPath: zDotDirectory.appendingPathComponent(".zshrc").path
+        ))
+    }
+
+    @Test("a v2 managed file without its zshrc path is never treated as legacy")
+    func damagedV2PathDoesNotRepairHomeZshRC() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let zDotDirectory = fixture.home.appendingPathComponent("custom-zdotdir", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: zDotDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let discoveryDirectory = fixture.root.appendingPathComponent("v2-codex-bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: discoveryDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createSymbolicLink(
+            at: discoveryDirectory.appendingPathComponent("codex"),
+            withDestinationURL: fixture.official
+        )
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: [
+                "PATH": discoveryDirectory.path,
+                "ZDOTDIR": zDotDirectory.path,
+            ],
+            versionReader: supportedCodexVersionReader
+        )
+        try manager.enable()
+        let selectedZshRC = zDotDirectory.appendingPathComponent(".zshrc")
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+        let homeContents = Data("export HOME_FILE_MUST_STAY=1\n".utf8)
+        try homeContents.write(to: fixture.zshRC)
+        let damaged = try String(contentsOf: managed, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.hasPrefix("# zshrc-path-base64: ") }
+            .joined(separator: "\n")
+        try Data(damaged.utf8).write(to: managed, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: managed.path
+        )
+
+        let restarted = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": discoveryDirectory.path],
+            versionReader: supportedCodexVersionReader
+        )
+        guard case .conflict = restarted.state() else {
+            Issue.record("a damaged v2 file must be a conflict")
+            return
+        }
+        #expect(throws: CodexAutoConnectError.self) { try restarted.enable() }
+        #expect(throws: CodexAutoConnectError.self) { try restarted.disable() }
+        #expect(try Data(contentsOf: fixture.zshRC) == homeContents)
+        #expect(try String(contentsOf: selectedZshRC, encoding: .utf8).contains(
+            ">>> Blabee Codex Auto Connect v1 >>>"
+        ))
+    }
+
+    @Test(arguments: [".local/bin", ".nvm/versions/node/v22.1.0/bin"])
+    func liveDiscoveryUsesKnownUserInstallLocations(relativeDirectory: String) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let directory = fixture.home.appendingPathComponent(relativeDirectory, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let stableEntry = directory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: stableEntry, withDestinationURL: fixture.official)
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": "relative"],
+            versionReader: supportedCodexVersionReader
+        )
+
+        try manager.enable()
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+        #expect(try String(contentsOf: managed, encoding: .utf8).contains(
+            normalizedStablePath(stableEntry)
+        ))
+    }
+
+    @Test(arguments: [".volta/bin", ".asdf/shims"])
+    func liveDiscoveryExcludesDynamicShims(relativeDirectory: String) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let shimDirectory = fixture.home.appendingPathComponent(relativeDirectory, isDirectory: true)
+        let stableDirectory = fixture.home.appendingPathComponent(".local/bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: shimDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            at: stableDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let shim = shimDirectory.appendingPathComponent("codex")
+        let stable = stableDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: shim, withDestinationURL: fixture.official)
+        try FileManager.default.createSymbolicLink(at: stable, withDestinationURL: fixture.official)
+        let versionPaths = CodexVersionPathProbe()
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": shimDirectory.path],
+            versionReader: { url in versionPaths.read(for: url) }
+        )
+
+        try manager.enable()
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+        let contents = try String(contentsOf: managed, encoding: .utf8)
+        #expect(contents.contains(normalizedStablePath(stable)))
+        #expect(!contents.contains(shim.path))
+        #expect(!versionPaths.paths.contains(shim.standardizedFileURL.path))
+    }
+
+    @Test(arguments: ["ASDF_DATA_DIR", "VOLTA_HOME"])
+    func liveDiscoveryReportsCustomDynamicShimRoots(environmentName: String) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let customRoot = fixture.home.appendingPathComponent(
+            "custom-\(environmentName.lowercased())",
+            isDirectory: true
+        )
+        let shimDirectory = customRoot.appendingPathComponent(
+            environmentName == "ASDF_DATA_DIR" ? "shims" : "bin",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: shimDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let shim = shimDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: shim, withDestinationURL: fixture.official)
+        let versionPaths = CodexVersionPathProbe()
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: [
+                "PATH": shimDirectory.path,
+                environmentName: customRoot.path,
+            ],
+            versionReader: { url in
+                _ = versionPaths.read(for: url)
+                return nil
+            }
+        )
+
+        guard case let .unavailable(reason) = manager.state() else {
+            Issue.record("custom dynamic shim must be unavailable")
+            return
+        }
+        #expect(reason.contains(environmentName))
+        #expect(reason.contains("실제 Codex 실행 파일"))
+        #expect(!versionPaths.paths.contains(shim.standardizedFileURL.path))
+        #expect(throws: CodexAutoConnectError.self) { try manager.enable() }
+    }
+
+    @Test("refresh never executes a custom shim persisted by an older installation")
+    func persistedCustomShimIsRejectedBeforeVersionProbe() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let customVoltaHome = fixture.home.appendingPathComponent(
+            "custom-volta-home",
+            isDirectory: true
+        )
+        let shimDirectory = customVoltaHome.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: shimDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let persistedShim = shimDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(
+            at: persistedShim,
+            withDestinationURL: fixture.official
+        )
+        let liveApplicationSupport = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee",
+            isDirectory: true
+        )
+        let liveManaged = liveApplicationSupport.appendingPathComponent(
+            "shell/v1/codex-auto-connect.zsh",
+            isDirectory: false
+        )
+
+        // Simulate metadata written by an older build that did not recognize
+        // a custom VOLTA_HOME as a dynamic shim root.
+        let legacyWriter = CodexAutoConnectManager(
+            homeURL: fixture.home,
+            applicationSupportURL: liveApplicationSupport,
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: persistedShim,
+            codexVersionReader: supportedCodexVersionReader
+        )
+        try legacyWriter.enable()
+
+        let versionPaths = CodexVersionPathProbe()
+        let refreshed = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: [
+                "PATH": fixture.official.deletingLastPathComponent().path,
+                "VOLTA_HOME": customVoltaHome.path,
+            ],
+            versionReader: { url in versionPaths.read(for: url) }
+        )
+
+        guard case let .repairRequired(reason) = refreshed.state() else {
+            Issue.record("persisted custom shim must require repair")
+            return
+        }
+        #expect(reason.contains("shim"))
+        #expect(!versionPaths.paths.contains(persistedShim.standardizedFileURL.path))
+        try refreshed.disable()
+        #expect(!FileManager.default.fileExists(atPath: liveManaged.path))
+    }
+
+    @Test("a real unsupported candidate takes precedence over an excluded shim")
+    func liveDiscoveryReportsStableQualificationBeforeShimExclusion() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let unsupportedDirectory = fixture.root.appendingPathComponent("unsupported-bin", isDirectory: true)
+        let asdfData = fixture.home.appendingPathComponent("custom-asdf", isDirectory: true)
+        let shimDirectory = asdfData.appendingPathComponent("shims", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: unsupportedDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            at: shimDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let unsupported = unsupportedDirectory.appendingPathComponent("codex")
+        try fixture.writeExecutable(unsupported, body: "exit 0")
+        try FileManager.default.createSymbolicLink(
+            at: shimDirectory.appendingPathComponent("codex"),
+            withDestinationURL: fixture.official
+        )
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: [
+                "PATH": "\(unsupportedDirectory.path):\(shimDirectory.path)",
+                "ASDF_DATA_DIR": asdfData.path,
+            ],
+            versionReader: { candidate in
+                candidate.standardizedFileURL == unsupported.standardizedFileURL
+                    ? "0.147.0" : nil
+            }
+        )
+
+        guard case let .unavailable(reason) = manager.state() else {
+            Issue.record("unsupported real candidate must remain the primary diagnosis")
+            return
+        }
+        #expect(reason.contains("0.147.0"))
+        #expect(!reason.contains("shim"))
+    }
+
+    @Test("live discovery never executes a candidate from a writable directory")
+    func liveDiscoveryRejectsUnsafeWritableCandidateBeforeVersion() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let unsafeDirectory = fixture.root.appendingPathComponent("unsafe-bin", isDirectory: true)
+        let stableDirectory = fixture.home.appendingPathComponent(".local/bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: unsafeDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o777]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o777],
+            ofItemAtPath: unsafeDirectory.path
+        )
+        try FileManager.default.createDirectory(
+            at: stableDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let unsafe = unsafeDirectory.appendingPathComponent("codex")
+        let stable = stableDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: unsafe, withDestinationURL: fixture.official)
+        try FileManager.default.createSymbolicLink(at: stable, withDestinationURL: fixture.official)
+        let versionPaths = CodexVersionPathProbe()
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": unsafeDirectory.path],
+            versionReader: { url in versionPaths.read(for: url) }
+        )
+
+        try manager.enable()
+        #expect(!versionPaths.paths.contains(unsafe.standardizedFileURL.path))
+        #expect(versionPaths.paths.contains(fixture.official.standardizedFileURL.path))
+    }
+
+    @Test(arguments: [0o770, 0o750])
+    func liveDiscoveryRejectsGroupWritableOrACLCandidateBeforeVersion(mode: Int) throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let unsafeDirectory = fixture.root.appendingPathComponent(
+            "group-or-acl-bin-\(mode)",
+            isDirectory: true
+        )
+        let stableDirectory = fixture.home.appendingPathComponent(".local/bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: unsafeDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            at: stableDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let unsafeExecutable = unsafeDirectory.appendingPathComponent("codex")
+        try fixture.writeExecutable(unsafeExecutable, body: "exit 0")
+        if mode == 0o770 {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: mode],
+                ofItemAtPath: unsafeDirectory.path
+            )
+        } else {
+            try replaceAccessControlList(
+                with: "user:\(NSUserName()) allow read,write",
+                at: unsafeDirectory
+            )
+        }
+        try FileManager.default.createSymbolicLink(
+            at: stableDirectory.appendingPathComponent("codex"),
+            withDestinationURL: fixture.official
+        )
+        let versionPaths = CodexVersionPathProbe()
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": unsafeDirectory.path],
+            versionReader: { url in versionPaths.read(for: url) }
+        )
+
+        try manager.enable()
+        #expect(!versionPaths.paths.contains(unsafeExecutable.standardizedFileURL.path))
+        #expect(versionPaths.paths.contains(fixture.official.standardizedFileURL.path))
+    }
+
+    @Test("live discovery honors an absolute NVM_BIN outside the GUI PATH")
+    func liveDiscoveryUsesNVMEnvironment() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let nvmBin = fixture.root.appendingPathComponent("active nvm/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: nvmBin, withIntermediateDirectories: true)
+        let stableEntry = nvmBin.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(at: stableEntry, withDestinationURL: fixture.official)
+        let manager = try CodexAutoConnectManager.live(
+            homeURL: fixture.home,
+            coordinatorURL: fixture.coordinator,
+            environment: ["PATH": "relative", "NVM_BIN": nvmBin.path],
+            versionReader: supportedCodexVersionReader
+        )
+
+        try manager.enable()
+        let managed = fixture.home.appendingPathComponent(
+            "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
+        )
+        #expect(try String(contentsOf: managed, encoding: .utf8).contains(
+            normalizedStablePath(stableEntry)
+        ))
     }
 
     @Test("official Codex cannot recurse into the coordinator")
@@ -622,7 +1617,8 @@ private final class AutoConnectFixture {
             homeURL: home,
             applicationSupportURL: applicationSupport,
             coordinatorURL: coordinator,
-            officialCodexURL: official
+            officialCodexURL: official,
+            codexVersionReader: supportedCodexVersionReader
         )
         try writeExecutable(
             coordinator,
@@ -631,7 +1627,7 @@ private final class AutoConnectFixture {
         if !officialIsCoordinator {
             try writeExecutable(
                 official,
-                body: "printf 'official-env:<%s><%s><%s>\\n' \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official-socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
+                body: "if [[ ${1-} == --version ]]; then\n  printf 'codex-cli 0.150.1\\n'\n  if [[ -z ${BLABEE_TEST_LOG-} ]]; then exit 0; fi\nfi\nprintf 'official-env:<%s><%s><%s>\\n' \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official-socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
             )
         }
     }
@@ -662,6 +1658,122 @@ private final class AutoConnectFixture {
 private enum AutoConnectFixtureError: Error {
     case raceSetup
     case extendedAttribute
+    case accessControlList
+}
+
+private func normalizedStablePath(_ url: URL) -> String {
+    url.deletingLastPathComponent()
+        .resolvingSymlinksInPath()
+        .appendingPathComponent(url.lastPathComponent, isDirectory: false)
+        .path
+}
+
+private func legacyManagedData(
+    schema: String,
+    coordinatorURL: URL,
+    officialCodexURL: URL,
+    zshRCURL: URL,
+    zshRCWasMissing: Bool
+) -> Data {
+    let coordinator = shellQuoteForFixture(coordinatorURL.path)
+    let official = shellQuoteForFixture(officialCodexURL.path)
+    let header = "# Blabee Codex Auto Connect \(schema)\n"
+    let coordinatorMetadata = Data(coordinatorURL.path.utf8).base64EncodedString()
+    let officialMetadata = Data(officialCodexURL.path.utf8).base64EncodedString()
+    let zshRCMetadata = schema == "v2"
+        ? "# zshrc-path-base64: \(Data(zshRCURL.path.utf8).base64EncodedString())\n"
+        : ""
+    return Data((
+        header
+            + "# Generated by Blabee. Do not edit.\n"
+            + "# zshrc-origin: \(zshRCWasMissing ? "missing" : "present")\n"
+            + "# coordinator-path-base64: \(coordinatorMetadata)\n"
+            + "# official-codex-path-base64: \(officialMetadata)\n"
+            + zshRCMetadata
+            + "\n"
+            + "if (( $+aliases[codex] )); then\n"
+            + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=alias\n"
+            + "elif (( $+functions[codex] )) && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v1 \"$@\"' ]]; then\n"
+            + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=function\n"
+            + "else\n"
+            + "  unset BLABEE_CODEX_AUTO_CONNECT_CONFLICT\n"
+            + "  function _blabee_codex_auto_connect_v1 {\n"
+            + "    local _blabee_coordinator=\(coordinator)\n"
+            + "    local _blabee_official=\(official)\n"
+            + "    if (( $# == 0 )) || [[ $1 == resume ]]; then\n"
+            + "      if [[ ! -x \"$_blabee_coordinator\" ]]; then\n"
+            + "        (\n"
+            + "          unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "          command \"$_blabee_official\" \"$@\"\n"
+            + "        )\n"
+            + "        return $?\n"
+            + "      fi\n"
+            + "      (\n"
+            + "        unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "        command \"$_blabee_coordinator\" managed-codex --codex \"$_blabee_official\" -- \"$@\"\n"
+            + "      )\n"
+            + "      return $?\n"
+            + "    fi\n"
+            + "    (\n"
+            + "      unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "      command \"$_blabee_official\" \"$@\"\n"
+            + "    )\n"
+            + "  }\n"
+            + "  function codex { _blabee_codex_auto_connect_v1 \"$@\" }\n"
+            + "fi\n"
+    ).utf8)
+}
+
+private func shellQuoteForFixture(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+private final class AccessControlListProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Data?
+
+    var value: Data? {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = newValue } }
+    }
+}
+
+private final class CodexVersionSequenceProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let versions: [String?]
+    private var calls = 0
+
+    init(_ versions: [String?]) {
+        self.versions = versions
+    }
+
+    var callCount: Int {
+        lock.withLock { calls }
+    }
+
+    func read(for _: URL) -> String? {
+        lock.withLock {
+            let index = min(calls, max(0, versions.count - 1))
+            calls += 1
+            return versions.isEmpty ? nil : versions[index]
+        }
+    }
+}
+
+private final class CodexVersionPathProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedPaths: [String] = []
+
+    var paths: [String] {
+        lock.withLock { recordedPaths }
+    }
+
+    func read(for url: URL) -> String? {
+        lock.withLock {
+            recordedPaths.append(url.standardizedFileURL.path)
+        }
+        return "0.150.1"
+    }
 }
 
 private func setExtendedAttribute(_ name: String, value: Data, at url: URL) throws {
@@ -678,4 +1790,37 @@ private func extendedAttribute(_ name: String, at url: URL) throws -> Data {
     let read = getxattr(url.path, name, &bytes, bytes.count, 0, 0)
     guard read == size else { throw AutoConnectFixtureError.extendedAttribute }
     return Data(bytes)
+}
+
+private func replaceAccessControlList(with entry: String, at url: URL) throws {
+    for arguments in [["-N", url.path], ["+a", entry, url.path]] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        process.arguments = arguments
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw AutoConnectFixtureError.accessControlList
+        }
+    }
+}
+
+private func accessControlList(at url: URL) throws -> Data? {
+    let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { throw AutoConnectFixtureError.accessControlList }
+    defer { close(descriptor) }
+    errno = 0
+    guard let acl = acl_get_fd(descriptor) else {
+        if errno == ENOENT { return nil }
+        throw AutoConnectFixtureError.accessControlList
+    }
+    defer { acl_free(UnsafeMutableRawPointer(acl)) }
+    var length: ssize_t = 0
+    guard let text = acl_to_text(acl, &length), length >= 0 else {
+        throw AutoConnectFixtureError.accessControlList
+    }
+    defer { acl_free(text) }
+    return Data(bytes: text, count: Int(length))
 }

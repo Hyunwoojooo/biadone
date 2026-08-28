@@ -175,10 +175,17 @@ Codex가 이를 소비했거나 명령이 실행됐다는 증거가 아니다.
 
 `blabee-codex`는 같은 관리형 경로를 실행하는 호환 별칭으로 유지한다.
 
-Pet의 `Blabee 설정`에서 **Codex 자동 연결**을 명시적으로 켜면 macOS 기본
-zsh의 `~/.zshrc`에는 Blabee가 소유한 versioned source 블록 하나만 추가된다.
-실제 함수는 `~/Library/Application Support/Blabee/shell/v1/` 아래의 별도 관리
-파일에 두며, 다음 대화형 명령만 위 관리형 실행기로 보낸다.
+Pet의 `Blabee 설정`에서 **Codex 자동 연결**을 명시적으로 켜면 실제 zsh 시작
+파일에는 Blabee가 소유한 versioned source 블록 하나만 추가된다. 기본 대상은
+`~/.zshrc`이고, 안전하게 해석할 수 있는 절대 `ZDOTDIR`가 있으면 그 아래의
+`.zshrc`를 사용한다. 동적으로 계산되는 경로처럼 대상을 증명할 수 없으면 파일을
+추측해 수정하지 않고 실패 폐쇄한다. 실제 함수는
+`~/Library/Application Support/Blabee/shell/v1/` 아래의 별도 관리 파일에 둔다.
+
+v3 관리 함수는 모든 `codex` 호출을 먼저 `blabee-coordinator codex-launch`로
+보낸다. 인수가 없거나 `resume`인 호출은 검증 뒤 관리형 App Server 경로를 사용하고,
+그 밖의 호출도 같은 런타임 신뢰 검증을 통과한 canonical Codex 실행 파일로 전달한다.
+따라서 사용자는 다음 명령을 포함해 평소의 Codex 명령 형태를 그대로 사용한다.
 
 ```sh
 codex
@@ -186,11 +193,12 @@ codex resume
 codex resume <thread-id>
 ```
 
-`codex plugin`, `codex exec`, `codex --version` 같은 다른 호출은 발견·검증한
-공식 Codex 절대 경로로 그대로 전달한다. 관리 함수는 공식 Codex 경로를
-`--codex`로 고정해 자기 자신을 다시 찾는 PATH 재귀를 막고, 관리형 실행을 시작하기
-전에 Blabee 실행 파일이 사라진 경우에만 공식 Codex를 정확히 한 번 실행한다. 관리형
-실행이 시작된 뒤의 모호한 실패에서는 두 번째 Codex를 자동 실행하지 않는다.
+활성화 시 `0600` 승인 파일에 공식 Codex의 경로·identity·지원 버전과 정책 버전을
+기록한다. 이후 identity가 같으면 파일과 경로의 신뢰 상태만 빠르게 다시 확인하고,
+Homebrew 업데이트처럼 identity가 바뀌면 공통 잠금 아래에서 지원 버전을 한 번 다시
+검증한 뒤 승인 기록을 원자적으로 갱신한다. coordinator나 승인 기록이 없거나
+손상됐을 때는 검증되지 않은 공식 Codex로 조용히 우회하지 않고 명시적으로 실패한다.
+이 경계는 PATH 재귀, 변경 중인 실행 파일, 미지원 버전으로의 fallback을 막는다.
 
 자동 연결은 기본 비활성이고 설정 화면 조회만으로 셸 파일을 변경하지 않는다. 켜기와
 끄기는 명시적인 버튼에서만 수행하며, 해제할 때도 Blabee marker와 Blabee가 생성한

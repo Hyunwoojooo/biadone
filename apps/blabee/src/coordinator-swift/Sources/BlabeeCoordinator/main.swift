@@ -996,6 +996,56 @@ private func runCodexAutoConnectCommand(arguments: [String]) throws {
     }
 }
 
+private func runCodexLaunch(arguments: [String]) throws {
+    guard arguments.first == "--" else {
+        throw CoordinatorError(
+            "invalid_arguments",
+            "codex-launch requires -- before Codex arguments"
+        )
+    }
+    let codexArguments = Array(arguments.dropFirst())
+    let manager = try CodexAutoConnectManager.liveForRuntime()
+    let approved = try manager.approvedCodexForLaunch()
+    let isManaged = codexArguments.isEmpty || codexArguments.first == "resume"
+    if isManaged {
+        let status = try ManagedCodexLauncher().run(
+            arguments: ["--"] + codexArguments,
+            approvedExecutableProvider: {
+                try manager.revalidateCodexForSpawn(approved)
+            }
+        )
+        if status != 0 { exit(status) }
+        return
+    }
+
+    let executable = try manager.revalidateCodexForSpawn(approved)
+    for name in [
+        "BLABEE_SOCKET",
+        "BLABEE_MANAGED_APPROVALS",
+        "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+    ] {
+        unsetenv(name)
+    }
+    var cArguments = ([executable.path] + codexArguments).map { strdup($0) }
+    guard !cArguments.contains(where: { $0 == nil }) else {
+        for case let pointer? in cArguments { free(pointer) }
+        throw CoordinatorError("codex_auto_connect_exec_failed")
+    }
+    cArguments.append(nil)
+    defer {
+        for case let pointer? in cArguments { free(pointer) }
+    }
+    let result = cArguments.withUnsafeMutableBufferPointer { buffer in
+        execv(executable.path, buffer.baseAddress)
+    }
+    guard result == 0 else {
+        throw CoordinatorError(
+            "codex_auto_connect_exec_failed",
+            "승인된 Codex 실행 파일을 시작하지 못했습니다."
+        )
+    }
+}
+
 do {
     let commandLine = CommandLine.arguments
     let mode = ProductInvocationResolver.mode(
@@ -1033,6 +1083,8 @@ do {
         if status != 0 { exit(status) }
     case "codex-auto-connect":
         try runCodexAutoConnectCommand(arguments: Array(commandLine.dropFirst(2)))
+    case "codex-launch":
+        try runCodexLaunch(arguments: Array(commandLine.dropFirst(2)))
     #if BLABEE_JOURNAL_TEST_HARNESS
     case "transport-test-server":
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))

@@ -95,14 +95,17 @@ private final class PetFakeCodexAutoConnectAdapter: PetCodexAutoConnectAdapting 
     var disableError: Error?
     var blocksEnable = false
 
-    private(set) var stateCalls = 0
+    private(set) var refreshCalls = 0
     private(set) var enableCalls = 0
     private(set) var disableCalls = 0
     private var enableWaiter: CheckedContinuation<Void, Never>?
 
-    func state() -> CodexAutoConnectState {
-        stateCalls += 1
-        return currentState
+    var snapshot: PetCodexAutoConnectSnapshot {
+        PetCodexAutoConnectSnapshot(state: currentState, canEnable: canEnable)
+    }
+
+    func refresh() async {
+        refreshCalls += 1
     }
 
     func enable() async throws {
@@ -156,6 +159,63 @@ private final class PetCodexAutoConnectThreadProbe: @unchecked Sendable {
     func markDisableStarted() {
         lock.withLock {
             disableStartedStorage = true
+        }
+    }
+}
+
+private final class PetCodexAutoConnectFactoryProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let homeURL: URL
+    private let applicationSupportURL: URL
+    private var callCountStorage = 0
+    private var mainThreadCallsStorage: [Bool] = []
+
+    init(homeURL: URL, applicationSupportURL: URL) {
+        self.homeURL = homeURL
+        self.applicationSupportURL = applicationSupportURL
+    }
+
+    var callCount: Int {
+        lock.withLock { callCountStorage }
+    }
+
+    var mainThreadCalls: [Bool] {
+        lock.withLock { mainThreadCallsStorage }
+    }
+
+    func makeManager() throws -> CodexAutoConnectManager {
+        let call = lock.withLock {
+            callCountStorage += 1
+            mainThreadCallsStorage.append(Thread.isMainThread)
+            return callCountStorage
+        }
+        return CodexAutoConnectManager(
+            homeURL: homeURL,
+            applicationSupportURL: applicationSupportURL,
+            coordinatorURL: URL(fileURLWithPath: "/usr/bin/false"),
+            officialCodexURL: call == 1
+                ? nil
+                : URL(fileURLWithPath: "/usr/bin/true"),
+            codexVersionReader: { _ in "0.150.1" }
+        )
+    }
+}
+
+private final class PetCodexVersionSequenceProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let versions: [String]
+    private var index = 0
+
+    init(_ versions: [String]) {
+        self.versions = versions
+    }
+
+    func read(for _: URL) -> String? {
+        lock.withLock {
+            guard !versions.isEmpty else { return nil }
+            let value = versions[min(index, versions.count - 1)]
+            index += 1
+            return value
         }
     }
 }
@@ -215,17 +275,28 @@ func petCodexAutoConnectMutationWorkerKeepsMainActorResponsive() async throws {
     let releaseEnable = DispatchSemaphore(value: 0)
     let probe = PetCodexAutoConnectThreadProbe()
     let worker = PetCodexAutoConnectMutationWorker(
+        refreshOperation: {
+            PetCodexAutoConnectSnapshot(state: .disabled, canEnable: true)
+        },
         enableOperation: {
             probe.markEnableStarted()
             releaseEnable.wait()
+            return PetCodexAutoConnectMutationOutcome(
+                snapshot: PetCodexAutoConnectSnapshot(state: .enabled, canEnable: true),
+                errorDescription: nil
+            )
         },
         disableOperation: {
             probe.markDisableStarted()
+            return PetCodexAutoConnectMutationOutcome(
+                snapshot: PetCodexAutoConnectSnapshot(state: .disabled, canEnable: true),
+                errorDescription: nil
+            )
         }
     )
 
     let enableTask = Task {
-        try await worker.enable()
+        await worker.enable()
     }
     for _ in 0..<1_000 where !probe.enableStarted {
         await Task.yield()
@@ -234,7 +305,7 @@ func petCodexAutoConnectMutationWorkerKeepsMainActorResponsive() async throws {
     #expect(probe.enableThreadWasMain == false)
 
     let disableTask = Task {
-        try await worker.disable()
+        await worker.disable()
     }
     for _ in 0..<20 {
         await Task.yield()
@@ -248,9 +319,93 @@ func petCodexAutoConnectMutationWorkerKeepsMainActorResponsive() async throws {
     #expect(mainActorTurnCompleted)
 
     releaseEnable.signal()
-    try await enableTask.value
-    try await disableTask.value
+    let enabled = await enableTask.value
+    let disabled = await disableTask.value
+    #expect(enabled.snapshot.state == .enabled)
+    #expect(disabled.snapshot.state == .disabled)
     #expect(probe.disableStarted)
+}
+
+@Test("Pet Codex auto-connect refresh and enable rediscover off MainActor")
+@MainActor
+func petCodexAutoConnectRediscoveryUsesFreshManager() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "blabee-pet-auto-connect-refresh-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = root.appendingPathComponent("home", isDirectory: true)
+    let applicationSupport = home.appendingPathComponent(
+        "Library/Application Support/Blabee",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(
+        at: home,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let probe = PetCodexAutoConnectFactoryProbe(
+        homeURL: home,
+        applicationSupportURL: applicationSupport
+    )
+    let adapter = PetLiveCodexAutoConnectAdapter {
+        try probe.makeManager()
+    }
+
+    #expect(probe.callCount == 0)
+    await adapter.refresh()
+    #expect(adapter.snapshot.state == .unavailable("공식 Codex 실행 파일을 찾지 못했습니다."))
+    #expect(!adapter.snapshot.canEnable)
+    #expect(probe.callCount == 1)
+
+    try await adapter.enable()
+    #expect(adapter.snapshot.state == .enabled)
+    #expect(adapter.snapshot.canEnable)
+    #expect(probe.callCount == 3)
+    #expect(probe.mainThreadCalls == [false, false, false])
+}
+
+@Test("Pet rebuilds discovery after an enable compatibility failure")
+@MainActor
+func petCodexAutoConnectFailureUsesFreshCompatibilitySnapshot() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "blabee-pet-auto-connect-version-refresh-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = root.appendingPathComponent("home", isDirectory: true)
+    let applicationSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: home,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let versions = PetCodexVersionSequenceProbe(["0.150.1", "0.147.0", "0.147.0"])
+    let adapter = PetLiveCodexAutoConnectAdapter {
+        CodexAutoConnectManager(
+            homeURL: home,
+            applicationSupportURL: applicationSupport,
+            coordinatorURL: URL(fileURLWithPath: "/usr/bin/false"),
+            officialCodexURL: URL(fileURLWithPath: "/usr/bin/true"),
+            codexVersionReader: { url in versions.read(for: url) }
+        )
+    }
+
+    await adapter.refresh()
+    #expect(adapter.snapshot.state == .disabled)
+    #expect(adapter.snapshot.canEnable)
+
+    do {
+        try await adapter.enable()
+        Issue.record("unsupported Codex must fail enable")
+    } catch {}
+
+    guard case let .unavailable(reason) = adapter.snapshot.state else {
+        Issue.record("post-failure snapshot must come from fresh unsupported discovery")
+        return
+    }
+    #expect(reason.contains("0.147.0"))
+    #expect(!adapter.snapshot.canEnable)
 }
 
 @Test("Pet settings refreshes Codex auto-connect state without mutating it")
@@ -264,15 +419,15 @@ func petCodexAutoConnectPassiveRefreshDoesNotMutate() async {
         autoConnectAdapter: autoConnect
     )
 
-    #expect(autoConnect.stateCalls == 0)
+    #expect(autoConnect.refreshCalls == 0)
     await viewModel.beginOnboarding()
     #expect(viewModel.codexAutoConnectState == .disabled)
-    #expect(autoConnect.stateCalls == 1)
+    #expect(autoConnect.refreshCalls == 1)
 
     autoConnect.currentState = .repairRequired("앱 경로가 변경되었습니다.")
     await viewModel.refreshCodexAutoConnect()
     #expect(viewModel.codexAutoConnectState == .repairRequired("앱 경로가 변경되었습니다."))
-    #expect(autoConnect.stateCalls == 2)
+    #expect(autoConnect.refreshCalls == 2)
     #expect(autoConnect.enableCalls == 0)
     #expect(autoConnect.disableCalls == 0)
     #expect(await transport.requestCount(type: "get_state") == 0)
@@ -330,6 +485,7 @@ func petCodexAutoConnectEligibilityIsFailClosed() async {
         autoConnect.canEnable = capability
         autoConnect.currentState = state
         await viewModel.refreshCodexAutoConnect()
+        #expect(viewModel.codexAutoConnectCanEnable == capability)
         #expect(viewModel.canEnableCodexAutoConnect == canEnable)
         #expect(viewModel.canDisableCodexAutoConnect == canDisable)
         #expect(viewModel.canRepairCodexAutoConnect == canRepair)
@@ -337,9 +493,9 @@ func petCodexAutoConnectEligibilityIsFailClosed() async {
     }
 }
 
-@Test("Pet Codex auto-connect re-reads actual state after an operation error")
+@Test("Pet Codex auto-connect applies the actual snapshot after an operation error")
 @MainActor
-func petCodexAutoConnectRefreshesAfterError() async {
+func petCodexAutoConnectAppliesSnapshotAfterError() async {
     let onboarding = PetFakeOnboardingAdapter()
     let autoConnect = PetFakeCodexAutoConnectAdapter()
     let (viewModel, transport) = petOnboardingViewModel(
@@ -347,14 +503,14 @@ func petCodexAutoConnectRefreshesAfterError() async {
         autoConnectAdapter: autoConnect
     )
     await viewModel.refreshCodexAutoConnect()
-    let stateCallsBeforeMutation = autoConnect.stateCalls
+    let refreshCallsBeforeMutation = autoConnect.refreshCalls
     autoConnect.stateAfterEnable = .repairRequired("부분 설치 상태")
     autoConnect.enableError = PetOnboardingTestError.injected
 
     await viewModel.enableCodexAutoConnect()
 
     #expect(autoConnect.enableCalls == 1)
-    #expect(autoConnect.stateCalls == stateCallsBeforeMutation + 1)
+    #expect(autoConnect.refreshCalls == refreshCallsBeforeMutation)
     #expect(viewModel.codexAutoConnectState == .repairRequired("부분 설치 상태"))
     #expect(viewModel.codexAutoConnectError?.contains("injected") == true)
     #expect(await transport.requestCount(type: "get_state") == 0)
@@ -385,12 +541,12 @@ func petCodexAutoConnectSingleFlightBlocksAllSettingsMutations() async {
     await viewModel.enableCodexAutoConnect()
     await viewModel.registerOnboardingService()
     let onboardingStatusCalls = onboarding.statusCalls
-    let autoConnectStateCalls = autoConnect.stateCalls
+    let autoConnectRefreshCalls = autoConnect.refreshCalls
     await viewModel.refreshOnboarding()
     #expect(autoConnect.enableCalls == 1)
     #expect(onboarding.registerCalls == 0)
     #expect(onboarding.statusCalls == onboardingStatusCalls)
-    #expect(autoConnect.stateCalls == autoConnectStateCalls)
+    #expect(autoConnect.refreshCalls == autoConnectRefreshCalls)
 
     autoConnect.resumeEnable()
     await first.value

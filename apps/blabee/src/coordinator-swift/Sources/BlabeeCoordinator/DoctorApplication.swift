@@ -170,8 +170,8 @@ struct DoctorDependencies {
 }
 
 struct DoctorApplication {
-    static let alphaBaselineVersion = "0.148.0"
-    static let supportedVersions: Set<String> = ["0.149.1", "0.150.1"]
+    static var alphaBaselineVersion: String { CodexCompatibility.alphaBaselineVersion }
+    static var supportedVersions: Set<String> { CodexCompatibility.supportedVersions }
     static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
     static let skillSHA256 = "75ea8d49729b00f54762a2fbad922f1ebce77c6710208176cbc52bc9d6a38d06"
     static let skillAgentSHA256 = "48f8357783a6f96d1d387501e78ba2ed6785c9945a80d1a45c14dff341ee9520"
@@ -429,48 +429,38 @@ private extension DoctorApplication {
     func readCodexVersion(at url: URL) -> String? {
         guard isExecutableRegularFile(url, allowingSymlink: false),
               let result = try? dependencies.processRunner(url, ["--version"], 5_000),
-              result.exitCode == 0,
-              result.stdout.count <= 4_096,
-              let output = String(data: result.stdout, encoding: .utf8)
+              result.exitCode == 0
         else { return nil }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = "codex-cli "
-        guard trimmed.hasPrefix(prefix) else { return nil }
-        let version = String(trimmed.dropFirst(prefix.count))
-        guard version.range(
-            of: "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-            options: .regularExpression
-        ) != nil else { return nil }
-        return version
+        return CodexCompatibility.parseVersionOutput(result.stdout)
     }
 
     func checkCodexVersion(_ version: String?) -> DoctorCheck {
-        guard let version else {
+        switch CodexCompatibility.qualify(version: version) {
+        case .unavailable:
             return DoctorCheck(
                 id: "codex_version", status: .fail,
                 code: "codex_version_unavailable",
                 summary: "Codex CLI 버전을 안전하게 확인하지 못했습니다."
             )
-        }
-        if Self.supportedVersions.contains(version) {
+        case .supported:
             return DoctorCheck(
                 id: "codex_version", status: .pass,
                 code: "codex_version_supported",
                 summary: "지원 승인된 Codex CLI 버전입니다."
             )
-        }
-        if version == Self.alphaBaselineVersion {
+        case .alphaQualificationRequired:
             return DoctorCheck(
                 id: "codex_version", status: .actionRequired,
                 code: "codex_alpha_qualification_required",
                 summary: "Codex CLI alpha 기준 버전은 추가 호환성 승인이 필요합니다."
             )
+        case .notAllowlisted:
+            return DoctorCheck(
+                id: "codex_version", status: .fail,
+                code: "codex_version_not_allowlisted",
+                summary: "이 Codex CLI 버전은 지원 allowlist에 없습니다."
+            )
         }
-        return DoctorCheck(
-            id: "codex_version", status: .fail,
-            code: "codex_version_not_allowlisted",
-            summary: "이 Codex CLI 버전은 지원 allowlist에 없습니다."
-        )
     }
 
     func inspectPluginInstallation(at codexURL: URL) -> PluginInspection {
