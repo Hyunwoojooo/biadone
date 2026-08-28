@@ -268,9 +268,12 @@ private struct OperationalFixture {
 
 private func operationalFixture(
     dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed,
+    initialApprovalAdmissionSequence: Int64 = 0,
     permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
+    permissionRequestDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
     maximumPendingPermissionRequests: Int = 8,
     managedCommandApprovalTimeoutNanoseconds: UInt64 = 30_000_000_000,
+    managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
     maximumPendingManagedCommandApprovals: Int = 8
 ) throws -> OperationalFixture {
     let journal = OperationalMemoryJournal()
@@ -295,10 +298,15 @@ private func operationalFixture(
         nextTurnDispatcher: { request in
             try await nextTurnDispatcher.dispatch(request)
         },
+        initialApprovalAdmissionSequence: initialApprovalAdmissionSequence,
         permissionRequestTimeoutNanoseconds: permissionRequestTimeoutNanoseconds,
+        permissionRequestDeliveryTimeoutNanoseconds:
+            permissionRequestDeliveryTimeoutNanoseconds,
         maximumPendingPermissionRequests: maximumPendingPermissionRequests,
         managedCommandApprovalTimeoutNanoseconds:
             managedCommandApprovalTimeoutNanoseconds,
+        managedCommandApprovalDeliveryTimeoutNanoseconds:
+            managedCommandApprovalDeliveryTimeoutNanoseconds,
         maximumPendingManagedCommandApprovals: maximumPendingManagedCommandApprovals
     )
     return OperationalFixture(
@@ -3857,16 +3865,16 @@ private func operationalPermissionPayload(
     command: String,
     description: String? = nil
 ) throws -> Data {
-    var toolInput: [String: Any] = [
-        "command": command,
-        "ignored_private_argument": "must-not-be-projected",
-    ]
-    toolInput["description"] = description as Any? ?? NSNull()
+    var toolInput: [String: Any] = ["command": command]
+    if let description {
+        toolInput["description"] = description
+    }
     return try operationalData([
         "session_id": ids["session_id"]!,
         "turn_id": ids["source_turn_id"]!,
         "cwd": ids["cwd"]!,
         "hook_event_name": "PermissionRequest",
+        "permission_mode": "default",
         "tool_name": "Bash",
         "tool_input": toolInput,
     ])
@@ -3889,6 +3897,61 @@ private func operationalPermissionResolution(
     ])
 }
 
+private func operationalPermissionDeliveryAck(
+    _ hookOutcome: [String: Any]
+) throws -> Data {
+    try operationalData([
+        "schema_version": "1.0",
+        "kind": "blabee_permission_request_delivery_ack",
+        "request_id": hookOutcome["request_id"]!,
+        "session_id": hookOutcome["session_id"]!,
+        "turn_id": hookOutcome["turn_id"]!,
+        "delivery_token": hookOutcome["delivery_token"]!,
+    ])
+}
+
+private struct OperationalPermissionRoundTrip {
+    let resolutionReceipt: Data
+    let hookOutcome: [String: Any]
+    let deliveryAckReceipt: Data
+}
+
+private func operationalResolvePermissionRequest(
+    app: CoordinatorOperationalApplication,
+    request: [String: Any],
+    decision: String,
+    responseID: String,
+    hookWaiter: Task<Data, any Error>
+) async throws -> OperationalPermissionRoundTrip {
+    let resolution = try operationalPermissionResolution(
+        request,
+        decision: decision,
+        responseID: responseID
+    )
+    let resolutionWaiter = Task {
+        try await app.handle(
+            type: "resolve_permission_request",
+            payload: resolution
+        )
+    }
+    let hookOutcome = try operationalObject(await hookWaiter.value)
+    #expect(Set(hookOutcome.keys) == [
+        "decision", "delivery_token", "request_id", "session_id", "turn_id",
+    ])
+    #expect(hookOutcome["decision"] as? String == decision)
+    let deliveryAckReceipt = try await app.handle(
+        type: "ack_permission_request_delivery",
+        payload: operationalPermissionDeliveryAck(hookOutcome)
+    )
+    #expect(try operationalObject(deliveryAckReceipt).isEmpty)
+    let resolutionReceipt = try await resolutionWaiter.value
+    return OperationalPermissionRoundTrip(
+        resolutionReceipt: resolutionReceipt,
+        hookOutcome: hookOutcome,
+        deliveryAckReceipt: deliveryAckReceipt
+    )
+}
+
 private func waitForOperationalPermissionRequests(
     _ app: CoordinatorOperationalApplication,
     count: Int
@@ -3907,13 +3970,13 @@ private func waitForOperationalPermissionRequests(
     throw CoordinatorError("test_permission_request_timeout")
 }
 
-@Test("Operational PermissionRequest relays deny and native defer without journal writes")
+@Test("Operational PermissionRequest relays allow, deny, and native defer without journal writes")
 func operationalPermissionRequestDecisions() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "permission_decisions")
     let loadCountBefore = fixture.journal.loadCount()
 
-    for (index, decision) in ["deny", "defer_to_codex"].enumerated() {
+    for (index, decision) in ["allow", "deny", "defer_to_codex"].enumerated() {
         let waiter = Task {
             try await fixture.app.handle(
                 type: "permission_request",
@@ -3927,41 +3990,39 @@ func operationalPermissionRequestDecisions() async throws {
         let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
         let request = try #require(requests.first)
         #expect(Set(request.keys) == [
-            "request_id", "project_id", "session_id", "turn_id", "cwd",
-            "tool_name", "description", "command_preview",
+            "request_id", "arrival_sequence", "project_id", "session_id",
+            "turn_id", "cwd", "tool_name", "description", "command_preview",
+            "allow_once_available", "delivery_pending",
         ])
         #expect(request["project_id"] as? String == ids["project_id"])
         #expect(request["session_id"] as? String == ids["session_id"])
         #expect(request["turn_id"] as? String == ids["source_turn_id"])
         #expect(request["description"] as? String == "Review this command")
         #expect(request["command_preview"] as? String == "printf first second")
-        #expect(!String(describing: request).contains("must-not-be-projected"))
+        #expect(request["allow_once_available"] as? Bool == true)
+        #expect(request["delivery_pending"] as? Bool == false)
 
         let responseID = "permission_response_decisions_\(index)"
-        let receipt = try operationalObject(
-            await fixture.app.handle(
-                type: "resolve_permission_request",
-                payload: operationalPermissionResolution(
-                    request,
-                    decision: decision,
-                    responseID: responseID
-                )
-            )
+        let roundTrip = try await operationalResolvePermissionRequest(
+            app: fixture.app,
+            request: request,
+            decision: decision,
+            responseID: responseID,
+            hookWaiter: waiter
         )
+        let receipt = try operationalObject(roundTrip.resolutionReceipt)
         #expect(receipt["resolved"] as? Bool == true)
         #expect(receipt["request_id"] as? String == request["request_id"] as? String)
         #expect(receipt["response_id"] as? String == responseID)
         #expect(receipt["decision"] as? String == decision)
-        let hookResult = try operationalObject(await waiter.value)
-        #expect(Set(hookResult.keys) == ["decision"])
-        #expect(hookResult["decision"] as? String == decision)
+        #expect(roundTrip.hookOutcome["decision"] as? String == decision)
         _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
     }
     #expect(fixture.journal.loadCount() == loadCountBefore)
 }
 
-@Test("Operational Hook PermissionRequest rejects allow without consuming its FIFO head")
-func operationalHookPermissionRequestRejectsAllow() async throws {
+@Test("Operational Hook PermissionRequest rejects hidden fields without consuming its FIFO head")
+func operationalHookPermissionRequestRejectsHiddenFields() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "permission_reject_allow")
     let waiter = Task {
@@ -3973,29 +4034,37 @@ func operationalHookPermissionRequestRejectsAllow() async throws {
     let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
     let request = try #require(requests.first)
 
-    await expectOperationalError("permission_resolution_invalid") {
+    var hiddenTopLevel = try operationalObject(
+        operationalPermissionPayload(ids, command: "printf hidden top level")
+    )
+    hiddenTopLevel["additional_authority"] = true
+    await expectOperationalError("permission_request_invalid") {
         _ = try await fixture.app.handle(
-            type: "resolve_permission_request",
-            payload: operationalPermissionResolution(
-                request,
-                decision: "allow",
-                responseID: "permission_response_rejected_allow"
-            )
+            type: "permission_request",
+            payload: operationalData(hiddenTopLevel)
+        )
+    }
+    var hiddenToolInput = try operationalObject(
+        operationalPermissionPayload(ids, command: "printf hidden tool input")
+    )
+    var toolInput = try #require(hiddenToolInput["tool_input"] as? [String: Any])
+    toolInput["sandbox_permissions"] = "require_escalated"
+    hiddenToolInput["tool_input"] = toolInput
+    await expectOperationalError("permission_request_tool_input_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(hiddenToolInput)
         )
     }
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
-    _ = try await fixture.app.handle(
-        type: "resolve_permission_request",
-        payload: operationalPermissionResolution(
-            request,
-            decision: "defer_to_codex",
-            responseID: "permission_response_rejected_allow_cleanup"
-        )
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: request,
+        decision: "defer_to_codex",
+        responseID: "permission_response_hidden_fields_cleanup",
+        hookWaiter: waiter
     )
-    #expect(
-        try operationalObject(await waiter.value)["decision"] as? String
-            == "defer_to_codex"
-    )
+    #expect(roundTrip.hookOutcome["decision"] as? String == "defer_to_codex")
 }
 
 @Test("Operational PermissionRequest enforces FIFO head and idempotent resolution receipts")
@@ -4049,15 +4118,29 @@ func operationalPermissionRequestFIFOAndIdempotency() async throws {
         decision: "deny",
         responseID: "permission_response_fifo_first"
     )
-    let firstReceipt = try await fixture.app.handle(
-        type: "resolve_permission_request",
-        payload: firstResolution
+    let firstResolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: firstResolution
+        )
+    }
+    let firstHookOutcome = try operationalObject(await firstWaiter.value)
+    await expectOperationalError("permission_resolution_in_progress") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: firstResolution
+        )
+    }
+    _ = try await fixture.app.handle(
+        type: "ack_permission_request_delivery",
+        payload: operationalPermissionDeliveryAck(firstHookOutcome)
     )
+    let firstReceipt = try await firstResolutionWaiter.value
     #expect(try await fixture.app.handle(
         type: "resolve_permission_request",
         payload: firstResolution
     ) == firstReceipt)
-    #expect(try operationalObject(await firstWaiter.value)["decision"] as? String == "deny")
+    #expect(firstHookOutcome["decision"] as? String == "deny")
 
     await expectOperationalError("permission_resolution_conflict") {
         _ = try await fixture.app.handle(
@@ -4079,15 +4162,14 @@ func operationalPermissionRequestFIFOAndIdempotency() async throws {
             )
         )
     }
-    _ = try await fixture.app.handle(
-        type: "resolve_permission_request",
-        payload: operationalPermissionResolution(
-            second,
-            decision: "deny",
-            responseID: "permission_response_fifo_second"
-        )
+    let secondRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: second,
+        decision: "deny",
+        responseID: "permission_response_fifo_second",
+        hookWaiter: secondWaiter
     )
-    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String == "deny")
+    #expect(secondRoundTrip.hookOutcome["decision"] as? String == "deny")
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
@@ -4115,15 +4197,14 @@ func operationalPermissionRequestCapacity() async throws {
             payload: operationalPermissionPayload(secondIDs, command: "must use native UI")
         )
     }
-    _ = try await fixture.app.handle(
-        type: "resolve_permission_request",
-        payload: operationalPermissionResolution(
-            request,
-            decision: "defer_to_codex",
-            responseID: "permission_response_capacity_first"
-        )
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: request,
+        decision: "defer_to_codex",
+        responseID: "permission_response_capacity_first",
+        hookWaiter: waiter
     )
-    #expect(try operationalObject(await waiter.value)["decision"] as? String == "defer_to_codex")
+    #expect(roundTrip.hookOutcome["decision"] as? String == "defer_to_codex")
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
@@ -4153,10 +4234,18 @@ func operationalPermissionRequestRejectsUnsupportedCommand() async throws {
         "turn_id": ids["source_turn_id"]!,
         "cwd": ids["cwd"]!,
         "hook_event_name": "PermissionRequest",
+        "permission_mode": "default",
         "tool_name": "Bash",
     ]
+    var legacyAlias = common
+    legacyAlias["tool_input"] = ["cmd": "legacy aliases must use native Codex UI"]
+    await expectOperationalError("permission_request_tool_input_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(legacyAlias)
+        )
+    }
     for toolInput in [
-        ["cmd": "legacy aliases must use native Codex UI"],
         ["command": ""],
         ["command": "printf first\nsecond"],
         ["command": "echo safe\u{202e}txt"],
@@ -4180,15 +4269,33 @@ func operationalPermissionRequestRejectsUnsupportedCommand() async throws {
             payload: operationalData(unknownSession)
         )
     }
+    var unsupportedTool = common
+    unsupportedTool["tool_name"] = "Read"
+    unsupportedTool["tool_input"] = ["command": "echo safe"]
+    await expectOperationalError("permission_request_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(unsupportedTool)
+        )
+    }
+    var elevatedMode = common
+    elevatedMode["permission_mode"] = "bypassPermissions"
+    elevatedMode["tool_input"] = ["command": "echo safe"]
+    await expectOperationalError("permission_request_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalData(elevatedMode)
+        )
+    }
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
-@Test("Operational PermissionRequest sanitizes display text and rejects spoofed tool names")
-func operationalPermissionRequestSanitizesDisplayText() async throws {
+@Test("Operational PermissionRequest rejects unsafe description and spoofed tool names")
+func operationalPermissionRequestRejectsUnsafeDisplayText() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "permission_display_safety")
-    let waiter = Task {
-        try await fixture.app.handle(
+    await expectOperationalError("permission_request_description_invalid") {
+        _ = try await fixture.app.handle(
             type: "permission_request",
             payload: operationalPermissionPayload(
                 ids,
@@ -4197,30 +4304,649 @@ func operationalPermissionRequestSanitizesDisplayText() async throws {
             )
         )
     }
-    let requests = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
-    let request = try #require(requests.first)
-    #expect(request["description"] as? String == "Review hidden command")
-    _ = try await fixture.app.handle(
-        type: "resolve_permission_request",
-        payload: operationalPermissionResolution(
-            request,
-            decision: "defer_to_codex",
-            responseID: "permission_response_display_safety"
-        )
-    )
-    #expect(try operationalObject(await waiter.value)["decision"] as? String == "defer_to_codex")
 
     var spoofedTool = try operationalObject(
         operationalPermissionPayload(ids, command: "printf safe")
     )
     spoofedTool["tool_name"] = "Ba\u{200b}sh"
-    await expectOperationalError("permission_request_tool_name_invalid") {
+    await expectOperationalError("permission_request_invalid") {
         _ = try await fixture.app.handle(
             type: "permission_request",
             payload: operationalData(spoofedTool)
         )
     }
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("A new turn expires older Hook approvals in the same session")
+func operationalNewTurnExpiresOlderHookApproval() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_new_turn")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf old-turn")
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+
+    _ = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_permission_new_turn_second",
+            "cwd": ids["cwd"]!,
+            "prompt": "Start a fresh manual request",
+            "hook_event_name": "UserPromptSubmit",
+        ])
+    )
+
+    #expect(
+        try operationalObject(await waiter.value)["decision"] as? String
+            == "defer_to_codex"
+    )
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("Cancelling a Hook approval removes its Pet card")
+func operationalHookPermissionCancellationRemovesCard() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_cancel")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf cancel")
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+
+    waiter.cancel()
+    do {
+        _ = try await waiter.value
+        Issue.record("cancelled Hook approval unexpectedly returned a decision")
+    } catch is CancellationError {
+        // Expected: a disconnected Hook process owns no fallback result.
+    } catch {
+        Issue.record("cancelled Hook approval failed with \(error)")
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("Hook then managed approvals share one global FIFO")
+func operationalHookThenManagedApprovalGlobalFIFO() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "approval_global_hook_first")
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf hook-first")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "approval_global_managed_second",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-managed-second"]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let hookSequence = try #require(
+        ExactJSONInteger.int64(hook["arrival_sequence"], minimum: 1)
+    )
+    let managedSequence = try #require(
+        ExactJSONInteger.int64(managed["arrival_sequence"], minimum: 1)
+    )
+    #expect(hookSequence < managedSequence)
+
+    await expectOperationalError("managed_command_approval_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                managed,
+                decision: "accept_once",
+                responseID: "managed_response_global_too_early"
+            )
+        )
+    }
+    let hookRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: hook,
+        decision: "allow",
+        responseID: "permission_response_global_hook_first",
+        hookWaiter: hookWaiter
+    )
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    let managedRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: managed,
+        decision: "accept_once",
+        responseID: "managed_response_global_second",
+        brokerWaiter: managedWaiter
+    )
+    #expect(managedRoundTrip.brokerOutcome["decision"] as? String == "accept_once")
+}
+
+@Test("Managed then Hook approvals share one global FIFO")
+func operationalManagedThenHookApprovalGlobalFIFO() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "approval_global_managed_first")
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "approval_global_managed_first",
+                jsonRPCRequestID: ["type": "integer", "value": 17]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf hook-second")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let managedSequence = try #require(
+        ExactJSONInteger.int64(managed["arrival_sequence"], minimum: 1)
+    )
+    let hookSequence = try #require(
+        ExactJSONInteger.int64(hook["arrival_sequence"], minimum: 1)
+    )
+    #expect(managedSequence < hookSequence)
+
+    await expectOperationalError("permission_request_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                hook,
+                decision: "allow",
+                responseID: "permission_response_global_too_early"
+            )
+        )
+    }
+    let managedRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: managed,
+        decision: "accept_once",
+        responseID: "managed_response_global_first",
+        brokerWaiter: managedWaiter
+    )
+    #expect(managedRoundTrip.brokerOutcome["decision"] as? String == "accept_once")
+    let hookRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: hook,
+        decision: "allow",
+        responseID: "permission_response_global_hook_second",
+        hookWaiter: hookWaiter
+    )
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+}
+
+@Test("Approval arrival sequence stays within the signed snapshot contract")
+func operationalApprovalArrivalSequenceSignedBoundary() async throws {
+    let fixture = try operationalFixture(
+        initialApprovalAdmissionSequence: Int64.max - 1
+    )
+    let ids = try await operationalBegin(fixture, suffix: "approval_sequence_boundary")
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf max-sequence")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(
+        ExactJSONInteger.int64(hook["arrival_sequence"], minimum: 1)
+            == Int64.max
+    )
+
+    let managedFallback = try operationalObject(
+        await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "approval_sequence_exhausted",
+                jsonRPCRequestID: ["type": "integer", "value": 31]
+            )
+        )
+    )
+    #expect(Set(managedFallback.keys) == ["decision"])
+    #expect(managedFallback["decision"] as? String == "decide_in_codex")
+
+    let hookRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: hook,
+        decision: "allow",
+        responseID: "permission_response_max_sequence",
+        hookWaiter: hookWaiter
+    )
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+
+    await expectOperationalError("approval_admission_sequence_exhausted") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf exhausted")
+        )
+    }
+}
+
+@Test("Managed delivery ack holds the global FIFO head and validates exact binding")
+func operationalManagedDeliveryAckHoldsGlobalHead() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "delivery_ack_global_head")
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "delivery_ack_global_head",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-delivery-head"]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf wait-for-ack")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+
+    let managedResolution = try operationalManagedCommandApprovalResolution(
+        managed,
+        decision: "accept_once",
+        responseID: "managed_response_delivery_head"
+    )
+    let managedResolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: managedResolution
+        )
+    }
+    let brokerOutcome = try operationalObject(await managedWaiter.value)
+    let deliveryToken = try #require(brokerOutcome["delivery_token"] as? String)
+    let selectedManaged = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    #expect(selectedManaged["delivery_pending"] as? Bool == true)
+
+    await expectOperationalError("permission_request_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                hook,
+                decision: "allow",
+                responseID: "permission_response_before_delivery_ack"
+            )
+        )
+    }
+
+    await expectOperationalError("managed_command_approval_delivery_token_invalid") {
+        _ = try await fixture.app.handle(
+            type: "ack_managed_command_approval_delivery",
+            payload: operationalManagedCommandApprovalDeliveryAck(
+                managed,
+                deliveryToken: "invalid:delivery:token"
+            )
+        )
+    }
+    var wrongBinding = try operationalObject(
+        operationalManagedCommandApprovalDeliveryAck(
+            managed,
+            deliveryToken: deliveryToken
+        )
+    )
+    wrongBinding["item_id"] = "item_delivery_other"
+    await expectOperationalError("managed_command_approval_delivery_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "ack_managed_command_approval_delivery",
+            payload: operationalData(wrongBinding)
+        )
+    }
+
+    let ack = try operationalManagedCommandApprovalDeliveryAck(
+        managed,
+        deliveryToken: deliveryToken
+    )
+    let ackReceipt = try await fixture.app.handle(
+        type: "ack_managed_command_approval_delivery",
+        payload: ack
+    )
+    #expect(try operationalObject(ackReceipt).isEmpty)
+    #expect(try await fixture.app.handle(
+        type: "ack_managed_command_approval_delivery",
+        payload: ack
+    ) == ackReceipt)
+    let resolutionReceipt = try operationalObject(
+        await managedResolutionWaiter.value
+    )
+    #expect(resolutionReceipt["resolved"] as? Bool == true)
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+
+    let hookRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: hook,
+        decision: "allow",
+        responseID: "permission_response_after_delivery_ack",
+        hookWaiter: hookWaiter
+    )
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+}
+
+@Test("Cancelling a selected managed resolve keeps its delivery barrier")
+func operationalManagedSelectedResolutionCancellationKeepsBarrier() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "managed_selected_cancel")
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "managed_selected_cancel",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-selected-cancel"]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf blocked-follower")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let managedResolution = try operationalManagedCommandApprovalResolution(
+        managed,
+        decision: "accept_once",
+        responseID: "managed_response_selected_cancel"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: managedResolution
+        )
+    }
+    let brokerOutcome = try operationalObject(await managedWaiter.value)
+    let deliveryToken = try #require(brokerOutcome["delivery_token"] as? String)
+
+    resolutionWaiter.cancel()
+    try await Task.sleep(nanoseconds: 20_000_000)
+    let selectedManaged = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    #expect(selectedManaged["delivery_pending"] as? Bool == true)
+    await expectOperationalError("permission_request_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                hook,
+                decision: "allow",
+                responseID: "permission_response_selected_managed_pending"
+            )
+        )
+    }
+
+    _ = try await fixture.app.handle(
+        type: "ack_managed_command_approval_delivery",
+        payload: operationalManagedCommandApprovalDeliveryAck(
+            managed,
+            deliveryToken: deliveryToken
+        )
+    )
+    #expect(
+        try operationalObject(await resolutionWaiter.value)["resolved"] as? Bool
+            == true
+    )
+    let hookRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: hook,
+        decision: "allow",
+        responseID: "permission_response_after_selected_managed_ack",
+        hookWaiter: hookWaiter
+    )
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+}
+
+@Test("Hook delivery ack holds the global FIFO head and validates exact binding")
+func operationalPermissionDeliveryAckHoldsGlobalHead() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_delivery_head")
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf hook-delivery")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(hook["delivery_pending"] as? Bool == false)
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "permission_delivery_follower",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-hook-follower"]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+
+    let resolution = try operationalPermissionResolution(
+        hook,
+        decision: "allow",
+        responseID: "permission_response_delivery_head"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: resolution
+        )
+    }
+    let hookOutcome = try operationalObject(await hookWaiter.value)
+    let deliveryToken = try #require(hookOutcome["delivery_token"] as? String)
+    let selectedHook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(selectedHook["delivery_pending"] as? Bool == true)
+
+    await expectOperationalError("managed_command_approval_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                managed,
+                decision: "accept_once",
+                responseID: "managed_response_before_hook_delivery_ack"
+            )
+        )
+    }
+    await expectOperationalError("permission_request_delivery_token_invalid") {
+        var invalidToken = try operationalObject(
+            operationalPermissionDeliveryAck(hookOutcome)
+        )
+        invalidToken["delivery_token"] = "invalid:permission:token"
+        _ = try await fixture.app.handle(
+            type: "ack_permission_request_delivery",
+            payload: operationalData(invalidToken)
+        )
+    }
+    var wrongBinding = try operationalObject(
+        operationalPermissionDeliveryAck(hookOutcome)
+    )
+    wrongBinding["turn_id"] = "turn_permission_delivery_other"
+    await expectOperationalError("permission_request_delivery_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "ack_permission_request_delivery",
+            payload: operationalData(wrongBinding)
+        )
+    }
+
+    let ack = try operationalPermissionDeliveryAck(hookOutcome)
+    let ackReceipt = try await fixture.app.handle(
+        type: "ack_permission_request_delivery",
+        payload: ack
+    )
+    #expect(try operationalObject(ackReceipt).isEmpty)
+    #expect(try await fixture.app.handle(
+        type: "ack_permission_request_delivery",
+        payload: ack
+    ) == ackReceipt)
+    let resolutionReceipt = try operationalObject(await resolutionWaiter.value)
+    #expect(resolutionReceipt["resolved"] as? Bool == true)
+    #expect(resolutionReceipt["decision"] as? String == "allow")
+    #expect(deliveryToken.utf8.count >= 16)
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+
+    let managedRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: managed,
+        decision: "accept_once",
+        responseID: "managed_response_after_hook_delivery_ack",
+        brokerWaiter: managedWaiter
+    )
+    #expect(managedRoundTrip.brokerOutcome["decision"] as? String == "accept_once")
+}
+
+@Test("Hook delivery timeout never returns a successful Pet receipt")
+func operationalPermissionDeliveryTimeout() async throws {
+    let fixture = try operationalFixture(
+        permissionRequestDeliveryTimeoutNanoseconds: 100_000_000
+    )
+    let ids = try await operationalBegin(fixture, suffix: "permission_delivery_timeout")
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf no-ack")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let resolution = try operationalPermissionResolution(
+        hook,
+        decision: "deny",
+        responseID: "permission_response_delivery_timeout"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: resolution
+        )
+    }
+    let hookOutcome = try operationalObject(await hookWaiter.value)
+    #expect(hookOutcome["decision"] as? String == "deny")
+
+    await expectOperationalError("permission_request_delivery_timeout") {
+        _ = try await resolutionWaiter.value
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+    await expectOperationalError("permission_request_delivery_not_found") {
+        _ = try await fixture.app.handle(
+            type: "ack_permission_request_delivery",
+            payload: operationalPermissionDeliveryAck(hookOutcome)
+        )
+    }
+    await expectOperationalError("permission_request_not_found") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: resolution
+        )
+    }
+}
+
+@Test("Cancelling a selected Hook resolve keeps its delivery barrier")
+func operationalPermissionSelectedResolutionCancellationKeepsBarrier() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_selected_cancel")
+    let hookWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf selected-hook")
+        )
+    }
+    let hook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let managedWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "permission_selected_cancel_follower",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-hook-cancel-follower"]
+            )
+        )
+    }
+    let managed = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let resolution = try operationalPermissionResolution(
+        hook,
+        decision: "allow",
+        responseID: "permission_response_selected_cancel"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: resolution
+        )
+    }
+    let hookOutcome = try operationalObject(await hookWaiter.value)
+
+    resolutionWaiter.cancel()
+    try await Task.sleep(nanoseconds: 20_000_000)
+    let selectedHook = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(selectedHook["delivery_pending"] as? Bool == true)
+    await expectOperationalError("managed_command_approval_not_global_head") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: operationalManagedCommandApprovalResolution(
+                managed,
+                decision: "accept_once",
+                responseID: "managed_response_selected_hook_pending"
+            )
+        )
+    }
+
+    _ = try await fixture.app.handle(
+        type: "ack_permission_request_delivery",
+        payload: operationalPermissionDeliveryAck(hookOutcome)
+    )
+    #expect(
+        try operationalObject(await resolutionWaiter.value)["resolved"] as? Bool
+            == true
+    )
+    let managedRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: managed,
+        decision: "accept_once",
+        responseID: "managed_response_after_selected_hook_ack",
+        brokerWaiter: managedWaiter
+    )
+    #expect(managedRoundTrip.brokerOutcome["decision"] as? String == "accept_once")
 }
 
 private func operationalManagedCommandApprovalPayload(
@@ -4257,11 +4983,76 @@ private func operationalManagedCommandApprovalResolution(
     responseID: String
 ) throws -> Data {
     var result = request
+    result.removeValue(forKey: "arrival_sequence")
+    result.removeValue(forKey: "delivery_pending")
     result["schema_version"] = "1.0"
     result["kind"] = "blabee_managed_command_approval_resolution_request"
     result["response_id"] = responseID
     result["decision"] = decision
     return try operationalData(result)
+}
+
+private func operationalManagedCommandApprovalDeliveryAck(
+    _ request: [String: Any],
+    deliveryToken: String
+) throws -> Data {
+    try operationalData([
+        "schema_version": "1.0",
+        "kind": "blabee_managed_command_approval_delivery_ack",
+        "broker_epoch": request["broker_epoch"]!,
+        "connection_id": request["connection_id"]!,
+        "jsonrpc_request_id": request["jsonrpc_request_id"]!,
+        "thread_id": request["thread_id"]!,
+        "turn_id": request["turn_id"]!,
+        "item_id": request["item_id"]!,
+        "approval_id": request["approval_id"]!,
+        "environment_id": request["environment_id"]!,
+        "delivery_token": deliveryToken,
+    ])
+}
+
+private struct OperationalManagedApprovalRoundTrip {
+    let resolutionReceipt: Data
+    let brokerOutcome: [String: Any]
+    let deliveryAckReceipt: Data
+}
+
+private func operationalResolveManagedCommandApproval(
+    app: CoordinatorOperationalApplication,
+    request: [String: Any],
+    decision: String,
+    responseID: String,
+    brokerWaiter: Task<Data, any Error>
+) async throws -> OperationalManagedApprovalRoundTrip {
+    let resolution = try operationalManagedCommandApprovalResolution(
+        request,
+        decision: decision,
+        responseID: responseID
+    )
+    let resolutionWaiter = Task {
+        try await app.handle(
+            type: "resolve_managed_command_approval",
+            payload: resolution
+        )
+    }
+    let brokerOutcome = try operationalObject(await brokerWaiter.value)
+    let deliveryToken = try #require(
+        brokerOutcome["delivery_token"] as? String
+    )
+    let deliveryAckReceipt = try await app.handle(
+        type: "ack_managed_command_approval_delivery",
+        payload: operationalManagedCommandApprovalDeliveryAck(
+            request,
+            deliveryToken: deliveryToken
+        )
+    )
+    #expect(try operationalObject(deliveryAckReceipt).isEmpty)
+    let resolutionReceipt = try await resolutionWaiter.value
+    return OperationalManagedApprovalRoundTrip(
+        resolutionReceipt: resolutionReceipt,
+        brokerOutcome: brokerOutcome,
+        deliveryAckReceipt: deliveryAckReceipt
+    )
 }
 
 private func waitForOperationalManagedCommandApprovals(
@@ -4319,16 +5110,19 @@ func operationalManagedCommandApprovalPreservesPrivateTmpPath() async throws {
         decision: "accept_once",
         responseID: "managed_response_private_tmp"
     )
-    let receipt = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: resolution
+    let roundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: request,
+        decision: "accept_once",
+        responseID: "managed_response_private_tmp",
+        brokerWaiter: waiter
     )
     #expect(try await fixture.app.handle(
         type: "resolve_managed_command_approval",
         payload: resolution
-    ) == receipt)
-    #expect(try operationalObject(await waiter.value)["decision"] as? String
-        == "accept_once")
+    ) == roundTrip.resolutionReceipt)
+    #expect(roundTrip.brokerOutcome["decision"] as? String == "accept_once")
+    #expect(Set(roundTrip.brokerOutcome.keys) == ["decision", "delivery_token"])
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
 }
 
@@ -4391,10 +5185,12 @@ func operationalManagedCommandApprovalFIFO() async throws {
     let first = requests[0]
     let second = requests[1]
     #expect(Set(first.keys) == [
-        "managed_request_id", "broker_epoch", "connection_id",
+        "managed_request_id", "arrival_sequence", "broker_epoch", "connection_id",
         "jsonrpc_request_id", "thread_id", "turn_id", "item_id", "approval_id",
-        "environment_id", "cwd", "command_preview", "allow_once_available", "decline_available",
+        "environment_id", "cwd", "command_preview", "allow_once_available",
+        "decline_available", "delivery_pending",
     ])
+    #expect(first["delivery_pending"] as? Bool == false)
     #expect(first["approval_id"] as? String == "approval-first")
     #expect((second["jsonrpc_request_id"] as? [String: Any])?["type"] as? String
         == "integer")
@@ -4429,27 +5225,27 @@ func operationalManagedCommandApprovalFIFO() async throws {
         decision: "accept_once",
         responseID: "managed_response_first"
     )
-    let firstReceipt = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: firstResolution
+    let firstRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: first,
+        decision: "accept_once",
+        responseID: "managed_response_first",
+        brokerWaiter: firstWaiter
     )
     #expect(try await fixture.app.handle(
         type: "resolve_managed_command_approval",
         payload: firstResolution
-    ) == firstReceipt)
-    #expect(try operationalObject(await firstWaiter.value)["decision"] as? String
-        == "accept_once")
+    ) == firstRoundTrip.resolutionReceipt)
+    #expect(firstRoundTrip.brokerOutcome["decision"] as? String == "accept_once")
 
-    _ = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: operationalManagedCommandApprovalResolution(
-            second,
-            decision: "decide_in_codex",
-            responseID: "managed_response_second"
-        )
+    let secondRoundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: second,
+        decision: "decide_in_codex",
+        responseID: "managed_response_second",
+        brokerWaiter: secondWaiter
     )
-    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String
-        == "decide_in_codex")
+    #expect(secondRoundTrip.brokerOutcome["decision"] as? String == "decide_in_codex")
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
     #expect(fixture.journal.loadCount() == loadCountBefore)
 }
@@ -4496,16 +5292,14 @@ func operationalManagedCommandApprovalCancellationAdvancesFIFO() async throws {
     let nextHead = try #require(remaining.first)
     #expect(nextHead["item_id"] as? String == "item_cancel_second")
 
-    _ = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: operationalManagedCommandApprovalResolution(
-            nextHead,
-            decision: "decline",
-            responseID: "managed_response_cancel_second"
-        )
+    let roundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: nextHead,
+        decision: "decline",
+        responseID: "managed_response_cancel_second",
+        brokerWaiter: secondWaiter
     )
-    #expect(try operationalObject(await secondWaiter.value)["decision"] as? String
-        == "decline")
+    #expect(roundTrip.brokerOutcome["decision"] as? String == "decline")
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
     #expect(fixture.journal.loadCount() == loadCountBefore)
 }
@@ -4537,16 +5331,14 @@ func operationalManagedCommandApprovalCapacity() async throws {
     )
     #expect(Set(overflow.keys) == ["decision"])
     #expect(overflow["decision"] as? String == "decide_in_codex")
-    _ = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: operationalManagedCommandApprovalResolution(
-            request,
-            decision: "decide_in_codex",
-            responseID: "managed_response_capacity"
-        )
+    let roundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: request,
+        decision: "decide_in_codex",
+        responseID: "managed_response_capacity",
+        brokerWaiter: waiter
     )
-    #expect(try operationalObject(await waiter.value)["decision"] as? String
-        == "decide_in_codex")
+    #expect(roundTrip.brokerOutcome["decision"] as? String == "decide_in_codex")
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
 }
 
@@ -4567,6 +5359,59 @@ func operationalManagedCommandApprovalTimeout() async throws {
     #expect(Set(response.keys) == ["decision"])
     #expect(response["decision"] as? String == "decide_in_codex")
     _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+}
+
+@Test("Managed delivery timeout never returns a successful Pet receipt")
+func operationalManagedCommandApprovalDeliveryTimeout() async throws {
+    let fixture = try operationalFixture(
+        managedCommandApprovalDeliveryTimeoutNanoseconds: 100_000_000
+    )
+    let brokerWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "delivery_timeout",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-delivery-timeout"]
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1).first
+    )
+    let resolution = try operationalManagedCommandApprovalResolution(
+        request,
+        decision: "accept_once",
+        responseID: "managed_response_delivery_timeout"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: resolution
+        )
+    }
+    let brokerOutcome = try operationalObject(await brokerWaiter.value)
+    let deliveryToken = try #require(brokerOutcome["delivery_token"] as? String)
+    #expect(brokerOutcome["decision"] as? String == "accept_once")
+
+    await expectOperationalError("managed_command_approval_delivery_timeout") {
+        _ = try await resolutionWaiter.value
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 0)
+    await expectOperationalError("managed_command_approval_delivery_not_found") {
+        _ = try await fixture.app.handle(
+            type: "ack_managed_command_approval_delivery",
+            payload: operationalManagedCommandApprovalDeliveryAck(
+                request,
+                deliveryToken: deliveryToken
+            )
+        )
+    }
+    await expectOperationalError("managed_command_approval_not_found") {
+        _ = try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: resolution
+        )
+    }
 }
 
 @Test("Operational managed approvals never accept unavailable or session decisions")
@@ -4606,16 +5451,14 @@ func operationalManagedCommandApprovalDecisionGating() async throws {
             )
         )
     }
-    _ = try await fixture.app.handle(
-        type: "resolve_managed_command_approval",
-        payload: operationalManagedCommandApprovalResolution(
-            request,
-            decision: "decline",
-            responseID: "managed_response_decline"
-        )
+    let roundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: request,
+        decision: "decline",
+        responseID: "managed_response_decline",
+        brokerWaiter: waiter
     )
-    #expect(try operationalObject(await waiter.value)["decision"] as? String
-        == "decline")
+    #expect(roundTrip.brokerOutcome["decision"] as? String == "decline")
 
     let noSyntheticDecision = try operationalObject(
         await fixture.app.handle(

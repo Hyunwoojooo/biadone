@@ -35,19 +35,24 @@ struct PetTestCard: Sendable, Equatable {
 
 struct PetTestPermissionRequest: Sendable, Equatable {
     var suffix: String
+    var arrivalSequence: Int64? = nil
     var toolName: String = "Bash"
     var requestDescription: String? = "테스트 명령 실행 권한이 필요합니다."
     var commandPreview: String? = "npm test"
+    var allowOnceAvailable: Bool = true
+    var deliveryPending: Bool = false
 }
 
 struct PetTestManagedCommandApproval: Sendable, Equatable {
     var suffix: String
+    var arrivalSequence: Int64? = nil
     var jsonRPCRequestID: AnySendableJSONRPCID = .string("request-managed")
     var approvalID: String? = "approval-managed"
     var environmentID: String? = "local"
     var commandPreview: String = "swift test"
     var allowOnceAvailable: Bool = true
     var declineAvailable: Bool = true
+    var deliveryPending: Bool = false
 }
 
 enum AnySendableJSONRPCID: Sendable, Equatable {
@@ -234,8 +239,10 @@ func petTestSnapshotObject(
 
     let foregroundCard = cards.first(where: { $0.suffix == foregroundSuffix })
     let foregroundObject: Any = foregroundCard.map { petTestIdentityObject($0) } ?? NSNull()
-    let permissionObjects: [[String: Any]] = permissionRequests.map { request in
+    let permissionObjects: [[String: Any]] = permissionRequests.enumerated().map {
+        index, request in
         [
+            "arrival_sequence": request.arrivalSequence ?? Int64(index * 2 + 1),
             "request_id": "permission_\(request.suffix)",
             "project_id": "project_\(request.suffix)",
             "session_id": "session_\(request.suffix)",
@@ -244,10 +251,15 @@ func petTestSnapshotObject(
             "tool_name": request.toolName,
             "description": request.requestDescription ?? NSNull(),
             "command_preview": request.commandPreview ?? NSNull(),
+            "allow_once_available": request.allowOnceAvailable,
+            "delivery_pending": request.deliveryPending,
         ]
     }
-    let managedApprovalObjects: [[String: Any]] = managedCommandApprovals.map { request in
+    let managedApprovalObjects: [[String: Any]] = managedCommandApprovals.enumerated().map {
+        index, request in
         [
+            "arrival_sequence": request.arrivalSequence
+                ?? Int64((permissionRequests.count + index) * 2 + 1),
             "managed_request_id": "managed_request_\(request.suffix)",
             "broker_epoch": "broker_epoch_\(request.suffix)",
             "connection_id": "connection_\(request.suffix)",
@@ -261,6 +273,7 @@ func petTestSnapshotObject(
             "command_preview": request.commandPreview,
             "allow_once_available": request.allowOnceAvailable,
             "decline_available": request.declineAvailable,
+            "delivery_pending": request.deliveryPending,
         ]
     }
     return [

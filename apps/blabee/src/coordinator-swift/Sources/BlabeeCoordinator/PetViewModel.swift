@@ -81,22 +81,26 @@ final class PetViewModel: ObservableObject {
             let currentActionCount = snapshot?.interactions.first?.actionChoices.count
             let priorQueueCount = oldValue?.interactions.count ?? 0
             let currentQueueCount = snapshot?.interactions.count ?? 0
-            let priorPermissionID = oldValue?.permissionRequests.first?.requestID
-            let currentPermissionID = snapshot?.permissionRequests.first?.requestID
-            let priorPermissionCount = oldValue?.permissionRequests.count ?? 0
-            let currentPermissionCount = snapshot?.permissionRequests.count ?? 0
-            let priorManagedApprovalID = oldValue?.managedCommandApprovals.first?
-                .managedRequestID
-            let currentManagedApprovalID = snapshot?.managedCommandApprovals.first?
-                .managedRequestID
-            let priorManagedApprovalCount = oldValue?.managedCommandApprovals.count ?? 0
-            let currentManagedApprovalCount = snapshot?.managedCommandApprovals.count ?? 0
+            let priorApprovalHead = oldValue.flatMap {
+                PetApprovalHead.first(
+                    permissionRequests: $0.permissionRequests,
+                    managedCommandApprovals: $0.managedCommandApprovals
+                )
+            }
+            let currentApprovalHead = snapshot.flatMap {
+                PetApprovalHead.first(
+                    permissionRequests: $0.permissionRequests,
+                    managedCommandApprovals: $0.managedCommandApprovals
+                )
+            }
+            let priorApprovalCount = (oldValue?.permissionRequests.count ?? 0)
+                + (oldValue?.managedCommandApprovals.count ?? 0)
+            let currentApprovalCount = (snapshot?.permissionRequests.count ?? 0)
+                + (snapshot?.managedCommandApprovals.count ?? 0)
             if priorActionCount != currentActionCount
                 || priorQueueCount != currentQueueCount
-                || priorPermissionID != currentPermissionID
-                || priorPermissionCount != currentPermissionCount
-                || priorManagedApprovalID != currentManagedApprovalID
-                || priorManagedApprovalCount != currentManagedApprovalCount
+                || priorApprovalHead?.identity != currentApprovalHead?.identity
+                || priorApprovalCount != currentApprovalCount
             {
                 onPanelLayoutChanged?()
             }
@@ -182,12 +186,14 @@ final class PetViewModel: ObservableObject {
     private var lastAppliedSnapshotRequest: UInt64 = 0
     private var refreshInProgress = false
     private var autoFocusAttemptedIdentity: PetInteractionIdentity?
+    private var persistentApprovalResolutionError: String?
 
     var onPanelLayoutChanged: (() -> Void)?
     var onPanelToggleRequested: (() -> Void)?
     var onAttentionChanged: ((Bool) -> Void)?
     var onAttentionEvent: (() -> Void)?
-    var onPermissionRequestChanged: ((PetPermissionRequest?) -> Void)?
+    var onApprovalHeadChanged: ((PetApprovalHeadIdentity?) -> Void)?
+    var onApprovalResolutionFailed: (() -> Void)?
 
     init(
         transport: any PetCoordinatorTransport,
@@ -257,12 +263,27 @@ final class PetViewModel: ObservableObject {
         return fifoHeadInteraction
     }
 
+    var approvalHead: PetApprovalHead? {
+        guard let snapshot else { return nil }
+        return PetApprovalHead.first(
+            permissionRequests: snapshot.permissionRequests,
+            managedCommandApprovals: snapshot.managedCommandApprovals
+        )
+    }
+
+    var approvalQueueCount: Int {
+        (snapshot?.permissionRequests.count ?? 0)
+            + (snapshot?.managedCommandApprovals.count ?? 0)
+    }
+
     var pendingPermissionRequest: PetPermissionRequest? {
-        snapshot?.permissionRequests.first
+        guard case .permission(let request) = approvalHead else { return nil }
+        return request
     }
 
     var pendingManagedCommandApproval: PetManagedCommandApproval? {
-        snapshot?.managedCommandApprovals.first
+        guard case .managed(let request) = approvalHead else { return nil }
+        return request
     }
 
     var managedCommandApprovalQueueCount: Int {
@@ -274,7 +295,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var hasNewPermissionNotice: Bool {
-        pendingManagedCommandApproval != nil || pendingPermissionRequest != nil
+        approvalHead != nil
     }
 
     /// Shortcut registration diagnostics are not actionable while a permission
@@ -288,8 +309,14 @@ final class PetViewModel: ObservableObject {
         lastError != nil || visibleShortcutDiagnostic != nil
     }
 
+    var hasPersistentApprovalResolutionError: Bool {
+        persistentApprovalResolutionError != nil
+    }
+
     var hasAttention: Bool {
-        hasNewPermissionNotice || fifoHeadInteraction?.isSelectionReady == true
+        hasNewPermissionNotice
+            || fifoHeadInteraction?.isSelectionReady == true
+            || hasPersistentApprovalResolutionError
     }
 
     var presentationState: PetPresentationState {
@@ -710,6 +737,13 @@ final class PetViewModel: ObservableObject {
         onPanelToggleRequested?()
     }
 
+    func acknowledgeApprovalResolutionError() {
+        guard persistentApprovalResolutionError != nil else { return }
+        persistentApprovalResolutionError = nil
+        lastError = nil
+        onAttentionChanged?(hasAttention)
+    }
+
     func refresh() async {
         guard !refreshInProgress else { return }
         refreshInProgress = true
@@ -746,7 +780,7 @@ final class PetViewModel: ObservableObject {
         pendingFocusIdentity = identity
         riskConfirmation = nil
         updateHotKeyEligibility()
-        lastError = nil
+        lastError = persistentApprovalResolutionError
         do {
             let response = try await transport.request(
                 type: "focus_interaction",
@@ -850,13 +884,20 @@ final class PetViewModel: ObservableObject {
         updateHotKeyEligibility()
     }
 
-    func resolvePermissionRequest(_ decision: PetPermissionDecision) async {
+    func resolvePermissionRequest(
+        _ decision: PetPermissionDecision,
+        for displayedRequest: PetPermissionRequest
+    ) async {
         guard let request = pendingPermissionRequest,
+              request == displayedRequest,
+              request.requestID.utf8.elementsEqual(displayedRequest.requestID.utf8),
+              !request.deliveryPending,
               inFlightPermissionRequestID == nil
         else { return }
+        if decision == .allow, !request.allowOnceAvailable { return }
         inFlightPermissionRequestID = request.requestID
         updateHotKeyEligibility()
-        lastError = nil
+        lastError = persistentApprovalResolutionError
         do {
             let responseID = permissionResponseIDGenerator()
             let response = try await transport.request(
@@ -883,8 +924,12 @@ final class PetViewModel: ObservableObject {
                 lastError = "권한 요청 때 감지한 앱을 열 수 없습니다."
             }
         } catch {
-            lastError = String(describing: error)
+            let resolutionError = String(describing: error)
             await fetchAndApplySnapshot()
+            persistentApprovalResolutionError = resolutionError
+            lastError = resolutionError
+            onAttentionChanged?(hasAttention)
+            onApprovalResolutionFailed?()
         }
         inFlightPermissionRequestID = nil
         updateHotKeyEligibility()
@@ -899,13 +944,14 @@ final class PetViewModel: ObservableObject {
               request.managedRequestID.utf8.elementsEqual(
                   displayedRequest.managedRequestID.utf8
               ),
+              !request.deliveryPending,
               inFlightManagedCommandApprovalID == nil
         else { return }
         if decision == .acceptOnce, !request.allowOnceAvailable { return }
         if decision == .decline, !request.declineAvailable { return }
         inFlightManagedCommandApprovalID = request.managedRequestID
         updateHotKeyEligibility()
-        lastError = nil
+        lastError = persistentApprovalResolutionError
         do {
             let responseID = managedApprovalResponseIDGenerator()
             let response = try await transport.request(
@@ -932,8 +978,12 @@ final class PetViewModel: ObservableObject {
                 lastError = "관리형 권한 요청 때 감지한 앱을 열 수 없습니다."
             }
         } catch {
-            lastError = String(describing: error)
+            let resolutionError = String(describing: error)
             await fetchAndApplySnapshot()
+            persistentApprovalResolutionError = resolutionError
+            lastError = resolutionError
+            onAttentionChanged?(hasAttention)
+            onApprovalResolutionFailed?()
         }
         inFlightManagedCommandApprovalID = nil
         updateHotKeyEligibility()
@@ -951,11 +1001,12 @@ final class PetViewModel: ObservableObject {
             guard requestNumber >= lastAppliedSnapshotRequest else { return }
             lastAppliedSnapshotRequest = requestNumber
             apply(parsed)
-            lastError = nil
+            lastError = persistentApprovalResolutionError
             await focusFIFOHeadIfNeeded()
         } catch {
             guard requestNumber >= lastAppliedSnapshotRequest else { return }
             lastAppliedSnapshotRequest = requestNumber
+            let priorApprovalHeadIdentity = approvalHead?.identity
             snapshot = nil
             localForegroundIdentity = nil
             pendingFocusIdentity = nil
@@ -963,13 +1014,14 @@ final class PetViewModel: ObservableObject {
             lastError = String(describing: error)
             updateHotKeyEligibility()
             onAttentionChanged?(hasAttention)
+            if priorApprovalHeadIdentity != nil {
+                onApprovalHeadChanged?(nil)
+            }
         }
     }
 
     private func apply(_ newSnapshot: PetSnapshot) {
-        let priorPermissionHeadID = snapshot?.permissionRequests.first?.requestID
-        let priorManagedApprovalHeadID = snapshot?.managedCommandApprovals.first?
-            .managedRequestID
+        let priorApprovalHeadIdentity = approvalHead?.identity
         let priorLocalForeground = localForegroundIdentity
         let priorHead = fifoHeadInteraction
         let priorReadyHeadIdentity = priorHead?.isSelectionReady == true
@@ -989,34 +1041,29 @@ final class PetViewModel: ObservableObject {
         permissionReturnApplications = permissionReturnApplications.filter {
             activePermissionRequestIDs.contains($0.key)
         }
-        let currentPermissionHeadID = newSnapshot.permissionRequests.first?.requestID
-        if let currentPermissionHeadID,
-           currentPermissionHeadID != priorPermissionHeadID,
-           permissionReturnApplications[currentPermissionHeadID] == nil,
-           let application = externalApplicationOpener
-               .captureFrontmostExternalApplication(
-                   excludingProcessIdentifier: processIdentifier
-               )
-        {
-            permissionReturnApplications[currentPermissionHeadID] = application
-        }
         let activeManagedApprovalIDs = Set(
             newSnapshot.managedCommandApprovals.map(\.managedRequestID)
         )
         managedApprovalReturnApplications = managedApprovalReturnApplications.filter {
             activeManagedApprovalIDs.contains($0.key)
         }
-        let currentManagedApprovalHeadID = newSnapshot.managedCommandApprovals.first?
-            .managedRequestID
-        if let currentManagedApprovalHeadID,
-           currentManagedApprovalHeadID != priorManagedApprovalHeadID,
-           managedApprovalReturnApplications[currentManagedApprovalHeadID] == nil,
-           let application = externalApplicationOpener
-               .captureFrontmostExternalApplication(
-                   excludingProcessIdentifier: processIdentifier
-               )
+        let currentApprovalHead = approvalHead
+        if currentApprovalHead?.identity != priorApprovalHeadIdentity,
+           let currentApprovalHead,
+           let application = externalApplicationOpener.captureFrontmostExternalApplication(
+               excludingProcessIdentifier: processIdentifier
+           )
         {
-            managedApprovalReturnApplications[currentManagedApprovalHeadID] = application
+            switch currentApprovalHead {
+            case .permission(let request):
+                if permissionReturnApplications[request.requestID] == nil {
+                    permissionReturnApplications[request.requestID] = application
+                }
+            case .managed(let request):
+                if managedApprovalReturnApplications[request.managedRequestID] == nil {
+                    managedApprovalReturnApplications[request.managedRequestID] = application
+                }
+            }
         }
 
         let authoritative = newSnapshot.routing.foreground
@@ -1079,12 +1126,10 @@ final class PetViewModel: ObservableObject {
             : nil
         let receivedReminder = currentReminderHeadIdentity != nil
             && currentReminderHeadIdentity != priorReminderHeadIdentity
-        let receivedManagedApproval = currentManagedApprovalHeadID != nil
-            && currentManagedApprovalHeadID != priorManagedApprovalHeadID
-        if currentPermissionHeadID != priorPermissionHeadID {
-            onPermissionRequestChanged?(newSnapshot.permissionRequests.first)
+        if currentApprovalHead?.identity != priorApprovalHeadIdentity {
+            onApprovalHeadChanged?(currentApprovalHead?.identity)
         }
-        if receivedManagedApproval || receivedNewDecision || receivedReminder {
+        if receivedNewDecision || receivedReminder {
             onAttentionEvent?()
         }
     }
@@ -1155,6 +1200,7 @@ final class PetViewModel: ObservableObject {
         guard inFlightSelectionIdentity == nil else { return }
         inFlightSelectionIdentity = key
         updateHotKeyEligibility()
+        lastError = persistentApprovalResolutionError
         do {
             let request = try PetSelectionRequest(
                 identity: current.identity,

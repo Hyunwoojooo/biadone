@@ -5,23 +5,39 @@ protocol PetCoordinatorTransport: Sendable {
     func request(type: String, payload: Data) async throws -> Data
 }
 
+enum PetTransportTimeoutPolicy {
+    static func responseTimeoutMilliseconds(
+        for requestType: String,
+        defaultTimeoutMilliseconds: Int32,
+        userDecisionTimeoutMilliseconds: Int32
+    ) -> Int32 {
+        switch requestType {
+        case "select", "resolve_permission_request",
+             "resolve_managed_command_approval":
+            userDecisionTimeoutMilliseconds
+        default:
+            defaultTimeoutMilliseconds
+        }
+    }
+}
+
 actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
     private let client: UnixDomainSocketClient
     private let connectTimeoutMilliseconds: Int32
     private let responseTimeoutMilliseconds: Int32
-    private let selectionResponseTimeoutMilliseconds: Int32
+    private let userDecisionResponseTimeoutMilliseconds: Int32
 
     init(
         socketPath: String,
         connectTimeoutMilliseconds: Int32 = 2_000,
         responseTimeoutMilliseconds: Int32 = 2_000,
-        selectionResponseTimeoutMilliseconds: Int32 = 12_000
+        userDecisionResponseTimeoutMilliseconds: Int32 = 12_000
     ) throws {
         let resolvedSocketPath = try OperationalSocketPath.resolve(explicitPath: socketPath)
         client = try UnixDomainSocketClient(socketPath: resolvedSocketPath)
         self.connectTimeoutMilliseconds = connectTimeoutMilliseconds
         self.responseTimeoutMilliseconds = responseTimeoutMilliseconds
-        self.selectionResponseTimeoutMilliseconds = selectionResponseTimeoutMilliseconds
+        self.userDecisionResponseTimeoutMilliseconds = userDecisionResponseTimeoutMilliseconds
     }
 
     func request(type: String, payload: Data) async throws -> Data {
@@ -33,9 +49,13 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
             type: type,
             payload: payloadObject,
             connectTimeoutMilliseconds: connectTimeoutMilliseconds,
-            responseTimeoutMilliseconds: type == "select"
-                ? selectionResponseTimeoutMilliseconds
-                : responseTimeoutMilliseconds
+            responseTimeoutMilliseconds: PetTransportTimeoutPolicy
+                .responseTimeoutMilliseconds(
+                    for: type,
+                    defaultTimeoutMilliseconds: responseTimeoutMilliseconds,
+                    userDecisionTimeoutMilliseconds:
+                        userDecisionResponseTimeoutMilliseconds
+                )
         )
         return try StrictJSONTransport.data(forJSONObject: result)
     }

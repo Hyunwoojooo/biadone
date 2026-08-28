@@ -155,6 +155,71 @@ private final class ManagedCodexCountingDecider: @unchecked Sendable,
     }
 }
 
+private final class ManagedCodexDeliveryTrackingDecider: @unchecked Sendable,
+    ManagedCodexApprovalDeliveryTracking
+{
+    private let lock = NSLock()
+    private var selections: [ManagedCodexApprovalSelection]
+    private var acknowledgedDeliveries: [ManagedCodexApprovalDelivery] = []
+    private let blockAcknowledgement: Bool
+    private let acknowledgementFailure: ManagedCodexTestError?
+    let acknowledgementStarted = DispatchSemaphore(value: 0)
+    let acknowledgementRelease = DispatchSemaphore(value: 0)
+
+    init(
+        _ selections: [ManagedCodexApprovalSelection],
+        blockAcknowledgement: Bool = false,
+        acknowledgementFailure: ManagedCodexTestError? = nil
+    ) {
+        self.selections = selections
+        self.blockAcknowledgement = blockAcknowledgement
+        self.acknowledgementFailure = acknowledgementFailure
+    }
+
+    func decision(
+        for request: CodexAppServerCommandApprovalRequest,
+        context: ManagedCodexConnectionContext,
+        cancellation: ManagedCodexApprovalCancellation
+    ) throws -> CodexAppServerApprovalDecision {
+        try selection(
+            for: request,
+            context: context,
+            cancellation: cancellation
+        ).decision
+    }
+
+    func selection(
+        for request: CodexAppServerCommandApprovalRequest,
+        context: ManagedCodexConnectionContext,
+        cancellation: ManagedCodexApprovalCancellation
+    ) throws -> ManagedCodexApprovalSelection {
+        try cancellation.check()
+        lock.lock()
+        defer { lock.unlock() }
+        guard !selections.isEmpty else {
+            throw ManagedCodexTestError.failed("selection")
+        }
+        return selections.removeFirst()
+    }
+
+    func acknowledgeDelivery(_ delivery: ManagedCodexApprovalDelivery) throws {
+        lock.lock()
+        acknowledgedDeliveries.append(delivery)
+        lock.unlock()
+        acknowledgementStarted.signal()
+        if blockAcknowledgement {
+            _ = acknowledgementRelease.wait(timeout: .now() + .seconds(2))
+        }
+        if let acknowledgementFailure { throw acknowledgementFailure }
+    }
+
+    var acknowledgements: [ManagedCodexApprovalDelivery] {
+        lock.lock()
+        defer { lock.unlock() }
+        return acknowledgedDeliveries
+    }
+}
+
 private final class ManagedCodexBridgeTestResult: @unchecked Sendable {
     private let lock = NSLock()
     private var storedError: Error?
@@ -478,6 +543,119 @@ func managedCodexCoordinatorPayloadPreservesBinding() throws {
     #expect(livePayload["decline_available"] as? Bool == true)
 }
 
+@Test("Managed delivery ack payload carries token and exact transport binding")
+func managedCodexDeliveryPayloadPreservesBinding() throws {
+    let request = try CodexAppServerApprovalAdapter.parse(
+        try managedCodexApprovalData(id: Int64.max, approvalID: nil)
+    )
+    let payload = ManagedCodexApprovalCoordinatorClient.deliveryPayload(
+        for: ManagedCodexApprovalDelivery(
+            token: "managed_delivery_01",
+            request: request,
+            context: ManagedCodexConnectionContext(
+                brokerEpoch: "epoch-delivery",
+                connectionID: "connection-delivery"
+            )
+        )
+    )
+    #expect(Set(payload.keys) == [
+        "schema_version", "kind", "broker_epoch", "connection_id",
+        "jsonrpc_request_id", "thread_id", "turn_id", "item_id",
+        "approval_id", "environment_id", "delivery_token",
+    ])
+    #expect(payload["schema_version"] as? String == "1.0")
+    #expect(
+        payload["kind"] as? String
+            == "blabee_managed_command_approval_delivery_ack"
+    )
+    #expect(payload["broker_epoch"] as? String == "epoch-delivery")
+    #expect(payload["connection_id"] as? String == "connection-delivery")
+    #expect(payload["thread_id"] as? String == "thread-1")
+    #expect(payload["turn_id"] as? String == "turn-1")
+    #expect(payload["item_id"] as? String == "item-1")
+    #expect(payload["approval_id"] is NSNull)
+    #expect(payload["environment_id"] is NSNull)
+    #expect(payload["delivery_token"] as? String == "managed_delivery_01")
+    let requestID = try #require(payload["jsonrpc_request_id"] as? [String: Any])
+    #expect(requestID["type"] as? String == "integer")
+    #expect((requestID["value"] as? NSNumber)?.int64Value == Int64.max)
+}
+
+@Test("Managed delivery token accepts only the narrow canonical identifier alphabet")
+func managedCodexDeliveryTokenIsStrictlyCanonical() throws {
+    let selection = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+        "decision": "accept_once",
+        "delivery_token": "managed_approval_delivery_01-ABC",
+    ])
+    #expect(selection == ManagedCodexApprovalSelection(
+        decision: .allowOnce,
+        deliveryToken: "managed_approval_delivery_01-ABC"
+    ))
+
+    for invalidToken in [
+        "",
+        "too-short",
+        "delivery token",
+        "delivery/token",
+        "delivery.token.that.is.long.enough",
+        "delivery:token:that:is:long:enough",
+        "delivery\n01",
+        "delivery\u{202E}01",
+        String(repeating: "a", count: 513),
+    ] {
+        #expect(throws: ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse) {
+            _ = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+                "decision": "accept_once",
+                "delivery_token": invalidToken,
+            ])
+        }
+    }
+    #expect(throws: ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse) {
+        _ = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+            "decision": "accept_once",
+            "delivery_token": "delivery_01",
+            "unexpected": true,
+        ])
+    }
+}
+
+@Test("Managed synthetic allow and deny require a delivery token")
+func managedCodexSyntheticDecisionsRequireDeliveryToken() throws {
+    for decision in ["accept_once", "decline"] {
+        #expect(throws: ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse) {
+            _ = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+                "decision": decision,
+            ])
+        }
+    }
+
+    let decline = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+        "decision": "decline",
+        "delivery_token": "managed_decline_delivery_01",
+    ])
+    #expect(decline == ManagedCodexApprovalSelection(
+        decision: .deny,
+        deliveryToken: "managed_decline_delivery_01"
+    ))
+
+    let nativeFallback = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+        "decision": "decide_in_codex",
+    ])
+    #expect(nativeFallback == ManagedCodexApprovalSelection(
+        decision: .decideInCodex,
+        deliveryToken: nil
+    ))
+
+    let selectedNativeFallback = try ManagedCodexApprovalCoordinatorClient.selection(from: [
+        "decision": "decide_in_codex",
+        "delivery_token": "managed_native_delivery_01",
+    ])
+    #expect(selectedNativeFallback == ManagedCodexApprovalSelection(
+        decision: .decideInCodex,
+        deliveryToken: "managed_native_delivery_01"
+    ))
+}
+
 @Test("Managed WebSocket handshake follows RFC example and requires bearer token")
 func managedCodexWebSocketHandshakeIsAuthenticated() throws {
     let request = Data((
@@ -748,6 +926,159 @@ func managedCodexWebSocketWriteDeadlineBoundsAStalledPeer() throws {
     #expect(elapsedMilliseconds < 300)
     _ = shutdown(descriptors[0], SHUT_RDWR)
     _ = shutdown(descriptors[1], SHUT_RDWR)
+}
+
+@Test("Managed App Server delivery is acknowledged once after response bytes are written")
+func managedCodexAppServerDeliveryAckFollowsWrite() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider(
+        [ManagedCodexApprovalSelection(
+            decision: .allowOnce,
+            deliveryToken: "delivery_app_server_1"
+        )],
+        blockAcknowledgement: true
+    )
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.acknowledgementRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    try harness.sendFromAppServer(
+        try managedCodexApprovalData(id: "delivery-app-server")
+    )
+
+    #expect(
+        decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1))
+            == .success
+    )
+    var readable = pollfd(
+        fd: harness.appServerResponseDescriptor,
+        events: Int16(POLLIN),
+        revents: 0
+    )
+    #expect(Darwin.poll(&readable, 1, 0) == 1)
+    let response = try managedCodexTestReadLine(
+        descriptor: harness.appServerResponseDescriptor
+    )
+    #expect(try managedCodexResponseID(response) == "delivery-app-server")
+    let acknowledgements = decider.acknowledgements
+    #expect(acknowledgements.count == 1)
+    #expect(acknowledgements.first?.token == "delivery_app_server_1")
+    #expect(acknowledgements.first?.context.brokerEpoch == "epoch-harness")
+    #expect(acknowledgements.first?.context.connectionID.isEmpty == false)
+    #expect(
+        acknowledgements.first?.request.requestID
+            == .string("delivery-app-server")
+    )
+}
+
+@Test("Managed Codex delivery is acknowledged once after the exact request is sent")
+func managedCodexDirectDeliveryAckFollowsWrite() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider(
+        [ManagedCodexApprovalSelection(
+            decision: .decideInCodex,
+            deliveryToken: "delivery_codex_1"
+        )],
+        blockAcknowledgement: true
+    )
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer {
+        decider.acknowledgementRelease.signal()
+        harness.close()
+    }
+    harness.start()
+    let request = try managedCodexApprovalData(id: "delivery-codex")
+    try harness.sendFromAppServer(request)
+
+    #expect(
+        decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1))
+            == .success
+    )
+    #expect(try managedCodexTestReadServerText(descriptor: harness.client) == request)
+    #expect(decider.acknowledgements.count == 1)
+    #expect(decider.acknowledgements.first?.token == "delivery_codex_1")
+}
+
+@Test("Managed delivery write failure sends no success acknowledgement")
+func managedCodexFailedWriteDoesNotAckDelivery() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(
+            decision: .allowOnce,
+            deliveryToken: "delivery_failed_write_1"
+        ),
+    ])
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer { harness.close() }
+    harness.start()
+    harness.closeAppServerResponseReader()
+    try harness.sendFromAppServer(
+        try managedCodexApprovalData(id: "delivery-write-failure")
+    )
+
+    #expect(harness.finished.wait(timeout: .now() + .seconds(2)) == .success)
+    #expect(decider.acknowledgements.isEmpty)
+    #expect(String(describing: harness.result.error).contains(
+        "managed_codex_app_server_closed"
+    ))
+}
+
+@Test("Native-only approval forwarding never creates a delivery acknowledgement")
+func managedCodexNativeOnlyApprovalDoesNotAckDelivery() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider([
+        ManagedCodexApprovalSelection(
+            decision: .allowOnce,
+            deliveryToken: "delivery_must_not_be_used"
+        ),
+    ])
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer { harness.close() }
+    harness.start()
+    let unsupported = try managedCodexApprovalData(
+        id: "delivery-native-only",
+        hasHiddenPermissions: true
+    )
+    try harness.sendFromAppServer(unsupported)
+
+    #expect(
+        try managedCodexTestReadServerText(descriptor: harness.client)
+            == unsupported
+    )
+    #expect(decider.acknowledgements.isEmpty)
+}
+
+@Test("Delivery acknowledgement failure does not stop a healthy Codex bridge")
+func managedCodexDeliveryAckFailureKeepsBridgeAlive() throws {
+    let decider = ManagedCodexDeliveryTrackingDecider(
+        [ManagedCodexApprovalSelection(
+            decision: .allowOnce,
+            deliveryToken: "delivery_ack_failure_1"
+        )],
+        acknowledgementFailure: .failed("ack")
+    )
+    let harness = try ManagedCodexBridgeHarness(decider: decider)
+    defer { harness.close() }
+    harness.start()
+    try harness.sendFromAppServer(
+        try managedCodexApprovalData(id: "delivery-ack-failure")
+    )
+    _ = try managedCodexTestReadLine(
+        descriptor: harness.appServerResponseDescriptor
+    )
+    #expect(
+        decider.acknowledgementStarted.wait(timeout: .now() + .seconds(1))
+            == .success
+    )
+
+    let notification = Data(
+        #"{"method":"thread/started","params":{"threadId":"still-live"}}"#.utf8
+    )
+    try harness.sendFromAppServer(notification)
+    #expect(
+        try managedCodexTestReadServerText(descriptor: harness.client)
+            == notification
+    )
+    #expect(decider.acknowledgements.count == 1)
+    #expect(harness.result.error == nil)
 }
 
 @Test("Managed approval admission fails open immediately when the bounded backlog is full")

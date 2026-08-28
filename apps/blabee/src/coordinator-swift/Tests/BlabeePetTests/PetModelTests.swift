@@ -21,6 +21,9 @@ func blabeePetStrictModelParsing() throws {
     #expect(snapshot.permissionRequests.count == 1)
     #expect(snapshot.permissionRequests[0].toolName == "Bash")
     #expect(snapshot.permissionRequests[0].commandPreview == "npm test")
+    #expect(snapshot.permissionRequests[0].arrivalSequence == 1)
+    #expect(snapshot.permissionRequests[0].allowOnceAvailable)
+    #expect(!snapshot.permissionRequests[0].deliveryPending)
     #expect(PetPermissionRequest.maximumCommandScalars == 120)
 
     var unknownTopLevel = petTestSnapshotObject(cards: [PetTestCard(suffix: "unknown")])
@@ -53,7 +56,8 @@ func blabeePetPermissionRequestParsing() throws {
         suffix: "permission_b",
         toolName: "mcp__server__tool",
         requestDescription: nil,
-        commandPreview: "safe command"
+        commandPreview: "safe command",
+        deliveryPending: true
     )
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
         cards: [],
@@ -64,8 +68,9 @@ func blabeePetPermissionRequestParsing() throws {
         "permission_permission_a", "permission_permission_b",
     ])
     #expect(snapshot.permissionRequests[1].displaySummary == "safe command")
+    #expect(snapshot.permissionRequests[1].deliveryPending)
     #expect(PetPermissionDecision.allCases.map(\.displayTitle) == [
-        "거절", "Codex에서 직접 결정",
+        "이번만 허용", "거절", "Codex에서 직접 결정",
     ])
 
     var mismatched = petTestSnapshotObject(
@@ -92,6 +97,36 @@ func blabeePetPermissionRequestParsing() throws {
     missingCommand["permission_requests"] = commandlessRequests
     #expect(throws: (any Error).self) {
         _ = try PetSnapshot.parse(petTestData(missingCommand))
+    }
+
+    for missingField in [
+        "arrival_sequence", "allow_once_available", "delivery_pending",
+    ] {
+        var missing = petTestSnapshotObject(
+            cards: [],
+            permissionRequests: [first]
+        )
+        var missingFieldRequests = try #require(
+            missing["permission_requests"] as? [[String: Any]]
+        )
+        missingFieldRequests[0].removeValue(forKey: missingField)
+        missing["permission_requests"] = missingFieldRequests
+        #expect(throws: (any Error).self) {
+            _ = try PetSnapshot.parse(petTestData(missing))
+        }
+    }
+
+    var invalidDeliveryPending = petTestSnapshotObject(
+        cards: [],
+        permissionRequests: [first]
+    )
+    var invalidDeliveryPendingRequests = try #require(
+        invalidDeliveryPending["permission_requests"] as? [[String: Any]]
+    )
+    invalidDeliveryPendingRequests[0]["delivery_pending"] = 0
+    invalidDeliveryPending["permission_requests"] = invalidDeliveryPendingRequests
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(invalidDeliveryPending))
     }
 
     for unsafeCommand in [
@@ -124,7 +159,8 @@ func blabeePetManagedCommandApprovalParsing() throws {
         suffix: "managed_second",
         jsonRPCRequestID: .integer(Int64.max),
         approvalID: nil,
-        allowOnceAvailable: false
+        allowOnceAvailable: false,
+        deliveryPending: true
     )
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
         cards: [],
@@ -142,7 +178,9 @@ func blabeePetManagedCommandApprovalParsing() throws {
         == .integer(Int64.max))
     #expect(snapshot.managedCommandApprovals[1].approvalID == nil)
     #expect(snapshot.managedCommandApprovals[0].environmentID == "local")
+    #expect(snapshot.managedCommandApprovals[0].arrivalSequence == 1)
     #expect(!snapshot.managedCommandApprovals[1].allowOnceAvailable)
+    #expect(snapshot.managedCommandApprovals[1].deliveryPending)
     #expect(PetManagedCommandApprovalDecision.allCases.map(\.displayTitle) == [
         "이번만 허용", "거절", "Codex에서 직접 결정",
     ])
@@ -160,6 +198,84 @@ func blabeePetManagedCommandApprovalParsing() throws {
     unsafe["managed_command_approvals"] = approvals
     #expect(throws: (any Error).self) {
         _ = try PetSnapshot.parse(petTestData(unsafe))
+    }
+
+    for missingField in ["arrival_sequence", "delivery_pending"] {
+        var missing = petTestSnapshotObject(
+            cards: [],
+            managedCommandApprovals: [first]
+        )
+        var missingFieldApprovals = try #require(
+            missing["managed_command_approvals"] as? [[String: Any]]
+        )
+        missingFieldApprovals[0].removeValue(forKey: missingField)
+        missing["managed_command_approvals"] = missingFieldApprovals
+        #expect(throws: (any Error).self) {
+            _ = try PetSnapshot.parse(petTestData(missing))
+        }
+    }
+
+    var invalidDeliveryPending = petTestSnapshotObject(
+        cards: [],
+        managedCommandApprovals: [first]
+    )
+    var invalidDeliveryPendingApprovals = try #require(
+        invalidDeliveryPending["managed_command_approvals"] as? [[String: Any]]
+    )
+    invalidDeliveryPendingApprovals[0]["delivery_pending"] = "false"
+    invalidDeliveryPending["managed_command_approvals"] = invalidDeliveryPendingApprovals
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(invalidDeliveryPending))
+    }
+}
+
+@Test("BlabeePet chooses one global approval head by arrival sequence")
+func blabeePetGlobalApprovalHeadOrdering() throws {
+    let hookFirst = try PetSnapshot.parse(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "hook_first",
+            arrivalSequence: 11
+        )],
+        managedCommandApprovals: [PetTestManagedCommandApproval(
+            suffix: "managed_second",
+            arrivalSequence: 12
+        )]
+    ))
+    #expect(PetApprovalHead.first(
+        permissionRequests: hookFirst.permissionRequests,
+        managedCommandApprovals: hookFirst.managedCommandApprovals
+    )?.identity == .permission(requestID: "permission_hook_first"))
+
+    let managedFirst = try PetSnapshot.parse(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "hook_second",
+            arrivalSequence: 22
+        )],
+        managedCommandApprovals: [PetTestManagedCommandApproval(
+            suffix: "managed_first",
+            arrivalSequence: 21
+        )]
+    ))
+    #expect(PetApprovalHead.first(
+        permissionRequests: managedFirst.permissionRequests,
+        managedCommandApprovals: managedFirst.managedCommandApprovals
+    )?.identity == .managed(managedRequestID: "managed_request_managed_first"))
+
+    let duplicated = petTestSnapshotObject(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "duplicate_hook",
+            arrivalSequence: 31
+        )],
+        managedCommandApprovals: [PetTestManagedCommandApproval(
+            suffix: "duplicate_managed",
+            arrivalSequence: 31
+        )]
+    )
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(duplicated))
     }
 }
 

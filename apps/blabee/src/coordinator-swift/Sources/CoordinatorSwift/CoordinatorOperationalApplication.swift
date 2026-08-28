@@ -66,12 +66,16 @@ public actor CoordinatorOperationalApplication {
     private static let maximumQueuedActionJSONBytes = 60_000
     private static let maximumUserPromptAdditionalContextBytes = 65_536
     private static let maximumPermissionRequestWaitNanoseconds: UInt64 = 50_000_000_000
+    private static let maximumPermissionRequestDeliveryWaitNanoseconds: UInt64 =
+        10_000_000_000
     private static let maximumPendingPermissionRequestLimit = 8
     private static let maximumResolvedPermissionTombstones = 64
     private static let maximumManagedCommandApprovalWaitNanoseconds =
         ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds
     private static let maximumPendingManagedCommandApprovalLimit = 8
     private static let maximumResolvedManagedCommandApprovalTombstones = 64
+    private static let maximumManagedCommandApprovalDeliveryWaitNanoseconds: UInt64 =
+        10_000_000_000
     private static let maximumPermissionDescriptionScalars = 4_096
     // Relay only commands that the fixed Pet card can render in full. Longer
     // or visually ambiguous commands fall back to Codex's native approval UI.
@@ -194,6 +198,7 @@ public actor CoordinatorOperationalApplication {
 
     private struct PendingPermissionRequest {
         let requestID: String
+        let arrivalSequence: Int64
         let projectID: String
         let sessionID: String
         let turnID: String
@@ -201,12 +206,15 @@ public actor CoordinatorOperationalApplication {
         let toolName: String
         let description: String?
         let commandPreview: String?
+        let allowOnceAvailable: Bool
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
+        var deliveryToken: String?
 
         var snapshotObject: [String: Any] {
             [
                 "request_id": requestID,
+                "arrival_sequence": arrivalSequence,
                 "project_id": projectID,
                 "session_id": sessionID,
                 "turn_id": turnID,
@@ -214,6 +222,8 @@ public actor CoordinatorOperationalApplication {
                 "tool_name": toolName,
                 "description": description as Any? ?? NSNull(),
                 "command_preview": commandPreview as Any? ?? NSNull(),
+                "allow_once_available": allowOnceAvailable,
+                "delivery_pending": deliveryToken != nil,
             ]
         }
     }
@@ -225,6 +235,7 @@ public actor CoordinatorOperationalApplication {
         let sessionID: String
         let turnID: String
         let decision: String
+        let deliveryToken: String
 
         func matches(
             responseID: String,
@@ -239,6 +250,18 @@ public actor CoordinatorOperationalApplication {
                 && CoordinatorOperationalApplication.byteExact(self.turnID, turnID)
                 && CoordinatorOperationalApplication.byteExact(self.decision, decision)
         }
+    }
+
+    private struct PendingPermissionRequestDelivery {
+        let requestID: String
+        let responseID: String
+        let projectID: String
+        let sessionID: String
+        let turnID: String
+        let decision: String
+        let deliveryToken: String
+        let continuation: CheckedContinuation<Data, any Error>
+        let timeoutTask: Task<Void, Never>
     }
 
     private enum ManagedJSONRPCRequestID: Equatable {
@@ -295,13 +318,17 @@ public actor CoordinatorOperationalApplication {
 
     private struct PendingManagedCommandApproval {
         let managedRequestID: String
+        let arrivalSequence: Int64
         let binding: ManagedCommandApprovalBinding
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
+        var deliveryToken: String?
 
         var snapshotObject: [String: Any] {
             var result = binding.snapshotObject
             result["managed_request_id"] = managedRequestID
+            result["arrival_sequence"] = arrivalSequence
+            result["delivery_pending"] = deliveryToken != nil
             return result
         }
     }
@@ -311,6 +338,7 @@ public actor CoordinatorOperationalApplication {
         let responseID: String
         let binding: ManagedCommandApprovalBinding
         let decision: String
+        let deliveryToken: String
 
         func matches(
             responseID: String,
@@ -323,6 +351,16 @@ public actor CoordinatorOperationalApplication {
         }
     }
 
+    private struct PendingManagedCommandApprovalDelivery {
+        let managedRequestID: String
+        let responseID: String
+        let binding: ManagedCommandApprovalBinding
+        let decision: String
+        let deliveryToken: String
+        let continuation: CheckedContinuation<Data, any Error>
+        let timeoutTask: Task<Void, Never>
+    }
+
     private let routing: CoordinatorRoutingApplication
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
@@ -331,8 +369,10 @@ public actor CoordinatorOperationalApplication {
     private let stopObservationHMACKey: Data
     private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
     private let permissionRequestTimeoutNanoseconds: UInt64
+    private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingPermissionRequests: Int
     private let managedCommandApprovalTimeoutNanoseconds: UInt64
+    private let managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingManagedCommandApprovals: Int
 
     private var projects: [String: Project] = [:]
@@ -352,10 +392,15 @@ public actor CoordinatorOperationalApplication {
     ] = [:]
     private var generation: UInt64 = 0
     private var permissionNoticeCount: UInt64 = 0
+    private var approvalAdmissionSequence: Int64
     private var pendingPermissionRequests: [PendingPermissionRequest] = []
+    private var pendingPermissionRequestDeliveries: [PendingPermissionRequestDelivery] = []
     private var resolvedPermissionRequests: [ResolvedPermissionRequest] = []
     private var managedCommandApprovalNoticeCount: UInt64 = 0
     private var pendingManagedCommandApprovals: [PendingManagedCommandApproval] = []
+    private var pendingManagedCommandApprovalDeliveries: [
+        PendingManagedCommandApprovalDelivery
+    ] = []
     private var resolvedManagedCommandApprovals: [ResolvedManagedCommandApproval] = []
     private var consecutiveReconciliationFailures = 0
     private var reconciliationRetryNotBeforeNanoseconds: UInt64?
@@ -371,10 +416,13 @@ public actor CoordinatorOperationalApplication {
         monotonicInstantGenerator: MonotonicInstantGenerator? = nil,
         stopObservationHMACKey: Data? = nil,
         nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil,
+        initialApprovalAdmissionSequence: Int64 = 0,
         permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
+        permissionRequestDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
         maximumPendingPermissionRequests: Int = 8,
         managedCommandApprovalTimeoutNanoseconds: UInt64 =
             ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds,
+        managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
         maximumPendingManagedCommandApprovals: Int = 8
     ) {
         let ids: IDGenerator = idGenerator ?? { purpose in
@@ -388,11 +436,19 @@ public actor CoordinatorOperationalApplication {
         self.nextTurnDispatcher = nextTurnDispatcher ?? { _ in
             throw CoordinatorError("next_turn_dispatcher_unavailable")
         }
+        self.approvalAdmissionSequence = max(0, initialApprovalAdmissionSequence)
         self.permissionRequestTimeoutNanoseconds = max(
             1,
             min(
                 permissionRequestTimeoutNanoseconds,
                 Self.maximumPermissionRequestWaitNanoseconds
+            )
+        )
+        self.permissionRequestDeliveryTimeoutNanoseconds = max(
+            1,
+            min(
+                permissionRequestDeliveryTimeoutNanoseconds,
+                Self.maximumPermissionRequestDeliveryWaitNanoseconds
             )
         )
         self.maximumPendingPermissionRequests = max(
@@ -407,6 +463,13 @@ public actor CoordinatorOperationalApplication {
             min(
                 managedCommandApprovalTimeoutNanoseconds,
                 Self.maximumManagedCommandApprovalWaitNanoseconds
+            )
+        )
+        self.managedCommandApprovalDeliveryTimeoutNanoseconds = max(
+            1,
+            min(
+                managedCommandApprovalDeliveryTimeoutNanoseconds,
+                Self.maximumManagedCommandApprovalDeliveryWaitNanoseconds
             )
         )
         self.maximumPendingManagedCommandApprovals = max(
@@ -469,11 +532,15 @@ public actor CoordinatorOperationalApplication {
         case "permission_request":
             return try await permissionRequest(payload)
         case "resolve_permission_request":
-            return try resolvePermissionRequest(payload)
+            return try await resolvePermissionRequest(payload)
+        case "ack_permission_request_delivery":
+            return try acknowledgePermissionRequestDelivery(payload)
         case "managed_command_approval":
             return try await managedCommandApproval(payload)
         case "resolve_managed_command_approval":
-            return try resolveManagedCommandApproval(payload)
+            return try await resolveManagedCommandApproval(payload)
+        case "ack_managed_command_approval_delivery":
+            return try acknowledgeManagedCommandApprovalDelivery(payload)
         case "pet_snapshot", "get_state":
             return try stateSnapshot()
         default:
@@ -1127,6 +1194,15 @@ private extension CoordinatorOperationalApplication {
             )
         }
 
+        // A fresh human turn supersedes any unanswered Hook approval from an
+        // older turn in the same session. Resume those Hook calls without a
+        // decision so Codex can return to its native approval surface instead
+        // of leaving stale Pet cards attached to the new turn.
+        expireSupersededPermissionRequests(
+            sessionID: sessionID,
+            currentTurnID: turnID
+        )
+
         let promptID = try identifier(idGenerator("prompt"), "source_prompt_id")
         let episode = Episode(
             episodeID: try identifier(idGenerator("episode"), "episode_id"),
@@ -1338,20 +1414,45 @@ private extension CoordinatorOperationalApplication {
 
     func permissionRequest(_ data: Data) async throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
+        let requiredKeys: Set<String> = [
+            "session_id", "turn_id", "cwd", "hook_event_name",
+            "permission_mode", "tool_name", "tool_input",
+        ]
+        let allowedKeys = requiredKeys.union(["transcript_path", "model"])
         try require(
-            payload["hook_event_name"] as? String == "PermissionRequest",
+            requiredKeys.isSubset(of: Set(payload.keys))
+                && Set(payload.keys).isSubset(of: allowedKeys),
             "permission_request_invalid"
+        )
+        try require(
+            payload["hook_event_name"] as? String == "PermissionRequest"
+                && payload["permission_mode"] as? String == "default"
+                && payload["tool_name"] as? String == "Bash",
+            "permission_request_invalid"
+        )
+        try validateOptionalPermissionMetadata(
+            payload["transcript_path"],
+            maximumScalars: 4_096,
+            code: "permission_request_transcript_path_invalid"
+        )
+        try validateOptionalPermissionMetadata(
+            payload["model"],
+            maximumScalars: 512,
+            code: "permission_request_model_invalid"
         )
         let sessionID = try identifier(string(payload, "session_id"), "session_id")
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
         let cwd = try Self.normalizedPermissionPath(string(payload, "cwd"))
-        let toolName = try boundedPermissionIdentifier(
-            string(payload, "tool_name"),
-            code: "permission_request_tool_name_invalid"
-        )
+        let toolName = "Bash"
         guard let toolInput = payload["tool_input"] as? [String: Any] else {
             throw CoordinatorError("permission_request_tool_input_invalid")
         }
+        let toolInputKeys = Set(toolInput.keys)
+        try require(
+            toolInputKeys == ["command"]
+                || toolInputKeys == ["command", "description"],
+            "permission_request_tool_input_invalid"
+        )
         let description = try permissionDisplayString(
             toolInput["description"],
             maximumScalars: Self.maximumPermissionDescriptionScalars,
@@ -1387,30 +1488,50 @@ private extension CoordinatorOperationalApplication {
             "permission_request_id_conflict"
         )
         permissionNoticeCount = try nextGeneration(permissionNoticeCount)
+        try require(
+            approvalAdmissionSequence < Int64.max,
+            "approval_admission_sequence_exhausted"
+        )
+        approvalAdmissionSequence += 1
+        let arrivalSequence = approvalAdmissionSequence
 
         let timeoutNanoseconds = permissionRequestTimeoutNanoseconds
-        return try await withCheckedThrowingContinuation { continuation in
-            let timeoutTask = Task.detached(priority: .utility) { [weak self] in
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
-                guard !Task.isCancelled else { return }
-                await self?.expirePermissionRequest(requestID: requestID)
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let timeoutTask = Task.detached(priority: .utility) { [weak self] in
+                    try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    await self?.expirePermissionRequest(requestID: requestID)
+                }
+                pendingPermissionRequests.append(PendingPermissionRequest(
+                    requestID: requestID,
+                    arrivalSequence: arrivalSequence,
+                    projectID: session.projectID,
+                    sessionID: sessionID,
+                    turnID: turnID,
+                    cwd: cwd,
+                    toolName: toolName,
+                    description: description,
+                    commandPreview: commandPreview,
+                    allowOnceAvailable: true,
+                    continuation: continuation,
+                    timeoutTask: timeoutTask,
+                    deliveryToken: nil
+                ))
             }
-            pendingPermissionRequests.append(PendingPermissionRequest(
-                requestID: requestID,
-                projectID: session.projectID,
-                sessionID: sessionID,
-                turnID: turnID,
-                cwd: cwd,
-                toolName: toolName,
-                description: description,
-                commandPreview: commandPreview,
-                continuation: continuation,
-                timeoutTask: timeoutTask
-            ))
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPermissionRequest(requestID: requestID)
+            }
         }
     }
 
-    func resolvePermissionRequest(_ data: Data) throws -> Data {
+    func resolvePermissionRequest(_ data: Data) async throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
         try exactKeys(
             payload,
@@ -1431,7 +1552,7 @@ private extension CoordinatorOperationalApplication {
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
         let decision = try string(payload, "decision")
         try require(
-            ["deny", "defer_to_codex"].contains(decision),
+            ["allow", "deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         if let resolved = resolvedPermissionRequests.first(where: {
@@ -1453,6 +1574,13 @@ private extension CoordinatorOperationalApplication {
             )
         }
         try require(
+            !pendingPermissionRequestDeliveries.contains(where: {
+                Self.byteExact($0.requestID, requestID)
+                    || Self.byteExact($0.responseID, responseID)
+            }),
+            "permission_resolution_in_progress"
+        )
+        try require(
             !resolvedPermissionRequests.contains(where: {
                 Self.byteExact($0.responseID, responseID)
             }),
@@ -1463,6 +1591,16 @@ private extension CoordinatorOperationalApplication {
         }
         guard Self.byteExact(head.requestID, requestID) else {
             throw CoordinatorError("permission_request_not_head")
+        }
+        try require(
+            isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
+            "permission_request_not_global_head"
+        )
+        if decision == "allow" {
+            try require(
+                head.allowOnceAvailable,
+                "permission_request_decision_unavailable"
+            )
         }
         try byteExactRequire(head.projectID, projectID, "permission_request_binding_mismatch")
         try byteExactRequire(head.sessionID, sessionID, "permission_request_binding_mismatch")
@@ -1480,35 +1618,73 @@ private extension CoordinatorOperationalApplication {
             throw CoordinatorError("permission_request_binding_invalid")
         }
 
-        let hookResponse = try permissionHookResponse(decision: decision)
-        pendingPermissionRequests.removeFirst()
-        head.timeoutTask.cancel()
-        head.continuation.resume(returning: hookResponse)
-        resolvedPermissionRequests.append(ResolvedPermissionRequest(
+        let deliveryToken = try permissionRequestDeliveryToken(
+            idGenerator("permission_request_delivery")
+        )
+        try require(
+            !pendingPermissionRequestDeliveries.contains(where: {
+                Self.byteExact($0.deliveryToken, deliveryToken)
+            }) && !resolvedPermissionRequests.contains(where: {
+                Self.byteExact($0.deliveryToken, deliveryToken)
+            }),
+            "permission_request_delivery_token_conflict"
+        )
+        let hookResponse = try permissionHookDeliveryResponse(
+            decision: decision,
             requestID: requestID,
-            responseID: responseID,
-            projectID: projectID,
             sessionID: sessionID,
             turnID: turnID,
-            decision: decision
-        ))
-        if resolvedPermissionRequests.count > Self.maximumResolvedPermissionTombstones {
-            resolvedPermissionRequests.removeFirst(
-                resolvedPermissionRequests.count - Self.maximumResolvedPermissionTombstones
-            )
-        }
-        return try permissionResolutionReceipt(
-            requestID: requestID,
-            responseID: responseID,
-            decision: decision
+            deliveryToken: deliveryToken
         )
+        let deliveryTimeoutNanoseconds = permissionRequestDeliveryTimeoutNanoseconds
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let timeoutTask = Task.detached(priority: .utility) { [weak self] in
+                    try? await Task.sleep(nanoseconds: deliveryTimeoutNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    await self?.expirePermissionRequestDelivery(
+                        deliveryToken: deliveryToken
+                    )
+                }
+                pendingPermissionRequestDeliveries.append(
+                    PendingPermissionRequestDelivery(
+                        requestID: requestID,
+                        responseID: responseID,
+                        projectID: projectID,
+                        sessionID: sessionID,
+                        turnID: turnID,
+                        decision: decision,
+                        deliveryToken: deliveryToken,
+                        continuation: continuation,
+                        timeoutTask: timeoutTask
+                    )
+                )
+                head.timeoutTask.cancel()
+                pendingPermissionRequests[0].deliveryToken = deliveryToken
+                head.continuation.resume(returning: hookResponse)
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPermissionResolutionBeforeDeliveryExposure(
+                    requestID: requestID,
+                    deliveryToken: deliveryToken
+                )
+            }
+        }
     }
 
     func expirePermissionRequest(requestID: String) {
         guard let index = pendingPermissionRequests.firstIndex(where: {
             Self.byteExact($0.requestID, requestID)
-        }) else { return }
+        }), pendingPermissionRequests[index].deliveryToken == nil
+        else { return }
         let request = pendingPermissionRequests.remove(at: index)
+        request.timeoutTask.cancel()
         do {
             request.continuation.resume(
                 returning: try permissionHookResponse(decision: "defer_to_codex")
@@ -1518,12 +1694,233 @@ private extension CoordinatorOperationalApplication {
         }
     }
 
+    func cancelPermissionRequest(requestID: String) {
+        guard let index = pendingPermissionRequests.firstIndex(where: {
+            Self.byteExact($0.requestID, requestID)
+        }), pendingPermissionRequests[index].deliveryToken == nil
+        else { return }
+        let request = pendingPermissionRequests.remove(at: index)
+        request.timeoutTask.cancel()
+        request.continuation.resume(throwing: CancellationError())
+    }
+
+    func expireSupersededPermissionRequests(
+        sessionID: String,
+        currentTurnID: String
+    ) {
+        let expired = pendingPermissionRequests.filter {
+            Self.byteExact($0.sessionID, sessionID)
+                && !Self.byteExact($0.turnID, currentTurnID)
+                && $0.deliveryToken == nil
+        }
+        pendingPermissionRequests.removeAll {
+            Self.byteExact($0.sessionID, sessionID)
+                && !Self.byteExact($0.turnID, currentTurnID)
+                && $0.deliveryToken == nil
+        }
+        for request in expired {
+            request.timeoutTask.cancel()
+            do {
+                request.continuation.resume(
+                    returning: try permissionHookResponse(decision: "defer_to_codex")
+                )
+            } catch {
+                request.continuation.resume(throwing: error)
+            }
+        }
+    }
+
     func permissionHookResponse(decision: String) throws -> Data {
         try require(
-            ["deny", "defer_to_codex"].contains(decision),
+            ["allow", "deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         return try publicData(["decision": decision])
+    }
+
+    func permissionHookDeliveryResponse(
+        decision: String,
+        requestID: String,
+        sessionID: String,
+        turnID: String,
+        deliveryToken: String
+    ) throws -> Data {
+        try require(
+            ["allow", "deny", "defer_to_codex"].contains(decision),
+            "permission_resolution_invalid"
+        )
+        return try publicData([
+            "decision": decision,
+            "delivery_token": deliveryToken,
+            "request_id": requestID,
+            "session_id": sessionID,
+            "turn_id": turnID,
+        ])
+    }
+
+    func acknowledgePermissionRequestDelivery(_ data: Data) throws -> Data {
+        let payload = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            payload,
+            required: [
+                "schema_version", "kind", "request_id", "session_id",
+                "turn_id", "delivery_token",
+            ]
+        )
+        try require(
+            payload["schema_version"] as? String == "1.0"
+                && payload["kind"] as? String
+                    == "blabee_permission_request_delivery_ack",
+            "permission_request_delivery_ack_invalid"
+        )
+        let requestID = try identifier(string(payload, "request_id"), "request_id")
+        let sessionID = try identifier(string(payload, "session_id"), "session_id")
+        let turnID = try identifier(string(payload, "turn_id"), "turn_id")
+        let deliveryToken = try permissionRequestDeliveryToken(
+            string(payload, "delivery_token")
+        )
+        if let resolved = resolvedPermissionRequests.first(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) {
+            try validatePermissionRequestDeliveryAck(
+                requestID: requestID,
+                sessionID: sessionID,
+                turnID: turnID,
+                expectedRequestID: resolved.requestID,
+                expectedSessionID: resolved.sessionID,
+                expectedTurnID: resolved.turnID
+            )
+            return try permissionRequestDeliveryAckReceipt()
+        }
+        guard let index = pendingPermissionRequestDeliveries.firstIndex(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else {
+            throw CoordinatorError("permission_request_delivery_not_found")
+        }
+        let delivery = pendingPermissionRequestDeliveries[index]
+        try validatePermissionRequestDeliveryAck(
+            requestID: requestID,
+            sessionID: sessionID,
+            turnID: turnID,
+            expectedRequestID: delivery.requestID,
+            expectedSessionID: delivery.sessionID,
+            expectedTurnID: delivery.turnID
+        )
+
+        pendingPermissionRequestDeliveries.remove(at: index)
+        delivery.timeoutTask.cancel()
+        removeSelectedPermissionRequest(
+            requestID: delivery.requestID,
+            deliveryToken: delivery.deliveryToken
+        )
+        let resolutionReceipt = try permissionResolutionReceipt(
+            requestID: delivery.requestID,
+            responseID: delivery.responseID,
+            decision: delivery.decision
+        )
+        resolvedPermissionRequests.append(ResolvedPermissionRequest(
+            requestID: delivery.requestID,
+            responseID: delivery.responseID,
+            projectID: delivery.projectID,
+            sessionID: delivery.sessionID,
+            turnID: delivery.turnID,
+            decision: delivery.decision,
+            deliveryToken: delivery.deliveryToken
+        ))
+        if resolvedPermissionRequests.count > Self.maximumResolvedPermissionTombstones {
+            resolvedPermissionRequests.removeFirst(
+                resolvedPermissionRequests.count - Self.maximumResolvedPermissionTombstones
+            )
+        }
+        delivery.continuation.resume(returning: resolutionReceipt)
+        return try permissionRequestDeliveryAckReceipt()
+    }
+
+    func expirePermissionRequestDelivery(deliveryToken: String) {
+        guard let index = pendingPermissionRequestDeliveries.firstIndex(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else { return }
+        let delivery = pendingPermissionRequestDeliveries.remove(at: index)
+        delivery.timeoutTask.cancel()
+        removeSelectedPermissionRequest(
+            requestID: delivery.requestID,
+            deliveryToken: delivery.deliveryToken
+        )
+        delivery.continuation.resume(
+            throwing: CoordinatorError("permission_request_delivery_timeout")
+        )
+    }
+
+    func cancelPermissionResolutionBeforeDeliveryExposure(
+        requestID: String,
+        deliveryToken: String
+    ) {
+        guard !pendingPermissionRequestDeliveries.contains(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }), let index = pendingPermissionRequests.firstIndex(where: {
+            Self.byteExact($0.requestID, requestID) && $0.deliveryToken == nil
+        }) else { return }
+        let request = pendingPermissionRequests.remove(at: index)
+        request.timeoutTask.cancel()
+        request.continuation.resume(throwing: CancellationError())
+    }
+
+    func removeSelectedPermissionRequest(
+        requestID: String,
+        deliveryToken: String
+    ) {
+        guard let index = pendingPermissionRequests.firstIndex(where: {
+            Self.byteExact($0.requestID, requestID)
+                && Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else { return }
+        let request = pendingPermissionRequests.remove(at: index)
+        request.timeoutTask.cancel()
+    }
+
+    func permissionRequestDeliveryAckReceipt() throws -> Data {
+        try publicData([:])
+    }
+
+    func permissionRequestDeliveryToken(_ value: String) throws -> String {
+        let bytes = Array(value.utf8)
+        try require(
+            bytes.count >= 16
+                && bytes.count <= 512
+                && bytes.allSatisfy { byte in
+                    (0x41...0x5A).contains(byte)
+                        || (0x61...0x7A).contains(byte)
+                        || (0x30...0x39).contains(byte)
+                        || byte == 0x5F
+                        || byte == 0x2D
+                },
+            "permission_request_delivery_token_invalid"
+        )
+        return value
+    }
+
+    func validatePermissionRequestDeliveryAck(
+        requestID: String,
+        sessionID: String,
+        turnID: String,
+        expectedRequestID: String,
+        expectedSessionID: String,
+        expectedTurnID: String
+    ) throws {
+        try byteExactRequire(
+            requestID,
+            expectedRequestID,
+            "permission_request_delivery_binding_mismatch"
+        )
+        try byteExactRequire(
+            sessionID,
+            expectedSessionID,
+            "permission_request_delivery_binding_mismatch"
+        )
+        try byteExactRequire(
+            turnID,
+            expectedTurnID,
+            "permission_request_delivery_binding_mismatch"
+        )
     }
 
     func permissionResolutionReceipt(
@@ -1573,6 +1970,9 @@ private extension CoordinatorOperationalApplication {
         else {
             return try managedCommandApprovalOutcome(decision: "decide_in_codex")
         }
+        guard approvalAdmissionSequence < Int64.max else {
+            return try managedCommandApprovalOutcome(decision: "decide_in_codex")
+        }
 
         let managedRequestID = try identifier(
             idGenerator("managed_command_approval"),
@@ -1589,6 +1989,8 @@ private extension CoordinatorOperationalApplication {
         managedCommandApprovalNoticeCount = try nextGeneration(
             managedCommandApprovalNoticeCount
         )
+        approvalAdmissionSequence += 1
+        let arrivalSequence = approvalAdmissionSequence
 
         let timeoutNanoseconds = managedCommandApprovalTimeoutNanoseconds
         return try await withTaskCancellationHandler {
@@ -1611,9 +2013,11 @@ private extension CoordinatorOperationalApplication {
                 }
                 pendingManagedCommandApprovals.append(PendingManagedCommandApproval(
                     managedRequestID: managedRequestID,
+                    arrivalSequence: arrivalSequence,
                     binding: binding,
                     continuation: continuation,
-                    timeoutTask: timeoutTask
+                    timeoutTask: timeoutTask,
+                    deliveryToken: nil
                 ))
             }
         } onCancel: {
@@ -1625,7 +2029,7 @@ private extension CoordinatorOperationalApplication {
         }
     }
 
-    func resolveManagedCommandApproval(_ data: Data) throws -> Data {
+    func resolveManagedCommandApproval(_ data: Data) async throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
         try exactKeys(
             payload,
@@ -1671,6 +2075,13 @@ private extension CoordinatorOperationalApplication {
             )
         }
         try require(
+            !pendingManagedCommandApprovalDeliveries.contains(where: {
+                Self.byteExact($0.managedRequestID, managedRequestID)
+                    || Self.byteExact($0.responseID, responseID)
+            }),
+            "managed_command_approval_resolution_in_progress"
+        )
+        try require(
             !resolvedManagedCommandApprovals.contains(where: {
                 Self.byteExact($0.responseID, responseID)
             }),
@@ -1682,6 +2093,10 @@ private extension CoordinatorOperationalApplication {
         guard Self.byteExact(head.managedRequestID, managedRequestID) else {
             throw CoordinatorError("managed_command_approval_not_head")
         }
+        try require(
+            isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
+            "managed_command_approval_not_global_head"
+        )
         try require(
             head.binding == binding,
             "managed_command_approval_binding_mismatch"
@@ -1698,36 +2113,69 @@ private extension CoordinatorOperationalApplication {
             )
         }
 
-        pendingManagedCommandApprovals.removeFirst()
-        head.timeoutTask.cancel()
-        head.continuation.resume(
-            returning: try managedCommandApprovalOutcome(decision: decision)
+        let deliveryToken = try managedCommandApprovalDeliveryToken(
+            idGenerator("managed_approval_delivery")
         )
-        resolvedManagedCommandApprovals.append(ResolvedManagedCommandApproval(
-            managedRequestID: managedRequestID,
-            responseID: responseID,
-            binding: binding,
-            decision: decision
-        ))
-        if resolvedManagedCommandApprovals.count
-            > Self.maximumResolvedManagedCommandApprovalTombstones
-        {
-            resolvedManagedCommandApprovals.removeFirst(
-                resolvedManagedCommandApprovals.count
-                    - Self.maximumResolvedManagedCommandApprovalTombstones
-            )
+        try require(
+            !pendingManagedCommandApprovalDeliveries.contains(where: {
+                Self.byteExact($0.deliveryToken, deliveryToken)
+            }) && !resolvedManagedCommandApprovals.contains(where: {
+                Self.byteExact($0.deliveryToken, deliveryToken)
+            }),
+            "managed_command_approval_delivery_token_conflict"
+        )
+        let brokerOutcome = try managedCommandApprovalOutcome(
+            decision: decision,
+            deliveryToken: deliveryToken
+        )
+        let deliveryTimeoutNanoseconds = managedCommandApprovalDeliveryTimeoutNanoseconds
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    pendingManagedCommandApprovals.removeFirst()
+                    head.timeoutTask.cancel()
+                    head.continuation.resume(throwing: CancellationError())
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let timeoutTask = Task.detached(priority: .utility) { [weak self] in
+                    try? await Task.sleep(nanoseconds: deliveryTimeoutNanoseconds)
+                    guard !Task.isCancelled else { return }
+                    await self?.expireManagedCommandApprovalDelivery(
+                        deliveryToken: deliveryToken
+                    )
+                }
+                pendingManagedCommandApprovalDeliveries.append(
+                    PendingManagedCommandApprovalDelivery(
+                        managedRequestID: managedRequestID,
+                        responseID: responseID,
+                        binding: binding,
+                        decision: decision,
+                        deliveryToken: deliveryToken,
+                        continuation: continuation,
+                        timeoutTask: timeoutTask
+                    )
+                )
+                head.timeoutTask.cancel()
+                pendingManagedCommandApprovals[0].deliveryToken = deliveryToken
+                head.continuation.resume(returning: brokerOutcome)
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelManagedCommandApprovalResolutionBeforeDeliveryExposure(
+                    managedRequestID: managedRequestID,
+                    deliveryToken: deliveryToken
+                )
+            }
         }
-        return try managedCommandApprovalResolutionReceipt(
-            managedRequestID: managedRequestID,
-            responseID: responseID,
-            decision: decision
-        )
     }
 
     func expireManagedCommandApproval(managedRequestID: String) {
         guard let index = pendingManagedCommandApprovals.firstIndex(where: {
             Self.byteExact($0.managedRequestID, managedRequestID)
-        }) else { return }
+        }), pendingManagedCommandApprovals[index].deliveryToken == nil
+        else { return }
         let request = pendingManagedCommandApprovals.remove(at: index)
         do {
             request.continuation.resume(
@@ -1743,23 +2191,169 @@ private extension CoordinatorOperationalApplication {
     func cancelManagedCommandApproval(managedRequestID: String) {
         guard let index = pendingManagedCommandApprovals.firstIndex(where: {
             Self.byteExact($0.managedRequestID, managedRequestID)
-        }) else { return }
+        }), pendingManagedCommandApprovals[index].deliveryToken == nil
+        else { return }
         let request = pendingManagedCommandApprovals.remove(at: index)
         request.timeoutTask.cancel()
         request.continuation.resume(throwing: CancellationError())
     }
 
-    func managedCommandApprovalOutcome(decision: String) throws -> Data {
+    func acknowledgeManagedCommandApprovalDelivery(_ data: Data) throws -> Data {
+        let payload = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            payload,
+            required: [
+                "schema_version", "kind", "broker_epoch", "connection_id",
+                "jsonrpc_request_id", "thread_id", "turn_id", "item_id",
+                "approval_id", "environment_id", "delivery_token",
+            ]
+        )
+        try require(
+            payload["schema_version"] as? String == "1.0"
+                && payload["kind"] as? String
+                    == "blabee_managed_command_approval_delivery_ack",
+            "managed_command_approval_delivery_ack_invalid"
+        )
+        let deliveryToken = try managedCommandApprovalDeliveryToken(
+            string(payload, "delivery_token")
+        )
+        if let resolved = resolvedManagedCommandApprovals.first(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) {
+            try validateManagedCommandApprovalDeliveryAck(
+                payload,
+                binding: resolved.binding
+            )
+            return try managedCommandApprovalDeliveryAckReceipt()
+        }
+        guard let index = pendingManagedCommandApprovalDeliveries.firstIndex(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else {
+            throw CoordinatorError("managed_command_approval_delivery_not_found")
+        }
+        let delivery = pendingManagedCommandApprovalDeliveries[index]
+        try validateManagedCommandApprovalDeliveryAck(
+            payload,
+            binding: delivery.binding
+        )
+
+        pendingManagedCommandApprovalDeliveries.remove(at: index)
+        delivery.timeoutTask.cancel()
+        removeSelectedManagedCommandApproval(
+            managedRequestID: delivery.managedRequestID,
+            deliveryToken: delivery.deliveryToken
+        )
+        let resolutionReceipt = try managedCommandApprovalResolutionReceipt(
+            managedRequestID: delivery.managedRequestID,
+            responseID: delivery.responseID,
+            decision: delivery.decision
+        )
+        resolvedManagedCommandApprovals.append(ResolvedManagedCommandApproval(
+            managedRequestID: delivery.managedRequestID,
+            responseID: delivery.responseID,
+            binding: delivery.binding,
+            decision: delivery.decision,
+            deliveryToken: delivery.deliveryToken
+        ))
+        if resolvedManagedCommandApprovals.count
+            > Self.maximumResolvedManagedCommandApprovalTombstones
+        {
+            resolvedManagedCommandApprovals.removeFirst(
+                resolvedManagedCommandApprovals.count
+                    - Self.maximumResolvedManagedCommandApprovalTombstones
+            )
+        }
+        delivery.continuation.resume(returning: resolutionReceipt)
+        return try managedCommandApprovalDeliveryAckReceipt()
+    }
+
+    func expireManagedCommandApprovalDelivery(deliveryToken: String) {
+        guard let index = pendingManagedCommandApprovalDeliveries.firstIndex(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else { return }
+        let delivery = pendingManagedCommandApprovalDeliveries.remove(at: index)
+        delivery.timeoutTask.cancel()
+        removeSelectedManagedCommandApproval(
+            managedRequestID: delivery.managedRequestID,
+            deliveryToken: delivery.deliveryToken
+        )
+        delivery.continuation.resume(
+            throwing: CoordinatorError("managed_command_approval_delivery_timeout")
+        )
+    }
+
+    func cancelManagedCommandApprovalResolutionBeforeDeliveryExposure(
+        managedRequestID: String,
+        deliveryToken: String
+    ) {
+        guard !pendingManagedCommandApprovalDeliveries.contains(where: {
+            Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else { return }
+        cancelManagedCommandApproval(managedRequestID: managedRequestID)
+    }
+
+    func removeSelectedManagedCommandApproval(
+        managedRequestID: String,
+        deliveryToken: String
+    ) {
+        guard let index = pendingManagedCommandApprovals.firstIndex(where: {
+            Self.byteExact($0.managedRequestID, managedRequestID)
+                && Self.byteExact($0.deliveryToken, deliveryToken)
+        }) else { return }
+        let request = pendingManagedCommandApprovals.remove(at: index)
+        request.timeoutTask.cancel()
+    }
+
+    func managedCommandApprovalOutcome(
+        decision: String,
+        deliveryToken: String? = nil
+    ) throws -> Data {
         try require(
             ["accept_once", "decline", "decide_in_codex"].contains(decision),
             "managed_command_approval_resolution_invalid"
         )
+        if let deliveryToken {
+            return try publicData([
+                "decision": decision,
+                "delivery_token": deliveryToken,
+            ])
+        }
         return try publicData(["decision": decision])
     }
 
-    /// Confirms only that the Pet selection matched the current FIFO head and
-    /// resumed its in-process waiter. App Server delivery and command success
-    /// remain separate downstream evidence.
+    func managedCommandApprovalDeliveryAckReceipt() throws -> Data {
+        try publicData([:])
+    }
+
+    func managedCommandApprovalDeliveryToken(_ value: String) throws -> String {
+        let bytes = Array(value.utf8)
+        try require(
+            bytes.count >= 16
+                && bytes.count <= 512
+                && bytes.allSatisfy { byte in
+                    (0x41...0x5A).contains(byte)
+                        || (0x61...0x7A).contains(byte)
+                        || (0x30...0x39).contains(byte)
+                        || byte == 0x5F
+                        || byte == 0x2D
+                },
+            "managed_command_approval_delivery_token_invalid"
+        )
+        return value
+    }
+
+    func isGlobalApprovalHead(arrivalSequence: Int64) -> Bool {
+        let permissionSequence = pendingPermissionRequests.first?.arrivalSequence
+        let managedSequence = pendingManagedCommandApprovals.first?.arrivalSequence
+        let globalHead = [permissionSequence, managedSequence]
+            .compactMap { $0 }
+            .min()
+        return globalHead == arrivalSequence
+    }
+
+    /// Confirms that the Pet selection matched the FIFO head and the broker
+    /// later acknowledged writing the response bytes. App Server processing
+    /// and command execution remain separate downstream evidence.
     func managedCommandApprovalResolutionReceipt(
         managedRequestID: String,
         responseID: String,
@@ -1848,6 +2442,65 @@ private extension CoordinatorOperationalApplication {
         )
     }
 
+    private func validateManagedCommandApprovalDeliveryAck(
+        _ payload: [String: Any],
+        binding: ManagedCommandApprovalBinding
+    ) throws {
+        let brokerEpoch = try boundedPermissionIdentifier(
+            string(payload, "broker_epoch"),
+            code: "managed_command_approval_broker_epoch_invalid"
+        )
+        let connectionID = try boundedPermissionIdentifier(
+            string(payload, "connection_id"),
+            code: "managed_command_approval_connection_id_invalid"
+        )
+        let jsonRPCRequestID = try managedJSONRPCRequestID(
+            payload["jsonrpc_request_id"]
+        )
+        let threadID = try boundedPermissionIdentifier(
+            string(payload, "thread_id"),
+            code: "managed_command_approval_thread_id_invalid"
+        )
+        let turnID = try boundedPermissionIdentifier(
+            string(payload, "turn_id"),
+            code: "managed_command_approval_turn_id_invalid"
+        )
+        let itemID = try boundedPermissionIdentifier(
+            string(payload, "item_id"),
+            code: "managed_command_approval_item_id_invalid"
+        )
+        let approvalID = try managedCommandApprovalOptionalIdentifier(
+            payload,
+            key: "approval_id"
+        )
+        let environmentID = try managedCommandApprovalOptionalIdentifier(
+            payload,
+            key: "environment_id"
+        )
+        try require(
+            Self.byteExact(brokerEpoch, binding.brokerEpoch)
+                && Self.byteExact(connectionID, binding.connectionID)
+                && jsonRPCRequestID == binding.jsonRPCRequestID
+                && Self.byteExact(threadID, binding.threadID)
+                && Self.byteExact(turnID, binding.turnID)
+                && Self.byteExact(itemID, binding.itemID)
+                && Self.byteExact(approvalID, binding.approvalID)
+                && Self.byteExact(environmentID, binding.environmentID),
+            "managed_command_approval_delivery_binding_mismatch"
+        )
+    }
+
+    private func managedCommandApprovalOptionalIdentifier(
+        _ payload: [String: Any],
+        key: String
+    ) throws -> String? {
+        if payload[key] is NSNull { return nil }
+        return try boundedPermissionIdentifier(
+            string(payload, key),
+            code: "managed_command_approval_\(key)_invalid"
+        )
+    }
+
     private func managedJSONRPCRequestID(
         _ rawValue: Any?
     ) throws -> ManagedJSONRPCRequestID {
@@ -1897,21 +2550,29 @@ private extension CoordinatorOperationalApplication {
         guard let rawValue else { return nil }
         if rawValue is NSNull { return nil }
         guard let value = rawValue as? String else { throw CoordinatorError(code) }
-        let normalized = value.precomposedStringWithCanonicalMapping
-        var result = ""
-        result.reserveCapacity(min(normalized.utf8.count, maximumScalars * 2))
-        var retainedScalars = 0
-        for scalar in normalized.unicodeScalars {
-            if retainedScalars == maximumScalars { break }
-            if !isSafePermissionDisplayScalar(scalar) {
-                result.append(" ")
-            } else {
-                result.unicodeScalars.append(scalar)
-            }
-            retainedScalars += 1
-        }
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        try require(
+            value.unicodeScalars.count <= maximumScalars
+                && IdentifierNormalization.isNFC(value)
+                && value.unicodeScalars.allSatisfy(isSafePermissionDisplayScalar),
+            code
+        )
+        return value.trimmingCharacters(in: .whitespaces).isEmpty ? nil : value
+    }
+
+    func validateOptionalPermissionMetadata(
+        _ rawValue: Any?,
+        maximumScalars: Int,
+        code: String
+    ) throws {
+        guard let rawValue, !(rawValue is NSNull) else { return }
+        guard let value = rawValue as? String else { throw CoordinatorError(code) }
+        try require(
+            !value.isEmpty
+                && value.unicodeScalars.count <= maximumScalars
+                && IdentifierNormalization.isNFC(value)
+                && value.unicodeScalars.allSatisfy(isSafePermissionDisplayScalar),
+            code
+        )
     }
 
     func isSafePermissionDisplayScalar(_ scalar: Unicode.Scalar) -> Bool {

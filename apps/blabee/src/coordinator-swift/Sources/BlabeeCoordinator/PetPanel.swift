@@ -43,9 +43,9 @@ enum PetPanelContentPolicy {
 
     static func allowsScrolling(in mode: PetPanelScreenMode) -> Bool {
         switch mode {
-        case .details, .projectSettings:
+        case .permission, .details, .projectSettings:
             true
-        case .ready, .permission, .decision, .shortcutSettings:
+        case .ready, .decision, .shortcutSettings:
             false
         }
     }
@@ -178,6 +178,38 @@ enum PetPanelDismissalPolicy {
             return false
         }
         return true
+    }
+}
+
+enum PetAutomaticPresentationOwner: Sendable, Equatable {
+    case genericAttention
+    case approval(PetApprovalHeadIdentity)
+}
+
+enum PetApprovalPresentationTransition: Sendable, Equatable {
+    case none
+    case present(PetApprovalHeadIdentity)
+    case hide
+    case replace(PetApprovalHeadIdentity)
+    case handoffToGenericAttention
+}
+
+enum PetApprovalPresentationPolicy {
+    static func transition(
+        panelIsVisible: Bool,
+        automaticOwner: PetAutomaticPresentationOwner?,
+        newApprovalIdentity: PetApprovalHeadIdentity?,
+        genericAttentionActive: Bool
+    ) -> PetApprovalPresentationTransition {
+        if case .approval(let displayedIdentity) = automaticOwner {
+            guard displayedIdentity != newApprovalIdentity else { return .none }
+            if let newApprovalIdentity {
+                return .replace(newApprovalIdentity)
+            }
+            return genericAttentionActive ? .handoffToGenericAttention : .hide
+        }
+        guard let newApprovalIdentity, !panelIsVisible else { return .none }
+        return .present(newApprovalIdentity)
     }
 }
 
@@ -423,6 +455,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             statusItemFrame: statusItemFrameInScreen()
         ) else { return }
         hide()
+        viewModel.acknowledgeApprovalResolutionError()
     }
 
     private func statusItemFrameInScreen() -> CGRect? {
@@ -498,7 +531,7 @@ final class PetMenuBarController: NSObject {
     private let panelController: PetPanelController
     private let statusItem: NSStatusItem
     private let baseStatusImage: NSImage?
-    private var wasAutomaticallyPresented = false
+    private var automaticPresentationOwner: PetAutomaticPresentationOwner?
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
@@ -525,11 +558,13 @@ final class PetMenuBarController: NSObject {
             self?.attentionChanged(attention)
         }
         viewModel.onAttentionEvent = { [weak self] in
-            self?.presentForAttention()
+            self?.presentForGenericAttention()
         }
-        viewModel.onPermissionRequestChanged = { [weak self] request in
-            guard request != nil else { return }
-            self?.presentForAttention()
+        viewModel.onApprovalHeadChanged = { [weak self] identity in
+            self?.approvalHeadChanged(identity)
+        }
+        viewModel.onApprovalResolutionFailed = { [weak self] in
+            self?.presentForGenericAttention()
         }
     }
 
@@ -537,21 +572,57 @@ final class PetMenuBarController: NSObject {
         viewModel.onPanelToggleRequested = nil
         viewModel.onAttentionChanged = nil
         viewModel.onAttentionEvent = nil
-        viewModel.onPermissionRequestChanged = nil
+        viewModel.onApprovalHeadChanged = nil
+        viewModel.onApprovalResolutionFailed = nil
         panelController.stopObservingScreenChanges()
         panelController.hide()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     @objc private func togglePanel(_ sender: Any?) {
-        wasAutomaticallyPresented = false
+        let wasVisible = panelController.panel.isVisible
+        automaticPresentationOwner = nil
         panelController.toggleVisibility()
+        if wasVisible {
+            viewModel.acknowledgeApprovalResolutionError()
+        }
     }
 
-    private func presentForAttention() {
+    private func presentForGenericAttention() {
         if !panelController.panel.isVisible {
-            wasAutomaticallyPresented = true
+            automaticPresentationOwner = .genericAttention
         }
+        showPanelForAttention()
+    }
+
+    private func approvalHeadChanged(_ identity: PetApprovalHeadIdentity?) {
+        let transition = PetApprovalPresentationPolicy.transition(
+            panelIsVisible: panelController.panel.isVisible,
+            automaticOwner: automaticPresentationOwner,
+            newApprovalIdentity: identity,
+            genericAttentionActive: viewModel.fifoHeadInteraction?.isSelectionReady == true
+                || viewModel.hasPersistentApprovalResolutionError
+        )
+        switch transition {
+        case .none:
+            return
+        case .present(let identity):
+            automaticPresentationOwner = .approval(identity)
+            showPanelForAttention()
+        case .hide:
+            automaticPresentationOwner = nil
+            panelController.hide()
+        case .replace(let identity):
+            automaticPresentationOwner = nil
+            panelController.hide()
+            automaticPresentationOwner = .approval(identity)
+            showPanelForAttention()
+        case .handoffToGenericAttention:
+            automaticPresentationOwner = .genericAttention
+        }
+    }
+
+    private func showPanelForAttention() {
         if !viewModel.isEditingShortcuts && !viewModel.isShowingOnboarding {
             viewModel.setExpanded(false)
         }
@@ -561,11 +632,11 @@ final class PetMenuBarController: NSObject {
     private func attentionChanged(_ attention: Bool) {
         updateStatusItem(attention: attention)
         guard !attention,
-              wasAutomaticallyPresented,
+              automaticPresentationOwner != nil,
               !viewModel.isEditingShortcuts,
               !viewModel.isShowingOnboarding
         else { return }
-        wasAutomaticallyPresented = false
+        automaticPresentationOwner = nil
         panelController.hide()
     }
 

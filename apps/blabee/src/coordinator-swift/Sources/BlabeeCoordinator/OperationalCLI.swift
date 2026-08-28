@@ -42,10 +42,39 @@ func runHookCommand(arguments: [String]) {
         guard result["enabled"] as? Bool != false else { return }
 
         if eventName == "PermissionRequest" {
-            guard Set(result.keys) == ["decision"],
-                  let decision = result["decision"] as? String
+            if Set(result.keys) == ["decision"] {
+                guard result["decision"] as? String == "defer_to_codex" else { return }
+                return
+            }
+            guard Set(result.keys) == [
+                "decision", "delivery_token", "request_id", "session_id", "turn_id",
+            ], let decision = result["decision"] as? String
             else { return }
+            let deliveryToken = try permissionDeliveryToken(
+                result["delivery_token"]
+            )
+            let requestID = try permissionDeliveryIdentifier(
+                result["request_id"],
+                code: "permission_request_id_invalid"
+            )
+            let sessionID = try permissionDeliveryIdentifier(
+                result["session_id"],
+                code: "permission_session_id_invalid"
+            )
+            let turnID = try permissionDeliveryIdentifier(
+                result["turn_id"],
+                code: "permission_turn_id_invalid"
+            )
             switch decision {
+            case "allow":
+                try writeStandardOutputJSON([
+                    "hookSpecificOutput": [
+                        "hookEventName": "PermissionRequest",
+                        "decision": [
+                            "behavior": "allow",
+                        ],
+                    ],
+                ])
             case "deny":
                 try writeStandardOutputJSON([
                     "hookSpecificOutput": [
@@ -57,10 +86,27 @@ func runHookCommand(arguments: [String]) {
                     ],
                 ])
             case "defer_to_codex":
-                return
+                // An empty Hook response is delivered only when stdout reaches
+                // EOF. Close it before acknowledging delivery so Pet cannot
+                // report success while Codex is still waiting for fallback.
+                try FileHandle.standardOutput.close()
             default:
                 return
             }
+            let acknowledgement = try client.request(
+                type: "ack_permission_request_delivery",
+                payload: [
+                    "schema_version": "1.0",
+                    "kind": "blabee_permission_request_delivery_ack",
+                    "request_id": requestID,
+                    "session_id": sessionID,
+                    "turn_id": turnID,
+                    "delivery_token": deliveryToken,
+                ],
+                connectTimeoutMilliseconds: 2_000,
+                responseTimeoutMilliseconds: 5_000
+            )
+            guard acknowledgement.isEmpty else { return }
             return
         }
         if eventName == "Stop" {
@@ -87,6 +133,35 @@ func runHookCommand(arguments: [String]) {
     } catch {
         return
     }
+}
+
+private func permissionDeliveryIdentifier(_ value: Any?, code: String) throws -> String {
+    guard let value = value as? String,
+          !value.isEmpty,
+          value.unicodeScalars.count <= 512,
+          value.utf8.elementsEqual(
+            value.precomposedStringWithCanonicalMapping.utf8
+          )
+    else { throw CoordinatorError(code) }
+    return value
+}
+
+private func permissionDeliveryToken(_ value: Any?) throws -> String {
+    guard let value = value as? String else {
+        throw CoordinatorError("permission_request_delivery_token_invalid")
+    }
+    let bytes = Array(value.utf8)
+    guard bytes.count >= 16,
+          bytes.count <= 512,
+          bytes.allSatisfy({ byte in
+              (0x41...0x5A).contains(byte)
+                  || (0x61...0x7A).contains(byte)
+                  || (0x30...0x39).contains(byte)
+                  || byte == 0x5F
+                  || byte == 0x2D
+          })
+    else { throw CoordinatorError("permission_request_delivery_token_invalid") }
+    return value
 }
 
 func runMCPCommand(arguments: [String]) throws {

@@ -77,6 +77,16 @@ private func petInteger(
     return value
 }
 
+private func petStrictlyIncreasing(
+    _ values: [Int64],
+    field: String
+) throws {
+    try petRequire(
+        zip(values, values.dropFirst()).allSatisfy { $0.0 < $0.1 },
+        field
+    )
+}
+
 private func petStableCode(_ value: String, field: String) throws -> String {
     try petRequire(value.count <= 128, field)
     try petRequire(
@@ -194,15 +204,22 @@ struct PetSession: Sendable, Equatable {
 }
 
 enum PetPermissionDecision: String, Sendable, Equatable, CaseIterable {
+    case allow
     case deny
     case deferToCodex = "defer_to_codex"
 
     var displayTitle: String {
         switch self {
+        case .allow: "이번만 허용"
         case .deny: "거절"
         case .deferToCodex: "Codex에서 직접 결정"
         }
     }
+}
+
+enum PetApprovalHeadIdentity: Sendable, Equatable, Hashable {
+    case permission(requestID: String)
+    case managed(managedRequestID: String)
 }
 
 enum PetManagedCommandApprovalDecision: String, Sendable, Equatable, CaseIterable {
@@ -253,6 +270,7 @@ enum PetManagedJSONRPCRequestID: Sendable, Equatable, Hashable {
 }
 
 struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
+    let arrivalSequence: Int64
     let managedRequestID: String
     let brokerEpoch: String
     let connectionID: String
@@ -266,6 +284,7 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
     let commandPreview: String
     let allowOnceAvailable: Bool
     let declineAvailable: Bool
+    let deliveryPending: Bool
 
     var id: String { managedRequestID }
 
@@ -273,12 +292,17 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
         try petExactKeys(
             jsonObject,
             [
-                "managed_request_id", "broker_epoch", "connection_id",
+                "arrival_sequence", "managed_request_id", "broker_epoch", "connection_id",
                 "jsonrpc_request_id", "thread_id", "turn_id", "item_id",
                 "approval_id", "environment_id", "cwd", "command_preview", "allow_once_available",
-                "decline_available",
+                "decline_available", "delivery_pending",
             ],
             "managed_command_approval"
+        )
+        arrivalSequence = try petInteger(
+            jsonObject,
+            "arrival_sequence",
+            minimum: 1
         )
         managedRequestID = try petString(
             jsonObject,
@@ -330,6 +354,7 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
         )
         allowOnceAvailable = try petBoolean(jsonObject, "allow_once_available")
         declineAvailable = try petBoolean(jsonObject, "decline_available")
+        deliveryPending = try petBoolean(jsonObject, "delivery_pending")
     }
 
     var bindingObject: [String: Any] {
@@ -353,6 +378,7 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
 struct PetPermissionRequest: Sendable, Equatable, Identifiable {
     static let maximumCommandScalars = 120
 
+    let arrivalSequence: Int64
     let requestID: String
     let projectID: String
     let sessionID: String
@@ -360,7 +386,9 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
     let cwd: String
     let toolName: String
     let requestDescription: String?
+    let allowOnceAvailable: Bool
     let commandPreview: String
+    let deliveryPending: Bool
 
     var id: String { requestID }
 
@@ -368,10 +396,16 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
         try petExactKeys(
             jsonObject,
             [
-                "request_id", "project_id", "session_id", "turn_id", "cwd",
-                "tool_name", "description", "command_preview",
+                "arrival_sequence", "request_id", "project_id", "session_id", "turn_id", "cwd",
+                "tool_name", "description", "command_preview", "allow_once_available",
+                "delivery_pending",
             ],
             "permission_request"
+        )
+        arrivalSequence = try petInteger(
+            jsonObject,
+            "arrival_sequence",
+            minimum: 1
         )
         requestID = try petString(jsonObject, "request_id", maximum: 512)
         projectID = try petString(jsonObject, "project_id", maximum: 512)
@@ -386,6 +420,8 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             "description",
             maximum: 4_096
         )
+        allowOnceAvailable = try petBoolean(jsonObject, "allow_once_available")
+        deliveryPending = try petBoolean(jsonObject, "delivery_pending")
         commandPreview = try petString(
             jsonObject,
             "command_preview",
@@ -407,6 +443,45 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
 
     var displaySummary: String {
         requestDescription ?? commandPreview
+    }
+}
+
+enum PetApprovalHead: Sendable, Equatable {
+    case permission(PetPermissionRequest)
+    case managed(PetManagedCommandApproval)
+
+    var identity: PetApprovalHeadIdentity {
+        switch self {
+        case .permission(let request):
+            .permission(requestID: request.requestID)
+        case .managed(let request):
+            .managed(managedRequestID: request.managedRequestID)
+        }
+    }
+
+    var arrivalSequence: Int64 {
+        switch self {
+        case .permission(let request): request.arrivalSequence
+        case .managed(let request): request.arrivalSequence
+        }
+    }
+
+    static func first(
+        permissionRequests: [PetPermissionRequest],
+        managedCommandApprovals: [PetManagedCommandApproval]
+    ) -> PetApprovalHead? {
+        switch (permissionRequests.first, managedCommandApprovals.first) {
+        case (.none, .none):
+            nil
+        case (.some(let request), .none):
+            .permission(request)
+        case (.none, .some(let request)):
+            .managed(request)
+        case (.some(let permission), .some(let managed)):
+            permission.arrivalSequence < managed.arrivalSequence
+                ? .permission(permission)
+                : .managed(managed)
+        }
     }
 }
 
@@ -1028,6 +1103,10 @@ struct PetSnapshot: Sendable, Equatable {
             Set(permissionRequests.map(\.requestID)).count == permissionRequests.count,
             "permission_requests.request_id"
         )
+        try petStrictlyIncreasing(
+            permissionRequests.map(\.arrivalSequence),
+            field: "permission_requests.arrival_sequence"
+        )
         for request in permissionRequests {
             guard let project = projectByID[request.projectID],
                   project.cwd == request.cwd,
@@ -1045,6 +1124,16 @@ struct PetSnapshot: Sendable, Equatable {
             Set(managedCommandApprovals.map(\.managedRequestID)).count
                 == managedCommandApprovals.count,
             "managed_command_approvals.managed_request_id"
+        )
+        try petStrictlyIncreasing(
+            managedCommandApprovals.map(\.arrivalSequence),
+            field: "managed_command_approvals.arrival_sequence"
+        )
+        let approvalArrivalSequences = permissionRequests.map(\.arrivalSequence)
+            + managedCommandApprovals.map(\.arrivalSequence)
+        try petRequire(
+            Set(approvalArrivalSequences).count == approvalArrivalSequences.count,
+            "approval_requests.arrival_sequence"
         )
         let managedTransportKeys = managedCommandApprovals.map { request in
             request.brokerEpoch + "\u{0}" + request.connectionID + "\u{0}"

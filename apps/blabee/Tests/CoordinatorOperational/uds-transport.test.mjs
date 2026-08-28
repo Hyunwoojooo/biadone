@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   chmod,
+  cp,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -59,10 +61,18 @@ const legacyOperationalProposalKeys = [
 const legacyOperationalProposal = Object.fromEntries(
   legacyOperationalProposalKeys.map((key) => [key, legacyProposal[key]]),
 );
+const hookSessionID = "01a01ece-22b8-7833-9ebf-8ef8d1addc58";
+const hookTurnIDs = {
+  allow: "01a02e18-df50-73b2-8ba3-000000000001",
+  deny: "01a02e18-df50-73b2-8ba3-000000000002",
+  defer: "01a02e18-df50-73b2-8ba3-000000000003",
+  stdoutFailure: "01a02e18-df50-73b2-8ba3-000000000004",
+  ackFailure: "01a02e18-df50-73b2-8ba3-000000000005",
+};
 
 function hookPayload(hook_event_name, eventFields = {}) {
   return {
-    session_id: "session_hook_fixture",
+    session_id: hookSessionID,
     transcript_path: "/tmp/fictional-blabee-transcript.jsonl",
     cwd: "/tmp/fictional-blabee-project",
     permission_mode: "default",
@@ -239,6 +249,98 @@ async function startFixtureTransportServer({
       await rm(directory, { force: true, recursive: true });
     },
   };
+}
+
+async function startOperationalApprovalServer() {
+  const build = await buildCoordinator();
+  const fixtureRoot = await mkdtemp("/tmp/blabee-t011-approval-uds-");
+  await chmod(fixtureRoot, 0o700);
+  const contractsPath = path.join(fixtureRoot, "contracts-v1");
+  const enabledProjectPath = path.join(fixtureRoot, "enabled-project");
+  const authorityRootPath = path.join(fixtureRoot, "authority");
+  await cp(CONTRACTS_ROOT, contractsPath, { recursive: true });
+  await Promise.all([
+    chmod(contractsPath, 0o700),
+    mkdir(enabledProjectPath, { mode: 0o700 }),
+    mkdir(authorityRootPath, { mode: 0o700 }),
+  ]);
+  const databasePath = path.join(fixtureRoot, "coordinator.sqlite3");
+  const keyPath = path.join(fixtureRoot, "coordinator.key");
+  const socketPath = path.join(fixtureRoot, "blabee.sock");
+  const child = spawn(
+    build.binaryPath,
+    [
+      "operational-roundtrip-test-server",
+      "--fixture-root", fixtureRoot,
+      "--database", databasePath,
+      "--key", keyPath,
+      "--contracts", contractsPath,
+      "--enabled-project", enabledProjectPath,
+      "--socket", socketPath,
+      "--authority-root", authorityRootPath,
+    ],
+    { env: build.environment, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+  child.stdout.setEncoding("utf8");
+  await new Promise((resolve, reject) => {
+    let output = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("approval operational server did not become ready"));
+    }, 20_000);
+    const onExit = (code, signal) => {
+      clearTimeout(timeout);
+      reject(new Error(
+        `approval operational server exited before ready (code=${code}, signal=${signal}, stderr=${Buffer.concat(stderr)})`,
+      ));
+    };
+    child.once("exit", onExit);
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      const newline = output.indexOf("\n");
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      child.off("exit", onExit);
+      assert.deepEqual(JSON.parse(output.slice(0, newline)), { ready: true });
+      resolve();
+    });
+  });
+  return {
+    build,
+    child,
+    enabledProjectPath,
+    fixtureRoot,
+    socketPath,
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) {
+        const termination = await new Promise((resolve) => {
+          child.once("exit", (code, signal) => {
+            resolve({ code, signal });
+          });
+          child.kill("SIGKILL");
+        });
+        assert.deepEqual(
+          termination,
+          { code: null, signal: "SIGKILL" },
+          Buffer.concat(stderr).toString("utf8"),
+        );
+      }
+      assert.equal(Buffer.concat(stderr).toString("utf8"), "");
+      await rm(fixtureRoot, { force: true, recursive: true });
+    },
+  };
+}
+
+async function waitForApprovalSnapshot(socketPath, key, count) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const response = await udsRequest(socketPath, "get_state");
+    assert.equal(response.ok, true);
+    if (response.result[key]?.length === count) return response.result[key];
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`${key} did not reach count ${count}`);
 }
 
 function udsRequest(socketPath, type, payload = {}) {
@@ -434,14 +536,17 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       prompt: "Continue the fictional implementation.",
     }),
     PermissionAllow: hookPayload("PermissionRequest", {
+      turn_id: hookTurnIDs.allow,
       tool_name: "Bash",
       tool_input: { command: "fictional-allow-command" },
     }),
     PermissionDeny: hookPayload("PermissionRequest", {
+      turn_id: hookTurnIDs.deny,
       tool_name: "Bash",
       tool_input: { command: "fictional-deny-command" },
     }),
     PermissionDefer: hookPayload("PermissionRequest", {
+      turn_id: hookTurnIDs.defer,
       tool_name: "Bash",
       tool_input: { command: "fictional-defer-command" },
     }),
@@ -462,11 +567,26 @@ test("all Hook events forward official-shaped payloads and map exact public outp
     if (request.type === "user_prompt_submit") {
       return { enabled: true, additionalContext: "Prompt episode bound." };
     }
+    if (request.type === "ack_permission_request_delivery") {
+      assert.deepEqual(Object.keys(request.payload).sort(), [
+        "delivery_token", "kind", "request_id", "schema_version", "session_id", "turn_id",
+      ]);
+      assert.equal(request.payload.schema_version, "1.0");
+      assert.equal(request.payload.kind, "blabee_permission_request_delivery_ack");
+      return {};
+    }
     if (request.type === "permission_request") {
       const command = request.payload.tool_input.command;
-      if (command === "fictional-allow-command") return { decision: "allow" };
-      if (command === "fictional-deny-command") return { decision: "deny" };
-      return { decision: "defer_to_codex" };
+      const suffix = command.includes("allow")
+        ? "allow"
+        : command.includes("deny") ? "deny" : "defer";
+      return {
+        decision: suffix === "defer" ? "defer_to_codex" : suffix,
+        delivery_token: `permission_delivery_${suffix}_token_1234`,
+        request_id: `permission_request_${suffix}`,
+        session_id: request.payload.session_id,
+        turn_id: request.payload.turn_id,
+      };
     }
     if (request.type === "stop" && request.payload.turn_id === "turn_hook_block") {
       return { enabled: true, decision: "block", reason: "Run the reviewed next action." };
@@ -485,18 +605,18 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       },
     });
 
-    const permissionUnsupportedAllow = await runBinary(
+    const permissionAllow = await runBinary(
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
       { input: JSON.stringify(payloads.PermissionAllow) },
     );
-    assert.deepEqual(
-      {
-        code: permissionUnsupportedAllow.code,
-        stderr: permissionUnsupportedAllow.stderr,
-        stdout: permissionUnsupportedAllow.stdout,
+    assert.deepEqual(JSON.parse(permissionAllow.stdout), {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "allow",
+        },
       },
-      { code: 0, stderr: "", stdout: "" },
-    );
+    });
 
     const permissionDeny = await runBinary(
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
@@ -550,18 +670,273 @@ test("all Hook events forward official-shaped payloads and map exact public outp
     assert.deepEqual(received, [
       { type: "user_prompt_submit", payload: payloads.UserPromptSubmit },
       { type: "permission_request", payload: payloads.PermissionAllow },
+      {
+        type: "ack_permission_request_delivery",
+        payload: {
+          schema_version: "1.0",
+          kind: "blabee_permission_request_delivery_ack",
+          request_id: "permission_request_allow",
+          session_id: hookSessionID,
+          turn_id: hookTurnIDs.allow,
+          delivery_token: "permission_delivery_allow_token_1234",
+        },
+      },
       { type: "permission_request", payload: payloads.PermissionDeny },
+      {
+        type: "ack_permission_request_delivery",
+        payload: {
+          schema_version: "1.0",
+          kind: "blabee_permission_request_delivery_ack",
+          request_id: "permission_request_deny",
+          session_id: hookSessionID,
+          turn_id: hookTurnIDs.deny,
+          delivery_token: "permission_delivery_deny_token_1234",
+        },
+      },
       { type: "permission_request", payload: payloads.PermissionDefer },
+      {
+        type: "ack_permission_request_delivery",
+        payload: {
+          schema_version: "1.0",
+          kind: "blabee_permission_request_delivery_ack",
+          request_id: "permission_request_defer",
+          session_id: hookSessionID,
+          turn_id: hookTurnIDs.defer,
+          delivery_token: "permission_delivery_defer_token_1234",
+        },
+      },
       { type: "stop", payload: payloads.StopBlock },
       { type: "stop", payload: payloads.StopNoDecision },
     ]);
     for (const result of [
-      userPrompt, permissionUnsupportedAllow, permissionDeny, permissionDefer,
+      userPrompt, permissionAllow, permissionDeny, permissionDefer,
       stopBlock, stopNoDecision,
     ]) {
       assert.equal(result.stdout.includes(assistantMessage), false);
       assert.equal(result.stderr.includes(assistantMessage), false);
     }
+  } finally {
+    await fake.close();
+  }
+});
+
+test("Hook stdout write failure sends no permission delivery acknowledgement", async () => {
+  let acknowledgementCalls = 0;
+  const fake = await startFakeCoordinator((request) => {
+    if (request.type === "permission_request") {
+      return {
+        decision: "allow",
+        delivery_token: "permission_delivery_stdout_failure_1234",
+        request_id: "permission_request_stdout_failure",
+        session_id: hookSessionID,
+        turn_id: hookTurnIDs.stdoutFailure,
+      };
+    }
+    if (request.type === "ack_permission_request_delivery") {
+      acknowledgementCalls += 1;
+      return {};
+    }
+    throw new Error(`unexpected request ${request.type}`);
+  });
+  try {
+    const build = await buildProductCoordinator();
+    const child = spawn(
+      build.binaryPath,
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      { env: build.environment, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const stderr = [];
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.stdout.destroy();
+    await new Promise((resolve) => setImmediate(resolve));
+    child.stdin.end(JSON.stringify(hookPayload("PermissionRequest", {
+      turn_id: hookTurnIDs.stdoutFailure,
+      tool_name: "Bash",
+      tool_input: { command: "fictional-stdout-failure-command" },
+    })));
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("Hook with closed stdout did not exit"));
+      }, 15_000);
+      child.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    assert.equal(acknowledgementCalls, 0);
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "");
+  } finally {
+    await fake.close();
+  }
+});
+
+test("Hook acknowledgement failure never retries or rewrites official stdout", async () => {
+  let permissionCalls = 0;
+  let acknowledgementCalls = 0;
+  const fake = await startFakeCoordinator((request) => {
+    if (request.type === "permission_request") {
+      permissionCalls += 1;
+      return {
+        decision: "deny",
+        delivery_token: "permission_delivery_ack_failure_1234",
+        request_id: "permission_request_ack_failure",
+        session_id: hookSessionID,
+        turn_id: hookTurnIDs.ackFailure,
+      };
+    }
+    if (request.type === "ack_permission_request_delivery") {
+      acknowledgementCalls += 1;
+      const error = new Error("fixture acknowledgement failure");
+      error.coordinatorCode = "permission_request_delivery_ack_invalid";
+      throw error;
+    }
+    throw new Error(`unexpected request ${request.type}`);
+  });
+  try {
+    const result = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      {
+        input: JSON.stringify(hookPayload("PermissionRequest", {
+          turn_id: hookTurnIDs.ackFailure,
+          tool_name: "Bash",
+          tool_input: { command: "fictional-ack-failure-command" },
+        })),
+      },
+    );
+    assert.deepEqual(
+      { code: result.code, signal: result.signal, stderr: result.stderr },
+      { code: 0, signal: null, stderr: "" },
+    );
+    assert.deepEqual(JSON.parse(result.stdout), {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: {
+          behavior: "deny",
+          message: "Blabee에서 사용자가 거절했습니다.",
+        },
+      },
+    });
+    assert.equal(permissionCalls, 1);
+    assert.equal(acknowledgementCalls, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("Hook native defer closes stdout before acknowledging delivery", async () => {
+  let acknowledgementCalls = 0;
+  let stdoutEnded = false;
+  let resolveStdoutEnd;
+  const stdoutEnd = new Promise((resolve) => {
+    resolveStdoutEnd = resolve;
+  });
+  const fake = await startFakeCoordinator(async (request) => {
+    if (request.type === "permission_request") {
+      return {
+        decision: "defer_to_codex",
+        delivery_token: "permission_delivery_defer_eof_1234",
+        request_id: "permission_request_defer_eof",
+        session_id: hookSessionID,
+        turn_id: hookTurnIDs.defer,
+      };
+    }
+    if (request.type === "ack_permission_request_delivery") {
+      acknowledgementCalls += 1;
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Hook acknowledged before stdout EOF")),
+          2_000,
+        );
+        stdoutEnd.then(() => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+      assert.equal(stdoutEnded, true);
+      return {};
+    }
+    throw new Error(`unexpected request ${request.type}`);
+  });
+  try {
+    const build = await buildProductCoordinator();
+    const child = spawn(
+      build.binaryPath,
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      { env: build.environment, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stdout.once("end", () => {
+      stdoutEnded = true;
+      resolveStdoutEnd();
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.stdin.end(JSON.stringify(hookPayload("PermissionRequest", {
+      turn_id: hookTurnIDs.defer,
+      tool_name: "Bash",
+      tool_input: { command: "fictional-defer-eof-command" },
+    })));
+    const exit = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("Hook native defer did not exit"));
+      }, 15_000);
+      child.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once("exit", (code, signal) => {
+        clearTimeout(timeout);
+        resolve({ code, signal });
+      });
+    });
+    assert.deepEqual(exit, { code: 0, signal: null });
+    assert.equal(Buffer.concat(stdout).toString("utf8"), "");
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "");
+    assert.equal(acknowledgementCalls, 1);
+    assert.equal(stdoutEnded, true);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("Hook rejects malformed internal delivery identifiers without acknowledgement", async () => {
+  let acknowledgementCalls = 0;
+  const fake = await startFakeCoordinator((request) => {
+    if (request.type === "permission_request") {
+      return {
+        decision: "allow",
+        delivery_token: "permission_delivery_bad_identifier_1234",
+        request_id: "permission_request_bad_identifier",
+        session_id: "e\u0301-session-not-nfc",
+        turn_id: hookTurnIDs.allow,
+      };
+    }
+    if (request.type === "ack_permission_request_delivery") {
+      acknowledgementCalls += 1;
+      return {};
+    }
+    throw new Error(`unexpected request ${request.type}`);
+  });
+  try {
+    const result = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      {
+        input: JSON.stringify(hookPayload("PermissionRequest", {
+          turn_id: hookTurnIDs.allow,
+          tool_name: "Bash",
+          tool_input: { command: "fictional-bad-identifier-command" },
+        })),
+      },
+    );
+    assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
+    assert.equal(acknowledgementCalls, 0);
   } finally {
     await fake.close();
   }
@@ -578,6 +953,34 @@ test("Hook transport failure exits zero with empty stdout and stderr", async () 
     assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
   } finally {
     await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("rejected Hook approval input fails open to native Codex", async () => {
+  const fake = await startFakeCoordinator(() => {
+    const error = new Error("fixture unsafe approval input");
+    error.coordinatorCode = "permission_request_tool_input_invalid";
+    throw error;
+  });
+  try {
+    const result = await runBinary(
+      ["hook", "PermissionRequest", "--socket", fake.socketPath],
+      {
+        input: JSON.stringify(hookPayload("PermissionRequest", {
+          tool_name: "Bash",
+          tool_input: {
+            command: "fictional-safe-visible-command",
+            hidden_authority: "must-not-be-approved",
+          },
+        })),
+      },
+    );
+    assert.deepEqual(
+      { code: result.code, signal: result.signal, stderr: result.stderr, stdout: result.stdout },
+      { code: 0, signal: null, stderr: "", stdout: "" },
+    );
+  } finally {
+    await fake.close();
   }
 });
 
@@ -918,6 +1321,28 @@ test("UDS server enforces one owner, secure modes, and the high-level allowlist"
       "resolve_permission_request",
     );
 
+    const deliveryAckAccepted = await udsRequest(
+      fixture.socketPath,
+      "ack_managed_command_approval_delivery",
+      {},
+    );
+    assert.equal(deliveryAckAccepted.ok, true);
+    assert.equal(
+      deliveryAckAccepted.result.handled_type,
+      "ack_managed_command_approval_delivery",
+    );
+
+    const permissionDeliveryAckAccepted = await udsRequest(
+      fixture.socketPath,
+      "ack_permission_request_delivery",
+      {},
+    );
+    assert.equal(permissionDeliveryAckAccepted.ok, true);
+    assert.equal(
+      permissionDeliveryAckAccepted.result.handled_type,
+      "ack_permission_request_delivery",
+    );
+
     const rejected = await udsRequest(fixture.socketPath, "execute_command", {
       command: { op: "unsafe_low_level" },
     });
@@ -947,6 +1372,224 @@ test("managed approval peer disconnect cancels waiters and releases UDS admissio
     assert.equal(response.result.fixture, "ok");
   } finally {
     await fixture.close();
+  }
+});
+
+test("Hook approval peer disconnect cancels waiters and releases UDS admission", async () => {
+  const fixture = await startFixtureTransportServer();
+  try {
+    await Promise.all(Array.from({ length: 64 }, (_, index) =>
+      sendRequestThenDisconnect(
+        fixture.socketPath,
+        "permission_request",
+        { fixture_delay_ms: 2_000, fixture_index: index },
+      )));
+
+    // Hook approvals use the same bounded peer-liveness race as managed
+    // approvals, so disconnected Hook processes must release all leases.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const response = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(response.ok, true);
+    assert.equal(response.result.fixture, "ok");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real Hook allow resolves Pet only after official stdout and delivery ack", async () => {
+  const server = await startOperationalApprovalServer();
+  try {
+    const productBuild = await buildProductCoordinator();
+    const turnID = "turn_permission_delivery_live";
+    const userPromptPayload = hookPayload("UserPromptSubmit", {
+      cwd: server.enabledProjectPath,
+      turn_id: turnID,
+      prompt: "Bind the live Hook delivery test",
+    });
+    const userPrompt = await runBuiltBinary(
+      productBuild,
+      ["hook", "UserPromptSubmit", "--socket", server.socketPath],
+      { input: JSON.stringify(userPromptPayload) },
+    );
+    assert.equal(userPrompt.code, 0);
+    assert.notEqual(userPrompt.stdout, "");
+
+    const permissionCompletion = runBuiltBinary(
+      productBuild,
+      ["hook", "PermissionRequest", "--socket", server.socketPath],
+      {
+        input: JSON.stringify(hookPayload("PermissionRequest", {
+          cwd: server.enabledProjectPath,
+          turn_id: turnID,
+          tool_name: "Bash",
+          tool_input: { command: "printf live-hook-delivery" },
+        })),
+      },
+    );
+    const [request] = await waitForApprovalSnapshot(
+      server.socketPath,
+      "permission_requests",
+      1,
+    );
+    assert.equal(request.delivery_pending, false);
+    const resolution = udsRequest(
+      server.socketPath,
+      "resolve_permission_request",
+      {
+        schema_version: "1.0",
+        kind: "blabee_permission_resolution_request",
+        request_id: request.request_id,
+        response_id: "permission_response_live_stdout",
+        project_id: request.project_id,
+        session_id: request.session_id,
+        turn_id: request.turn_id,
+        decision: "allow",
+      },
+    );
+    const [permission, resolved] = await Promise.all([
+      permissionCompletion,
+      resolution,
+    ]);
+    assert.deepEqual(
+      { code: permission.code, signal: permission.signal, stderr: permission.stderr },
+      { code: 0, signal: null, stderr: "" },
+    );
+    assert.deepEqual(JSON.parse(permission.stdout), {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: "allow" },
+      },
+    });
+    assert.equal(resolved.ok, true);
+    assert.deepEqual(resolved.result, {
+      decision: "allow",
+      request_id: request.request_id,
+      resolved: true,
+      response_id: "permission_response_live_stdout",
+    });
+    await waitForApprovalSnapshot(server.socketPath, "permission_requests", 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("managed Pet disconnect after selection keeps FIFO barrier until delivery ack", async () => {
+  const server = await startOperationalApprovalServer();
+  const managedPayload = (suffix) => ({
+    schema_version: "1.0",
+    kind: "blabee_managed_command_approval_request",
+    broker_epoch: `broker_epoch_${suffix}`,
+    connection_id: `connection_${suffix}`,
+    jsonrpc_request_id: { type: "string", value: `rpc-${suffix}` },
+    thread_id: `thread_${suffix}`,
+    turn_id: `turn_${suffix}`,
+    item_id: `item_${suffix}`,
+    approval_id: `approval_${suffix}`,
+    environment_id: "local",
+    cwd: `/tmp/blabee-managed-${suffix}`,
+    command_preview: `printf ${suffix}`,
+    allow_once_available: true,
+    decline_available: true,
+  });
+  const resolution = (request, responseID) => {
+    const result = { ...request };
+    delete result.arrival_sequence;
+    delete result.delivery_pending;
+    result.schema_version = "1.0";
+    result.kind = "blabee_managed_command_approval_resolution_request";
+    result.response_id = responseID;
+    result.decision = "accept_once";
+    return result;
+  };
+  const acknowledgement = (request, deliveryToken) => ({
+    schema_version: "1.0",
+    kind: "blabee_managed_command_approval_delivery_ack",
+    broker_epoch: request.broker_epoch,
+    connection_id: request.connection_id,
+    jsonrpc_request_id: request.jsonrpc_request_id,
+    thread_id: request.thread_id,
+    turn_id: request.turn_id,
+    item_id: request.item_id,
+    approval_id: request.approval_id,
+    environment_id: request.environment_id,
+    delivery_token: deliveryToken,
+  });
+  try {
+    const firstBroker = udsRequest(
+      server.socketPath,
+      "managed_command_approval",
+      managedPayload("disconnect_first"),
+    );
+    await waitForApprovalSnapshot(server.socketPath, "managed_command_approvals", 1);
+    const secondBroker = udsRequest(
+      server.socketPath,
+      "managed_command_approval",
+      managedPayload("disconnect_second"),
+    );
+    const [first, second] = await waitForApprovalSnapshot(
+      server.socketPath,
+      "managed_command_approvals",
+      2,
+    );
+
+    const disconnectedPet = sendRequestThenDisconnect(
+      server.socketPath,
+      "resolve_managed_command_approval",
+      resolution(first, "managed_response_disconnected_pet"),
+      100,
+    );
+    const firstOutcome = await firstBroker;
+    assert.equal(firstOutcome.ok, true);
+    assert.equal(firstOutcome.result.decision, "accept_once");
+    assert.match(firstOutcome.result.delivery_token, /^[A-Za-z0-9_-]{16,512}$/);
+    await disconnectedPet;
+
+    const [selectedFirst] = await waitForApprovalSnapshot(
+      server.socketPath,
+      "managed_command_approvals",
+      2,
+    );
+    assert.equal(selectedFirst.delivery_pending, true);
+    const followerBeforeAck = await udsRequest(
+      server.socketPath,
+      "resolve_managed_command_approval",
+      resolution(second, "managed_response_follower_too_early"),
+    );
+    assert.equal(followerBeforeAck.ok, false);
+    assert.equal(followerBeforeAck.error.code, "managed_command_approval_not_head");
+
+    const firstAck = await udsRequest(
+      server.socketPath,
+      "ack_managed_command_approval_delivery",
+      acknowledgement(first, firstOutcome.result.delivery_token),
+    );
+    assert.equal(firstAck.ok, true);
+    assert.deepEqual(firstAck.result, {});
+    const [remaining] = await waitForApprovalSnapshot(
+      server.socketPath,
+      "managed_command_approvals",
+      1,
+    );
+    assert.equal(remaining.managed_request_id, second.managed_request_id);
+
+    const secondResolution = udsRequest(
+      server.socketPath,
+      "resolve_managed_command_approval",
+      resolution(second, "managed_response_after_disconnected_pet_ack"),
+    );
+    const secondOutcome = await secondBroker;
+    assert.equal(secondOutcome.ok, true);
+    const secondAck = await udsRequest(
+      server.socketPath,
+      "ack_managed_command_approval_delivery",
+      acknowledgement(second, secondOutcome.result.delivery_token),
+    );
+    assert.equal(secondAck.ok, true);
+    const secondReceipt = await secondResolution;
+    assert.equal(secondReceipt.ok, true);
+    await waitForApprovalSnapshot(server.socketPath, "managed_command_approvals", 0);
+  } finally {
+    await server.close();
   }
 });
 

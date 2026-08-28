@@ -19,6 +19,17 @@ struct ManagedCodexConnectionContext: Sendable, Equatable {
     let connectionID: String
 }
 
+struct ManagedCodexApprovalSelection: Sendable, Equatable {
+    let decision: CodexAppServerApprovalDecision
+    let deliveryToken: String?
+}
+
+struct ManagedCodexApprovalDelivery: Sendable, Equatable {
+    let token: String
+    let request: CodexAppServerCommandApprovalRequest
+    let context: ManagedCodexConnectionContext
+}
+
 final class ManagedCodexApprovalCancellation: @unchecked Sendable {
     fileprivate final class Registration: @unchecked Sendable {
         private let descriptor: Int32
@@ -112,7 +123,25 @@ protocol ManagedCodexApprovalDeciding: Sendable {
     ) throws -> CodexAppServerApprovalDecision
 }
 
-struct ManagedCodexApprovalCoordinatorClient: ManagedCodexApprovalDeciding {
+/// Optional capability implemented by the live coordinator client. Test and
+/// fallback deciders can keep returning a bare decision; only coordinator
+/// selections carrying an exact, one-use token participate in delivery acks.
+protocol ManagedCodexApprovalDeliveryTracking:
+    ManagedCodexApprovalDeciding
+{
+    func selection(
+        for request: CodexAppServerCommandApprovalRequest,
+        context: ManagedCodexConnectionContext,
+        cancellation: ManagedCodexApprovalCancellation
+    ) throws -> ManagedCodexApprovalSelection
+
+    func acknowledgeDelivery(_ delivery: ManagedCodexApprovalDelivery) throws
+}
+
+struct ManagedCodexApprovalCoordinatorClient:
+    ManagedCodexApprovalDeciding,
+    ManagedCodexApprovalDeliveryTracking
+{
     private let socketPath: String
     private let connectTimeoutMilliseconds: Int32
     private let responseTimeoutMilliseconds: Int32
@@ -133,6 +162,18 @@ struct ManagedCodexApprovalCoordinatorClient: ManagedCodexApprovalDeciding {
         context: ManagedCodexConnectionContext,
         cancellation: ManagedCodexApprovalCancellation
     ) throws -> CodexAppServerApprovalDecision {
+        try selection(
+            for: request,
+            context: context,
+            cancellation: cancellation
+        ).decision
+    }
+
+    func selection(
+        for request: CodexAppServerCommandApprovalRequest,
+        context: ManagedCodexConnectionContext,
+        cancellation: ManagedCodexApprovalCancellation
+    ) throws -> ManagedCodexApprovalSelection {
         let result = try ManagedCodexApprovalSocketRequest(
             socketPath: socketPath,
             connectTimeoutMilliseconds: connectTimeoutMilliseconds,
@@ -142,16 +183,62 @@ struct ManagedCodexApprovalCoordinatorClient: ManagedCodexApprovalDeciding {
             payload: Self.payload(for: request, context: context),
             cancellation: cancellation
         )
-        guard Set(result.keys) == ["decision"],
+        return try Self.selection(from: result)
+    }
+
+    static func selection(
+        from result: [String: Any]
+    ) throws -> ManagedCodexApprovalSelection {
+        let resultKeys = Set(result.keys)
+        guard resultKeys == ["decision"]
+                || resultKeys == ["decision", "delivery_token"],
               let rawDecision = result["decision"] as? String
         else {
             throw ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse
         }
+        let deliveryToken: String?
+        if resultKeys.contains("delivery_token") {
+            guard let token = result["delivery_token"] as? String,
+                  Self.isCanonicalDeliveryToken(token)
+            else {
+                throw ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse
+            }
+            deliveryToken = token
+        } else {
+            deliveryToken = nil
+        }
+        let decision: CodexAppServerApprovalDecision
         switch rawDecision {
-        case "accept_once": return .allowOnce
-        case "decline": return .deny
-        case "decide_in_codex": return .decideInCodex
+        case "accept_once": decision = .allowOnce
+        case "decline": decision = .deny
+        case "decide_in_codex": decision = .decideInCodex
         default: throw ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse
+        }
+        // A synthetic allow or deny is valid only as a Pet-selected delivery
+        // that the broker can acknowledge after writing to App Server. A
+        // tokenless positive/negative response can come from stale or malformed
+        // coordinator code and must never bypass the delivery contract.
+        if decision != .decideInCodex, deliveryToken == nil {
+            throw ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse
+        }
+        return ManagedCodexApprovalSelection(
+            decision: decision,
+            deliveryToken: deliveryToken
+        )
+    }
+
+    func acknowledgeDelivery(_ delivery: ManagedCodexApprovalDelivery) throws {
+        let result = try ManagedCodexApprovalSocketRequest(
+            socketPath: socketPath,
+            connectTimeoutMilliseconds: connectTimeoutMilliseconds,
+            responseTimeoutMilliseconds: connectTimeoutMilliseconds
+        ).request(
+            type: "ack_managed_command_approval_delivery",
+            payload: Self.deliveryPayload(for: delivery),
+            cancellation: ManagedCodexApprovalCancellation()
+        )
+        guard result.isEmpty else {
+            throw ManagedCodexApprovalRuntimeError.invalidCoordinatorResponse
         }
     }
 
@@ -184,11 +271,55 @@ struct ManagedCodexApprovalCoordinatorClient: ManagedCodexApprovalDeciding {
                 || request.availableDecisions.contains(.cancel),
         ]
     }
+
+    static func deliveryPayload(
+        for delivery: ManagedCodexApprovalDelivery
+    ) -> [String: Any] {
+        let request = delivery.request
+        let requestID: [String: Any]
+        switch request.requestID {
+        case .string(let value):
+            requestID = ["type": "string", "value": value]
+        case .integer(let value):
+            requestID = ["type": "integer", "value": value]
+        }
+        return [
+            "schema_version": "1.0",
+            "kind": "blabee_managed_command_approval_delivery_ack",
+            "broker_epoch": delivery.context.brokerEpoch,
+            "connection_id": delivery.context.connectionID,
+            "jsonrpc_request_id": requestID,
+            "thread_id": request.threadID,
+            "turn_id": request.turnID,
+            "item_id": request.itemID,
+            "approval_id": request.approvalID as Any? ?? NSNull(),
+            "environment_id": request.environmentID as Any? ?? NSNull(),
+            "delivery_token": delivery.token,
+        ]
+    }
+
+    private static func isCanonicalDeliveryToken(_ value: String) -> Bool {
+        guard value.utf8.count >= 16, value.utf8.count <= 512 else {
+            return false
+        }
+        return value.utf8.allSatisfy { byte in
+            (byte >= 0x30 && byte <= 0x39)
+                || (byte >= 0x41 && byte <= 0x5A)
+                || (byte >= 0x61 && byte <= 0x7A)
+                || byte == 0x2D // -
+                || byte == 0x5F // _
+        }
+    }
 }
 
 enum ManagedCodexApprovalRoute: Equatable {
     case appServer(Data)
     case codex(Data)
+}
+
+struct ManagedCodexApprovalRoutingResult: Equatable {
+    let route: ManagedCodexApprovalRoute
+    let delivery: ManagedCodexApprovalDelivery?
 }
 
 /// Resolves one intercepted App Server command approval. The router deliberately
@@ -203,34 +334,90 @@ struct ManagedCodexApprovalRouter: Sendable {
         cancellation: ManagedCodexApprovalCancellation =
             ManagedCodexApprovalCancellation()
     ) -> ManagedCodexApprovalRoute {
+        routeWithDelivery(
+            appServerMessage: appServerMessage,
+            context: context,
+            cancellation: cancellation
+        ).route
+    }
+
+    func routeWithDelivery(
+        appServerMessage: Data,
+        context: ManagedCodexConnectionContext,
+        cancellation: ManagedCodexApprovalCancellation =
+            ManagedCodexApprovalCancellation()
+    ) -> ManagedCodexApprovalRoutingResult {
         let request: CodexAppServerCommandApprovalRequest
         do {
             request = try CodexAppServerApprovalAdapter.parse(appServerMessage)
         } catch {
-            return .codex(appServerMessage)
-        }
-
-        let decision: CodexAppServerApprovalDecision
-        do {
-            decision = try decider.decision(
-                for: request,
-                context: context,
-                cancellation: cancellation
+            return ManagedCodexApprovalRoutingResult(
+                route: .codex(appServerMessage),
+                delivery: nil
             )
-        } catch {
-            return .codex(request.forwardingData)
         }
 
+        let selection: ManagedCodexApprovalSelection
         do {
-            switch try CodexAppServerApprovalAdapter.resolve(decision, for: request) {
-            case .respond(let response):
-                return .appServer(try response.encodedData())
-            case .forwardToCodex(let requestData):
-                return .codex(requestData)
+            if let deliveryTracker = decider as? ManagedCodexApprovalDeliveryTracking {
+                selection = try deliveryTracker.selection(
+                    for: request,
+                    context: context,
+                    cancellation: cancellation
+                )
+            } else {
+                selection = ManagedCodexApprovalSelection(
+                    decision: try decider.decision(
+                        for: request,
+                        context: context,
+                        cancellation: cancellation
+                    ),
+                    deliveryToken: nil
+                )
             }
         } catch {
-            return .codex(request.forwardingData)
+            return ManagedCodexApprovalRoutingResult(
+                route: .codex(request.forwardingData),
+                delivery: nil
+            )
         }
+
+        let delivery = selection.deliveryToken.map {
+            ManagedCodexApprovalDelivery(
+                token: $0,
+                request: request,
+                context: context
+            )
+        }
+        do {
+            switch try CodexAppServerApprovalAdapter.resolve(
+                selection.decision,
+                for: request
+            ) {
+            case .respond(let response):
+                return ManagedCodexApprovalRoutingResult(
+                    route: .appServer(try response.encodedData()),
+                    delivery: delivery
+                )
+            case .forwardToCodex(let requestData):
+                return ManagedCodexApprovalRoutingResult(
+                    route: .codex(requestData),
+                    delivery: delivery
+                )
+            }
+        } catch {
+            return ManagedCodexApprovalRoutingResult(
+                route: .codex(request.forwardingData),
+                delivery: nil
+            )
+        }
+    }
+
+    func acknowledgeDelivery(_ delivery: ManagedCodexApprovalDelivery) throws {
+        guard let deliveryTracker = decider as? ManagedCodexApprovalDeliveryTracking else {
+            return
+        }
+        try deliveryTracker.acknowledgeDelivery(delivery)
     }
 }
 

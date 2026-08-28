@@ -120,8 +120,10 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "stop",
         "permission_request",
         "resolve_permission_request",
+        "ack_permission_request_delivery",
         "managed_command_approval",
         "resolve_managed_command_approval",
+        "ack_managed_command_approval_delivery",
         "doctor_status",
         "pet_snapshot",
         "get_state",
@@ -319,10 +321,13 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let resultData: Data
             if type == "doctor_status" {
                 resultData = try await application.doctorStatus(payload: payloadData)
-            } else if type == "managed_command_approval" {
-                resultData = try await handleManagedCommandApproval(
+            } else if type == "permission_request"
+                        || type == "managed_command_approval"
+            {
+                resultData = try await handleApprovalRequest(
                     descriptor: descriptor,
                     application: application,
+                    type: type,
                     payload: payloadData
                 )
             } else {
@@ -367,31 +372,32 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         }
     }
 
-    private enum ManagedCommandApprovalConnectionRace: Sendable {
+    private enum ApprovalConnectionRace: Sendable {
         case application(Data)
         case peerUnavailable
         case cancelled
     }
 
-    /// A managed approval exists only while its broker request is alive. The
-    /// normal UDS request path can wait for Pet, but it must not leave a card
-    /// behind when the broker exits before receiving that selection.
-    private static func handleManagedCommandApproval(
+    /// An approval exists only while its Hook or broker request is alive. The
+    /// normal UDS request path can wait for Pet, but it must not leave a stale
+    /// card behind when the peer exits before receiving that selection.
+    private static func handleApprovalRequest(
         descriptor: Int32,
         application: any CoordinatorOperationalHandling,
+        type: String,
         payload: Data
     ) async throws -> Data {
         try await withThrowingTaskGroup(
-            of: ManagedCommandApprovalConnectionRace.self
+            of: ApprovalConnectionRace.self
         ) { group in
             group.addTask {
                 .application(try await application.handle(
-                    type: "managed_command_approval",
+                    type: type,
                     payload: payload
                 ))
             }
             group.addTask(priority: .utility) {
-                await waitForManagedApprovalPeerAvailability(descriptor)
+                await waitForApprovalPeerAvailability(descriptor)
             }
 
             do {
@@ -414,9 +420,9 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         }
     }
 
-    private static func waitForManagedApprovalPeerAvailability(
+    private static func waitForApprovalPeerAvailability(
         _ descriptor: Int32
-    ) async -> ManagedCommandApprovalConnectionRace {
+    ) async -> ApprovalConnectionRace {
         let intervalMilliseconds: Int32 = 100
         while !Task.isCancelled {
             var state = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)

@@ -341,7 +341,8 @@ struct PetRootView: View {
     }
 
     private func permissionRequestCard(_ request: PetPermissionRequest) -> some View {
-        let isResolving = viewModel.inFlightPermissionRequestID == request.requestID
+        let isResolving = request.deliveryPending
+            || viewModel.inFlightPermissionRequestID == request.requestID
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
@@ -353,8 +354,8 @@ struct PetRootView: View {
                     HStack(spacing: 7) {
                         Text("Codex 권한 요청")
                             .font(.title2.weight(.semibold))
-                        if viewModel.permissionRequestQueueCount > 1 {
-                            Text("1 / \(viewModel.permissionRequestQueueCount)")
+                        if viewModel.approvalQueueCount > 1 {
+                            Text("1 / \(viewModel.approvalQueueCount)")
                                 .font(.caption2.monospaced().bold())
                                 .foregroundStyle(.secondary)
                         }
@@ -370,8 +371,18 @@ struct PetRootView: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                Text(request.toolName)
+                Text("일반 Codex Hook")
                     .font(.callout.monospaced().bold())
+                Label(
+                    "세션: \(shortSessionID(request.sessionID))",
+                    systemImage: "link"
+                )
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .help(request.sessionID)
+                Text(request.toolName)
+                    .font(.caption.monospaced().bold())
+                    .foregroundStyle(.secondary)
                 Text(request.displaySummary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -381,8 +392,8 @@ struct PetRootView: View {
                 Label(request.cwd, systemImage: "folder")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
                     .help(request.cwd)
                 Text(request.commandPreview)
                     .font(.caption.monospaced())
@@ -398,30 +409,48 @@ struct PetRootView: View {
                     )
             }
 
+            if request.deliveryPending {
+                Label("Codex에 전달 확인 중", systemImage: "hourglass")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.orange)
+            }
+
             VStack(spacing: 9) {
                 permissionChoiceRow(
                     number: 1,
-                    title: PetPermissionDecision.deny.displayTitle,
-                    icon: "xmark",
-                    tint: .red,
-                    emphasized: true,
-                    disabled: isResolving
+                    title: PetPermissionDecision.allow.displayTitle,
+                    icon: "checkmark",
+                    tint: .blue,
+                    emphasized: request.allowOnceAvailable,
+                    disabled: isResolving || !request.allowOnceAvailable
                 ) {
-                    await viewModel.resolvePermissionRequest(.deny)
+                    await viewModel.resolvePermissionRequest(.allow, for: request)
                 }
                 permissionChoiceRow(
                     number: 2,
+                    title: PetPermissionDecision.deny.displayTitle,
+                    icon: "xmark",
+                    tint: .red,
+                    emphasized: false,
+                    disabled: isResolving
+                ) {
+                    await viewModel.resolvePermissionRequest(.deny, for: request)
+                }
+                permissionChoiceRow(
+                    number: 3,
                     title: PetPermissionDecision.deferToCodex.displayTitle,
                     icon: "arrow.up.forward.app",
                     tint: .teal,
                     emphasized: false,
                     disabled: isResolving
                 ) {
-                    await viewModel.resolvePermissionRequest(.deferToCodex)
+                    await viewModel.resolvePermissionRequest(.deferToCodex, for: request)
                 }
             }
 
-            Text("일회 허용은 Hook 경로에서 제공하지 않습니다. Codex에서 직접 결정하거나 응답하지 않으면 기존 Codex 승인 화면으로 돌아갑니다.")
+            Text(request.allowOnceAvailable
+                ? "이번만 허용은 이 요청 한 번에만 적용됩니다."
+                : "이 요청은 Pet에서 안전하게 허용할 수 없습니다. 거절하거나 Codex에서 직접 결정하세요.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -431,7 +460,8 @@ struct PetRootView: View {
     private func managedCommandApprovalCard(
         _ request: PetManagedCommandApproval
     ) -> some View {
-        let isResolving = viewModel.inFlightManagedCommandApprovalID != nil
+        let isResolving = request.deliveryPending
+            || viewModel.inFlightManagedCommandApprovalID != nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
@@ -443,8 +473,8 @@ struct PetRootView: View {
                     HStack(spacing: 7) {
                         Text("Blabee 관리형 권한 요청")
                             .font(.title2.weight(.semibold))
-                        if viewModel.managedCommandApprovalQueueCount > 1 {
-                            Text("1 / \(viewModel.managedCommandApprovalQueueCount)")
+                        if viewModel.approvalQueueCount > 1 {
+                            Text("1 / \(viewModel.approvalQueueCount)")
                                 .font(.caption2.monospaced().bold())
                                 .foregroundStyle(.secondary)
                         }
@@ -465,8 +495,8 @@ struct PetRootView: View {
                 Label(request.cwd, systemImage: "folder")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
                     .help(request.cwd)
                 Label(
                     "환경: \(request.environmentID ?? "기본 환경")",
@@ -478,7 +508,7 @@ struct PetRootView: View {
                     .truncationMode(.middle)
                     .help(request.environmentID ?? "기본 환경")
                 Label(
-                    "세션: \(request.threadID)",
+                    "세션: \(shortSessionID(request.threadID))",
                     systemImage: "link"
                 )
                     .font(.caption.monospaced())
@@ -498,6 +528,12 @@ struct PetRootView: View {
                         Color.primary.opacity(0.05),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                     )
+            }
+
+            if request.deliveryPending {
+                Label("Codex에 전달 확인 중", systemImage: "hourglass")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.orange)
             }
 
             VStack(spacing: 9) {
@@ -862,6 +898,11 @@ struct PetRootView: View {
     private func projectName(forManagedCWD cwd: String) -> String {
         let name = URL(fileURLWithPath: cwd, isDirectory: true).lastPathComponent
         return name.isEmpty ? "Codex" : name
+    }
+
+    private func shortSessionID(_ sessionID: String) -> String {
+        guard sessionID.count > 18 else { return sessionID }
+        return "\(sessionID.prefix(8))…\(sessionID.suffix(6))"
     }
 
     private func choiceIcon(slot: Int) -> String {

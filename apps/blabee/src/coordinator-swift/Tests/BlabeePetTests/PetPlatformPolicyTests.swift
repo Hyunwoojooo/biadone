@@ -148,6 +148,91 @@ func blabeePetOutsideClickDismissalPolicy() {
     ))
 }
 
+@Test("BlabeePet auto-presentation is owned by the exact approval head")
+func blabeePetExactApprovalPresentationPolicy() {
+    let first = PetApprovalHeadIdentity.permission(requestID: "permission_first")
+    let second = PetApprovalHeadIdentity.managed(managedRequestID: "managed_second")
+
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: false,
+        automaticOwner: nil,
+        newApprovalIdentity: first,
+        genericAttentionActive: false
+    ) == .present(first))
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: .approval(first),
+        newApprovalIdentity: first,
+        genericAttentionActive: false
+    ) == .none)
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: .approval(first),
+        newApprovalIdentity: second,
+        genericAttentionActive: false
+    ) == .replace(second))
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: .approval(first),
+        newApprovalIdentity: nil,
+        genericAttentionActive: false
+    ) == .hide)
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: .approval(first),
+        newApprovalIdentity: nil,
+        genericAttentionActive: true
+    ) == .handoffToGenericAttention)
+
+    // A manually opened panel and a generic decision-owned panel remain
+    // visible; neither is reclassified as approval-owned behind the user.
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: nil,
+        newApprovalIdentity: first,
+        genericAttentionActive: false
+    ) == .none)
+    #expect(PetApprovalPresentationPolicy.transition(
+        panelIsVisible: true,
+        automaticOwner: .genericAttention,
+        newApprovalIdentity: first,
+        genericAttentionActive: true
+    ) == .none)
+}
+
+@Test("BlabeePet permission cards scroll so full authority remains inspectable")
+func blabeePetPermissionContentCanScroll() {
+    #expect(PetPanelContentPolicy.allowsScrolling(in: .permission))
+    #expect(!PetPanelContentPolicy.allowsScrolling(in: .ready))
+    #expect(!PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
+}
+
+@Test("BlabeePet gives every explicit user decision the long response timeout")
+func blabeePetUserDecisionTimeoutPolicy() {
+    for requestType in [
+        "select",
+        "resolve_permission_request",
+        "resolve_managed_command_approval",
+    ] {
+        #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+            for: requestType,
+            defaultTimeoutMilliseconds: 2_000,
+            userDecisionTimeoutMilliseconds: 12_000
+        ) == 12_000)
+    }
+    for requestType in [
+        "get_state",
+        "focus_interaction",
+        "resolve_managed_command_approval_extra",
+    ] {
+        #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+            for: requestType,
+            defaultTimeoutMilliseconds: 2_000,
+            userDecisionTimeoutMilliseconds: 12_000
+        ) == 2_000)
+    }
+}
+
 @Test("BlabeePet loads the bundled SVG and overlays attention inside the icon")
 @MainActor
 func blabeePetStatusItemIconAsset() throws {

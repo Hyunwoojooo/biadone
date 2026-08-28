@@ -137,29 +137,44 @@ daemon은 `CoordinatorOperationalApplication` 하나를 UDS owner에 연결하�
 고수준 요청만 허용한다.
 
 - `enable_project`, `session_start`, `user_prompt_submit`
-- `emit_decision`, `stop`, `permission_request`, `resolve_permission_request`
-- `managed_command_approval`, `resolve_managed_command_approval`
+- `emit_decision`, `stop`, `permission_request`, `resolve_permission_request`,
+  `ack_permission_request_delivery`
+- `managed_command_approval`, `resolve_managed_command_approval`,
+  `ack_managed_command_approval_delivery`
 - Pet용 `get_state`/`pet_snapshot`, `focus_interaction`, `select`
 
 `PermissionRequest` 중계는 동결된 `native-request` v1과 별개인 process-local
-운영 IPC다. 일반 Hook 경로는 `deny`, `defer_to_codex`만 받으며 Pet에는
-각각 `거절`, `Codex에서 직접 결정`으로 표시한다. Hook에서 `allow`를 출력하지
-않는다. 계약상 진짜 `이번만 허용`은 관리형 App Server 요청의 `accept` 응답으로만
-제공하며 `acceptForSession`은 표시·저장·전송하지 않는다. 기본
-`codex-with-blabee` 실행기는 공식 TUI를 인증된 loopback WebSocket으로, App Server를
-stdio JSONL로 실행해 command
-approval만 별도의 process-local Pet FIFO에 연결한다. 120초 안에 선택하지 않거나
-daemon·transport 오류가 나면 원본 request를 공식 TUI로 전달한다. Pet이 손실 없이 전부
-표시할 수 있는 120 Unicode scalar 이하의
-안전한 단일 행 명령만 중계하며, 더 길거나 제어·방향성 문자가 포함된 명령은 즉시
-Codex 네이티브 승인 체계로 돌려준다. 코디네이터는 최대 8개 요청을 도착 순서로 보관하고 FIFO 선두의
-broker/connection/thread/turn/item/approval/environment/cwd/command 바인딩과
-response ID가 정확히 일치할 때만 한 번
-응답한다. 요청과 bounded tombstone은 journal에 쓰지 않으며 daemon 재시작 뒤
-복구하지 않는다. 시간 예산은 coordinator 50초, CLI 55초, Hook 60초다. 실패,
-만료, 재시작, 상한 초과에서는 Hook이 빈 stdout으로 끝나 Codex 네이티브 승인
-체계에 결정을 돌려준다. Pet receipt는 Hook에 보낼 응답을 선택했다는 뜻일 뿐,
-Codex가 이를 소비했거나 명령이 실행됐다는 증거가 아니다.
+운영 IPC다. 일반 Hook 경로는 최상위 필드와 `tool_input` 필드를 exact allowlist로
+검사하고, `permission_mode: default`의 `Bash` 요청 중 120 Unicode scalar 이하인
+NFC 안전 단일 행 command만 받는다. 이때 Pet은 `이번만 허용`, `거절`,
+`Codex에서 직접 결정`을 표시하고, `이번만 허용`은 현재 Hook 요청 하나의 공식
+`allow`로만 출력한다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool, 긴·여러
+행·제어/방향성 문자를 포함한 command는 일부만 표시하지 않고 빈 stdout으로 끝내
+Codex 네이티브 승인 체계에 결정을 돌려준다.
+
+기본 `codex-with-blabee` 실행기는 공식 TUI를 인증된 loopback WebSocket으로, App
+Server를 stdio JSONL로 실행해 command approval만 관리형 경로로 연결한다. 관리형
+`이번만 허용`은 원본 request의 `accept`로만 전송하며 `acceptForSession`은 어떤
+경로에서도 표시·저장·전송하지 않는다. 관리형 자식의 Hook 중계는 비활성화해 같은
+명령에 App Server 승인과 Hook 승인이 동시에 생기지 않게 한다.
+
+Hook과 관리형 요청은 transport·request binding을 분리하되, 코디네이터가 부여한
+공통 단조 `arrival_sequence`로 하나의 Pet 승인 FIFO를 만든다. Pet은 두 종류 중
+가장 오래된 선두 하나만 표시·focus·선택하며 관리형 요청을 고정 우선하지 않는다.
+경로별 최대 8개를 process-local로 보관하고, 전역 선두의 exact binding과 response
+ID가 일치할 때만 한 번 응답한다. 요청과 bounded tombstone은 journal에 쓰지 않으며
+daemon 재시작 뒤 복구하지 않는다. Hook 시간 예산은 coordinator 50초, CLI 55초,
+Codex Hook 60초다. 50초 안에 선택하지 않거나 daemon·transport 오류, 상한 초과,
+Hook peer disconnect, 같은 세션의 새 사람 턴이 발생하면 남은 Hook 요청은 결정 없이
+Codex 네이티브 승인 체계로 반환한다. 관리형 요청은 사용자 결정 120초, broker 130초,
+socket 135초의 별도 예산을 사용한다.
+
+Hook 카드를 선택하면 코디네이터는 선택된 요청을 전역 FIFO 선두로 유지한다. Hook
+CLI가 allow/deny의 공식 승인 JSON을 stdout에 성공적으로 쓰거나, `Codex에서 직접
+결정`의 빈 stdout EOF를 명시적으로 전달한 뒤 exact delivery ack를 보낸 경우에만
+Pet receipt를 반환한다. 이 receipt도 Codex가 stdout을 소비했거나 명령을 실행·완료했다는
+증거는 아니다. write·EOF·ack가 실패하거나 결과가 불명확하면 자동으로 재출력·재시도하지
+않는다.
 
 관리형 Codex 자식 프로세스에는 `BLABEE_MANAGED_APPROVALS=1`을 명시해 같은
 명령에 App Server 승인과 Hook 승인이 동시에 대기하지 않도록 한다. 이 표식이 있는
@@ -210,14 +225,19 @@ Codex 보안 경계다.
 이 wrapper로 새로 시작하거나 재개한 세션만 관리하며 이미 독립 실행 중인 TUI에는
 연결하지 않는다. App Server WebSocket 계약은 Codex 버전 의존 실험 경로이므로
 설치본 실제 왕복과 지원 버전 자격을 통과하기 전 공개 기능으로 간주하지 않는다.
-Pet의 관리형 승인 receipt는 코디네이터가 해당 선택을 브로커에 반환했다는 뜻이다.
-App Server가 응답을 소비했거나 명령이 실행·성공했다는 증거는 아니며, 브로커 연결이
-먼저 끊기면 대기 카드를 취소하고 자동 재시도하지 않는다.
+Pet의 관리형 승인 receipt는 코디네이터가 선택을 검증한 뒤 브로커가 exact response
+bytes를 App Server 또는 TUI stream에 write했고, exact delivery token과 transport
+binding으로 이를 확인했다는 뜻이다. App Server가 응답을 처리한 사실과 명령의
+실행·완료·성공은 여전히 별도 증거다. 앞 단계만으로 뒤 단계를 성공 처리하지 않으며,
+브로커 연결이 먼저 끊기거나 write 결과가 불명확하면 대기 카드를 취소하고 자동
+재시도하지 않는다. 새 브로커는 delivery token이 없는 `accept_once`·`decline`을
+stale/malformed coordinator 응답으로 거부하며, token 없는 응답은 Pet 선택이 아닌
+`decide_in_codex` fallback에만 허용한다.
 
 현재 관리형 계약 지원 버전은 Codex `0.149.1`, `0.150.1`이다. Pet은 요청의
-`environmentId`를 함께
-표시하고, FIFO는 도착 시점부터 사용자 결정 120초·브로커 130초·socket 135초의
-순서화된 상한과 동시 8개로 제한한다. 연결별 request ID 기억이
+`environmentId`를 함께 표시하고, 관리형 대기는 도착 시점부터 사용자 결정
+120초·브로커 130초·socket 135초의 순서화된 상한과 동시 8개로 제한한다. Pet 노출
+순서는 위 공통 `arrival_sequence`가 결정한다. 연결별 request ID 기억이
 256개에 도달하면 이후 승인 가로채기를 중지하고 공식 TUI로만 전달한다. 이는 오래된
 ID를 버려 중복 관리 승인을 허용하지 않기 위한 안전 경계다.
 

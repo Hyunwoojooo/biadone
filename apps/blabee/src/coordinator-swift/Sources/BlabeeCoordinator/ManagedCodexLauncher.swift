@@ -485,6 +485,18 @@ private func recordManagedCodexApprovalFallback(_ error: Error) {
     try? FileHandle.standardError.write(contentsOf: data)
 }
 
+private func recordManagedCodexDeliveryAckFailure(_ error: Error) {
+    guard ProcessInfo.processInfo.environment[
+        "BLABEE_MANAGED_CODEX_DIAGNOSTICS"
+    ] == "1" else { return }
+    guard var data = try? StrictJSONTransport.data(forJSONObject: [
+        "code": "managed_codex_approval_delivery_ack_failed",
+        "reason": error.coordinatorError.code,
+    ]) else { return }
+    data.append(0x0A)
+    try? FileHandle.standardError.write(contentsOf: data)
+}
+
 /// One process-local, non-replayable bridge between the Codex remote TUI and
 /// `codex app-server --listen stdio://`. Approval waits run on their own serial
 /// queue, leaving both transport read loops free to forward unrelated traffic.
@@ -598,7 +610,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                             approvalQueue.async { [self] in
                                 defer { releaseApproval(admissionID) }
                                 guard !cancellation.isCancelled else { return }
-                                let route = approvalRouter.route(
+                                let routingResult = approvalRouter.routeWithDelivery(
                                     appServerMessage: message,
                                     context: connectionContext,
                                     cancellation: cancellation
@@ -611,11 +623,25 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                                         try connection.sendText(message)
                                         return
                                     }
-                                    switch route {
+                                    switch routingResult.route {
                                     case .appServer(let response):
                                         try appServerWriter.write(response)
                                     case .codex(let request):
                                         try connection.sendText(request)
+                                    }
+                                    if let delivery = routingResult.delivery {
+                                        // Selection receipt and downstream delivery are
+                                        // separate facts. Acknowledge exactly once only
+                                        // after the intended peer accepted every byte.
+                                        do {
+                                            try approvalRouter.acknowledgeDelivery(delivery)
+                                        } catch {
+                                            // The downstream response cannot be rolled
+                                            // back. Do not retry or tear down a healthy
+                                            // Codex session; the coordinator retains the
+                                            // unresolved delivery state instead.
+                                            recordManagedCodexDeliveryAckFailure(error)
+                                        }
                                     }
                                 } catch {
                                     if !isStopped { errors.record(error) }

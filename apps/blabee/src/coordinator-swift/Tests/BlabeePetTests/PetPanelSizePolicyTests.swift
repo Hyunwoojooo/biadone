@@ -58,10 +58,10 @@ func blabeePetPanelHeightHonorsExpandedModes() {
     #expect(preferredPanelSize(actionCount: nil, isShowingOnboarding: true).height == 680)
 }
 
-@Test("BlabeePet scrolls only details and project settings")
+@Test("BlabeePet keeps fixed screens static and scrolls inspectable variable content")
 func blabeePetScrollPolicyIsBoundedToVariableContent() {
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .ready))
-    #expect(!PetPanelContentPolicy.allowsScrolling(in: .permission))
+    #expect(PetPanelContentPolicy.allowsScrolling(in: .permission))
     for actionCount in 1 ... 4 {
         #expect(!PetPanelContentPolicy.allowsScrolling(
             in: .decision(actionCount: actionCount)
@@ -70,6 +70,10 @@ func blabeePetScrollPolicyIsBoundedToVariableContent() {
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
     #expect(PetPanelContentPolicy.allowsScrolling(in: .details))
     #expect(PetPanelContentPolicy.allowsScrolling(in: .projectSettings))
+    #expect(preferredPanelSize(
+        actionCount: nil,
+        hasPermissionNotice: true
+    ) == CGSize(width: 460, height: 520))
 }
 
 @Test("BlabeePet compact screens use fixed text truncation limits")
