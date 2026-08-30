@@ -225,6 +225,11 @@ Codex 보안 경계다.
 이 wrapper로 새로 시작하거나 재개한 세션만 관리하며 이미 독립 실행 중인 TUI에는
 연결하지 않는다. App Server WebSocket 계약은 Codex 버전 의존 실험 경로이므로
 설치본 실제 왕복과 지원 버전 자격을 통과하기 전 공개 기능으로 간주하지 않는다.
+다른 Codex 클라이언트가 이미 writer를 보유한 세션의 `thread/resume`은 Codex가
+원래대로 거부한다. Blabee는 정확히 대응하는 원본 오류를 TUI에 먼저 byte-exact로
+전달한 뒤 고정된 설명을 최대 한 번 덧붙일 뿐이다. 세션 archive/unarchive, writer
+lock 삭제, 소유 프로세스 종료, 자동 재시도, 오류 대체는 수행하지 않는다. 즉 이
+안내는 충돌 원인을 설명하지만 Codex의 단일-writer 보호를 우회하지 않는다.
 Pet의 관리형 승인 receipt는 코디네이터가 선택을 검증한 뒤 브로커가 exact response
 bytes를 App Server 또는 TUI stream에 write했고, exact delivery token과 transport
 binding으로 이를 확인했다는 뜻이다. App Server가 응답을 처리한 사실과 명령의

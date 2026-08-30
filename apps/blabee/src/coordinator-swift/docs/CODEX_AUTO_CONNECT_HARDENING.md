@@ -110,6 +110,14 @@ asdf 및 Volta의 shim은 현재 프로젝트에 따라 실제 실행 파일이 
 - 인자가 없거나 `resume`인 관리형 실행은 app-server와 TUI 시작 직전에 같은 승인 token을 다시 확인한다. 두 프로세스 사이에 target이 바뀌면 TUI를 시작하지 않고 먼저 시작한 app-server를 정리한다.
 - coordinator 또는 승인 기록이 없거나 손상되면 공식 Codex를 조용히 직접 실행하지 않고 명시적으로 실패한다.
 
+### 3.8 active-writer 충돌은 관찰만 하고 Codex의 결정을 보존한다
+
+- Blabee는 `thread/resume` 요청과 동일한 typed JSON-RPC ID의 응답만 process-memory에서 제한적으로 연결한다. 문자열 ID와 정수 ID는 서로 다르며, 중복 ID는 해당 bridge 수명 동안 관찰에서 격리한다. 중복 ID와 관찰 한도 초과는 안내만 포기하고 transport는 계속한다.
+- `-32600` 코드와 `thread <lowercase canonical UUID> already has an active writer` 전체 문구가 모두 일치할 때만 충돌로 판정한다. raw 오류, thread ID, request ID, PID, 경로는 안내 sink로 전달하지 않는다.
+- App Server 응답 원본을 TUI에 먼저 byte-exact로 전달하고 성공한 뒤에만 고정 안내를 비동기로 최대 한 번 출력한다. 관찰 파싱이나 안내 출력 실패는 Codex 연결 실패로 전파하지 않는다.
+- Blabee는 이 경로에서 archive/unarchive, writer lock 삭제, 프로세스 종료, 자동 재시도, 성공 응답 합성, Codex 원본 오류의 대체·억제를 하지 않는다.
+- 따라서 다른 Codex 클라이언트가 writer를 보유한 동안 재개가 실패하는 것은 Codex의 원래 보호 동작이다. Blabee는 원인을 설명할 뿐 소유권을 넘기거나 보호를 우회하지 않는다.
+
 ## 4. 상태 및 오류 계약
 
 자동 연결 UI는 최소 다음 원인을 서로 구분해 표시해야 한다.
@@ -177,6 +185,7 @@ asdf 및 Volta의 shim은 현재 프로젝트에 따라 실제 실행 파일이 
 | Homebrew 업데이트 | stable symlink의 지원/미지원 target 교체, 동시 실행 | 지원 target은 잠금 아래 1회 재승인, 미지원 target은 실행·fallback 없이 차단 |
 | 실행 전달 | passthrough argv·환경·cwd·TTY·signal·종료 코드 | coordinator가 검증한 canonical target으로 `execv`, 의미 보존 |
 | 관리형 일관성 | app-server와 TUI 사이 target 변경 | TUI 미실행, app-server 정리, 자동 중간 재승인 없음 |
+| active-writer 관찰 | exact 충돌, ID 타입 불일치, 중복 ID, 정상 응답, malformed/과대 JSON, 즉시 응답 경쟁 | 원본 양방향 byte-exact 전달, exact 충돌만 고정 안내 1회, 자동 조치·재시도 없음 |
 | 재탐색 | 앱 시작 후 설치·제거·업데이트, 명시적 새로고침, enable 성공·실패 직후 | 앱 재시작 없이 fresh manager의 최신 상태 반영 |
 | 회귀 | 일반 `codex`, `codex resume`, 비활성화 후 원래 명령 | 관리형 연결 및 원상 복귀가 각각 정상 |
 
@@ -214,13 +223,14 @@ asdf 및 Volta의 shim은 현재 프로젝트에 따라 실제 실행 파일이 
 - 동적으로 계산되는 `ZDOTDIR`는 셸 코드를 실행하지 않는 원칙상 자동 지원하지 않는다. 명시적 시작 파일 선택 UI가 후속 과제다.
 - 명시적 절대 `ZDOTDIR` 유무와 관계없이 시스템 또는 초기 ZDOTDIR의 `.zshenv`에 실행 가능한 설정이 있으면 간접 `source`·`eval`까지 정적으로 증명할 수 없으므로 실패 폐쇄한다.
 - 버전 허용 목록과 실제 `--remote`, `app-server --listen stdio://` 기능이 어긋날 수 있으므로 향후에는 버전과 기능 probe를 함께 관리한다.
+- 다른 Codex 클라이언트가 보유한 active-writer는 Blabee가 안전하게 인계받을 수 없다. 공식 handoff 계약이 추가되기 전에는 원본 실패를 보존하고 수동으로 소유 클라이언트의 사용을 끝내야 한다.
 - 복구 중 프로세스가 비정상 종료되는 경우를 대비해 임시·격리 파일의 수명 주기와 Doctor 복구 안내를 별도 검증한다.
 - 일반 편집기 저장과 dotfile 동기화 경쟁은 원자 교체와 inode 검증으로 방어한다. 그러나 현재 사용자와 같은 UID로 디렉터리를 악의적으로 실시간 감시하며 무작위 격리 이름까지 바꾸는 프로세스는 이번 위협 모델에 포함하지 않는다. 그런 정황이 감지되면 자동 삭제보다 파일 보존과 수동 복구를 우선한다.
 - 잠금 회귀 테스트는 동일 테스트 프로세스의 실제 `flock` 선점과 별도 coordinator 프로세스들의 동시 enable/disable을 모두 검증한다. 겹쳐 실행된 요청 사이에는 외부에서 관찰 가능한 선후관계가 없으므로 특정 호출 순서를 강제하지 않고, 잠금이 정한 직렬 순서의 마지막 완전한 상태와 부분 설치 부재를 검증한다.
 
 ## 10. 자동 검증 결과
 
-- 전체 Swift 테스트: XCTest 5개와 Swift Testing 382개, 총 387개 통과
+- 전체 테스트: Swift Testing 423개와 XCTest 5개, 총 428개 통과 (2026-08-30)
 - release 빌드: `swift build -c release` 통과
 - 실제 coordinator subprocess: passthrough argv, 작업 디렉터리, 환경 정리, 종료 코드 전달, 변경 없는 승인 fast path 통과
 - 별도 프로세스 경쟁: enable/disable 동시 실행과 supported drift 동시 launch 2건 통과

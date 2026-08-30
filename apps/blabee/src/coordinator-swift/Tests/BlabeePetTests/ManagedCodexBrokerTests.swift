@@ -249,6 +249,10 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
         decider: any ManagedCodexApprovalDeciding,
         maximumPendingApprovals: Int = 8,
         maximumSeenApprovalRequestIDs: Int = 256,
+        maximumTrackedResumeRequestIDs: Int = 32,
+        resumeConflictReporter: @escaping ManagedCodexResumeConflictObserver.Reporter = {
+            _ in
+        },
         approvalWaitNanoseconds: UInt64 = 30_000_000_000
     ) throws {
         finished.enter()
@@ -275,6 +279,8 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
             brokerEpoch: "epoch-harness",
             maximumPendingApprovals: maximumPendingApprovals,
             maximumSeenApprovalRequestIDs: maximumSeenApprovalRequestIDs,
+            maximumTrackedResumeRequestIDs: maximumTrackedResumeRequestIDs,
+            resumeConflictReporter: resumeConflictReporter,
             approvalWaitNanoseconds: approvalWaitNanoseconds
         )
     }
@@ -870,6 +876,248 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
     #expect(killError == ESRCH)
 }
 
+@Test("Managed launcher accepts and reaps an isolated auxiliary App Server")
+func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
+    let fixture = try managedCodexAuxiliaryExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let token = "auxiliary-token"
+    let listener = try ManagedCodexWebSocketListener(expectedToken: token)
+    let primaryClient = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(primaryClient) }
+    try managedCodexTestWrite(Data((
+        "GET / HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(listener.port)\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            + "Sec-WebSocket-Version: 13\r\n"
+            + "Authorization: Bearer \(token)\r\n\r\n"
+    ).utf8), descriptor: primaryClient)
+    let primaryConnection = try listener.accept(timeoutMilliseconds: 1_000)
+    defer { primaryConnection.close() }
+    _ = try managedCodexTestReadHeaders(descriptor: primaryClient)
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let provider = ManagedCodexExecutableSequence<ManagedCodexTestError>([
+        .success(fixture.executable),
+        .success(fixture.executable),
+    ])
+
+    let broker = ManagedCodexAuxiliaryConnectionBroker(
+        admission: admission,
+        executable: fixture.executable,
+        environment: [
+            "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+        ],
+        coordinatorSocketPath: "/tmp/blabee-managed-auxiliary.sock",
+        brokerEpoch: "epoch-auxiliary-test",
+        approvedExecutableProvider: provider.next
+    )
+    broker.start()
+    defer { broker.stopAndWait() }
+
+    let auxiliaryClient = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(auxiliaryClient) }
+    try managedCodexTestWrite(Data((
+        "GET / HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(listener.port)\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"
+            + "Sec-WebSocket-Version: 13\r\n"
+            + "Authorization: Bearer \(token)\r\n\r\n"
+    ).utf8), descriptor: auxiliaryClient)
+    let handshake = try managedCodexTestReadHeaders(descriptor: auxiliaryClient)
+    #expect(String(data: handshake, encoding: .utf8)?.hasPrefix(
+        "HTTP/1.1 101 Switching Protocols"
+    ) == true)
+
+    let request = Data(
+        #"{"id":7,"method":"thread/list","params":{}}"#.utf8
+    )
+    try managedCodexTestWrite(
+        managedCodexClientFrame(opcode: 0x1, payload: request),
+        descriptor: auxiliaryClient
+    )
+    #expect(
+        try managedCodexTestReadServerText(descriptor: auxiliaryClient)
+            == request
+    )
+    #expect(provider.callCount == 2)
+
+    let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+    while !FileManager.default.fileExists(atPath: fixture.pidFile.path),
+          DispatchTime.now().uptimeNanoseconds < deadline
+    {
+        usleep(10_000)
+    }
+    let pidText = try String(contentsOf: fixture.pidFile, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let pid = try #require(pid_t(pidText))
+
+    broker.stopAndWait()
+    let killResult = kill(pid, 0)
+    let killError = errno
+    #expect(killResult == -1)
+    #expect(killError == ESRCH)
+}
+
+@Test("Managed auxiliary admission survives a disconnected handshake peer")
+func managedCodexAuxiliaryAdmissionSurvivesHandshakeResponseFailure() throws {
+    let fixture = try managedCodexAuxiliaryExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let token = "auxiliary-retry-token"
+    let listener = try ManagedCodexWebSocketListener(expectedToken: token)
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let broker = ManagedCodexAuxiliaryConnectionBroker(
+        admission: admission,
+        executable: fixture.executable,
+        environment: ["BLABEE_TEST_PID_FILE": fixture.pidFile.path],
+        coordinatorSocketPath: "/tmp/blabee-managed-auxiliary-retry.sock",
+        brokerEpoch: "epoch-auxiliary-retry"
+    )
+    broker.start()
+    defer { broker.stopAndWait() }
+
+    let disconnectedClient = try managedCodexConnectClient(port: listener.port)
+    try managedCodexTestWrite(
+        managedCodexTestHandshakeRequest(
+            port: listener.port,
+            token: token,
+            key: "dGhlIHNhbXBsZSBub25jZQ=="
+        ),
+        descriptor: disconnectedClient
+    )
+    var reset = linger(l_onoff: 1, l_linger: 0)
+    _ = setsockopt(
+        disconnectedClient,
+        SOL_SOCKET,
+        SO_LINGER,
+        &reset,
+        socklen_t(MemoryLayout<linger>.size)
+    )
+    Darwin.close(disconnectedClient)
+    usleep(25_000)
+
+    let healthyClient = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(healthyClient) }
+    try managedCodexTestWrite(
+        managedCodexTestHandshakeRequest(
+            port: listener.port,
+            token: token,
+            key: "x3JJHMbDL1EzLkh9GBhXDw=="
+        ),
+        descriptor: healthyClient
+    )
+    _ = try managedCodexTestReadHeaders(descriptor: healthyClient)
+    let request = Data(
+        #"{"id":8,"method":"thread/list","params":{}}"#.utf8
+    )
+    try managedCodexTestWrite(
+        managedCodexClientFrame(opcode: 0x1, payload: request),
+        descriptor: healthyClient
+    )
+    #expect(
+        try managedCodexTestReadServerText(descriptor: healthyClient)
+            == request
+    )
+}
+
+@Test("Managed auxiliary stop safely interrupts an in-flight accept")
+func managedCodexAuxiliaryStopInterruptsAccept() throws {
+    let listener = try ManagedCodexWebSocketListener(
+        expectedToken: "auxiliary-stop-token"
+    )
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let broker = ManagedCodexAuxiliaryConnectionBroker(
+        admission: admission,
+        executable: URL(fileURLWithPath: "/usr/bin/false"),
+        environment: [:],
+        coordinatorSocketPath: "/tmp/blabee-managed-auxiliary-stop.sock",
+        brokerEpoch: "epoch-auxiliary-stop"
+    )
+    broker.start()
+    usleep(25_000)
+
+    let stopped = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .userInitiated).async {
+        broker.stopAndWait()
+        stopped.signal()
+    }
+    #expect(stopped.wait(timeout: .now() + .seconds(1)) == .success)
+}
+
+@Test("Managed initial primary admission shutdown interrupts accept safely")
+func managedCodexInitialAdmissionShutdownInterruptsAccept() throws {
+    let listener = try ManagedCodexWebSocketListener(
+        expectedToken: "primary-stop-token"
+    )
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let finished = DispatchSemaphore(value: 0)
+    let result = ManagedCodexBridgeTestResult()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { finished.signal() }
+        do {
+            let connection = try admission.accept(
+                timeoutMilliseconds: 15_000,
+                handshakeTimeoutMilliseconds: 500
+            )
+            connection.close()
+        } catch {
+            result.record(error)
+        }
+    }
+    usleep(25_000)
+
+    let started = DispatchTime.now().uptimeNanoseconds
+    admission.stop()
+    let elapsedMilliseconds = (
+        DispatchTime.now().uptimeNanoseconds - started
+    ) / 1_000_000
+    #expect(finished.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(result.error != nil)
+    #expect(elapsedMilliseconds < 1_000)
+}
+
+@Test("Managed admission shutdown is bounded by a slow handshake and full backlog")
+func managedCodexAdmissionShutdownWithFullBacklogIsBounded() throws {
+    let listener = try ManagedCodexWebSocketListener(
+        expectedToken: "backlog-stop-token"
+    )
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let slowClient = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(slowClient) }
+    let finished = DispatchSemaphore(value: 0)
+    let result = ManagedCodexBridgeTestResult()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { finished.signal() }
+        do {
+            let connection = try admission.accept(
+                timeoutMilliseconds: 15_000,
+                handshakeTimeoutMilliseconds: 500
+            )
+            connection.close()
+        } catch {
+            result.record(error)
+        }
+    }
+    try managedCodexTestWrite(Data("G".utf8), descriptor: slowClient)
+    usleep(50_000)
+
+    // The first client is held in the active handshake while this connection
+    // occupies the listener's one-entry backlog.
+    let backlogClient = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(backlogClient) }
+    let started = DispatchTime.now().uptimeNanoseconds
+    admission.stop()
+    let elapsedMilliseconds = (
+        DispatchTime.now().uptimeNanoseconds - started
+    ) / 1_000_000
+
+    #expect(finished.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(result.error != nil)
+    #expect(elapsedMilliseconds < 1_000)
+}
+
 @Test("Managed launcher propagates the resolved coordinator socket to both children")
 func managedCodexLauncherPropagatesCoordinatorSocket() {
     let inherited = [
@@ -1372,6 +1620,53 @@ func managedCodexBridgeStopCancelsCoordinatorRequest() throws {
     #expect(harness.finished.wait(timeout: .now() + .seconds(2)) == .success)
 }
 
+@Test("Managed bridge explains active-writer resume without changing transport bytes")
+func managedCodexBridgeObservesResumeConflictTransparently() throws {
+    let recorder = ManagedCodexResumeObserverRecorder()
+    let harness = try ManagedCodexBridgeHarness(
+        decider: ManagedCodexFakeDecider(result: .success(.decideInCodex)),
+        resumeConflictReporter: recorder.record
+    )
+    defer { harness.close() }
+    harness.start()
+
+    let request = Data(
+        #"{ "id" : 41, "method" : "thread/resume", "params" : { "threadId" : "01a01ece-22b8-7833-9ebf-8ef8d1addc58" } }"#.utf8
+    )
+    try harness.sendFromTUI(request)
+    #expect(
+        try managedCodexTestReadLine(
+            descriptor: harness.appServerResponseDescriptor
+        ) == request
+    )
+
+    let response = Data(
+        #"{"id":41,"error":{"code":-32600,"message":"thread 01a01ece-22b8-7833-9ebf-8ef8d1addc58 already has an active writer"}}"#.utf8
+    )
+    try harness.sendFromAppServer(response)
+    #expect(try managedCodexTestReadServerText(descriptor: harness.client) == response)
+    #expect(recorder.eventReceived.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(recorder.events == [.activeWriter])
+
+    let laterRequest = Data(
+        #"{"id":42,"method":"thread/list","params":{}}"#.utf8
+    )
+    try harness.sendFromTUI(laterRequest)
+    #expect(
+        try managedCodexTestReadLine(
+            descriptor: harness.appServerResponseDescriptor
+        ) == laterRequest
+    )
+    let laterResponse = Data(#"{"id":42,"result":{"data":[]}}"#.utf8)
+    try harness.sendFromAppServer(laterResponse)
+    #expect(
+        try managedCodexTestReadServerText(descriptor: harness.client)
+            == laterResponse
+    )
+    #expect(recorder.events == [.activeWriter])
+    #expect(harness.result.error == nil)
+}
+
 @Test("Managed bridge performs authenticated socket and pipe round trips then stops")
 func managedCodexBridgeSocketPipeRoundTrip() throws {
     let token = "integration-token"
@@ -1478,6 +1773,55 @@ private struct ManagedCodexLauncherExecutableFixture {
     let executable: URL
     let markerFile: URL
     let pidFile: URL
+}
+
+private struct ManagedCodexAuxiliaryExecutableFixture {
+    let directory: URL
+    let executable: URL
+    let pidFile: URL
+}
+
+private func managedCodexAuxiliaryExecutableFixture(
+) throws -> ManagedCodexAuxiliaryExecutableFixture {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "blabee-managed-auxiliary-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    let executable = directory.appendingPathComponent(
+        "fake-codex",
+        isDirectory: false
+    )
+    let pidFile = directory.appendingPathComponent(
+        "app-server.pid",
+        isDirectory: false
+    )
+    let script = #"""
+    #!/bin/sh
+    if [ "$1" = "app-server" ]; then
+      printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
+      trap 'exit 0' TERM INT
+      while IFS= read -r line; do
+        printf '%s\n' "$line"
+      done
+      exit 0
+    fi
+    exit 1
+    """#
+    try Data(script.utf8).write(to: executable, options: .atomic)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: NSNumber(value: Int16(0o700))],
+        ofItemAtPath: executable.path
+    )
+    return ManagedCodexAuxiliaryExecutableFixture(
+        directory: directory,
+        executable: executable,
+        pidFile: pidFile
+    )
 }
 
 private func managedCodexLauncherExecutableFixture(
@@ -1649,6 +1993,22 @@ private func managedCodexTestWrite(_ data: Data, descriptor: Int32) throws {
             offset += count
         }
     }
+}
+
+private func managedCodexTestHandshakeRequest(
+    port: UInt16,
+    token: String,
+    key: String
+) -> Data {
+    Data((
+        "GET / HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(port)\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Key: \(key)\r\n"
+            + "Sec-WebSocket-Version: 13\r\n"
+            + "Authorization: Bearer \(token)\r\n\r\n"
+    ).utf8)
 }
 
 private func managedCodexTestReadExact(

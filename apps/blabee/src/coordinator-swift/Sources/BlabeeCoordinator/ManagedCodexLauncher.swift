@@ -135,7 +135,7 @@ private final class ManagedCodexChildProcesses: @unchecked Sendable {
 private final class ManagedCodexSignalRelay: @unchecked Sendable {
     private let sources: [DispatchSourceSignal]
 
-    init(children: ManagedCodexChildProcesses) {
+    init(terminationHandler: @escaping @Sendable () -> Void) {
         var retained: [DispatchSourceSignal] = []
         for signalNumber in [SIGINT, SIGTERM] {
             // Children are already running and retain the terminal's default
@@ -147,7 +147,7 @@ private final class ManagedCodexSignalRelay: @unchecked Sendable {
                 queue: DispatchQueue.global(qos: .userInitiated)
             )
             source.setEventHandler {
-                children.terminateAll()
+                terminationHandler()
                 _exit(128 + signalNumber)
             }
             source.resume()
@@ -514,6 +514,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
     private let appServerWriter: ManagedCodexJSONLineWriter
     private let approvalRouter: ManagedCodexApprovalRouter
     private let connectionContext: ManagedCodexConnectionContext
+    private let resumeConflictObserver: ManagedCodexResumeConflictObserver
     private let approvalQueue = DispatchQueue(
         label: "com.biadone.blabee.managed-codex.approvals",
         qos: .userInitiated
@@ -538,6 +539,10 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
         brokerEpoch: String,
         maximumPendingApprovals: Int = 8,
         maximumSeenApprovalRequestIDs: Int = 256,
+        maximumTrackedResumeRequestIDs: Int = 32,
+        resumeConflictReporter: @escaping ManagedCodexResumeConflictObserver.Reporter = {
+            _ in
+        },
         approvalWaitNanoseconds: UInt64 =
             ManagedCodexApprovalTimingPolicy.brokerDeadlineNanoseconds
     ) throws {
@@ -545,6 +550,10 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
         appServerReader = ManagedCodexJSONLineReader(appServerOutput)
         appServerWriter = try ManagedCodexJSONLineWriter(appServerInput)
         self.approvalRouter = approvalRouter
+        resumeConflictObserver = ManagedCodexResumeConflictObserver(
+            maximumTrackedRequestIDs: maximumTrackedResumeRequestIDs,
+            reporter: resumeConflictReporter
+        )
         connectionContext = ManagedCodexConnectionContext(
             brokerEpoch: brokerEpoch,
             connectionID: connection.connectionID
@@ -578,7 +587,9 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                     guard !message.contains(0x0A), !message.contains(0x0D) else {
                         throw CoordinatorError("managed_codex_tui_protocol_invalid")
                     }
-                    try appServerWriter.write(message)
+                    try resumeConflictObserver.forwardRequest(message) {
+                        try appServerWriter.write(message)
+                    }
                 }
             } catch {
                 if !isStopped { errors.record(error) }
@@ -666,6 +677,7 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
                         }
                     } else {
                         try connection.sendText(message)
+                        resumeConflictObserver.observeForwardedResponse(message)
                     }
                 }
             } catch {
@@ -746,6 +758,443 @@ final class ManagedCodexAppServerBridge: @unchecked Sendable {
     }
 }
 
+final class ManagedCodexListenerAdmission: @unchecked Sendable {
+    let port: UInt16
+    private let listener: ManagedCodexWebSocketListener
+    private let acceptOperationLock = NSLock()
+    private let stateLock = NSLock()
+    private var stopped = false
+
+    init(listener: ManagedCodexWebSocketListener) {
+        self.listener = listener
+        port = listener.port
+    }
+
+    func accept(
+        timeoutMilliseconds: Int32,
+        handshakeTimeoutMilliseconds: Int32
+    ) throws -> ManagedCodexWebSocketConnection {
+        acceptOperationLock.lock()
+        defer { acceptOperationLock.unlock() }
+        guard !isStopped else {
+            throw CoordinatorError("managed_codex_listener_stopped")
+        }
+        return try listener.accept(
+            timeoutMilliseconds: timeoutMilliseconds,
+            handshakeTimeoutMilliseconds: handshakeTimeoutMilliseconds
+        )
+    }
+
+    func stop() {
+        stateLock.lock()
+        guard !stopped else {
+            stateLock.unlock()
+            return
+        }
+        stopped = true
+        stateLock.unlock()
+
+        // Wake a blocked poll before waiting for the current accept operation.
+        // Only the operation owner can perform the final descriptor close.
+        Self.wakeListener(port: port)
+        acceptOperationLock.lock()
+        listener.close()
+        acceptOperationLock.unlock()
+    }
+
+    private var isStopped: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return stopped
+    }
+
+    private static func wakeListener(port: UInt16) {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return }
+        defer { Darwin.close(descriptor) }
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0,
+              fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0
+        else { return }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let connectResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_in>.size)
+                )
+            }
+        }
+        if connectResult == 0 { return }
+        guard errno == EINPROGRESS else { return }
+
+        let deadline = DispatchTime.now().uptimeNanoseconds + 100_000_000
+        while true {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else { return }
+            let remainingMilliseconds = max(
+                1,
+                Int32(min((deadline - now) / 1_000_000, UInt64(Int32.max)))
+            )
+            var item = pollfd(
+                fd: descriptor,
+                events: Int16(POLLOUT),
+                revents: 0
+            )
+            let pollResult = Darwin.poll(
+                &item,
+                1,
+                remainingMilliseconds
+            )
+            if pollResult < 0 && errno == EINTR { continue }
+            guard pollResult > 0 else { return }
+
+            var socketError: Int32 = 0
+            var socketErrorLength = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_ERROR,
+                &socketError,
+                &socketErrorLength
+            ) == 0,
+                  socketError == 0
+            else { return }
+            return
+        }
+    }
+}
+
+private final class ManagedCodexAuxiliarySession: @unchecked Sendable {
+    let id = UUID()
+    private let process: Process
+    private let bridge: ManagedCodexAppServerBridge
+    private let stateLock = NSLock()
+    private var stopped = false
+
+    init(process: Process, bridge: ManagedCodexAppServerBridge) {
+        self.process = process
+        self.bridge = bridge
+    }
+
+    func run() throws {
+        defer { stop() }
+        try bridge.run()
+    }
+
+    func stop() {
+        stateLock.lock()
+        guard !stopped else {
+            stateLock.unlock()
+            return
+        }
+        stopped = true
+        stateLock.unlock()
+        bridge.stop()
+        managedCodexTerminateProcess(process)
+    }
+}
+
+/// Accepts the additional remote connections Codex opens for in-session
+/// pickers such as `/resume`. Each connection owns an isolated stdio App
+/// Server so JSON-RPC request IDs and approval state never cross sessions.
+final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
+    private let admission: ManagedCodexListenerAdmission
+    private let executable: URL
+    private let environment: [String: String]
+    private let coordinatorSocketPath: String
+    private let brokerEpoch: String
+    private let approvedExecutableProvider: ManagedCodexExecutableProvider?
+    private let resumeConflictReporter: ManagedCodexResumeConflictObserver.Reporter
+    private let maximumSessions: Int
+    private let stateLock = NSLock()
+    private let workGroup = DispatchGroup()
+    private var started = false
+    private var stopped = false
+    private var pendingSessionCount = 0
+    private var sessions: [UUID: ManagedCodexAuxiliarySession] = [:]
+
+    init(
+        admission: ManagedCodexListenerAdmission,
+        executable: URL,
+        environment: [String: String],
+        coordinatorSocketPath: String,
+        brokerEpoch: String,
+        approvedExecutableProvider: ManagedCodexExecutableProvider? = nil,
+        resumeConflictReporter: @escaping ManagedCodexResumeConflictObserver.Reporter = {
+            _ in
+        },
+        maximumSessions: Int = 4
+    ) {
+        self.admission = admission
+        self.executable = executable
+        self.environment = environment
+        self.coordinatorSocketPath = coordinatorSocketPath
+        self.brokerEpoch = brokerEpoch
+        self.approvedExecutableProvider = approvedExecutableProvider
+        self.resumeConflictReporter = resumeConflictReporter
+        self.maximumSessions = max(1, min(4, maximumSessions))
+    }
+
+    func start() {
+        stateLock.lock()
+        guard !started, !stopped else {
+            stateLock.unlock()
+            return
+        }
+        started = true
+        workGroup.enter()
+        stateLock.unlock()
+
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { workGroup.leave() }
+            acceptConnections()
+        }
+    }
+
+    func stop() {
+        stateLock.lock()
+        guard !stopped else {
+            stateLock.unlock()
+            return
+        }
+        stopped = true
+        let activeSessions = Array(sessions.values)
+        stateLock.unlock()
+
+        admission.stop()
+
+        for session in activeSessions { session.stop() }
+    }
+
+    func stopAndWait() {
+        stop()
+        workGroup.wait()
+    }
+
+    private func acceptConnections() {
+        while !isStopped {
+            let result: Result<ManagedCodexWebSocketConnection, Error>
+            do {
+                result = .success(try admission.accept(
+                    timeoutMilliseconds: 250,
+                    handshakeTimeoutMilliseconds: 500
+                ))
+            } catch {
+                result = .failure(error)
+            }
+
+            switch result {
+            case .success(let connection):
+                guard !isStopped else {
+                    connection.close()
+                    return
+                }
+                startSession(for: connection)
+            case .failure(let error):
+                if isStopped { return }
+                guard Self.isConnectionScopedAcceptError(error) else {
+                    // Fatal listener errors end auxiliary admission without
+                    // affecting the already-running primary TUI.
+                    return
+                }
+            }
+        }
+    }
+
+    private static func isConnectionScopedAcceptError(_ error: Error) -> Bool {
+        guard let error = error as? ManagedCodexWebSocketError else {
+            return false
+        }
+        switch error {
+        case .acceptTimedOut,
+             .authenticationFailed,
+             .invalidHandshake,
+             .connectionClosed,
+             .writeTimedOut:
+            return true
+        case .socketFailure(let operation):
+            return operation == "write"
+                || operation == "write_poll"
+                || operation == "write_nonblocking"
+        case .invalidFrame, .messageTooLarge:
+            return false
+        }
+    }
+
+    private func startSession(
+        for connection: ManagedCodexWebSocketConnection
+    ) {
+        guard reserveSession() else {
+            connection.close()
+            return
+        }
+
+        let session: ManagedCodexAuxiliarySession
+        do {
+            session = try makeSession(connection: connection)
+        } catch {
+            connection.close()
+            releaseFailedReservation()
+            return
+        }
+
+        stateLock.lock()
+        pendingSessionCount -= 1
+        let shouldStop = stopped
+        if !shouldStop { sessions[session.id] = session }
+        stateLock.unlock()
+
+        if shouldStop {
+            session.stop()
+            workGroup.leave()
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            try? session.run()
+            stateLock.lock()
+            sessions.removeValue(forKey: session.id)
+            stateLock.unlock()
+            workGroup.leave()
+        }
+    }
+
+    private func reserveSession() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !stopped,
+              pendingSessionCount + sessions.count < maximumSessions
+        else { return false }
+        pendingSessionCount += 1
+        // Enter before spawning. stopAndWait() therefore covers a process that
+        // is between authentication and registration as well as active ones.
+        workGroup.enter()
+        return true
+    }
+
+    private func releaseFailedReservation() {
+        stateLock.lock()
+        pendingSessionCount -= 1
+        stateLock.unlock()
+        workGroup.leave()
+    }
+
+    private func makeSession(
+        connection: ManagedCodexWebSocketConnection
+    ) throws -> ManagedCodexAuxiliarySession {
+        let appServerInput = Pipe()
+        let appServerOutput = Pipe()
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["app-server", "--listen", "stdio://"]
+        process.standardInput = appServerInput
+        process.standardOutput = appServerOutput
+        process.standardError = FileHandle.standardError
+        process.environment = ManagedCodexLauncher.childEnvironment(
+            environment,
+            authenticationToken: nil,
+            coordinatorSocketPath: coordinatorSocketPath
+        )
+
+        if let approvedExecutableProvider {
+            let revalidated = try approvedExecutableProvider()
+            guard revalidated == executable else {
+                throw CoordinatorError("managed_codex_executable_changed")
+            }
+        }
+        guard !isStopped else {
+            throw CoordinatorError("managed_codex_stopped")
+        }
+
+        var started = false
+        do {
+            try process.run()
+            started = true
+            try? appServerInput.fileHandleForReading.close()
+            try? appServerOutput.fileHandleForWriting.close()
+
+            if let approvedExecutableProvider {
+                let revalidated = try approvedExecutableProvider()
+                guard revalidated == executable else {
+                    throw CoordinatorError("managed_codex_executable_changed")
+                }
+            }
+
+            let coordinatorClient = try ManagedCodexApprovalCoordinatorClient(
+                socketPath: coordinatorSocketPath,
+                responseTimeoutMilliseconds:
+                    ManagedCodexApprovalTimingPolicy.socketResponseTimeoutMilliseconds
+            )
+            let bridge = try ManagedCodexAppServerBridge(
+                connection: connection,
+                appServerOutput: appServerOutput.fileHandleForReading,
+                appServerInput: appServerInput.fileHandleForWriting,
+                approvalRouter: ManagedCodexApprovalRouter(
+                    decider: coordinatorClient
+                ),
+                brokerEpoch: brokerEpoch,
+                resumeConflictReporter: resumeConflictReporter
+            )
+            return ManagedCodexAuxiliarySession(
+                process: process,
+                bridge: bridge
+            )
+        } catch {
+            connection.close()
+            try? appServerInput.fileHandleForWriting.close()
+            try? appServerOutput.fileHandleForReading.close()
+            if started { managedCodexTerminateProcess(process) }
+            throw error
+        }
+    }
+
+    private var isStopped: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return stopped
+    }
+}
+
+private final class ManagedCodexLauncherShutdown: @unchecked Sendable {
+    private let admission: ManagedCodexListenerAdmission
+    private let children: ManagedCodexChildProcesses
+    private let stateLock = NSLock()
+    private var stopped = false
+    private var auxiliaryBroker: ManagedCodexAuxiliaryConnectionBroker?
+
+    init(
+        admission: ManagedCodexListenerAdmission,
+        children: ManagedCodexChildProcesses
+    ) {
+        self.admission = admission
+        self.children = children
+    }
+
+    func attach(_ broker: ManagedCodexAuxiliaryConnectionBroker) {
+        stateLock.lock()
+        let shouldStop = stopped
+        if !shouldStop { auxiliaryBroker = broker }
+        stateLock.unlock()
+        if shouldStop { broker.stopAndWait() }
+    }
+
+    func terminateAll() {
+        admission.stop()
+        stateLock.lock()
+        stopped = true
+        let broker = auxiliaryBroker
+        stateLock.unlock()
+        broker?.stopAndWait()
+        children.terminateAll()
+    }
+}
+
 struct ManagedCodexLauncher {
     private static let authenticationEnvironmentName = "BLABEE_MANAGED_CODEX_AUTH_TOKEN"
 
@@ -772,6 +1221,7 @@ struct ManagedCodexLauncher {
         }
         let token = try Self.authenticationToken()
         let listener = try ManagedCodexWebSocketListener(expectedToken: token)
+        let admission = ManagedCodexListenerAdmission(listener: listener)
         let appServerInput = Pipe()
         let appServerOutput = Pipe()
         let appServer = Process()
@@ -789,7 +1239,7 @@ struct ManagedCodexLauncher {
         let tui = Process()
         tui.executableURL = executable
         tui.arguments = [
-            "--remote", "ws://127.0.0.1:\(listener.port)",
+            "--remote", "ws://127.0.0.1:\(admission.port)",
             "--remote-auth-token-env", Self.authenticationEnvironmentName,
         ] + arguments.tuiArguments
         tui.standardInput = FileHandle.standardInput
@@ -806,7 +1256,7 @@ struct ManagedCodexLauncher {
             try? appServerInput.fileHandleForReading.close()
             try? appServerOutput.fileHandleForWriting.close()
         } catch {
-            listener.close()
+            admission.stop()
             throw CoordinatorError("managed_codex_app_server_unavailable")
         }
 
@@ -817,7 +1267,7 @@ struct ManagedCodexLauncher {
                     throw CoordinatorError("managed_codex_executable_changed")
                 }
             } catch {
-                listener.close()
+                admission.stop()
                 Self.terminate(appServer)
                 throw error
             }
@@ -825,7 +1275,7 @@ struct ManagedCodexLauncher {
         do {
             try tui.run()
         } catch {
-            listener.close()
+            admission.stop()
             Self.terminate(appServer)
             throw CoordinatorError("managed_codex_tui_unavailable")
         }
@@ -833,34 +1283,61 @@ struct ManagedCodexLauncher {
         do {
             terminalLease = try ManagedCodexTerminalForegroundLease(tui: tui)
         } catch {
-            listener.close()
+            admission.stop()
             Self.terminate(tui)
             Self.terminate(appServer)
             throw error
         }
         defer { terminalLease.restoreIgnoringErrors() }
         let children = ManagedCodexChildProcesses(appServer: appServer, tui: tui)
-        let signalRelay = ManagedCodexSignalRelay(children: children)
+        let shutdown = ManagedCodexLauncherShutdown(
+            admission: admission,
+            children: children
+        )
+        let signalRelay = ManagedCodexSignalRelay {
+            shutdown.terminateAll()
+        }
         defer { signalRelay.retainUntilScopeExit() }
 
         let bridge: ManagedCodexAppServerBridge
+        let auxiliaryBroker: ManagedCodexAuxiliaryConnectionBroker
         do {
-            let connection = try Self.acceptConnection(listener: listener, tui: tui)
-            listener.close()
+            let connection = try Self.acceptConnection(
+                admission: admission,
+                tui: tui
+            )
+            let brokerEpoch = UUID().uuidString.lowercased()
             let coordinatorClient = try ManagedCodexApprovalCoordinatorClient(
                 socketPath: arguments.coordinatorSocketPath,
                 responseTimeoutMilliseconds:
                     ManagedCodexApprovalTimingPolicy.socketResponseTimeoutMilliseconds
             )
+            let activeWriterNoticeEmitter = ManagedCodexActiveWriterNoticeEmitter()
+            let resumeConflictReporter: ManagedCodexResumeConflictObserver.Reporter = {
+                event in
+                activeWriterNoticeEmitter.report(event)
+            }
             bridge = try ManagedCodexAppServerBridge(
                 connection: connection,
                 appServerOutput: appServerOutput.fileHandleForReading,
                 appServerInput: appServerInput.fileHandleForWriting,
                 approvalRouter: ManagedCodexApprovalRouter(decider: coordinatorClient),
-                brokerEpoch: UUID().uuidString.lowercased()
+                brokerEpoch: brokerEpoch,
+                resumeConflictReporter: resumeConflictReporter
             )
+            auxiliaryBroker = ManagedCodexAuxiliaryConnectionBroker(
+                admission: admission,
+                executable: executable,
+                environment: environment,
+                coordinatorSocketPath: arguments.coordinatorSocketPath,
+                brokerEpoch: brokerEpoch,
+                approvedExecutableProvider: approvedExecutableProvider,
+                resumeConflictReporter: resumeConflictReporter
+            )
+            shutdown.attach(auxiliaryBroker)
+            auxiliaryBroker.start()
         } catch {
-            listener.close()
+            admission.stop()
             if !tui.isRunning {
                 tui.waitUntilExit()
                 let appServerTerminatedByBroker = Self.terminate(appServer)
@@ -870,7 +1347,7 @@ struct ManagedCodexLauncher {
                     appServerTerminatedByBroker: appServerTerminatedByBroker
                 )
             }
-            children.terminateAll()
+            shutdown.terminateAll()
             throw error
         }
 
@@ -878,10 +1355,11 @@ struct ManagedCodexLauncher {
             try bridge.run()
         } catch {
             bridge.stop()
-            children.terminateAll()
+            shutdown.terminateAll()
             throw error
         }
         bridge.stop()
+        auxiliaryBroker.stopAndWait()
 
         // A normally closing TUI tears down the bridge first. Give it a short
         // grace period, then terminate only these two exact managed children.
@@ -915,7 +1393,7 @@ struct ManagedCodexLauncher {
     }
 
     private static func acceptConnection(
-        listener: ManagedCodexWebSocketListener,
+        admission: ManagedCodexListenerAdmission,
         tui: Process
     ) throws -> ManagedCodexWebSocketConnection {
         let deadline = DispatchTime.now().uptimeNanoseconds + 15_000_000_000
@@ -931,9 +1409,9 @@ struct ManagedCodexLauncher {
                 Int32(min((deadline - now) / 1_000_000, UInt64(Int32.max)))
             )
             do {
-                return try listener.accept(
+                return try admission.accept(
                     timeoutMilliseconds: min(250, remainingMilliseconds),
-                    handshakeTimeoutMilliseconds: min(5_000, remainingMilliseconds)
+                    handshakeTimeoutMilliseconds: min(500, remainingMilliseconds)
                 )
             } catch ManagedCodexWebSocketError.acceptTimedOut {
                 continue
