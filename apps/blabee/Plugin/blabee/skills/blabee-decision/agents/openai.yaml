@@ -1,4 +1,4 @@
 interface:
-  display_name: "Blabee Decision"
-  short_description: "의미 있는 작업 경계만 Blabee의 다음 결정으로 연결합니다"
-  default_prompt: "$blabee-decision으로 현재 작업 경계의 다음 결정을 정확한 컨텍스트에 연결해 주세요."
+  display_name: "Blabee Follow-up"
+  short_description: "현재 제안 모드에 맞는 유용한 후속 작업과 질문을 연결합니다"
+  default_prompt: "$blabee-decision으로 현재 Hook 제안 모드에 맞는 후속 선택을 정확한 컨텍스트에 연결해 주세요."

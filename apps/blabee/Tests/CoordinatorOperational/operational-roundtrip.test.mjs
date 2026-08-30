@@ -21,6 +21,10 @@ import {
   CONTRACTS_ROOT,
 } from "../CoordinatorPersistence/runtime-harness.mjs";
 
+const OPERATIONAL_TEST_RUNTIME_IDENTITY =
+  "sha256:9f26db098b51450583945ef7a1da32d3f84b07ea697860ef5036f63c43c85b35";
+const OPERATIONAL_RUNTIME_REQUEST_TYPE_PREFIX = "blabee.runtime-identity.v1/";
+
 after(async () => {
   await cleanupCoordinatorBuild();
 });
@@ -35,7 +39,11 @@ function spawnBuiltBinary(
   { environment = {}, input = "", timeoutMs = 15_000 } = {},
 ) {
   const child = spawn(build.binaryPath, arguments_, {
-    env: { ...build.environment, ...environment },
+    env: {
+      ...build.environment,
+      BLABEE_RUNTIME_IDENTITY: OPERATIONAL_TEST_RUNTIME_IDENTITY,
+      ...environment,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stdout = [];
@@ -97,7 +105,13 @@ async function startOperationalServer() {
       "--socket", socketPath,
       "--authority-root", authorityRootPath,
     ],
-    { env: build.environment, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      env: {
+        ...build.environment,
+        BLABEE_RUNTIME_IDENTITY: OPERATIONAL_TEST_RUNTIME_IDENTITY,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
   const stderr = [];
   child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
@@ -175,7 +189,12 @@ function udsRequest(socketPath, type, payload = {}) {
       reject(new Error(`UDS ${type} request timed out`));
     }, 5_000);
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ request_id, type, payload })}\n`);
+      socket.write(`${JSON.stringify({
+        request_id,
+        runtime_identity: OPERATIONAL_TEST_RUNTIME_IDENTITY,
+        type: `${OPERATIONAL_RUNTIME_REQUEST_TYPE_PREFIX}${type}`,
+        payload,
+      })}\n`);
     });
     socket.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
@@ -186,6 +205,7 @@ function udsRequest(socketPath, type, payload = {}) {
       try {
         const response = JSON.parse(buffer.subarray(0, newline).toString("utf8"));
         assert.equal(response.request_id, request_id);
+        assert.equal(response.runtime_identity, OPERATIONAL_TEST_RUNTIME_IDENTITY);
         resolve(response);
       } catch (error) {
         reject(error);

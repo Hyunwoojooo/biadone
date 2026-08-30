@@ -35,6 +35,9 @@ let requestSequence = 0;
 const KEYCHAIN_TEST_NAMESPACE_GATE = "BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE";
 const KEYCHAIN_TEST_ACCOUNT = "BLABEE_T007B_KEYCHAIN_ACCOUNT";
 const KEYCHAIN_TEST_DELETE = "BLABEE_T007B_DELETE_KEYCHAIN_TEST_ANCHOR";
+const KEYCHAIN_TEST_READ_FD = "BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD";
+const KEYCHAIN_TEST_ORACLE_MAX_BYTES = 64 * 1024;
+const KEYCHAIN_TEST_ORACLE_TIMEOUT_MS = 10_000;
 
 function requestId() {
   requestSequence += 1;
@@ -266,6 +269,7 @@ export async function deleteKeychainTestAnchor({
     [KEYCHAIN_TEST_DELETE]: "1",
   };
   delete environment.BLABEE_T007B_ENABLE_CRASH_INJECTION;
+  delete environment[KEYCHAIN_TEST_READ_FD];
   await execFileAsync(
     availableBuild.binaryPath,
     [
@@ -285,22 +289,88 @@ export async function deleteKeychainTestAnchor({
 
 export async function readKeychainTestAnchor(workspace) {
   assert.match(workspace.freshnessAccount, /^test-[a-f0-9]{32}$/);
-  const { stdout } = await execFileAsync(
-    "/usr/bin/security",
+  const availableBuild = buildResult ?? await buildCoordinator();
+  const environment = {
+    ...availableBuild.environment,
+    [KEYCHAIN_TEST_NAMESPACE_GATE]: "1",
+    [KEYCHAIN_TEST_ACCOUNT]: workspace.freshnessAccount,
+    [KEYCHAIN_TEST_READ_FD]: "3",
+  };
+  delete environment.BLABEE_T007B_ENABLE_CRASH_INJECTION;
+  delete environment[KEYCHAIN_TEST_DELETE];
+
+  const child = spawn(
+    availableBuild.binaryPath,
     [
-      "find-generic-password",
-      "-s", "com.biadone.blabee.coordinator.freshness.v1",
-      "-a", workspace.freshnessAccount,
-      "-w",
+      "--database", workspace.databasePath,
+      "--key", workspace.keyPath,
+      "--contracts", CONTRACTS_ROOT,
     ],
     {
       cwd: PROJECT_ROOT,
-      maxBuffer: 4 * 1024 * 1024,
-      timeout: 30_000,
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
     },
   );
-  const bytes = Buffer.from(stdout);
-  return bytes.at(-1) === 0x0A ? bytes.subarray(0, bytes.length - 1) : bytes;
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const oracleChunks = [];
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let oracleBytes = 0;
+  let boundFailure;
+  const collect = (chunks, count, label) => (chunk) => {
+    const bytes = Buffer.from(chunk);
+    const nextCount = count() + bytes.length;
+    if (nextCount > KEYCHAIN_TEST_ORACLE_MAX_BYTES) {
+      boundFailure ??= new Error(`${label} exceeded the Keychain test oracle byte bound`);
+      child.kill("SIGKILL");
+      return;
+    }
+    chunks.push(bytes);
+    if (label === "stdout") stdoutBytes = nextCount;
+    else if (label === "stderr") stderrBytes = nextCount;
+    else oracleBytes = nextCount;
+  };
+  child.stdout.on("data", collect(stdoutChunks, () => stdoutBytes, "stdout"));
+  child.stderr.on("data", collect(stderrChunks, () => stderrBytes, "stderr"));
+  child.stdio[3].on("data", collect(oracleChunks, () => oracleBytes, "oracle"));
+
+  const result = await new Promise((resolve, reject) => {
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, KEYCHAIN_TEST_ORACLE_TIMEOUT_MS);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        reject(new Error(`Keychain test oracle exceeded ${KEYCHAIN_TEST_ORACLE_TIMEOUT_MS} ms`));
+        return;
+      }
+      if (boundFailure) {
+        reject(boundFailure);
+        return;
+      }
+      resolve({ code, signal });
+    });
+  });
+  const stdout = Buffer.concat(stdoutChunks);
+  const stderr = Buffer.concat(stderrChunks);
+  assert.deepEqual(
+    result,
+    { code: 0, signal: null },
+    `Keychain test oracle failed: ${stderr.toString("utf8")}`,
+  );
+  assert.equal(stdout.length, 0, "Keychain test oracle wrote to regular stdout");
+  assert.equal(stderr.length, 0, "Keychain test oracle wrote to regular stderr");
+  const record = Buffer.concat(oracleChunks);
+  assert.equal(record.length > 0, true, "Keychain test oracle returned no record");
+  return record;
 }
 
 export async function createStorageKey(
@@ -354,6 +424,7 @@ export class CoordinatorClient {
     delete childEnvironment[KEYCHAIN_TEST_NAMESPACE_GATE];
     delete childEnvironment[KEYCHAIN_TEST_ACCOUNT];
     delete childEnvironment[KEYCHAIN_TEST_DELETE];
+    delete childEnvironment[KEYCHAIN_TEST_READ_FD];
     if (freshnessAccount !== null) {
       childEnvironment[KEYCHAIN_TEST_NAMESPACE_GATE] = "1";
       childEnvironment[KEYCHAIN_TEST_ACCOUNT] = freshnessAccount;

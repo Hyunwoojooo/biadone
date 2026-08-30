@@ -1345,7 +1345,7 @@ test("product NDJSON rejects crash injection unless the test-only environment ga
   }
 });
 
-test("Keychain test cleanup cannot target an ungated namespace or the primary account", async () => {
+test("Keychain test operations fail closed outside the exact isolated oracle contract", async () => {
   const workspace = await createPersistenceWorkspace("keychain-cleanup-gate");
   const cases = [
     {
@@ -1361,6 +1361,46 @@ test("Keychain test cleanup cannot target an ungated namespace or the primary ac
         BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE: "1",
         BLABEE_T007B_KEYCHAIN_ACCOUNT: "primary",
         BLABEE_T007B_DELETE_KEYCHAIN_TEST_ANCHOR: "1",
+      },
+    },
+    {
+      name: "read missing exact gate",
+      environmentOverrides: {
+        BLABEE_T007B_KEYCHAIN_ACCOUNT: workspace.freshnessAccount,
+        BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "3",
+      },
+    },
+    {
+      name: "read primary account",
+      environmentOverrides: {
+        BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE: "1",
+        BLABEE_T007B_KEYCHAIN_ACCOUNT: "primary",
+        BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "3",
+      },
+    },
+    {
+      name: "read wrong available descriptor",
+      environmentOverrides: {
+        BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE: "1",
+        BLABEE_T007B_KEYCHAIN_ACCOUNT: workspace.freshnessAccount,
+        BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "2",
+      },
+    },
+    {
+      name: "read descriptor unavailable",
+      environmentOverrides: {
+        BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE: "1",
+        BLABEE_T007B_KEYCHAIN_ACCOUNT: workspace.freshnessAccount,
+        BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "3",
+      },
+    },
+    {
+      name: "read delete collision",
+      environmentOverrides: {
+        BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE: "1",
+        BLABEE_T007B_KEYCHAIN_ACCOUNT: workspace.freshnessAccount,
+        BLABEE_T007B_DELETE_KEYCHAIN_TEST_ANCHOR: "1",
+        BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "3",
       },
     },
   ];

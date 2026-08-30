@@ -6,6 +6,18 @@ import Security
 
 typealias ManagedCodexExecutableProvider = @Sendable () throws -> URL
 
+enum ManagedCodexChildStartState: Equatable {
+    case notStarted
+    case started
+}
+
+struct ManagedCodexLaunchFailure: Error {
+    let childStartState: ManagedCodexChildStartState
+    let nativeExecutableURL: URL
+    let tuiArguments: [String]
+    let underlyingError: Error
+}
+
 struct ManagedCodexLauncherArguments: Equatable {
     let explicitCodexURL: URL?
     let coordinatorSocketPath: String
@@ -126,7 +138,9 @@ private final class ManagedCodexChildProcesses: @unchecked Sendable {
         let appServerTerminatedByBroker = managedCodexTerminateProcess(appServer)
         return managedCodexResolvedExitStatus(
             tuiStatus: tui.terminationStatus,
+            tuiReason: tui.terminationReason,
             appServerStatus: appServer.terminationStatus,
+            appServerReason: appServer.terminationReason,
             appServerTerminatedByBroker: appServerTerminatedByBroker
         )
     }
@@ -1219,6 +1233,8 @@ struct ManagedCodexLauncher {
                 environment: environment
             )
         }
+        var childStartState = ManagedCodexChildStartState.notStarted
+        do {
         let token = try Self.authenticationToken()
         let listener = try ManagedCodexWebSocketListener(expectedToken: token)
         let admission = ManagedCodexListenerAdmission(listener: listener)
@@ -1253,6 +1269,7 @@ struct ManagedCodexLauncher {
 
         do {
             try appServer.run()
+            childStartState = .started
             try? appServerInput.fileHandleForReading.close()
             try? appServerOutput.fileHandleForWriting.close()
         } catch {
@@ -1278,6 +1295,19 @@ struct ManagedCodexLauncher {
             admission.stop()
             Self.terminate(appServer)
             throw CoordinatorError("managed_codex_tui_unavailable")
+        }
+        if let approvedExecutableProvider {
+            do {
+                let revalidated = try approvedExecutableProvider()
+                guard revalidated == executable else {
+                    throw CoordinatorError("managed_codex_executable_changed")
+                }
+            } catch {
+                admission.stop()
+                Self.terminate(tui)
+                Self.terminate(appServer)
+                throw error
+            }
         }
         let terminalLease: ManagedCodexTerminalForegroundLease
         do {
@@ -1343,7 +1373,9 @@ struct ManagedCodexLauncher {
                 let appServerTerminatedByBroker = Self.terminate(appServer)
                 return managedCodexResolvedExitStatus(
                     tuiStatus: tui.terminationStatus,
+                    tuiReason: tui.terminationReason,
                     appServerStatus: appServer.terminationStatus,
+                    appServerReason: appServer.terminationReason,
                     appServerTerminatedByBroker: appServerTerminatedByBroker
                 )
             }
@@ -1366,6 +1398,16 @@ struct ManagedCodexLauncher {
         let status = children.finish(graceMilliseconds: 2_000)
         try terminalLease.restore()
         return status
+        } catch let failure as ManagedCodexLaunchFailure {
+            throw failure
+        } catch {
+            throw ManagedCodexLaunchFailure(
+                childStartState: childStartState,
+                nativeExecutableURL: executable,
+                tuiArguments: arguments.tuiArguments,
+                underlyingError: error
+            )
+        }
     }
 
     static func childEnvironment(
@@ -1435,12 +1477,31 @@ struct ManagedCodexLauncher {
 
 func managedCodexResolvedExitStatus(
     tuiStatus: Int32,
+    tuiReason: Process.TerminationReason,
     appServerStatus: Int32,
+    appServerReason: Process.TerminationReason,
     appServerTerminatedByBroker: Bool
 ) -> Int32 {
-    if tuiStatus != 0 { return tuiStatus }
-    if !appServerTerminatedByBroker, appServerStatus != 0 { return appServerStatus }
+    let tuiShellStatus = managedCodexShellExitStatus(
+        status: tuiStatus,
+        reason: tuiReason
+    )
+    if tuiShellStatus != 0 { return tuiShellStatus }
+    let appServerShellStatus = managedCodexShellExitStatus(
+        status: appServerStatus,
+        reason: appServerReason
+    )
+    if !appServerTerminatedByBroker, appServerShellStatus != 0 {
+        return appServerShellStatus
+    }
     return 0
+}
+
+func managedCodexShellExitStatus(
+    status: Int32,
+    reason: Process.TerminationReason
+) -> Int32 {
+    reason == .uncaughtSignal ? 128 + status : status
 }
 
 @discardableResult

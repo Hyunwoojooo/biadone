@@ -1,10 +1,405 @@
 import CoordinatorSwift
+import CoreFoundation
 import CryptoKit
 import Darwin
 import Dispatch
 import Foundation
+import Security
 
 private let operationalMaximumMessageBytes = 1_048_576
+private let operationalRuntimeRequestTypePrefix = "blabee.runtime-identity.v1/"
+
+struct OperationalCodeSignatureEvidence: Equatable, Sendable {
+    let identifier: String
+    let cdHash: Data
+    let executableURL: URL
+}
+
+struct OperationalCodeSignatureVerifier: Sendable {
+    var runningCode: @Sendable () -> OperationalCodeSignatureEvidence?
+    var installedCode: @Sendable (
+        _ executableURL: URL,
+        _ assemblyManifest: Data
+    ) -> OperationalCodeSignatureEvidence?
+
+    static let live = OperationalCodeSignatureVerifier(
+        runningCode: OperationalRuntimeIdentity.runningCodeSignatureEvidence,
+        installedCode: OperationalRuntimeIdentity.installedCodeSignatureEvidence
+    )
+}
+
+/// A non-secret, process-cached build/install discriminator for the local UDS.
+///
+/// Packaged builds bind the running SecCode CDHash to a bounded assembly
+/// manifest whose bytes are verified against the installed app's code
+/// signature. SwiftPM/test binaries without an app bundle retain the cheaper
+/// environment/filesystem fallback. `current` is captured once per process so
+/// neither Security.framework nor the filesystem is queried per UDS request.
+enum OperationalRuntimeIdentity {
+    static let assemblyManifestSchemaVersion = "blabee.macos-app-assembly.v1"
+    static let assemblyManifestFileName = "assembly-manifest.json"
+    static let environmentKey = "BLABEE_RUNTIME_IDENTITY"
+    static let expectedBundleIdentifier = "com.biadone.blabee"
+    static let currentResolution: Result<String, CoordinatorError> = {
+        let identity = resolve()
+        guard isValid(identity) else {
+            return .failure(CoordinatorError("operational_runtime_identity_unverified"))
+        }
+        return .success(identity)
+    }()
+    static let current = (try? currentResolution.get()) ?? ""
+
+    static func requireCurrent() throws -> String {
+        try currentResolution.get()
+    }
+
+    static func isValid(_ value: String) -> Bool {
+        value.range(
+            of: "^sha256:[0-9a-f]{64}$",
+            options: .regularExpression
+        ) != nil
+    }
+
+    static func resolve(
+        executableURL: URL? = Bundle.main.executableURL,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        signatureVerifier: OperationalCodeSignatureVerifier = .live
+    ) -> String {
+        if let executableURL,
+           packagedAppURL(forExecutable: executableURL) != nil
+        {
+            // A packaged coordinator must never silently downgrade to an
+            // environment or inode identity. The process-cached resolution
+            // converts this invalid value into a typed initialization failure.
+            return packagedIdentity(
+                forExecutable: executableURL,
+                signatureVerifier: signatureVerifier
+            ) ?? ""
+        }
+        if let configured = environment[environmentKey], isValid(configured) {
+            return configured
+        }
+        return executableURL.flatMap(filesystemIdentity(forExecutable:))
+            ?? digest("blabee-runtime-unavailable-v1")
+    }
+
+    /// Computes the identity of an installed packaged coordinator using its
+    /// validated static signature and sealed assembly manifest. Doctor uses
+    /// this to compare the process-cached running identity with the app that is
+    /// currently present on disk.
+    static func installedIdentity(forExecutable executableURL: URL) -> String? {
+        installedIdentity(
+            forExecutable: executableURL,
+            signatureVerifier: .live
+        )
+    }
+
+    static func installedIdentity(
+        forExecutable executableURL: URL,
+        signatureVerifier: OperationalCodeSignatureVerifier
+    ) -> String? {
+        guard packagedAppURL(forExecutable: executableURL) != nil,
+              let manifestData = validatedManifestData(forExecutable: executableURL),
+              let evidence = signatureVerifier.installedCode(
+                executableURL,
+                manifestData
+              ),
+              validSignatureEvidence(evidence, executableURL: executableURL)
+        else { return nil }
+        return combine(
+            cdHash: evidence.cdHash,
+            manifestDigest: Data(SHA256.hash(data: manifestData))
+        )
+    }
+
+    static func combine(cdHash: Data, manifestDigest: Data) -> String? {
+        guard !cdHash.isEmpty,
+              cdHash.count <= 128,
+              manifestDigest.count == SHA256.byteCount
+        else { return nil }
+        var framed = Data("blabee-runtime-signed-v1\0".utf8)
+        var cdHashLength = UInt32(cdHash.count).bigEndian
+        withUnsafeBytes(of: &cdHashLength) { framed.append(contentsOf: $0) }
+        framed.append(cdHash)
+        framed.append(manifestDigest)
+        return digest(framed)
+    }
+
+    static func manifestIdentity(forExecutable executableURL: URL) -> String? {
+        guard let data = validatedManifestData(forExecutable: executableURL)
+        else { return nil }
+        return digest(data)
+    }
+
+    static func manifestURL(forExecutable executableURL: URL) -> URL? {
+        guard let app = packagedAppURL(forExecutable: executableURL) else { return nil }
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        return contents.appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent(assemblyManifestFileName)
+    }
+
+    private static func packagedIdentity(
+        forExecutable executableURL: URL,
+        signatureVerifier: OperationalCodeSignatureVerifier
+    ) -> String? {
+        guard let manifestData = validatedManifestData(forExecutable: executableURL),
+              let running = signatureVerifier.runningCode(),
+              let installed = signatureVerifier.installedCode(
+                executableURL,
+                manifestData
+              ),
+              validSignatureEvidence(running, executableURL: executableURL),
+              validSignatureEvidence(installed, executableURL: executableURL),
+              running.cdHash == installed.cdHash
+        else { return nil }
+        return combine(
+            cdHash: running.cdHash,
+            manifestDigest: Data(SHA256.hash(data: manifestData))
+        )
+    }
+
+    private static func packagedAppURL(forExecutable executableURL: URL) -> URL? {
+        let executable = executableURL.standardizedFileURL
+        let macOS = executable.deletingLastPathComponent()
+        let contents = macOS.deletingLastPathComponent()
+        let app = contents.deletingLastPathComponent()
+        guard executable.lastPathComponent == "blabee-coordinator",
+              macOS.lastPathComponent == "MacOS",
+              contents.lastPathComponent == "Contents",
+              app.pathExtension.lowercased() == "app"
+        else { return nil }
+        return app
+    }
+
+    private static func validatedManifestData(forExecutable executableURL: URL) -> Data? {
+        guard let candidate = manifestURL(forExecutable: executableURL),
+              let data = readManifestData(at: candidate),
+              validAssemblyManifest(data)
+        else { return nil }
+        return data
+    }
+
+    private static func readManifestData(at url: URL) -> Data? {
+        let maximumBytes = 1_048_576
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              info.st_size > 0,
+              info.st_size <= off_t(maximumBytes)
+        else { return nil }
+        var data = Data()
+        data.reserveCapacity(Int(info.st_size))
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count == 0 { break }
+            if count < 0 {
+                if errno == EINTR { continue }
+                return nil
+            }
+            guard data.count <= maximumBytes - count else { return nil }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data.count == Int(info.st_size) ? data : nil
+    }
+
+    private static func validAssemblyManifest(_ data: Data) -> Bool {
+        guard let value = try? JSONSerialization.jsonObject(with: data),
+              let object = value as? [String: Any],
+              Set(object.keys) == Set([
+                "schema_version", "bundle_identifier", "hash_phase", "files",
+              ]),
+              object["schema_version"] as? String == assemblyManifestSchemaVersion,
+              object["bundle_identifier"] as? String == expectedBundleIdentifier,
+              object["hash_phase"] as? String
+                == "assembled_payload_before_optional_code_signing",
+              let files = object["files"] as? [[String: Any]],
+              !files.isEmpty,
+              files.count <= 4_096
+        else { return false }
+        var paths = Set<String>()
+        var previousPath: String?
+        for file in files {
+            guard Set(file.keys) == Set(["path", "sha256", "size", "mode"]),
+                  let path = file["path"] as? String,
+                  !path.isEmpty,
+                  !path.hasPrefix("/"),
+                  !path.contains("\0"),
+                  !path.split(separator: "/").contains(".."),
+                  let sha256 = file["sha256"] as? String,
+                  sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  let size = file["size"] as? NSNumber,
+                  CFGetTypeID(size) != CFBooleanGetTypeID(),
+                  size.int64Value >= 0,
+                  size.doubleValue == Double(size.int64Value),
+                  let mode = file["mode"] as? String,
+                  mode.range(of: "^[0-7]{4}$", options: .regularExpression) != nil,
+                  paths.insert(path).inserted,
+                  previousPath.map({
+                    $0.utf16.lexicographicallyPrecedes(path.utf16)
+                  }) ?? true
+            else { return false }
+            previousPath = path
+        }
+        return paths.contains("Contents/MacOS/blabee-coordinator")
+            && paths.contains("Contents/Resources/Plugin/blabee/scripts/blabee-launcher")
+    }
+
+    private static func filesystemIdentity(forExecutable url: URL) -> String? {
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+        var info = stat()
+        guard lstat(resolved.path, &info) == 0,
+              info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
+        else { return nil }
+        return digest([
+            "blabee-runtime-filesystem-v1",
+            resolved.path,
+            String(info.st_dev),
+            String(info.st_ino),
+            String(info.st_size),
+            String(info.st_mtimespec.tv_sec),
+            String(info.st_mtimespec.tv_nsec),
+            String(info.st_ctimespec.tv_sec),
+            String(info.st_ctimespec.tv_nsec),
+        ].joined(separator: "\u{0}"))
+    }
+
+    private static func digest(_ value: String) -> String {
+        digest(Data(value.utf8))
+    }
+
+    private static func digest(_ value: Data) -> String {
+        let hash = SHA256.hash(data: value)
+        return "sha256:" + hash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func validSignatureEvidence(
+        _ evidence: OperationalCodeSignatureEvidence,
+        executableURL: URL
+    ) -> Bool {
+        evidence.identifier == expectedBundleIdentifier
+            && !evidence.cdHash.isEmpty
+            && evidence.cdHash.count <= 128
+            && canonicalPath(evidence.executableURL) == canonicalPath(executableURL)
+    }
+
+    private static func canonicalPath(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    fileprivate static func runningCodeSignatureEvidence()
+        -> OperationalCodeSignatureEvidence?
+    {
+        guard let requirement = expectedCodeRequirement() else { return nil }
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess,
+              let code,
+              let evidence = signingEvidence(forRunningCode: code),
+              SecCodeCheckValidity(code, SecCSFlags(), requirement) == errSecSuccess
+        else { return nil }
+        return evidence
+    }
+
+    fileprivate static func installedCodeSignatureEvidence(
+        executableURL: URL,
+        assemblyManifest: Data
+    ) -> OperationalCodeSignatureEvidence? {
+        guard let appURL = packagedAppURL(forExecutable: executableURL),
+              let requirement = expectedCodeRequirement()
+        else { return nil }
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(
+            appURL as CFURL,
+            SecCSFlags(),
+            &code
+        ) == errSecSuccess,
+        let code
+        else { return nil }
+        let validationFlags = SecCSFlags(
+            rawValue: UInt32(
+                kSecCSCheckAllArchitectures
+                    | kSecCSCheckNestedCode
+                    | kSecCSStrictValidate
+                    | kSecCSRestrictSymlinks
+                    | kSecCSRestrictToAppLike
+            )
+        )
+        guard let evidence = signingEvidence(for: code),
+              SecStaticCodeCheckValidity(
+            code,
+            validationFlags,
+            requirement
+        ) == errSecSuccess,
+        // This validates the exact bytes read through the bounded, no-follow
+        // descriptor against the resource envelope sealed by code signing.
+        SecCodeValidateFileResource(
+            code,
+            "Resources/\(assemblyManifestFileName)" as CFString,
+            assemblyManifest as CFData,
+            SecCSFlags()
+        ) == errSecSuccess
+        else { return nil }
+        return evidence
+    }
+
+    private static func expectedCodeRequirement() -> SecRequirement? {
+        var requirement: SecRequirement?
+        let expression = "identifier \"\(expectedBundleIdentifier)\"" as CFString
+        guard SecRequirementCreateWithString(
+            expression,
+            SecCSFlags(),
+            &requirement
+        ) == errSecSuccess
+        else { return nil }
+        return requirement
+    }
+
+    private static func signingEvidence(
+        for code: SecStaticCode
+    ) -> OperationalCodeSignatureEvidence? {
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(),
+            &information
+        ) == errSecSuccess
+        else { return nil }
+        return signingEvidence(from: information)
+    }
+
+    /// Security.framework documents that signing information accepts a
+    /// running SecCode and internally obtains its static signing material. The
+    /// Swift overlay models the C parameter as SecStaticCode even though both
+    /// references use the same opaque `__SecCode` object, so preserve the
+    /// dynamic object with the narrow bridge below instead of resolving its
+    /// path ourselves.
+    private static func signingEvidence(
+        forRunningCode code: SecCode
+    ) -> OperationalCodeSignatureEvidence? {
+        let signingSubject = unsafeBitCast(code, to: SecStaticCode.self)
+        return signingEvidence(for: signingSubject)
+    }
+
+    private static func signingEvidence(
+        from information: CFDictionary?
+    ) -> OperationalCodeSignatureEvidence? {
+        guard let dictionary = information as? [CFString: Any],
+        let identifier = dictionary[kSecCodeInfoIdentifier] as? String,
+        let cdHash = dictionary[kSecCodeInfoUnique] as? Data,
+        let executableURL = dictionary[kSecCodeInfoMainExecutable] as? URL
+        else { return nil }
+        return OperationalCodeSignatureEvidence(
+            identifier: identifier,
+            cdHash: cdHash,
+            executableURL: executableURL
+        )
+    }
+}
 
 protocol CoordinatorOperationalHandling: Sendable {
     func handle(type: String, payload: Data) async throws -> Data
@@ -44,13 +439,27 @@ struct OperationalSocketPath {
 
 struct UnixDomainSocketClient {
     let socketPath: String
+    let runtimeIdentity: String
 
-    init(socketPath: String) throws {
+    init(
+        socketPath: String,
+        runtimeIdentity: String? = nil
+    ) throws {
         guard socketPath.hasPrefix("/") else {
             throw CoordinatorError("operational_socket_invalid", "socket path must be absolute")
         }
+        let resolvedRuntimeIdentity: String
+        if let runtimeIdentity {
+            resolvedRuntimeIdentity = runtimeIdentity
+        } else {
+            resolvedRuntimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+        }
+        guard OperationalRuntimeIdentity.isValid(resolvedRuntimeIdentity) else {
+            throw CoordinatorError("operational_runtime_identity_invalid")
+        }
         try validateUnixSocketPathLength(socketPath)
         self.socketPath = socketPath
+        self.runtimeIdentity = resolvedRuntimeIdentity
     }
 
     func request(
@@ -62,7 +471,12 @@ struct UnixDomainSocketClient {
         let requestID = "request_" + UUID().uuidString.lowercased()
         let request: [String: Any] = [
             "request_id": requestID,
-            "type": type,
+            "runtime_identity": runtimeIdentity,
+            // The wire type is namespaced as well as carrying an identity.
+            // An older server therefore rejects this request before dispatch,
+            // instead of executing it and only then returning an unbound
+            // response that the new client would have to discard.
+            "type": operationalRuntimeRequestTypePrefix + type,
             "payload": payload,
         ]
         var requestData = try StrictJSONTransport.data(forJSONObject: request)
@@ -96,6 +510,11 @@ struct UnixDomainSocketClient {
         )
         guard response["request_id"] as? String == requestID else {
             throw CoordinatorError("operational_response_invalid")
+        }
+        guard response["runtime_identity"] as? String == runtimeIdentity else {
+            // Old servers omit this field; mismatched new servers report their
+            // own identity. Both are the same typed compatibility boundary.
+            throw CoordinatorError("operational_runtime_identity_mismatch")
         }
         guard let ok = response["ok"] as? Bool else {
             throw CoordinatorError("operational_response_invalid")
@@ -132,6 +551,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
     ]
 
     private let socketPath: String
+    private let runtimeIdentity: String
     private let lockDescriptor: Int32
     private let admissionGate = ConnectionAdmissionGate(limit: 64)
     private let stateLock = NSLock()
@@ -140,12 +560,25 @@ final class UnixDomainSocketServer: @unchecked Sendable {
     private var socketInode: ino_t = 0
     private var stopped = false
 
-    init(socketPath: String) throws {
+    init(
+        socketPath: String,
+        runtimeIdentity: String? = nil
+    ) throws {
         guard socketPath.hasPrefix("/") else {
             throw CoordinatorError("operational_socket_invalid", "socket path must be absolute")
         }
+        let resolvedRuntimeIdentity: String
+        if let runtimeIdentity {
+            resolvedRuntimeIdentity = runtimeIdentity
+        } else {
+            resolvedRuntimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+        }
+        guard OperationalRuntimeIdentity.isValid(resolvedRuntimeIdentity) else {
+            throw CoordinatorError("operational_runtime_identity_invalid")
+        }
         try validateUnixSocketPathLength(socketPath)
         self.socketPath = socketPath
+        self.runtimeIdentity = resolvedRuntimeIdentity
 
         let socketURL = URL(fileURLWithPath: socketPath, isDirectory: false)
         let parent = socketURL.deletingLastPathComponent()
@@ -244,12 +677,14 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             setCloseOnExec(descriptor)
             setNoSigPipe(descriptor)
             let gate = admissionGate
+            let serverRuntimeIdentity = runtimeIdentity
             Task.detached(priority: .userInitiated) {
                 defer { gate.release() }
                 await Self.handleConnection(
                     descriptor: descriptor,
                     application: application,
-                    secretCorpus: secretCorpus
+                    secretCorpus: secretCorpus,
+                    runtimeIdentity: serverRuntimeIdentity
                 )
             }
         }
@@ -288,7 +723,8 @@ final class UnixDomainSocketServer: @unchecked Sendable {
     private static func handleConnection(
         descriptor: Int32,
         application: any CoordinatorOperationalHandling,
-        secretCorpus: RuntimeSecretCorpus
+        secretCorpus: RuntimeSecretCorpus,
+        runtimeIdentity: String
     ) async {
         defer { close(descriptor) }
         guard peerHasCurrentEffectiveUserID(descriptor) else { return }
@@ -305,7 +741,20 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 )
             )
             requestID = try safeRequestID(request["request_id"])
-            guard let type = request["type"] as? String,
+            guard request["runtime_identity"] as? String == runtimeIdentity else {
+                // Legacy clients omit the field. They are rejected rather than
+                // silently crossing a running-build boundary.
+                throw CoordinatorError("operational_runtime_identity_mismatch")
+            }
+            guard let wireType = request["type"] as? String,
+                  wireType.hasPrefix(operationalRuntimeRequestTypePrefix)
+            else {
+                throw CoordinatorError("operational_runtime_identity_mismatch")
+            }
+            let type = String(wireType.dropFirst(
+                operationalRuntimeRequestTypePrefix.count
+            ))
+            guard !type.isEmpty,
                   allowedTypes.contains(type),
                   let payload = request["payload"] as? [String: Any]
             else {
@@ -350,6 +799,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             try secretCorpus.assertNoKnownSecret(in: resultData)
             try writeOperationalJSON([
                 "request_id": requestID,
+                "runtime_identity": runtimeIdentity,
                 "ok": true,
                 "result": result,
             ],
@@ -360,6 +810,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let failure = error.coordinatorError
             try? writeOperationalJSON([
                 "request_id": requestID,
+                "runtime_identity": runtimeIdentity,
                 "ok": false,
                 "error": [
                     "code": safeErrorCode(failure.code),

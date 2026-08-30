@@ -10,6 +10,210 @@ is_usable_binary() {
   [ -f "$1" ] && [ -x "$1" ]
 }
 
+run_hook_fail_open() {
+  hook_event=${2:-}
+  case "$hook_event" in
+    SessionStart|UserPromptSubmit) hook_deadline_seconds=7 ;;
+    Stop) hook_deadline_seconds=5 ;;
+    PermissionRequest) hook_deadline_seconds=57 ;;
+    *) hook_deadline_seconds=5 ;;
+  esac
+
+  # Tests and emergency operators may shorten, but never extend, the packaged
+  # deadline. Codex's own Hook timeout therefore remains the outer hard bound.
+  case "${BLABEE_HOOK_DEADLINE_SECONDS:-}" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "$BLABEE_HOOK_DEADLINE_SECONDS" -ge 1 ] 2>/dev/null \
+        && [ "$BLABEE_HOOK_DEADLINE_SECONDS" -lt "$hook_deadline_seconds" ] 2>/dev/null; then
+        hook_deadline_seconds=$BLABEE_HOOK_DEADLINE_SECONDS
+      fi
+      ;;
+  esac
+
+  hook_output_limit=1048576
+  hook_capture_limit=1048577
+  hook_temp_directory=
+  hook_reader_pid=
+  hook_child_pid=
+  hook_child_is_process_group=false
+  hook_child_process_group=
+
+  hook_owned_child_is_alive() {
+    if [ -n "$hook_child_process_group" ]; then
+      if /bin/kill -0 -"$hook_child_process_group" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+    if [ -n "$hook_child_pid" ]; then
+      /bin/kill -0 "$hook_child_pid" >/dev/null 2>&1
+    else
+      return 1
+    fi
+  }
+
+  signal_hook_owned_child() {
+    hook_signal=$1
+    if [ -n "$hook_child_process_group" ]; then
+      /bin/kill -"$hook_signal" -"$hook_child_process_group" >/dev/null 2>&1 \
+        || { [ -z "$hook_child_pid" ] \
+          || /bin/kill -"$hook_signal" "$hook_child_pid" >/dev/null 2>&1 \
+          || :; }
+    elif [ -n "$hook_child_pid" ]; then
+      /bin/kill -"$hook_signal" "$hook_child_pid" >/dev/null 2>&1 || :
+    fi
+  }
+
+  stop_hook_owned_child() {
+    if hook_owned_child_is_alive; then
+      signal_hook_owned_child TERM
+      hook_stop_ticks=2
+      while hook_owned_child_is_alive && [ "$hook_stop_ticks" -gt 0 ]; do
+        /bin/sleep 0.1
+        hook_stop_ticks=$((hook_stop_ticks - 1))
+      done
+      if hook_owned_child_is_alive; then
+        signal_hook_owned_child KILL
+      fi
+    fi
+    if [ -n "$hook_child_pid" ]; then
+      wait "$hook_child_pid" 2>/dev/null || :
+    fi
+    hook_child_pid=
+    hook_child_process_group=
+  }
+
+  stop_hook_reader() {
+    if [ -n "$hook_reader_pid" ]; then
+      /bin/kill -TERM "$hook_reader_pid" >/dev/null 2>&1 || :
+      hook_reader_stop_ticks=2
+      while /bin/kill -0 "$hook_reader_pid" >/dev/null 2>&1 \
+        && [ "$hook_reader_stop_ticks" -gt 0 ]; do
+        /bin/sleep 0.1
+        hook_reader_stop_ticks=$((hook_reader_stop_ticks - 1))
+      done
+      /bin/kill -KILL "$hook_reader_pid" >/dev/null 2>&1 || :
+      wait "$hook_reader_pid" 2>/dev/null || :
+      hook_reader_pid=
+    fi
+  }
+
+  cleanup_hook() {
+    exec 9>&- 9<&-
+    stop_hook_owned_child
+    stop_hook_reader
+    if [ -n "$hook_temp_directory" ]; then
+      /bin/rm -f \
+        "$hook_temp_directory/output" \
+        "$hook_temp_directory/output.pipe" \
+        "$hook_temp_directory/timed-out" \
+        >/dev/null 2>&1 || :
+      /bin/rmdir "$hook_temp_directory" >/dev/null 2>&1 || :
+      hook_temp_directory=
+    fi
+  }
+
+  # A Hook extension is optional. Every local setup, launch, transport, child,
+  # and cleanup failure must collapse to silent success so native Codex keeps
+  # control. The private directory contains output only; stdin streams directly
+  # and byte-for-byte to the coordinator.
+  umask 077
+  hook_temp_directory=$(/usr/bin/mktemp -d /tmp/blabee-hook.XXXXXXXX 2>/dev/null) \
+    || return 0
+  trap 'exit 0' HUP INT TERM
+  trap cleanup_hook 0
+
+  hook_output=$hook_temp_directory/output
+  hook_pipe=$hook_temp_directory/output.pipe
+  hook_timed_out=$hook_temp_directory/timed-out
+  /usr/bin/mkfifo "$hook_pipe" >/dev/null 2>&1 || return 0
+
+  # Hold one private read/write descriptor just long enough to open both FIFO
+  # endpoints without an ordering deadlock. Neither child inherits it.
+  exec 9<> "$hook_pipe" || return 0
+
+  /usr/bin/head -c "$hook_capture_limit" < "$hook_pipe" 9>&- > "$hook_output" 2>/dev/null &
+  hook_reader_pid=$!
+  # Monitor mode gives the coordinator job its own process group on macOS, so
+  # a timed-out helper cannot leave descendants behind. Fall back to its PID on
+  # shells which cannot create a job group.
+  if set -m 2>/dev/null; then
+    hook_child_is_process_group=true
+  fi
+  "$coordinator_binary" "$@" <&0 > "$hook_pipe" 9>&- 2>/dev/null &
+  hook_child_pid=$!
+  if [ "$hook_child_is_process_group" = true ]; then
+    hook_child_process_group=$hook_child_pid
+  fi
+  set +m 2>/dev/null || :
+  exec 9>&- 9<&-
+
+  # POSIX sh has no portable timed wait. Polling the owned child avoids a
+  # detached watchdog which could later signal a recycled PID.
+  hook_ticks=$((hook_deadline_seconds * 10))
+  while /bin/kill -0 "$hook_child_pid" >/dev/null 2>&1 \
+    && [ "$hook_ticks" -gt 0 ]; do
+    /bin/sleep 0.1
+    hook_ticks=$((hook_ticks - 1))
+  done
+  if /bin/kill -0 "$hook_child_pid" >/dev/null 2>&1; then
+    : > "$hook_timed_out"
+    stop_hook_owned_child
+    hook_child_status=124
+  else
+    wait "$hook_child_pid" 2>/dev/null
+    hook_child_status=$?
+    hook_child_pid=
+  fi
+
+  # A successful coordinator is not allowed to detach work from a Hook. Keep
+  # the owned PGID after reaping its leader so descendants can still be found
+  # and terminated before any buffered stdout is released.
+  if [ -n "$hook_child_process_group" ]; then
+    if hook_owned_child_is_alive; then
+      : > "$hook_timed_out"
+      stop_hook_owned_child
+    else
+      hook_child_process_group=
+    fi
+  fi
+
+  # A descendant must not keep the output pipe open after the coordinator has
+  # exited. Give the bounded reader a short drain window, then fail open.
+  hook_reader_ticks=2
+  while /bin/kill -0 "$hook_reader_pid" >/dev/null 2>&1 \
+    && [ "$hook_reader_ticks" -gt 0 ]; do
+    /bin/sleep 0.1
+    hook_reader_ticks=$((hook_reader_ticks - 1))
+  done
+  if /bin/kill -0 "$hook_reader_pid" >/dev/null 2>&1; then
+    : > "$hook_timed_out"
+    stop_hook_reader
+    hook_reader_status=124
+  else
+    wait "$hook_reader_pid" 2>/dev/null
+    hook_reader_status=$?
+    hook_reader_pid=
+  fi
+
+  if [ -e "$hook_timed_out" ] \
+    || [ "$hook_child_status" -ne 0 ] \
+    || [ "$hook_reader_status" -ne 0 ]; then
+    return 0
+  fi
+
+  hook_output_size=$(/usr/bin/stat -f '%z' "$hook_output" 2>/dev/null) || return 0
+  case "$hook_output_size" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if [ "$hook_output_size" -gt "$hook_output_limit" ] 2>/dev/null; then
+    return 0
+  fi
+
+  /bin/cat "$hook_output" 2>/dev/null || :
+  return 0
+}
+
 if [ "${BLABEE_COORDINATOR_BINARY+x}" = "x" ]; then
   coordinator_binary=$BLABEE_COORDINATOR_BINARY
 else
@@ -77,6 +281,10 @@ else
 fi
 
 if is_usable_binary "$coordinator_binary"; then
+  if [ "$mode" = "hook" ]; then
+    run_hook_fail_open "$@" 2>/dev/null
+    exit 0
+  fi
   exec "$coordinator_binary" "$@"
 fi
 

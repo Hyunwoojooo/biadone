@@ -6,6 +6,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  readFile,
   readdir,
   realpath,
   writeFile,
@@ -131,6 +132,11 @@ async function copyTreeStrict(source, destination) {
   }
 }
 
+async function makeRuntimeIdentity(appPath) {
+  const manifest = join(appPath, "Contents", "Resources", "assembly-manifest.json");
+  return `sha256:${createHash("sha256").update(await readFile(manifest)).digest("hex")}`;
+}
+
 async function writeNewFile(path, content, mode) {
   await writeFile(path, content, { encoding: "utf8", flag: "wx", mode });
   await chmod(path, mode);
@@ -161,6 +167,8 @@ function wrapperPreamble() {
 function coordinatorWrapper() {
   return [
     ...wrapperPreamble(),
+    "unset BLABEE_RUNTIME_IDENTITY",
+    "unset BLABEE_SOCKET",
     'BLABEE_DOGFOOD_APP="$BLABEE_DOGFOOD_ROOT/Blabee.app"',
     'if [ "${1-}" = "doctor" ]; then',
     "  shift",
@@ -176,6 +184,7 @@ function productRuntimeWrapper(prefixArguments) {
   const quotedArguments = prefixArguments.map((argument) => `'${argument}'`).join(" ");
   return [
     ...wrapperPreamble(),
+    "unset BLABEE_RUNTIME_IDENTITY",
     "unset BLABEE_SOCKET",
     `exec "$BLABEE_DOGFOOD_ROOT/Blabee.app/Contents/MacOS/blabee-coordinator" ${quotedArguments}${quotedArguments ? " " : ""}"$@"`,
     "",
@@ -183,15 +192,25 @@ function productRuntimeWrapper(prefixArguments) {
 }
 
 function codexWrapper() {
-  // The primary Blabee launcher must use the managed App Server bridge.
-  // Launching the official TUI directly still installs Hooks, but command
-  // approvals then remain native to Codex and cannot appear in the Pet.
-  return managedCodexWrapper();
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    // The ordinary path preserves native Codex behavior. Hook discovery is a
+    // Codex/plugin concern; App Server management remains explicit below.
+    "unset BLABEE_COORDINATOR_BINARY",
+    "unset BLABEE_RUNTIME_IDENTITY",
+    "unset BLABEE_SOCKET",
+    "unset BLABEE_MANAGED_APPROVALS",
+    "unset BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+    'exec codex "$@"',
+    "",
+  ].join("\n");
 }
 
 function managedCodexWrapper() {
   return [
     ...wrapperPreamble(),
+    "unset BLABEE_RUNTIME_IDENTITY",
     "unset BLABEE_SOCKET",
     'export BLABEE_COORDINATOR_BINARY="$BLABEE_DOGFOOD_ROOT/Blabee.app/Contents/MacOS/blabee-coordinator"',
     'export PATH="$BLABEE_DOGFOOD_BIN_DIR${PATH:+:$PATH}"',
@@ -200,7 +219,7 @@ function managedCodexWrapper() {
   ].join("\n");
 }
 
-function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
+function makeSummary(outputRoot, { signed, marketplaceIdentity, runtimeIdentity }) {
   const app = join(outputRoot, appRelativePath);
   const coordinator = join(outputRoot, coordinatorRelativePath);
   const marketplace = join(outputRoot, "marketplace");
@@ -214,6 +233,12 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
   const coordinatorShim = join(outputRoot, "bin", "blabee-coordinator");
   const codexLauncher = join(outputRoot, "bin", "codex-with-blabee");
   const managedCodexLauncher = join(outputRoot, "bin", "blabee-codex");
+  const runtimeIdentityManifest = join(
+    app,
+    "Contents",
+    "Resources",
+    "assembly-manifest.json",
+  );
   const projectSettingsLauncher = join(outputRoot, "bin", "blabee-project-settings");
   const serviceLauncher = join(outputRoot, "bin", "blabee-service");
   const petLauncher = join(outputRoot, "bin", "blabee-pet");
@@ -268,6 +293,7 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
       coordinator_shim: coordinatorShim,
       codex_launcher: codexLauncher,
       managed_codex_launcher: managedCodexLauncher,
+      runtime_identity_manifest: runtimeIdentityManifest,
       project_settings_launcher: projectSettingsLauncher,
       service_launcher: serviceLauncher,
       pet_launcher: petLauncher,
@@ -290,10 +316,13 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
       launch: {
         argv: [codexLauncher],
         environment: {
-          BLABEE_COORDINATOR_BINARY: coordinator,
+          BLABEE_COORDINATOR_BINARY: "unset_by_launcher",
+          BLABEE_RUNTIME_IDENTITY: "unset_by_launcher",
           BLABEE_SOCKET: "unset_by_launcher",
-          PATH_prepend: join(outputRoot, "bin"),
+          BLABEE_MANAGED_APPROVALS: "unset_by_launcher",
+          BLABEE_MANAGED_CODEX_AUTH_TOKEN: "unset_by_launcher",
         },
+        mode: "native_codex",
         automatic: false,
       },
       managed_launch: {
@@ -316,6 +345,13 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
       },
     },
     runtime: {
+      identity: {
+        strategy: "process_cached_signed_code_and_manifest_v1",
+        source_manifest_schema_version: "blabee.macos-app-assembly.v1",
+        assembly_manifest_sha256: runtimeIdentity,
+        manifest: runtimeIdentityManifest,
+        resolved_at_process_start: true,
+      },
       project_enable: {
         argv_prefix: projectEnableArgvPrefix,
         project_path_requirement: "append_one_explicit_absolute_project_path",
@@ -515,8 +551,11 @@ function makeSummary(outputRoot, { signed, marketplaceIdentity }) {
 export async function prepareLocalDogfood({
   binaryPath,
   outputPath,
-  adhocSign = false,
+  adhocSign = true,
 } = {}) {
+  if (adhocSign !== true) {
+    fail("local dogfood must be ad-hoc signed");
+  }
   const outputRoot = await resolveSafeOutputRoot(outputPath);
   await mkdir(outputRoot, { mode: 0o700 });
   await chmod(outputRoot, 0o700);
@@ -528,6 +567,7 @@ export async function prepareLocalDogfood({
     adhocSign,
     cleanupOnFailure: false,
   });
+  const runtimeIdentity = await makeRuntimeIdentity(appPath);
 
   const marketplaceRoot = join(outputRoot, "marketplace");
   const marketplaceConfigDirectory = join(
@@ -607,6 +647,7 @@ export async function prepareLocalDogfood({
   const summary = makeSummary(outputRoot, {
     signed: assembled.signed,
     marketplaceIdentity,
+    runtimeIdentity,
   });
   const summaryPath = join(outputRoot, "dogfood-summary.json");
   await writeNewFile(
@@ -620,13 +661,14 @@ export async function prepareLocalDogfood({
 function parseCLIArguments(values) {
   let binaryPath;
   let outputPath;
-  let adhocSign = false;
+  const adhocSign = true;
+  let adhocSignFlagSeen = false;
   let help = false;
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--adhoc-sign") {
-      if (adhocSign) fail("--adhoc-sign may be provided only once");
-      adhocSign = true;
+      if (adhocSignFlagSeen) fail("--adhoc-sign may be provided only once");
+      adhocSignFlagSeen = true;
       continue;
     }
     if (value === "--help" || value === "-h") {
@@ -658,6 +700,7 @@ function usage() {
     "  node scripts/prepare-local-dogfood.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/dogfood-root [--adhoc-sign]",
     "",
     "The output parent must already exist. Preparation only writes inside a new output root.",
+    "Local dogfood is always ad-hoc signed; --adhoc-sign remains as a compatibility flag.",
     "It does not install a Codex plugin, start Blabee, touch Keychain, or register launchd.",
     "On failure it preserves the exact partial output root for inspection and manual cleanup.",
   ].join("\n");

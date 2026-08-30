@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 public final class KeychainFreshnessAnchorStore: FreshnessAnchorStore, @unchecked Sendable {
@@ -26,11 +27,12 @@ public final class KeychainFreshnessAnchorStore: FreshnessAnchorStore, @unchecke
     }
 
     public func load() throws -> FreshnessStoredRecord? {
+        let authenticationContext = noninteractiveAuthenticationContext()
         var query = baseQuery()
         query[kSecMatchLimit] = kSecMatchLimitOne
         query[kSecReturnAttributes] = kCFBooleanTrue
         query[kSecReturnData] = kCFBooleanTrue
-        query[kSecUseAuthenticationUI] = kSecUseAuthenticationUIFail
+        query[kSecUseAuthenticationContext] = authenticationContext
 
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -82,9 +84,10 @@ public final class KeychainFreshnessAnchorStore: FreshnessAnchorStore, @unchecke
         )
         let value = try replacement.encoded()
         let revision = try replacement.revision
+        let authenticationContext = noninteractiveAuthenticationContext()
         var query = baseQuery()
         query[kSecAttrGeneric] = expectedRevision
-        query[kSecUseAuthenticationUI] = kSecUseAuthenticationUIFail
+        query[kSecUseAuthenticationContext] = authenticationContext
         let updates: [CFString: Any] = [
             kSecValueData: value,
             kSecAttrGeneric: revision,
@@ -103,8 +106,9 @@ public final class KeychainFreshnessAnchorStore: FreshnessAnchorStore, @unchecke
             "invalid_arguments",
             "Keychain deletion is restricted to an explicit test namespace"
         )
+        let authenticationContext = noninteractiveAuthenticationContext()
         var query = baseQuery()
-        query[kSecUseAuthenticationUI] = kSecUseAuthenticationUIFail
+        query[kSecUseAuthenticationContext] = authenticationContext
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw unavailable(status) }
     }
@@ -131,6 +135,12 @@ public final class KeychainFreshnessAnchorStore: FreshnessAnchorStore, @unchecke
             kSecAttrAccount: storageSlot,
             kSecAttrSynchronizable: kCFBooleanFalse as Any,
         ]
+    }
+
+    private func noninteractiveAuthenticationContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
     }
 
     private func unavailable(_ status: OSStatus) -> CoordinatorError {

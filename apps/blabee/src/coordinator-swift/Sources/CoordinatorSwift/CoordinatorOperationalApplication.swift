@@ -70,6 +70,8 @@ public actor CoordinatorOperationalApplication {
         10_000_000_000
     private static let maximumPendingPermissionRequestLimit = 8
     private static let maximumResolvedPermissionTombstones = 64
+    private static let maximumPetConsumerLeaseDurationNanoseconds: UInt64 =
+        10_000_000_000
     private static let maximumManagedCommandApprovalWaitNanoseconds =
         ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds
     private static let maximumPendingManagedCommandApprovalLimit = 8
@@ -362,6 +364,7 @@ public actor CoordinatorOperationalApplication {
     }
 
     private let routing: CoordinatorRoutingApplication
+    private let suggestionMode: BlabeeSuggestionMode
     private let secretCorpus: RuntimeSecretCorpus
     private let idGenerator: IDGenerator
     private let wallInstantGenerator: WallInstantGenerator
@@ -371,6 +374,7 @@ public actor CoordinatorOperationalApplication {
     private let permissionRequestTimeoutNanoseconds: UInt64
     private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingPermissionRequests: Int
+    private let petConsumerLeaseDurationNanoseconds: UInt64
     private let managedCommandApprovalTimeoutNanoseconds: UInt64
     private let managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingManagedCommandApprovals: Int
@@ -396,6 +400,9 @@ public actor CoordinatorOperationalApplication {
     private var pendingPermissionRequests: [PendingPermissionRequest] = []
     private var pendingPermissionRequestDeliveries: [PendingPermissionRequestDelivery] = []
     private var resolvedPermissionRequests: [ResolvedPermissionRequest] = []
+    private var lastPetConsumerHeartbeatNanoseconds: UInt64?
+    private var petConsumerLeaseExpiryTask: Task<Void, Never>?
+    private var petConsumerLeaseTimerGeneration: UInt64 = 0
     private var managedCommandApprovalNoticeCount: UInt64 = 0
     private var pendingManagedCommandApprovals: [PendingManagedCommandApproval] = []
     private var pendingManagedCommandApprovalDeliveries: [
@@ -410,6 +417,7 @@ public actor CoordinatorOperationalApplication {
     public init(
         routing: CoordinatorRoutingApplication,
         enabledProjectPaths: [String] = [],
+        suggestionMode: BlabeeSuggestionMode = .actionOnly,
         secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
         idGenerator: IDGenerator? = nil,
         wallInstantGenerator: WallInstantGenerator? = nil,
@@ -420,6 +428,7 @@ public actor CoordinatorOperationalApplication {
         permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
         permissionRequestDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
         maximumPendingPermissionRequests: Int = 8,
+        petConsumerLeaseDurationNanoseconds: UInt64 = 3_000_000_000,
         managedCommandApprovalTimeoutNanoseconds: UInt64 =
             ManagedCodexApprovalTimingPolicy.userDecisionTimeoutNanoseconds,
         managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
@@ -429,6 +438,7 @@ public actor CoordinatorOperationalApplication {
             "\(purpose)_\(UUID().uuidString.lowercased())"
         }
         self.routing = routing
+        self.suggestionMode = suggestionMode
         self.secretCorpus = secretCorpus
         self.idGenerator = ids
         self.stopObservationHMACKey = stopObservationHMACKey
@@ -456,6 +466,13 @@ public actor CoordinatorOperationalApplication {
             min(
                 maximumPendingPermissionRequests,
                 Self.maximumPendingPermissionRequestLimit
+            )
+        )
+        self.petConsumerLeaseDurationNanoseconds = max(
+            1,
+            min(
+                petConsumerLeaseDurationNanoseconds,
+                Self.maximumPetConsumerLeaseDurationNanoseconds
             )
         )
         self.managedCommandApprovalTimeoutNanoseconds = max(
@@ -542,7 +559,7 @@ public actor CoordinatorOperationalApplication {
         case "ack_managed_command_approval_delivery":
             return try acknowledgeManagedCommandApprovalDelivery(payload)
         case "pet_snapshot", "get_state":
-            return try stateSnapshot()
+            return try stateSnapshot(payload: payload)
         default:
             break
         }
@@ -1075,7 +1092,8 @@ private extension CoordinatorOperationalApplication {
         )
         return try publicData([
             "enabled": true,
-            "additionalContext": "Blabee is enabled for this project. For an action-type request, every completed, partial, blocked, or failed result must call blabee.emit_decision before finalizing, even when the result is short or text-only. Do not emit for explanations, structure descriptions, status checks, or general questions.",
+            "additionalContext": "Blabee is enabled for this project. "
+                + BlabeeSuggestionContext.instructions(for: suggestionMode),
         ])
     }
 
@@ -1470,6 +1488,14 @@ private extension CoordinatorOperationalApplication {
         else {
             throw CoordinatorError("permission_request_binding_invalid")
         }
+        let permissionAdmissionInstant = monotonicInstantGenerator()
+        expireApprovalsWithoutLivePetConsumer(at: permissionAdmissionInstant)
+        guard petConsumerLeaseIsLive(at: permissionAdmissionInstant) else {
+            // A Hook must never wait for a UI that is not demonstrably alive.
+            // This path does not allocate an id, advance notice counters, or
+            // leave a card behind; native Codex remains the approval owner.
+            return try permissionHookResponse(decision: "defer_to_codex")
+        }
         try require(
             pendingPermissionRequests.count < maximumPendingPermissionRequests,
             "permission_request_capacity_exceeded"
@@ -1532,6 +1558,9 @@ private extension CoordinatorOperationalApplication {
     }
 
     func resolvePermissionRequest(_ data: Data) async throws -> Data {
+        expireApprovalsWithoutLivePetConsumer(
+            at: monotonicInstantGenerator()
+        )
         let payload = try StrictJSONTransport.object(from: data)
         try exactKeys(
             payload,
@@ -1692,6 +1721,112 @@ private extension CoordinatorOperationalApplication {
         } catch {
             request.continuation.resume(throwing: error)
         }
+    }
+
+    private func petConsumerLeaseIsLive(at nowNanoseconds: UInt64) -> Bool {
+        guard let heartbeat = lastPetConsumerHeartbeatNanoseconds,
+              nowNanoseconds >= heartbeat
+        else { return false }
+        return nowNanoseconds - heartbeat < petConsumerLeaseDurationNanoseconds
+    }
+
+    private func expireApprovalsWithoutLivePetConsumer(
+        at nowNanoseconds: UInt64
+    ) {
+        guard !petConsumerLeaseIsLive(at: nowNanoseconds) else { return }
+        let invalidatesLeaseTimer = lastPetConsumerHeartbeatNanoseconds != nil
+            || petConsumerLeaseExpiryTask != nil
+        lastPetConsumerHeartbeatNanoseconds = nil
+        if invalidatesLeaseTimer { petConsumerLeaseTimerGeneration &+= 1 }
+        petConsumerLeaseExpiryTask?.cancel()
+        petConsumerLeaseExpiryTask = nil
+
+        let expiredPermissionRequests = pendingPermissionRequests.filter {
+            $0.deliveryToken == nil
+        }
+        let expiredPermissionRequestIDs = Set(
+            expiredPermissionRequests.map(\.requestID)
+        )
+        pendingPermissionRequests.removeAll {
+            expiredPermissionRequestIDs.contains($0.requestID)
+                && $0.deliveryToken == nil
+        }
+        for request in expiredPermissionRequests {
+            request.timeoutTask.cancel()
+            do {
+                request.continuation.resume(
+                    returning: try permissionHookResponse(decision: "defer_to_codex")
+                )
+            } catch {
+                request.continuation.resume(throwing: error)
+            }
+        }
+
+        let expiredManagedApprovals = pendingManagedCommandApprovals.filter {
+            $0.deliveryToken == nil
+        }
+        let expiredManagedRequestIDs = Set(
+            expiredManagedApprovals.map(\.managedRequestID)
+        )
+        pendingManagedCommandApprovals.removeAll {
+            expiredManagedRequestIDs.contains($0.managedRequestID)
+                && $0.deliveryToken == nil
+        }
+        for request in expiredManagedApprovals {
+            request.timeoutTask.cancel()
+            do {
+                request.continuation.resume(
+                    returning: try managedCommandApprovalOutcome(
+                        decision: "decide_in_codex"
+                    )
+                )
+            } catch {
+                request.continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    private func recordPetConsumerHeartbeat() {
+        let nowNanoseconds = monotonicInstantGenerator()
+        lastPetConsumerHeartbeatNanoseconds = nowNanoseconds
+        schedulePetConsumerLeaseExpiryCheckIfNeeded(
+            after: petConsumerLeaseDurationNanoseconds
+        )
+    }
+
+    private func schedulePetConsumerLeaseExpiryCheckIfNeeded(
+        after delayNanoseconds: UInt64
+    ) {
+        guard petConsumerLeaseExpiryTask == nil else { return }
+        petConsumerLeaseTimerGeneration &+= 1
+        let timerGeneration = petConsumerLeaseTimerGeneration
+        petConsumerLeaseExpiryTask = Task.detached(priority: .utility) { [weak self] in
+            try? await Task.sleep(nanoseconds: max(1, delayNanoseconds))
+            guard !Task.isCancelled else { return }
+            await self?.petConsumerLeaseExpiryTimerFired(
+                timerGeneration: timerGeneration
+            )
+        }
+    }
+
+    private func petConsumerLeaseExpiryTimerFired(timerGeneration: UInt64) {
+        guard timerGeneration == petConsumerLeaseTimerGeneration else { return }
+        petConsumerLeaseExpiryTask = nil
+        let nowNanoseconds = monotonicInstantGenerator()
+        guard let heartbeat = lastPetConsumerHeartbeatNanoseconds,
+              nowNanoseconds >= heartbeat
+        else {
+            expireApprovalsWithoutLivePetConsumer(at: nowNanoseconds)
+            return
+        }
+        let elapsed = nowNanoseconds - heartbeat
+        guard elapsed < petConsumerLeaseDurationNanoseconds else {
+            expireApprovalsWithoutLivePetConsumer(at: nowNanoseconds)
+            return
+        }
+        schedulePetConsumerLeaseExpiryCheckIfNeeded(
+            after: petConsumerLeaseDurationNanoseconds - elapsed
+        )
     }
 
     func cancelPermissionRequest(requestID: String) {
@@ -1954,6 +2089,16 @@ private extension CoordinatorOperationalApplication {
             "managed_command_approval_invalid"
         )
         let binding = try managedCommandApprovalBinding(payload)
+        let approvalAdmissionInstant = monotonicInstantGenerator()
+        expireApprovalsWithoutLivePetConsumer(at: approvalAdmissionInstant)
+        guard petConsumerLeaseIsLive(at: approvalAdmissionInstant) else {
+            // A managed broker must not wait for a Pet that is not
+            // demonstrably consuming cards. Leave the official Codex UI as
+            // the approval owner without allocating any local identity.
+            return try managedCommandApprovalOutcome(
+                decision: "decide_in_codex"
+            )
+        }
 
         // Requests with no synthetic decision available do not need to enter
         // Pet. Capacity and duplicate transport identities fail open to the
@@ -3199,10 +3344,38 @@ private extension CoordinatorOperationalApplication {
         ])
     }
 
-    func stateSnapshot() throws -> Data {
-        // The common operational request prelude already advanced routing
-        // time and reconciled its notices. Keep this projection read-only so
-        // one Pet state request remains exactly one reconciliation tick.
+    func stateSnapshot(payload: Data) throws -> Data {
+        let request = try StrictJSONTransport.object(from: payload)
+        let recordsPetConsumerHeartbeat: Bool
+        if request.isEmpty {
+            // Empty payloads remain a compatible read-only diagnostic, but do
+            // not claim that a Pet UI exists to consume an approval card.
+            expireApprovalsWithoutLivePetConsumer(
+                at: monotonicInstantGenerator()
+            )
+            recordsPetConsumerHeartbeat = false
+        } else {
+            let heartbeat = request["consumer_heartbeat"] as? NSNumber
+            try require(
+                Set(request.keys) == [
+                    "schema_version", "kind", "consumer_heartbeat",
+                ]
+                    && request["schema_version"] as? String == "1.0"
+                    && request["kind"] as? String == "blabee_pet_snapshot_request"
+                    && heartbeat.map { CFGetTypeID($0) == CFBooleanGetTypeID() } == true
+                    && heartbeat?.boolValue == true,
+                "pet_snapshot_request_invalid"
+            )
+            // Expire any prior lease before taking a replacement heartbeat so
+            // a returning Pet cannot revive a card from an abandoned waiter.
+            expireApprovalsWithoutLivePetConsumer(
+                at: monotonicInstantGenerator()
+            )
+            recordsPetConsumerHeartbeat = true
+        }
+        // Lease reconciliation above is process-local only. Keep the snapshot
+        // projection journal/freshness read-only so ordinary Pet polling does
+        // not create durable work or repeat full-state verification.
         let routingObject = try StrictJSONTransport.object(
             from: routing.snapshotWithoutProcessingTime().canonicalJSON
         )
@@ -3261,7 +3434,7 @@ private extension CoordinatorOperationalApplication {
             result.merge(boundary.binding.jsonObject) { current, _ in current }
             return result
         }
-        return try publicData([
+        let response = try publicData([
             "schema_version": "1.0",
             "kind": "blabee_operational_snapshot",
             "routing": routingObject,
@@ -3275,6 +3448,13 @@ private extension CoordinatorOperationalApplication {
             ),
             "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
         ])
+        if recordsPetConsumerHeartbeat {
+            // Record presence only after a complete snapshot was produced.
+            // Failed/malformed state responses therefore cannot make a Hook
+            // wait for a Pet that never received consumable state.
+            recordPetConsumerHeartbeat()
+        }
+        return response
     }
 }
 
@@ -3528,7 +3708,8 @@ private extension CoordinatorOperationalApplication {
               let correlation = session.correlationToken
         else { throw CoordinatorError("session_prompt_context_missing") }
         let identifiers = try publicIdentifiers(session: session)
-        var context = "Blabee boundary: project_id=\(session.projectID); session_id=\(session.sessionID); source_turn_id=\(turnID); source_prompt_id=\(promptID); episode_id=\(episode.episodeID); episode_root_prompt_id=\(episode.rootPromptID); episode_baseline_checkpoint_id=\(episode.baselineCheckpointID); correlation_token=\(correlation). Use these exact values only when calling blabee.emit_decision. For an action-type request, every completed, partial, blocked, or failed result must call it before finalizing, even when the result is short or text-only. Do not call it for explanations, structure descriptions, status checks, or general questions."
+        var context = "Blabee boundary: project_id=\(session.projectID); session_id=\(session.sessionID); source_turn_id=\(turnID); source_prompt_id=\(promptID); episode_id=\(episode.episodeID); episode_root_prompt_id=\(episode.rootPromptID); episode_baseline_checkpoint_id=\(episode.baselineCheckpointID); correlation_token=\(correlation). Use these exact values only when calling blabee.emit_decision. "
+            + BlabeeSuggestionContext.instructions(for: suggestionMode)
         if let queuedActionContext = session.queuedActionContext {
             context += "\n\n" + queuedActionContext
         }

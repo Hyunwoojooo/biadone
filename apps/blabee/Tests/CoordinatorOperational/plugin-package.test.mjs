@@ -53,6 +53,20 @@ function run(executable, args, { cwd = repositoryRoot, env, input = "" } = {}) {
   });
 }
 
+async function waitForFile(pathname, timeoutMilliseconds = 1_000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(pathname);
+      return;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`timed out waiting for ${pathname}`);
+}
+
 test("plugin manifest has production metadata and relies on default hook discovery", async () => {
   const manifest = await json(manifestPath);
 
@@ -107,7 +121,7 @@ test("four supported hooks call the native coordinator through the plugin launch
   );
 });
 
-test("guarded Hook commands quote plugin roots and preserve launcher I/O and status", async () => {
+test("guarded Hook commands quote plugin roots and preserve valid launcher output", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-quoted-hook-"));
   const injectionMarkerName = "blabee-hook-injection-marker";
   const cachedPluginRoot = path.join(
@@ -115,6 +129,7 @@ test("guarded Hook commands quote plugin roots and preserve launcher I/O and sta
     `cached plugin ; $(touch ${injectionMarkerName}) [*]`,
   );
   const cachedLauncher = path.join(cachedPluginRoot, "scripts", "blabee-launcher");
+  const fakeCoordinator = path.join(directory, "blabee-coordinator");
   const invocationLog = path.join(directory, "invocations.log");
   const hookDocument = await json(hooksPath);
   const commands = Object.fromEntries(
@@ -126,35 +141,259 @@ test("guarded Hook commands quote plugin roots and preserve launcher I/O and sta
 
   try {
     await mkdir(path.dirname(cachedLauncher), { recursive: true });
+    await writeFile(cachedLauncher, await readFile(launcherPath));
+    await chmod(cachedLauncher, 0o755);
     await writeFile(
-      cachedLauncher,
-      "#!/bin/sh\nprintf '%s:%s\\n' \"$1\" \"$2\" >> \"$BLABEE_HOOK_INVOCATION_LOG\"\n/bin/cat\nprintf 'launcher-stderr:%s:%s' \"$1\" \"$2\" >&2\nexit 23\n",
+      fakeCoordinator,
+      "#!/bin/sh\nprintf '%s:%s\\n' \"$1\" \"$2\" >> \"$BLABEE_HOOK_INVOCATION_LOG\"\n/bin/cat >/dev/null\nprintf 'hook-output:%s:%s' \"$1\" \"$2\"\nprintf 'private-stderr:%s:%s' \"$1\" \"$2\" >&2\nexit 0\n",
       "utf8",
     );
-    await chmod(cachedLauncher, 0o755);
+    await chmod(fakeCoordinator, 0o755);
 
     const env = {
       ...process.env,
       PLUGIN_ROOT: cachedPluginRoot,
+      BLABEE_COORDINATOR_BINARY: fakeCoordinator,
       BLABEE_HOOK_INVOCATION_LOG: invocationLog,
     };
     for (const [eventName, command] of Object.entries(commands)) {
       const input = `payload:${eventName}:한글:\u0000\nsecond line\n`;
+      const startedAt = Date.now();
       const result = await run("/bin/sh", ["-c", command], {
         cwd: directory,
         env,
         input,
       });
-      assert.equal(result.code, 23, eventName);
+      const elapsedMilliseconds = Date.now() - startedAt;
+      assert.equal(result.code, 0, eventName);
       assert.equal(result.signal, null, eventName);
-      assert.equal(result.stdout, input, eventName);
-      assert.equal(result.stderr, `launcher-stderr:hook:${eventName}`, eventName);
+      assert.equal(result.stdout, `hook-output:hook:${eventName}`, eventName);
+      assert.equal(result.stderr, "", eventName);
+      assert.ok(
+        elapsedMilliseconds < 1_000,
+        `${eventName}: valid Hook waited ${elapsedMilliseconds}ms`,
+      );
     }
     assert.equal(
       await readFile(invocationLog, "utf8"),
       Object.keys(commands).map((eventName) => `hook:${eventName}\n`).join(""),
     );
     assert.equal((await readdir(directory)).includes(injectionMarkerName), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Hook transport buffers output and fails open on child and output failures", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-hook-fail-open-"));
+  const fakeCoordinator = path.join(directory, "blabee-coordinator");
+  const inputLog = path.join(directory, "input.bin");
+  const exactLimitOutput = path.join(directory, "exact-limit-output.bin");
+  const oversizedOutput = path.join(directory, "oversized-output.bin");
+  const timeoutOrphanMarker = path.join(directory, "timeout-orphan-marker");
+  const successfulOrphanMarker = path.join(directory, "successful-orphan-marker");
+  const validOutput = '{"hookSpecificOutput":{"hookEventName":"Stop","additionalContext":"한글"}}\n';
+  const privateInput = Buffer.from("private-input\u0000한글\nsecond line\n", "utf8");
+  const hookTempPrefix = "blabee-hook.";
+
+  try {
+    await writeFile(
+      fakeCoordinator,
+      `#!/bin/sh
+/bin/cat > "$BLABEE_FAKE_INPUT_LOG"
+case "$BLABEE_FAKE_MODE" in
+  valid)
+    /bin/cat "$BLABEE_FAKE_OUTPUT"
+    printf 'must-never-reach-codex' >&2
+    exit 0
+    ;;
+  nonzero)
+    printf 'partial-output'
+    printf 'private-failure' >&2
+    exit 23
+    ;;
+  crash)
+    /bin/kill -KILL $$
+    ;;
+  timeout)
+    printf 'partial-before-timeout'
+    /bin/sleep 2
+    printf 'orphaned' > "$BLABEE_FAKE_TIMEOUT_MARKER"
+    ;;
+  orphan-success)
+    printf 'partial-before-orphan'
+    (
+      trap '' TERM
+      /bin/sleep 2
+      printf 'orphaned' > "$BLABEE_FAKE_SUCCESSFUL_ORPHAN_MARKER"
+    ) </dev/null >/dev/null 2>&1 &
+    exit 0
+    ;;
+  exact-limit)
+    /bin/cat "$BLABEE_FAKE_EXACT_LIMIT_OUTPUT"
+    exit 0
+    ;;
+  oversized)
+    /bin/cat "$BLABEE_FAKE_OVERSIZED_OUTPUT"
+    exit 0
+    ;;
+esac
+exit 91
+`,
+      "utf8",
+    );
+    await chmod(fakeCoordinator, 0o755);
+    await writeFile(path.join(directory, "valid-output.json"), validOutput, "utf8");
+    await writeFile(exactLimitOutput, Buffer.alloc(1_048_576, 0x61));
+    await writeFile(oversizedOutput, Buffer.alloc(1_048_577, 0x61));
+
+    const baseEnv = {
+      ...process.env,
+      BLABEE_COORDINATOR_BINARY: fakeCoordinator,
+      BLABEE_FAKE_INPUT_LOG: inputLog,
+      BLABEE_FAKE_OUTPUT: path.join(directory, "valid-output.json"),
+      BLABEE_FAKE_EXACT_LIMIT_OUTPUT: exactLimitOutput,
+      BLABEE_FAKE_OVERSIZED_OUTPUT: oversizedOutput,
+      BLABEE_FAKE_TIMEOUT_MARKER: timeoutOrphanMarker,
+      BLABEE_FAKE_SUCCESSFUL_ORPHAN_MARKER: successfulOrphanMarker,
+      BLABEE_HOOK_DEADLINE_SECONDS: "1",
+    };
+
+    const beforeTempEntries = new Set(
+      (await readdir(os.tmpdir())).filter((entry) => entry.startsWith(hookTempPrefix)),
+    );
+    const valid = await run(launcherPath, ["hook", "Stop"], {
+      env: { ...baseEnv, BLABEE_FAKE_MODE: "valid" },
+      input: privateInput,
+    });
+    assert.equal(valid.code, 0);
+    assert.equal(valid.signal, null);
+    assert.equal(valid.stdout, validOutput);
+    assert.equal(valid.stderr, "");
+    assert.deepEqual(await readFile(inputLog), privateInput);
+
+    const exactLimit = await run(launcherPath, ["hook", "Stop"], {
+      env: { ...baseEnv, BLABEE_FAKE_MODE: "exact-limit" },
+      input: privateInput,
+    });
+    assert.equal(exactLimit.code, 0);
+    assert.equal(exactLimit.signal, null);
+    assert.equal(Buffer.byteLength(exactLimit.stdout, "utf8"), 1_048_576);
+    assert.equal(exactLimit.stderr, "");
+
+    for (const mode of ["nonzero", "crash", "timeout", "orphan-success", "oversized"]) {
+      const startedAt = Date.now();
+      const result = await run(launcherPath, ["hook", "Stop"], {
+        env: { ...baseEnv, BLABEE_FAKE_MODE: mode },
+        input: privateInput,
+      });
+      const elapsedMilliseconds = Date.now() - startedAt;
+      assert.equal(result.code, 0, mode);
+      assert.equal(result.signal, null, mode);
+      assert.equal(result.stdout, "", mode);
+      assert.equal(result.stderr, "", mode);
+      assert.equal(`${result.stdout}${result.stderr}`.includes("private"), false, mode);
+      assert.deepEqual(await readFile(inputLog), privateInput, mode);
+      if (mode === "timeout") {
+        assert.ok(elapsedMilliseconds < 3_000, `timeout took ${elapsedMilliseconds}ms`);
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await assert.rejects(
+          readFile(timeoutOrphanMarker),
+          (error) => error?.code === "ENOENT",
+        );
+      }
+      if (mode === "orphan-success") {
+        assert.ok(
+          elapsedMilliseconds < 1_500,
+          `successful coordinator with orphan took ${elapsedMilliseconds}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 2_200));
+        await assert.rejects(
+          readFile(successfulOrphanMarker),
+          (error) => error?.code === "ENOENT",
+        );
+      }
+    }
+
+    const mcpFailure = await run(launcherPath, ["mcp"], {
+      env: { ...baseEnv, BLABEE_FAKE_MODE: "nonzero" },
+      input: privateInput,
+    });
+    assert.equal(mcpFailure.code, 23);
+    assert.equal(mcpFailure.signal, null);
+    assert.equal(mcpFailure.stdout, "partial-output");
+    assert.equal(mcpFailure.stderr, "private-failure");
+
+    const afterTempEntries = new Set(
+      (await readdir(os.tmpdir())).filter((entry) => entry.startsWith(hookTempPrefix)),
+    );
+    assert.deepEqual(afterTempEntries, beforeTempEntries);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Hook TERM performs bounded cleanup when the coordinator ignores TERM", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-hook-signal-"));
+  const fakeCoordinator = path.join(directory, "blabee-coordinator");
+  const startedMarker = path.join(directory, "coordinator-started");
+  const completionMarker = path.join(directory, "coordinator-completed");
+
+  try {
+    await writeFile(
+      fakeCoordinator,
+      `#!/bin/sh
+trap '' TERM
+: > "$BLABEE_FAKE_STARTED_MARKER"
+printf 'partial-before-signal'
+/bin/sleep 2
+printf 'completed' > "$BLABEE_FAKE_COMPLETION_MARKER"
+`,
+      "utf8",
+    );
+    await chmod(fakeCoordinator, 0o755);
+
+    const startedAt = Date.now();
+    const resultPromise = new Promise((resolve, reject) => {
+      const child = spawn(launcherPath, ["hook", "Stop"], {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          BLABEE_COORDINATOR_BINARY: fakeCoordinator,
+          BLABEE_FAKE_STARTED_MARKER: startedMarker,
+          BLABEE_FAKE_COMPLETION_MARKER: completionMarker,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+      child.stdin.end("private-input");
+
+      waitForFile(startedMarker).then(
+        () => child.kill("SIGTERM"),
+        reject,
+      );
+    });
+
+    const result = await resultPromise;
+    const elapsedMilliseconds = Date.now() - startedAt;
+    assert.equal(result.code, 0);
+    assert.equal(result.signal, null);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    assert.ok(elapsedMilliseconds < 1_500, `signal cleanup took ${elapsedMilliseconds}ms`);
+
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    await assert.rejects(
+      readFile(completionMarker),
+      (error) => error?.code === "ENOENT",
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -504,7 +743,7 @@ test("missing native binary returns a clear JSON-RPC MCP error without leaking s
   }
 });
 
-test("decision skill gates emission and preserves the exact wrapper/proposal contract", async () => {
+test("decision skill applies suggestion modes and preserves the exact v1 contract", async () => {
   const skill = await readFile(skillPath, "utf8");
   const metadata = await readFile(skillMetadataPath, "utf8");
   const example = skill.match(/```json\n([\s\S]*?)\n```/);
@@ -537,18 +776,28 @@ test("decision skill gates emission and preserves the exact wrapper/proposal con
   assert.equal(payload.proposal.next_actions.every((action) => (
     Object.keys(action).sort().join(",") === "constraints,done_when,objective,title"
   )), true);
-  assert.match(skill, /기본적으로 한 번 호출/);
+  assert.match(skill, /현재 Hook 컨텍스트의 `suggestion_mode`/);
+  assert.match(skill, /이 필드만 없고.*`action_only`로 취급/);
+  assert.match(skill, /### `action_only`/);
+  assert.match(skill, /### `smart`/);
+  assert.match(skill, /### `always`/);
+  assert.match(skill, /서로 다른 유용한 후속 질문 또는 작업이 둘 이상/);
+  assert.match(skill, /두 개 이상 기준은 설명·분석·일반 질문 응답에만 적용/);
+  assert.match(skill, /실제로 제안할 수 있는 후속 항목이 둘 미만/);
   assert.match(skill, /proposal_source_prompt_mismatch/);
   assert.match(skill, /보정 재시도를 한 번/);
   assert.match(skill, /prompt 이외의 값도 다르거나/);
-  assert.match(skill, /설명, 코드 구조 설명, 상태 확인, 일반 질문/);
   assert.match(skill, /권한 승인이나 네이티브 질문/);
+  assert.match(skill, /도구 호출이나 부수 효과를 명시적으로 금지/);
+  assert.match(skill, /정확한 출력 하나, 명령의 정확히 한 번 실행 또는 추가 작업 금지/);
   assert.match(skill, /모든 답변을 번호 선택지나 고정된 1~4 형식으로 바꾸지 않는다/);
   assert.match(skill, /2~4개/);
   assert.match(skill, /첫 항목이 가장 권장/);
   assert.match(skill, /보류나 롤백을 이 배열에 넣지 않고/);
   assert.match(skill, /실행하지 않은 테스트/);
   assert.match(skill, /검증되지 않은 롤백 가능성/);
-  assert.equal((skill.match(/`emit_decision`/g) ?? []).length, 1);
+  assert.match(skill, /설명·분석 후속 제안도 기존/);
+  assert.match(skill, /`suggestion_kind` 같은 새 필드를 추가하지 않는다/);
+  assert.equal((skill.match(/`emit_decision`/g) ?? []).length, 3);
   assert.match(metadata, /\$blabee-decision/);
 });

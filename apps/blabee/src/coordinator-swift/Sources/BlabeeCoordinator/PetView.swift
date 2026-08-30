@@ -1,3 +1,4 @@
+import CoordinatorSwift
 import SwiftUI
 
 private enum PetPanelVisualStyle {
@@ -690,7 +691,13 @@ struct PetRootView: View {
     }
 
     private func choiceRow(interaction: PetInteraction, choice: PetChoice) -> some View {
-        let enabled = choice.enabled && interaction.isSelectionReady
+        let accessory = viewModel.actionAccessoryPresentation(
+            interaction: interaction,
+            choice: choice
+        )
+        let submissionInProgress = viewModel.selectionSubmission != nil
+        let ownsProgress = accessory == .progress
+        let enabled = choice.enabled && interaction.isSelectionReady && !submissionInProgress
         let tint = choiceTint(slot: choice.slot)
         return Button {
             Task {
@@ -736,17 +743,44 @@ struct PetRootView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text(viewModel.actionShortcutLabel(interaction: interaction, choice: choice))
-                    .font(.caption.monospaced().bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                switch accessory {
+                case .shortcut(let label):
+                    Text(label)
+                        .font(.caption.monospaced().bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Color.primary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                case .progress:
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityHidden(true)
+                        Text("진행 중")
+                            .font(.caption.bold())
+                    }
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                case .suppressed:
+                    Text("사용 불가")
+                        .font(.caption.monospaced().bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Color.primary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .petInsetSurface(
-                emphasized: choice.slot == 1 && enabled,
+                emphasized: choice.slot == 1 && (enabled || ownsProgress),
                 cornerRadius: PetPanelVisualStyle.rowRadius
             )
             .overlay(
@@ -754,17 +788,18 @@ struct PetRootView: View {
                     cornerRadius: PetPanelVisualStyle.rowRadius,
                     style: .continuous
                 )
-                    .stroke(
-                        choice.slot == 1 && enabled
+                .stroke(
+                        choice.slot == 1 && (enabled || ownsProgress)
                             ? tint.opacity(0.32)
                             : Color.clear,
                         lineWidth: 1
                     )
             )
+            .accessibilityValue(ownsProgress ? "진행 중" : "")
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.52)
+        .opacity(enabled || ownsProgress ? 1 : submissionInProgress ? 0.72 : 0.52)
     }
 
     private func secondaryControls(interaction: PetInteraction) -> some View {
@@ -965,7 +1000,7 @@ struct PetRootView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Blabee 설정")
                         .font(.title2.weight(.semibold))
-                    Text("프로젝트 관찰 범위, 백그라운드 서비스, Codex 터미널 연결을 관리합니다.")
+                    Text("후속 제안, 프로젝트 관찰 범위, 백그라운드 서비스, Codex 터미널 연결을 관리합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1012,6 +1047,8 @@ struct PetRootView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .petInsetSurface(emphasized: true)
+
+            suggestionModeCard
 
             codexAutoConnectCard
 
@@ -1083,6 +1120,83 @@ struct PetRootView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var suggestionModeCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.indigo)
+                    .frame(width: 38, height: 38)
+                    .background(Color.indigo.opacity(0.13), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("후속 제안")
+                        .font(.body.weight(.semibold))
+                    Text("Codex 답변 뒤에 다음 대화를 제안하는 범위를 정합니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Picker(
+                "후속 제안 모드",
+                selection: Binding(
+                    get: { viewModel.suggestionMode },
+                    set: { viewModel.updateSuggestionMode($0) }
+                )
+            ) {
+                ForEach(
+                    [
+                        BlabeeSuggestionMode.smart,
+                        BlabeeSuggestionMode.always,
+                        BlabeeSuggestionMode.actionOnly,
+                    ],
+                    id: \.rawValue
+                ) { mode in
+                    Text(mode.petDisplayTitle).tag(mode)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .accessibilityLabel("후속 제안 모드")
+
+            Text(viewModel.suggestionMode.petDisplayDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Label(
+                "스마트가 권장 기본값입니다. 변경 사항은 백그라운드 서비스를 재시작한 후 Hook에 적용됩니다.",
+                systemImage: "arrow.clockwise.circle"
+            )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("이 설정은 제안 빈도만 바꾸며 Codex 권한 승인에는 영향을 주지 않습니다.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let diagnostic = viewModel.suggestionModeDiagnostic {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(diagnostic, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("작업만으로 복구") {
+                        viewModel.updateSuggestionMode(.actionOnly)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface()
     }
 
     @ViewBuilder

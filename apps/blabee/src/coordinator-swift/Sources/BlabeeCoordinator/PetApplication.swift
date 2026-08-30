@@ -156,10 +156,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 reason: "Codex 자동 연결 환경을 확인할 수 없습니다: \(error)"
             )
         }
+        let suggestionModeStore = BlabeeSuggestionModeStore()
         let viewModel = PetViewModel(
             transport: transport,
             externalApplicationOpener: opener,
             onboardingAdapter: onboardingAdapter,
+            suggestionModeStore: suggestionModeStore,
             codexAutoConnectAdapter: codexAutoConnectAdapter,
             projectFolderChooser: PetOpenPanelProjectFolderChooser()
         )

@@ -428,19 +428,57 @@ func managedCodexApprovalProductionDeadlinesAreOrdered() {
 func managedCodexLauncherResolvesChildExitStatus() {
     #expect(managedCodexResolvedExitStatus(
         tuiStatus: 9,
+        tuiReason: .exit,
         appServerStatus: 17,
+        appServerReason: .exit,
         appServerTerminatedByBroker: false
     ) == 9)
     #expect(managedCodexResolvedExitStatus(
         tuiStatus: 0,
+        tuiReason: .exit,
         appServerStatus: 17,
+        appServerReason: .exit,
         appServerTerminatedByBroker: false
     ) == 17)
     #expect(managedCodexResolvedExitStatus(
         tuiStatus: 0,
+        tuiReason: .exit,
         appServerStatus: SIGTERM,
+        appServerReason: .uncaughtSignal,
         appServerTerminatedByBroker: true
     ) == 0)
+}
+
+@Test("Managed launcher maps child signals to shell exit statuses")
+func managedCodexLauncherMapsSignalExitStatus() {
+    #expect(managedCodexShellExitStatus(
+        status: SIGINT,
+        reason: .uncaughtSignal
+    ) == 130)
+    #expect(managedCodexShellExitStatus(
+        status: SIGTERM,
+        reason: .uncaughtSignal
+    ) == 143)
+    #expect(managedCodexShellExitStatus(
+        status: SIGKILL,
+        reason: .uncaughtSignal
+    ) == 137)
+    #expect(managedCodexShellExitStatus(status: 37, reason: .exit) == 37)
+
+    #expect(managedCodexResolvedExitStatus(
+        tuiStatus: SIGINT,
+        tuiReason: .uncaughtSignal,
+        appServerStatus: 0,
+        appServerReason: .exit,
+        appServerTerminatedByBroker: false
+    ) == 130)
+    #expect(managedCodexResolvedExitStatus(
+        tuiStatus: 0,
+        tuiReason: .exit,
+        appServerStatus: SIGTERM,
+        appServerReason: .uncaughtSignal,
+        appServerTerminatedByBroker: false
+    ) == 143)
 }
 
 @Test("Managed approval router synthesizes only one-time accept")
@@ -814,6 +852,38 @@ func managedCodexLauncherRejectsExplicitCodexWithApprovalProvider() {
 
 @Test("Managed launcher resolves approval before starting App Server")
 func managedCodexLauncherChecksApprovalBeforeAppServer() {
+    let resolvedExecutable = URL(
+        fileURLWithPath: "/tmp/blabee-managed-missing-(UUID().uuidString)"
+    )
+    let provider = ManagedCodexExecutableSequence<ManagedCodexTestError>([
+        .success(resolvedExecutable),
+    ])
+
+    do {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-first.sock",
+                "--",
+            ],
+            approvedExecutableProvider: provider.next
+        )
+        Issue.record("expected a pre-child managed launch failure")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .notStarted)
+        #expect(failure.nativeExecutableURL == resolvedExecutable)
+        #expect(failure.tuiArguments.isEmpty)
+        #expect(
+            (failure.underlyingError as? CoordinatorError)?.code
+                == "managed_codex_app_server_unavailable"
+        )
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+    #expect(provider.callCount == 1)
+}
+
+@Test("Managed launcher does not invent a native fallback before resolution")
+func managedCodexLauncherResolutionFailureIsNotFallbackEligible() {
     let provider = ManagedCodexExecutableSequence<ManagedCodexTestError>([
         .failure(.failed("first-check")),
     ])
@@ -821,8 +891,8 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
     #expect(throws: ManagedCodexTestError.failed("first-check")) {
         _ = try ManagedCodexLauncher().run(
             arguments: [
-                "--coordinator-socket", "/tmp/blabee-managed-first.sock",
-                "--",
+                "--coordinator-socket", "/tmp/blabee-managed-unresolved.sock",
+                "--", "resume", "thread-1",
             ],
             approvedExecutableProvider: provider.next
         )
@@ -850,7 +920,7 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
         }
     )
 
-    #expect(throws: CodexRuntimeTrustError.approvalDrift) {
+    do {
         _ = try ManagedCodexLauncher().run(
             arguments: [
                 "--coordinator-socket", "/tmp/blabee-managed-second.sock",
@@ -862,6 +932,14 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
             ],
             approvedExecutableProvider: provider.next
         )
+        Issue.record("expected a post-child managed launch failure")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .started)
+        #expect(failure.nativeExecutableURL == fixture.executable)
+        #expect(failure.tuiArguments.isEmpty)
+        #expect(failure.underlyingError as? CodexRuntimeTrustError == .approvalDrift)
+    } catch {
+        Issue.record("unexpected error: \(error)")
     }
 
     #expect(provider.callCount == 2)
@@ -874,6 +952,66 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
     let killError = errno
     #expect(killResult == -1)
     #expect(killError == ESRCH)
+}
+
+@Test("Managed launcher revalidates after TUI spawn and cleans up both children")
+func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
+    let fixture = try managedCodexLauncherExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>(
+        [
+            .success(fixture.executable),
+            .success(fixture.executable),
+            .failure(.approvalDrift),
+        ],
+        beforeOutcome: { call in
+            guard call == 3 else { return }
+            let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+            while (
+                !FileManager.default.fileExists(atPath: fixture.pidFile.path)
+                    || !FileManager.default.fileExists(atPath: fixture.tuiPIDFile.path)
+            ), DispatchTime.now().uptimeNanoseconds < deadline {
+                usleep(10_000)
+            }
+        }
+    )
+
+    do {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-third.sock",
+                "--",
+            ],
+            environment: [
+                "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
+                "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+                "BLABEE_TEST_TUI_PID_FILE": fixture.tuiPIDFile.path,
+            ],
+            approvedExecutableProvider: provider.next
+        )
+        Issue.record("expected a post-TUI managed launch failure")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .started)
+        #expect(failure.nativeExecutableURL == fixture.executable)
+        #expect(failure.tuiArguments.isEmpty)
+        #expect(failure.underlyingError as? CodexRuntimeTrustError == .approvalDrift)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+
+    #expect(provider.callCount == 3)
+    let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
+    let startedChildren = marker.split(separator: "\n").map(String.init).sorted()
+    #expect(startedChildren == ["app-server", "tui"])
+    for pidFile in [fixture.pidFile, fixture.tuiPIDFile] {
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(pidText))
+        let killResult = kill(pid, 0)
+        let killError = errno
+        #expect(killResult == -1)
+        #expect(killError == ESRCH)
+    }
 }
 
 @Test("Managed launcher accepts and reaps an isolated auxiliary App Server")
@@ -1773,6 +1911,7 @@ private struct ManagedCodexLauncherExecutableFixture {
     let executable: URL
     let markerFile: URL
     let pidFile: URL
+    let tuiPIDFile: URL
 }
 
 private struct ManagedCodexAuxiliaryExecutableFixture {
@@ -1847,6 +1986,10 @@ private func managedCodexLauncherExecutableFixture(
         "app-server.pid",
         isDirectory: false
     )
+    let tuiPIDFile = directory.appendingPathComponent(
+        "tui.pid",
+        isDirectory: false
+    )
     let script = #"""
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
@@ -1856,7 +1999,9 @@ private func managedCodexLauncherExecutableFixture(
       while :; do /bin/sleep 1; done
     fi
     printf 'tui\n' >> "$BLABEE_TEST_MARKER_FILE"
-    exit 0
+    printf '%s\n' "$$" > "$BLABEE_TEST_TUI_PID_FILE"
+    trap 'exit 0' TERM INT
+    while :; do /bin/sleep 1; done
     """#
     try Data(script.utf8).write(to: executable, options: .atomic)
     try FileManager.default.setAttributes(
@@ -1867,7 +2012,8 @@ private func managedCodexLauncherExecutableFixture(
         directory: directory,
         executable: executable,
         markerFile: markerFile,
-        pidFile: pidFile
+        pidFile: pidFile,
+        tuiPIDFile: tuiPIDFile
     )
 }
 

@@ -147,6 +147,11 @@ struct DoctorProcessResult {
 struct DoctorDependencies {
     var environment: [String: String]
     var currentExecutableURL: URL?
+    /// Captured once by the running process. Do not recompute this from the
+    /// executable path: an atomic app replacement can make that path point to
+    /// a newer build while this process is still the older build.
+    var currentRuntimeIdentity: String
+    var installedRuntimeIdentity: (_ executable: URL) -> String?
     var processRunner: (_ executable: URL, _ arguments: [String], _ timeoutMilliseconds: Int) throws -> DoctorProcessResult
     var daemonRequester: (_ socketPath: String) throws -> Data
 
@@ -154,6 +159,12 @@ struct DoctorDependencies {
         DoctorDependencies(
             environment: ProcessInfo.processInfo.environment,
             currentExecutableURL: Bundle.main.executableURL,
+            currentRuntimeIdentity: OperationalRuntimeIdentity.current,
+            installedRuntimeIdentity: { executableURL in
+                OperationalRuntimeIdentity.installedIdentity(
+                    forExecutable: executableURL
+                )
+            },
             processRunner: DoctorProcessRunner.run,
             daemonRequester: { socketPath in
                 let client = try UnixDomainSocketClient(socketPath: socketPath)
@@ -173,107 +184,12 @@ struct DoctorApplication {
     static var alphaBaselineVersion: String { CodexCompatibility.alphaBaselineVersion }
     static var supportedVersions: Set<String> { CodexCompatibility.supportedVersions }
     static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
-    static let skillSHA256 = "75ea8d49729b00f54762a2fbad922f1ebce77c6710208176cbc52bc9d6a38d06"
-    static let skillAgentSHA256 = "48f8357783a6f96d1d387501e78ba2ed6785c9945a80d1a45c14dff341ee9520"
+    static let skillSHA256 = "496b602b57ed0bb9c07f96500dd993c89dba43ba70bfd54ecce7365faa732197"
+    static let skillAgentSHA256 = "6a57a7eea07b13f0053208de1075dbdaf8ee708f83357d5029498ff2e0a7b1a6"
+    static let launcherSHA256 = "152c94f24b5813af499a784ebb09d349931618c19d3231c3a44dd3d8cad3769a"
     static func expectedHookCommand(event: String) -> String {
         #"if [ -n "${PLUGIN_ROOT:-}" ] && [ -d "$PLUGIN_ROOT" ] && [ ! -L "$PLUGIN_ROOT" ] && [ -d "$PLUGIN_ROOT/scripts" ] && [ ! -L "$PLUGIN_ROOT/scripts" ] && [ -f "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ ! -L "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ -x "$PLUGIN_ROOT/scripts/blabee-launcher" ]; then exec "$PLUGIN_ROOT/scripts/blabee-launcher" hook \#(event); fi; exit 0"#
     }
-    static let bundledLauncherData = Data(("""
-    #!/bin/sh
-
-    mode=${1:-}
-
-    is_usable_binary() {
-      case "$1" in
-        /*) ;;
-        *) return 1 ;;
-      esac
-      [ -f "$1" ] && [ -x "$1" ]
-    }
-
-    if [ "${BLABEE_COORDINATOR_BINARY+x}" = "x" ]; then
-      coordinator_binary=$BLABEE_COORDINATOR_BINARY
-    else
-      coordinator_binary=
-      launcher_path=
-      runtime_path_state=unknown
-      case "$0" in
-        /*) launcher_path=$0 ;;
-        */*)
-          current_directory=$(pwd -P 2>/dev/null) || current_directory=
-          if [ -n "$current_directory" ]; then
-            launcher_path=$current_directory/$0
-          fi
-          ;;
-        *) launcher_path= ;;
-      esac
-      if [ -n "$launcher_path" ]; then
-        launcher_directory=${launcher_path%/*}
-        plugin_root=$(CDPATH= cd -P "$launcher_directory/.." 2>/dev/null && pwd -P) \\
-          || plugin_root=
-        if [ -n "$plugin_root" ]; then
-          runtime_path_file=$plugin_root/runtime/coordinator-path
-          if [ -e "$runtime_path_file" ] || [ -L "$runtime_path_file" ]; then
-            runtime_path_state=invalid
-            if [ -f "$runtime_path_file" ] && [ ! -L "$runtime_path_file" ]; then
-              runtime_path_size=$(/usr/bin/stat -f '%z' "$runtime_path_file" 2>/dev/null) \\
-                || runtime_path_size=
-              case "$runtime_path_size" in
-                ''|*[!0-9]*) runtime_path_size_valid=false ;;
-                *)
-                  if [ "$runtime_path_size" -le 4096 ] 2>/dev/null; then
-                    runtime_path_size_valid=true
-                  else
-                    runtime_path_size_valid=false
-                  fi
-                  ;;
-              esac
-              if [ "$runtime_path_size_valid" = true ]; then
-                runtime_binary=
-                runtime_extra=
-                runtime_path_valid=false
-                {
-                  if IFS= read -r runtime_binary <&3 || [ -n "$runtime_binary" ]; then
-                    if IFS= read -r runtime_extra <&3 || [ -n "$runtime_extra" ]; then
-                      runtime_binary=
-                    else
-                      runtime_path_valid=true
-                    fi
-                  fi
-                } 3< "$runtime_path_file" 2>/dev/null
-                if [ "$runtime_path_valid" = true ] && is_usable_binary "$runtime_binary"; then
-                  coordinator_binary=$runtime_binary
-                  runtime_path_state=valid
-                fi
-              fi
-            fi
-          else
-            runtime_path_state=absent
-          fi
-        fi
-      fi
-      if [ -z "$coordinator_binary" ] && [ "$runtime_path_state" = absent ]; then
-        coordinator_binary=/Applications/Blabee.app/Contents/MacOS/blabee-coordinator
-      fi
-    fi
-
-    if is_usable_binary "$coordinator_binary"; then
-      exec "$coordinator_binary" "$@"
-    fi
-
-    if [ "$mode" = "hook" ]; then
-      # Blabee availability must never prevent normal Codex use.
-      exit 0
-    fi
-
-    if [ "$mode" = "mcp" ]; then
-      printf '%s\\n' '{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Blabee coordinator binary is unavailable."}}'
-      exit 127
-    fi
-
-    exit 64
-    """ + "\n").utf8)
-
     let dependencies: DoctorDependencies
 
     init(dependencies: DoctorDependencies = .live()) {
@@ -356,7 +272,9 @@ private extension DoctorApplication {
         guard let url = dependencies.currentExecutableURL,
               let resolved = resolvedExecutable(url),
               isExecutableRegularFile(embeddedURL, allowingSymlink: false),
-              sameFile(resolved, embeddedURL)
+              sameFile(resolved, embeddedURL),
+              let embeddedIdentity = dependencies.installedRuntimeIdentity(embeddedURL),
+              dependencies.currentRuntimeIdentity == embeddedIdentity
         else {
             return DoctorCheck(
                 id: "coordinator_runtime", status: .fail,
@@ -562,10 +480,11 @@ private extension DoctorApplication {
               validatePluginManifest(pluginURL),
               validatePluginMCP(pluginURL),
               validatePluginSkills(pluginURL),
-              boundedFileData(
+              let launcher = boundedFileData(
                 pluginURL.appendingPathComponent("scripts/blabee-launcher"),
                 requireExecutable: true
-              ) == Self.bundledLauncherData,
+              ),
+              sha256Hex(launcher) == Self.launcherSHA256,
               validatePluginHooks(pluginURL)
         else {
             return DoctorCheck(
@@ -605,6 +524,16 @@ private extension DoctorApplication {
                         summary: "Plugin runtime coordinator가 앱 내장 실행 파일과 다릅니다."
                     )
                 }
+                guard let targetIdentity = dependencies.installedRuntimeIdentity(target),
+                let embeddedIdentity = dependencies.installedRuntimeIdentity(embedded),
+                targetIdentity == embeddedIdentity
+                else {
+                    return DoctorCheck(
+                        id: "mcp_runtime", status: .fail,
+                        code: "mcp_runtime_identity_manifest_invalid",
+                        summary: "Plugin과 앱의 runtime identity를 일치시킬 수 없습니다."
+                    )
+                }
                 return DoctorCheck(
                     id: "mcp_runtime", status: .pass,
                     code: "mcp_runtime_ok",
@@ -621,7 +550,8 @@ private extension DoctorApplication {
         }
 
         guard appURL.standardizedFileURL.path == "/Applications/Blabee.app",
-              isExecutableRegularFile(embedded, allowingSymlink: false)
+              isExecutableRegularFile(embedded, allowingSymlink: false),
+              dependencies.installedRuntimeIdentity(embedded) != nil
         else {
             return DoctorCheck(
                 id: "mcp_runtime", status: .fail,

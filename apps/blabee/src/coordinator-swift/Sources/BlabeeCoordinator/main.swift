@@ -2,6 +2,9 @@ import CoordinatorSwift
 import BlabeeProductSupport
 import Darwin
 import Foundation
+#if BLABEE_JOURNAL_TEST_HARNESS
+import Dispatch
+#endif
 
 private struct Arguments {
     let database: URL
@@ -101,6 +104,7 @@ private struct DaemonRuntimeConfiguration {
     let contracts: URL
     let socketPath: String
     let enabledProjectPaths: [String]
+    let suggestionMode: BlabeeSuggestionMode
     let freshnessEnvironment: [String: String]
 
     init(_ arguments: DaemonArguments) {
@@ -109,6 +113,7 @@ private struct DaemonRuntimeConfiguration {
         contracts = arguments.contracts
         socketPath = arguments.socketPath
         enabledProjectPaths = arguments.enabledProjectPaths
+        suggestionMode = .actionOnly
         freshnessEnvironment = ProcessInfo.processInfo.environment
     }
 
@@ -118,6 +123,7 @@ private struct DaemonRuntimeConfiguration {
         contracts = configuration.contracts
         socketPath = configuration.socketPath
         enabledProjectPaths = configuration.enabledProjectPaths
+        suggestionMode = BlabeeSuggestionModeStore().load().mode
         freshnessEnvironment = [:]
     }
 }
@@ -125,13 +131,38 @@ private struct DaemonRuntimeConfiguration {
 private struct FreshnessRuntimeConfiguration {
     let store: KeychainFreshnessAnchorStore
     let deleteForTesting: Bool
+    #if BLABEE_JOURNAL_TEST_HARNESS
+    let readDescriptorForTesting: Int32?
+    #endif
 
     init(environment: [String: String]) throws {
         let testNamespaceEnabled = environment["BLABEE_T007B_ENABLE_KEYCHAIN_TEST_NAMESPACE"] == "1"
         let requestedAccount = environment["BLABEE_T007B_KEYCHAIN_ACCOUNT"]
         let deleteRequested = environment["BLABEE_T007B_DELETE_KEYCHAIN_TEST_ANCHOR"] == "1"
+        #if BLABEE_JOURNAL_TEST_HARNESS
+        let requestedReadDescriptor = environment[
+            "BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD"
+        ]
+        let readRequested = requestedReadDescriptor != nil
+        if readRequested {
+            guard requestedReadDescriptor == "3" else {
+                throw CoordinatorError(
+                    "invalid_arguments",
+                    "Keychain test reads require inherited file descriptor 3"
+                )
+            }
+        }
+        guard !(deleteRequested && readRequested) else {
+            throw CoordinatorError(
+                "invalid_arguments",
+                "Keychain test read and delete modes are mutually exclusive"
+            )
+        }
+        #else
+        let readRequested = false
+        #endif
 
-        if requestedAccount != nil || deleteRequested {
+        if requestedAccount != nil || deleteRequested || readRequested {
             guard testNamespaceEnabled else {
                 throw CoordinatorError(
                     "invalid_arguments",
@@ -160,8 +191,70 @@ private struct FreshnessRuntimeConfiguration {
             allowsTestDeletion: testNamespaceEnabled
         )
         deleteForTesting = deleteRequested
+        #if BLABEE_JOURNAL_TEST_HARNESS
+        readDescriptorForTesting = readRequested ? 3 : nil
+        #endif
     }
 }
+
+#if BLABEE_JOURNAL_TEST_HARNESS
+private func writeKeychainTestAnchor(
+    from store: KeychainFreshnessAnchorStore,
+    to descriptor: Int32
+) throws {
+    guard descriptor == 3, fcntl(descriptor, F_GETFD) >= 0 else {
+        throw CoordinatorError("invalid_arguments", "Keychain test oracle descriptor is unavailable")
+    }
+    guard let stored = try store.load() else {
+        throw CoordinatorError("freshness_anchor_unavailable", "Keychain test anchor is missing")
+    }
+    let bytes = try stored.record.encoded()
+    let maximumBytes = 64 * 1024
+    guard !bytes.isEmpty, bytes.count <= maximumBytes else {
+        throw CoordinatorError("freshness_anchor_corrupt", "Keychain test anchor exceeds its bound")
+    }
+
+    let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+    try bytes.withUnsafeBytes { rawBuffer in
+        guard let baseAddress = rawBuffer.baseAddress else { return }
+        var offset = 0
+        while offset < rawBuffer.count {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw CoordinatorError("transport_write_failed", "Keychain test oracle write timed out")
+            }
+            let timeoutMilliseconds = max(
+                1,
+                Int32(min((deadline - now) / 1_000_000, UInt64(Int32.max)))
+            )
+            var pollDescriptor = pollfd(
+                fd: descriptor,
+                events: Int16(POLLOUT),
+                revents: 0
+            )
+            let pollResult = Darwin.poll(&pollDescriptor, 1, timeoutMilliseconds)
+            if pollResult < 0 && errno == EINTR { continue }
+            guard pollResult > 0,
+                  pollDescriptor.revents & Int16(POLLOUT) != 0
+            else {
+                throw CoordinatorError("transport_write_failed", "Keychain test oracle is unavailable")
+            }
+            let written = Darwin.write(
+                descriptor,
+                baseAddress.advanced(by: offset),
+                rawBuffer.count - offset
+            )
+            if written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue
+            }
+            guard written > 0 else {
+                throw CoordinatorError("transport_write_failed", "Keychain test oracle write failed")
+            }
+            offset += written
+        }
+    }
+}
+#endif
 
 private func requiredString(_ object: [String: Any], _ key: String) throws -> String {
     guard let value = object[key] as? String, !value.isEmpty else {
@@ -580,6 +673,13 @@ private func handleLine(
 private func runLegacyCoordinator(arguments rawArguments: [String]) throws {
     let arguments = try Arguments(rawArguments)
     try ContractPin.verify(contractsDirectory: arguments.contracts)
+    let freshness = try FreshnessRuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
+    #if BLABEE_JOURNAL_TEST_HARNESS
+    if let descriptor = freshness.readDescriptorForTesting {
+        try writeKeychainTestAnchor(from: freshness.store, to: descriptor)
+        return
+    }
+    #endif
     let authorityLease: CoordinatorAuthorityLease?
     #if BLABEE_JOURNAL_TEST_HARNESS
     let environment = ProcessInfo.processInfo.environment
@@ -602,7 +702,6 @@ private func runLegacyCoordinator(arguments rawArguments: [String]) throws {
     // Keep the storage authority for the complete legacy process lifetime.
     // Test-harness builds retain their existing cross-process CAS semantics.
     defer { withExtendedLifetime(authorityLease) {} }
-    let freshness = try FreshnessRuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
     if freshness.deleteForTesting {
         try freshness.store.deleteForTesting()
         return
@@ -689,6 +788,16 @@ private func runProductProjectSettings(arguments: [String]) throws {
 
 private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) throws {
     try ContractPin.verify(contractsDirectory: arguments.contracts)
+    #if BLABEE_JOURNAL_TEST_HARNESS
+    guard arguments.freshnessEnvironment[
+        "BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD"
+    ] == nil else {
+        throw CoordinatorError(
+            "invalid_arguments",
+            "Keychain test oracle is restricted to the legacy test invocation"
+        )
+    }
+    #endif
     let authorityLease = try CoordinatorAuthorityLease(databaseURL: arguments.database)
     // Acquire the process-lifetime owner lease before storage initialization.
     // The socket itself is published only after the full application is ready.
@@ -709,6 +818,7 @@ private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) thro
     let operational = CoordinatorOperationalApplication(
         routing: routing,
         enabledProjectPaths: arguments.enabledProjectPaths,
+        suggestionMode: arguments.suggestionMode,
         secretCorpus: journal.secretCorpus,
         nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher
     )
@@ -996,6 +1106,23 @@ private func runCodexAutoConnectCommand(arguments: [String]) throws {
     }
 }
 
+func codexAutoConnectLaunchCoordinatorError(_ error: Error) -> CoordinatorError {
+    if let error = error as? CoordinatorError { return error }
+    guard let error = error as? CodexAutoConnectError else {
+        return error.coordinatorError
+    }
+    let code: String
+    switch error {
+    case .conflict:
+        code = "codex_auto_connect_conflict"
+    case .unavailable:
+        code = "codex_auto_connect_unavailable"
+    case .unsafeFilesystem, .writeFailed:
+        code = "codex_auto_connect_repair_required"
+    }
+    return CoordinatorError(code)
+}
+
 private func runCodexLaunch(arguments: [String]) throws {
     guard arguments.first == "--" else {
         throw CoordinatorError(
@@ -1005,28 +1132,27 @@ private func runCodexLaunch(arguments: [String]) throws {
     }
     let codexArguments = Array(arguments.dropFirst())
     let manager = try CodexAutoConnectManager.liveForRuntime()
-    let approved = try manager.approvedCodexForLaunch()
-    let isManaged = codexArguments.isEmpty || codexArguments.first == "resume"
-    if isManaged {
-        let status = try ManagedCodexLauncher().run(
-            arguments: ["--"] + codexArguments,
-            approvedExecutableProvider: {
-                try manager.revalidateCodexForSpawn(approved)
-            }
-        )
-        if status != 0 { exit(status) }
-        return
-    }
+    let executable = try manager.nativeCodexForLaunch()
+    try runResolvedNativeCodexLaunch(
+        executable: executable,
+        arguments: codexArguments
+    )
+}
 
-    let executable = try manager.revalidateCodexForSpawn(approved)
+private func runResolvedNativeCodexLaunch(
+    executable: URL,
+    arguments: [String]
+) throws {
     for name in [
+        "BLABEE_COORDINATOR_BINARY",
         "BLABEE_SOCKET",
         "BLABEE_MANAGED_APPROVALS",
         "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+        "BLABEE_RUNTIME_IDENTITY",
     ] {
         unsetenv(name)
     }
-    var cArguments = ([executable.path] + codexArguments).map { strdup($0) }
+    var cArguments = ([executable.path] + arguments).map { strdup($0) }
     guard !cArguments.contains(where: { $0 == nil }) else {
         for case let pointer? in cArguments { free(pointer) }
         throw CoordinatorError("codex_auto_connect_exec_failed")
@@ -1042,6 +1168,24 @@ private func runCodexLaunch(arguments: [String]) throws {
         throw CoordinatorError(
             "codex_auto_connect_exec_failed",
             "승인된 Codex 실행 파일을 시작하지 못했습니다."
+        )
+    }
+}
+
+func runExplicitManagedCodexLaunch(
+    arguments: [String],
+    managedRun: ([String]) throws -> Int32,
+    nativeRun: (URL, [String]) throws -> Int32
+) throws -> Int32 {
+    do {
+        return try managedRun(arguments)
+    } catch let failure as ManagedCodexLaunchFailure {
+        guard failure.childStartState == .notStarted else {
+            throw failure.underlyingError
+        }
+        return try nativeRun(
+            failure.nativeExecutableURL,
+            failure.tuiArguments
         )
     }
 }
@@ -1074,8 +1218,40 @@ do {
     case "managed-codex":
         let status: Int32
         do {
-            status = try ManagedCodexLauncher().run(
-                arguments: Array(commandLine.dropFirst(2))
+            status = try runExplicitManagedCodexLaunch(
+                arguments: Array(commandLine.dropFirst(2)),
+                managedRun: { arguments in
+                    let environment = ProcessInfo.processInfo.environment
+                    // Keep syntax/socket validation ahead of managed trust
+                    // discovery so an invalid invocation is never made
+                    // fallback-eligible by an unrelated runtime condition.
+                    _ = try ManagedCodexLauncherArguments(
+                        arguments,
+                        environment: environment
+                    )
+                    let manager = try CodexAutoConnectManager.liveForRuntime(
+                        environment: environment
+                    )
+                    let provider = CodexAutoConnectApprovedExecutableProvider(
+                        manager: manager
+                    )
+                    return try ManagedCodexLauncher().run(
+                        arguments: arguments,
+                        environment: environment,
+                        approvedExecutableProvider: provider.next
+                    )
+                },
+                nativeRun: { executable, arguments in
+                    do {
+                        try runResolvedNativeCodexLaunch(
+                            executable: executable,
+                            arguments: arguments
+                        )
+                        return 0
+                    } catch {
+                        throw codexAutoConnectLaunchCoordinatorError(error)
+                    }
+                }
             )
         } catch {
             throw managedCodexCoordinatorError(error)
@@ -1084,7 +1260,11 @@ do {
     case "codex-auto-connect":
         try runCodexAutoConnectCommand(arguments: Array(commandLine.dropFirst(2)))
     case "codex-launch":
-        try runCodexLaunch(arguments: Array(commandLine.dropFirst(2)))
+        do {
+            try runCodexLaunch(arguments: Array(commandLine.dropFirst(2)))
+        } catch {
+            throw codexAutoConnectLaunchCoordinatorError(error)
+        }
     #if BLABEE_JOURNAL_TEST_HARNESS
     case "transport-test-server":
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))

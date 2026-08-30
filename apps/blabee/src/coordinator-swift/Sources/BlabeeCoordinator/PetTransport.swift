@@ -21,6 +21,20 @@ enum PetTransportTimeoutPolicy {
     }
 }
 
+enum PetTransportRequestPayload {
+    /// A Pet snapshot read also acts as a short-lived, process-local consumer
+    /// heartbeat. It contains no secret or durable identity; the coordinator
+    /// uses it only to avoid holding a Hook approval open when no Pet is
+    /// actively polling.
+    static func snapshotWithConsumerHeartbeat() throws -> Data {
+        try StrictJSONTransport.data(forJSONObject: [
+            "schema_version": "1.0",
+            "kind": "blabee_pet_snapshot_request",
+            "consumer_heartbeat": true,
+        ])
+    }
+}
+
 actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
     private let client: UnixDomainSocketClient
     private let connectTimeoutMilliseconds: Int32
@@ -41,23 +55,31 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
     }
 
     func request(type: String, payload: Data) async throws -> Data {
-        let payloadObject = try StrictJSONTransport.object(
-            from: payload,
-            limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
-        )
-        let result = try client.request(
-            type: type,
-            payload: payloadObject,
-            connectTimeoutMilliseconds: connectTimeoutMilliseconds,
-            responseTimeoutMilliseconds: PetTransportTimeoutPolicy
-                .responseTimeoutMilliseconds(
-                    for: type,
-                    defaultTimeoutMilliseconds: responseTimeoutMilliseconds,
-                    userDecisionTimeoutMilliseconds:
-                        userDecisionResponseTimeoutMilliseconds
-                )
-        )
-        return try StrictJSONTransport.data(forJSONObject: result)
+        let client = client
+        let connectTimeoutMilliseconds = connectTimeoutMilliseconds
+        let responseTimeoutMilliseconds = PetTransportTimeoutPolicy
+            .responseTimeoutMilliseconds(
+                for: type,
+                defaultTimeoutMilliseconds: responseTimeoutMilliseconds,
+                userDecisionTimeoutMilliseconds:
+                    userDecisionResponseTimeoutMilliseconds
+            )
+        // UnixDomainSocketClient is deliberately synchronous. Run that bounded
+        // I/O away from this actor so a long selection response cannot starve
+        // the Pet's 500 ms get_state heartbeat and falsely expire its lease.
+        return try await Task.detached(priority: .userInitiated) {
+            let payloadObject = try StrictJSONTransport.object(
+                from: payload,
+                limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
+            )
+            let result = try client.request(
+                type: type,
+                payload: payloadObject,
+                connectTimeoutMilliseconds: connectTimeoutMilliseconds,
+                responseTimeoutMilliseconds: responseTimeoutMilliseconds
+            )
+            return try StrictJSONTransport.data(forJSONObject: result)
+        }.value
     }
 }
 

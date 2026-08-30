@@ -6,7 +6,7 @@ import Foundation
 /// on an appropriate worker and then apply the same fail-closed policy.
 enum CodexCompatibility {
     static let alphaBaselineVersion = "0.148.0"
-    static let supportedVersions: Set<String> = ["0.149.1", "0.150.1"]
+    static let supportedVersions: Set<String> = ["0.149.1", "0.150.1", "0.151.0"]
     static let maximumVersionOutputBytes = 4_096
 
     enum Qualification: Equatable, Sendable {

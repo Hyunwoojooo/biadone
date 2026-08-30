@@ -160,6 +160,12 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   const marketplacePlugin = join(marketplace, "plugins", "blabee");
   const marketplaceRuntime = join(marketplacePlugin, "runtime");
   const coordinatorLocator = join(marketplaceRuntime, "coordinator-path");
+  const runtimeIdentityManifest = join(
+    app,
+    "Contents",
+    "Resources",
+    "assembly-manifest.json",
+  );
   const marketplaceManifestPath = join(
     marketplace,
     ".agents",
@@ -186,6 +192,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     serviceLauncher,
     petLauncher,
     coordinatorLocator,
+    runtimeIdentityManifest,
     result.summaryPath,
   ]) {
     const metadata = await lstat(path);
@@ -202,6 +209,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal((await lstat(marketplaceRuntime)).isDirectory(), true);
   assert.equal((await lstat(marketplaceRuntime)).mode & 0o777, 0o700);
   assert.equal((await lstat(coordinatorLocator)).mode & 0o777, 0o600);
+  assert.equal((await lstat(runtimeIdentityManifest)).mode & 0o777, 0o644);
   assert.equal(await readFile(coordinatorLocator, "utf8"), `${bundledCoordinator}\n`);
   await assert.rejects(
     lstat(join(bundledPlugin, "runtime", "coordinator-path")),
@@ -217,7 +225,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     doctorRun.stdout,
     [
       `path=${join(app, "Contents", "MacOS")}:/usr/bin:/bin`,
-      `socket=/tmp/stale-blabee.sock;args=doctor --app ${app} --project ${canonicalOutput}`,
+      `socket=unset;args=doctor --app ${app} --project ${canonicalOutput}`,
       "",
     ].join("\n"),
   );
@@ -280,6 +288,11 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.deepEqual(summary, result.summary);
   assert.equal(summary.schema_version, "blabee.local-dogfood-preparation.v1");
   assert.equal(summary.preparation_only, true);
+  assert.equal(summary.signed, true);
+  await execFile(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", app],
+  );
   assert.deepEqual(summary.codex.marketplace_add.argv, [
     "codex",
     "plugin",
@@ -300,7 +313,44 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal(summary.codex.hook_trust.bypass_hook_trust, false);
   assert.equal(summary.codex.marketplace_identity_suffix, expectedMarketplaceSuffix);
   assert.equal(summary.codex.launch.environment.BLABEE_SOCKET, "unset_by_launcher");
+  assert.equal(
+    summary.codex.launch.environment.BLABEE_COORDINATOR_BINARY,
+    "unset_by_launcher",
+  );
+  assert.equal(
+    summary.codex.launch.environment.BLABEE_RUNTIME_IDENTITY,
+    "unset_by_launcher",
+  );
+  assert.equal(
+    summary.codex.launch.environment.BLABEE_MANAGED_APPROVALS,
+    "unset_by_launcher",
+  );
+  assert.equal(
+    summary.codex.launch.environment.BLABEE_MANAGED_CODEX_AUTH_TOKEN,
+    "unset_by_launcher",
+  );
+  assert.equal(summary.codex.launch.mode, "native_codex");
+  assert.equal(summary.codex.launch.environment.PATH_prepend, undefined);
   assert.equal(summary.paths.managed_codex_launcher, managedCodexLauncher);
+  assert.equal(summary.paths.runtime_identity_manifest, runtimeIdentityManifest);
+  assert.equal(
+    summary.runtime.identity.source_manifest_schema_version,
+    "blabee.macos-app-assembly.v1",
+  );
+  assert.equal(
+    summary.runtime.identity.strategy,
+    "process_cached_signed_code_and_manifest_v1",
+  );
+  assert.equal(summary.runtime.identity.resolved_at_process_start, true);
+  assert.match(
+    summary.runtime.identity.assembly_manifest_sha256,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+  assert.equal(summary.runtime.identity.manifest, runtimeIdentityManifest);
+  assert.equal(
+    summary.runtime.identity.assembly_manifest_sha256,
+    `sha256:${await digest(runtimeIdentityManifest)}`,
+  );
   assert.deepEqual(summary.codex.managed_launch, {
     argv: [managedCodexLauncher],
     environment: {
@@ -417,16 +467,29 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
 
   const fakeBin = join(fixture.root, "fake-bin");
   await mkdir(fakeBin);
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(
+    fakeCodex,
+    [
+      "#!/bin/sh",
+      "printf 'native-codex;coordinator=%s;runtime=%s;socket=%s;managed=%s;auth=%s;args=%s\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"${BLABEE_RUNTIME_IDENTITY-unset}\" \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" \"$*\"",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
   const launched = await execFile(codexLauncher, ["resume", "session-id"], {
-    env: { PATH: fakeBin, BLABEE_SOCKET: "/tmp/stale-blabee.sock" },
+    env: {
+      PATH: fakeBin,
+      BLABEE_COORDINATOR_BINARY: "/tmp/stale-coordinator",
+      BLABEE_RUNTIME_IDENTITY: `sha256:${"f".repeat(64)}`,
+      BLABEE_SOCKET: "/tmp/stale-blabee.sock",
+      BLABEE_MANAGED_APPROVALS: "stale-approvals",
+      BLABEE_MANAGED_CODEX_AUTH_TOKEN: "stale-auth-token",
+    },
   });
   assert.equal(
     launched.stdout,
-    [
-      `coordinator=${bundledCoordinator};path=${join(canonicalOutput, "bin")}:${fakeBin}`,
-      "socket=unset;args=managed-codex -- resume session-id",
-      "",
-    ].join("\n"),
+    "native-codex;coordinator=unset;runtime=unset;socket=unset;managed=unset;auth=unset;args=resume session-id\n",
   );
 
   const managedLaunch = await execFile(
@@ -590,6 +653,19 @@ test("preparation rejects unsafe or existing roots and preserves its failed root
   );
   assert.equal((await lstat(failedOutput)).isDirectory(), true);
   assert.deepEqual(await readdir(failedOutput), []);
+});
+
+test("preparation rejects an explicit unsigned dogfood request before creating output", async (t) => {
+  const fixture = await makeWorkspace(t, "blabee-local-dogfood-unsigned-");
+  await assert.rejects(
+    prepareLocalDogfood({
+      binaryPath: fixture.binary,
+      outputPath: fixture.output,
+      adhocSign: false,
+    }),
+    /must be ad-hoc signed/,
+  );
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
 });
 
 test("repeated and concurrent preparation never replace a completed output", async (t) => {

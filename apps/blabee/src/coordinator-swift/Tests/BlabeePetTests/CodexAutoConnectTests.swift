@@ -227,38 +227,47 @@ struct CodexAutoConnectTests {
         #expect(try Data(contentsOf: fixture.zshRC) == expected)
     }
 
-    @Test("zshrc extended attributes and mode survive inode replacement")
+    @Test("zshrc user metadata survives while system provenance may rotate")
     func preservesZshRCMetadata() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
         let original = Data("export METADATA=kept\n".utf8)
         let attributeName = "com.biadone.blabee.auto-connect-test"
         let attributeValue = Data("opaque-test-value".utf8)
+        let provenanceName = "com.apple.provenance"
+        let provenanceSeed = Data([0x01, 0x02, 0x00, 0, 0, 0, 0, 0, 0, 0, 0])
         try original.write(to: fixture.zshRC)
         try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: fixture.zshRC.path)
         try setExtendedAttribute(attributeName, value: attributeValue, at: fixture.zshRC)
+        try setExtendedAttribute(provenanceName, value: provenanceSeed, at: fixture.zshRC)
+        let provenanceBytes = try extendedAttribute(provenanceName, at: fixture.zshRC).count
 
         try fixture.manager.enable()
         #expect(try extendedAttribute(attributeName, at: fixture.zshRC) == attributeValue)
+        #expect(try extendedAttribute(provenanceName, at: fixture.zshRC).count == provenanceBytes)
         var attributes = try FileManager.default.attributesOfItem(atPath: fixture.zshRC.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
 
         try fixture.manager.disable()
         #expect(try Data(contentsOf: fixture.zshRC) == original)
         #expect(try extendedAttribute(attributeName, at: fixture.zshRC) == attributeValue)
+        #expect(try extendedAttribute(provenanceName, at: fixture.zshRC).count == provenanceBytes)
         attributes = try FileManager.default.attributesOfItem(atPath: fixture.zshRC.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o640)
     }
 
-    @Test("stale owned generated content is reported and repaired")
-    func repairsStaleManagedFile() throws {
+    @Test("a stable launcher for an older official Codex is reported and repaired")
+    func repairsStaleStableLauncher() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
         try fixture.manager.enable()
-        var stale = try String(contentsOf: fixture.managed, encoding: .utf8)
-        stale = stale.replacingOccurrences(of: fixture.coordinator.path, with: "/missing/coordinator")
-        try Data(stale.utf8).write(to: fixture.managed, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.managed.path)
+        var stale = try String(contentsOf: fixture.stableLauncher, encoding: .utf8)
+        stale = stale.replacingOccurrences(of: fixture.official.path, with: "/missing/codex")
+        try Data(stale.utf8).write(to: fixture.stableLauncher, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fixture.stableLauncher.path
+        )
 
         guard case .repairRequired = fixture.manager.state() else {
             Issue.record("expected repairRequired")
@@ -266,7 +275,31 @@ struct CodexAutoConnectTests {
         }
         try fixture.manager.enable()
         #expect(fixture.manager.state() == .enabled)
-        #expect(try String(contentsOf: fixture.managed, encoding: .utf8).contains(fixture.coordinator.path))
+        #expect(try String(contentsOf: fixture.stableLauncher, encoding: .utf8)
+            .contains(fixture.official.path))
+    }
+
+    @Test("enable repairs a non-executable owned stable launcher to mode 0700")
+    func repairsStableLauncherMode() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.stableLauncher.path
+        )
+
+        guard case let .repairRequired(reason) = fixture.manager.state() else {
+            Issue.record("a non-executable stable launcher must require repair")
+            return
+        }
+        #expect(reason.contains("고정 실행기"))
+        try fixture.manager.enable()
+
+        var info = stat()
+        #expect(lstat(fixture.stableLauncher.path, &info) == 0)
+        #expect(info.st_mode & 0o777 == 0o700)
+        #expect(fixture.manager.state() == .enabled)
     }
 
     @Test("duplicate or malformed markers fail closed before creating managed code")
@@ -360,7 +393,7 @@ struct CodexAutoConnectTests {
         #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("v1").path))
     }
 
-    @Test("spaces and apostrophes are escaped and argv routing is exact")
+    @Test("spaces and apostrophes are escaped and native Codex argv routing is exact")
     func exactZshRouting() throws {
         let fixture = try AutoConnectFixture(
             rootName: "Blabee auto connect's fixture \(UUID().uuidString)"
@@ -369,52 +402,251 @@ struct CodexAutoConnectTests {
         try fixture.manager.enable()
 
         let log = fixture.root.appendingPathComponent("argv log")
-        let environment = ["BLABEE_TEST_LOG": log.path, "BLABEE_SOCKET": "/stale/socket"]
+        let environment = [
+            "BLABEE_TEST_LOG": log.path,
+            "BLABEE_COORDINATOR_BINARY": "/stale/coordinator",
+            "BLABEE_SOCKET": "/stale/socket",
+            "BLABEE_MANAGED_APPROVALS": "stale-approvals",
+            "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+            "BLABEE_RUNTIME_IDENTITY": "sha256:stale-runtime",
+        ]
         #expect(try fixture.runCodex([], environment: environment) == 0)
         #expect(try fixture.runCodex(["resume", "thread id", "*[x]"], environment: environment) == 0)
+        #expect(try fixture.runCodex(["fork", "thread id"], environment: environment) == 0)
         #expect(try fixture.runCodex(["exec", "two words"], environment: environment) == 0)
         #expect(try fixture.runCodex(["plugin", "list"], environment: environment) == 0)
+        #expect(try fixture.runCodex(["write a short plan", "--full-auto"], environment: environment) == 0)
+        #expect(try fixture.runCodex(["-C", "/tmp/work path", "resume"], environment: environment) == 0)
+        #expect(try fixture.runCodex(["--remote", "ws://127.0.0.1:4321", "resume"], environment: environment) == 0)
         #expect(try fixture.runCodex(["--version"], environment: environment) == 0)
 
         let lines = try String(contentsOf: log, encoding: .utf8)
-        #expect(lines.contains("coordinator:<codex-launch><-->") )
-        #expect(lines.contains("coordinator:<codex-launch><--><resume><thread id><*[x]>") )
-        #expect(lines.contains("coordinator:<codex-launch><--><exec><two words>"))
-        #expect(lines.contains("coordinator:<codex-launch><--><plugin><list>"))
-        #expect(lines.contains("coordinator:<codex-launch><--><--version>"))
-        #expect(!lines.contains("official:"))
-        #expect(lines.contains("socket:unset"))
-        #expect(lines.components(separatedBy: "coordinator-env:<unset><unset><unset>").count - 1 == 5)
+        let records = lines.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(records.filter { $0.hasPrefix("official:") }.count == 9)
+        #expect(records.contains("official:"))
+        #expect(records.contains("official:<resume><thread id><*[x]>"))
+        #expect(records.contains("official:<fork><thread id>"))
+        #expect(records.contains("official:<exec><two words>"))
+        #expect(records.contains("official:<plugin><list>"))
+        #expect(records.contains("official:<write a short plan><--full-auto>"))
+        #expect(records.contains("official:<-C></tmp/work path><resume>"))
+        #expect(records.contains("official:<--remote><ws://127.0.0.1:4321><resume>"))
+        #expect(records.contains("official:<--version>"))
+        #expect(!lines.contains("coordinator:"))
+        #expect(records.filter { $0 == "official-env:<unset><unset><unset><unset><unset>" }.count == 9)
+        #expect(!lines.contains("/stale/socket"))
+        #expect(!lines.contains("stale-runtime"))
     }
 
-    @Test("missing or failed coordinator never falls back to an unverified Codex")
-    func failClosedCoordinatorBoundary() throws {
+    @Test("an already-open shell keeps native Codex working after auto-connect is disabled")
+    func openShellSurvivesDisable() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+
+        let cachedManaged = fixture.root.appendingPathComponent("cached-open-shell.zsh")
+        try Data(contentsOf: fixture.managed).write(to: cachedManaged)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: cachedManaged.path
+        )
+        let cachedText = try String(contentsOf: cachedManaged, encoding: .utf8)
+        #expect(cachedText.contains(fixture.official.path))
+        #expect(!cachedText.contains("local _blabee_launcher="))
+        #expect(!cachedText.contains(fixture.coordinator.path))
+        let installedStableLauncher = try Data(contentsOf: fixture.stableLauncher)
+        try fixture.manager.disable()
+
+        #expect(fixture.manager.state() == .disabled)
+        #expect(try Data(contentsOf: fixture.stableLauncher) == installedStableLauncher)
+
+        let log = fixture.root.appendingPathComponent("open shell log")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [
+            "-f", "-c", "source \"$1\"; codex --version", "test", cachedManaged.path,
+        ]
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["BLABEE_TEST_LOG": log.path]
+        ) { _, new in new }
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+
+        // A shell that sourced the previous stable-launcher-backed function
+        // keeps calling this path after disable. It must now be a native-only
+        // pass-through rather than a dependency on the coordinator.
+        let legacyOpenShell = Process()
+        legacyOpenShell.executableURL = fixture.stableLauncher
+        legacyOpenShell.arguments = ["resume"]
+        legacyOpenShell.environment = ProcessInfo.processInfo.environment.merging(
+            ["BLABEE_TEST_LOG": log.path]
+        ) { _, new in new }
+        try legacyOpenShell.run()
+        legacyOpenShell.waitUntilExit()
+
+        #expect(legacyOpenShell.terminationStatus == 0)
+        let records = try String(contentsOf: log, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(records.filter { $0 == "official:<--version>" }.count == 1)
+        #expect(records.filter { $0 == "official:<resume>" }.count == 1)
+        #expect(!records.contains { $0.hasPrefix("coordinator:") })
+    }
+
+    @Test("the native v4 function ignores a malformed executable stable launcher")
+    func nativeFunctionIgnoresMalformedStableLauncher() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        let log = fixture.root.appendingPathComponent("malformed stable log")
+        try fixture.writeExecutable(
+            fixture.stableLauncher,
+            body: "printf 'malformed-stable\\n' >> \"$BLABEE_TEST_LOG\"\nexit 88"
+        )
+
+        #expect(try fixture.runCodex(["fork", "thread id"], environment: [
+            "BLABEE_TEST_LOG": log.path,
+        ]) == 0)
+
+        let records = try String(contentsOf: log, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(records.filter { $0 == "official:<fork><thread id>" }.count == 1)
+        #expect(!records.contains("malformed-stable"))
+    }
+
+    @Test("the legacy native stable launcher preserves a nonzero exit exactly once")
+    func legacyStableLauncherPreservesNonzeroExit() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        let log = fixture.root.appendingPathComponent("legacy nonzero log")
+        try fixture.writeExecutable(
+            fixture.official,
+            body: "printf 'official-nonzero:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\"\nexit 29"
+        )
+
+        let process = Process()
+        process.executableURL = fixture.stableLauncher
+        process.arguments = ["resume", "thread id"]
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "BLABEE_TEST_LOG": log.path,
+        ]) { _, new in new }
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationReason == .exit)
+        #expect(process.terminationStatus == 29)
+        let records = try String(contentsOf: log, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(records.filter { $0 == "official-nonzero:<resume><thread id>" }.count == 1)
+    }
+
+    @Test("missing or failed coordinator leaves native Codex available exactly once")
+    func coordinatorFailurePreservesNativeCodex() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
         try fixture.manager.enable()
         let log = fixture.root.appendingPathComponent("log")
         let environment = [
             "BLABEE_TEST_LOG": log.path,
+            "BLABEE_COORDINATOR_BINARY": "/stale/coordinator",
             "BLABEE_SOCKET": "/stale/socket",
             "BLABEE_MANAGED_APPROVALS": "stale-approvals",
             "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+            "BLABEE_RUNTIME_IDENTITY": "sha256:stale-runtime",
         ]
 
         try FileManager.default.removeItem(at: fixture.coordinator)
-        #expect(try fixture.runCodex(["resume"], environment: environment) == 127)
-        #expect(!FileManager.default.fileExists(atPath: log.path))
+        let staleResult = try fixture.runCodexCapturingError(
+            ["resume", "thread id"],
+            environment: environment
+        )
+        #expect(staleResult.status == 0)
+        #expect(staleResult.error.isEmpty)
 
         try fixture.writeExecutable(
             fixture.coordinator,
             body: "printf 'coordinator-failed:' >> \"$BLABEE_TEST_LOG\"\nexit 17"
         )
-        #expect(try fixture.runCodex([], environment: environment) == 17)
+        #expect(try fixture.runCodex(["exec", "two words"], environment: environment) == 0)
         let text = try String(contentsOf: log, encoding: .utf8)
-        #expect(!text.contains("official:"))
-        #expect(text.contains("coordinator-failed:"))
+        let records = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(records.filter { $0.hasPrefix("official:") }.count == 2)
+        #expect(records.filter { $0 == "official:<resume><thread id>" }.count == 1)
+        #expect(records.filter { $0 == "official:<exec><two words>" }.count == 1)
+        #expect(records.filter { $0 == "official-env:<unset><unset><unset><unset><unset>" }.count == 2)
+        #expect(!text.contains("coordinator-failed:"))
+        #expect(!text.contains("/stale/socket"))
+        #expect(!text.contains("stale-approvals"))
+        #expect(!text.contains("stale-token"))
+        #expect(!text.contains("stale-runtime"))
+        #expect(!text.contains("/stale/coordinator"))
     }
 
-    @Test("all managed runtime variables are cleared and coordinator failure stays closed")
+    @Test("missing Blabee runtime files do not block an already-sourced native Codex function")
+    func missingBlabeeRuntimePreservesNativeCodex() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+
+        let cachedManaged = fixture.root.appendingPathComponent("cached-native-function.zsh")
+        try Data(contentsOf: fixture.managed).write(to: cachedManaged)
+        try FileManager.default.removeItem(at: fixture.coordinator)
+        try FileManager.default.removeItem(
+            at: fixture.applicationSupport.appendingPathComponent("shell", isDirectory: true)
+        )
+
+        let log = fixture.root.appendingPathComponent("runtime-missing log")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [
+            "-f", "-c", "source \"$1\"; shift; codex \"$@\"",
+            "test", cachedManaged.path, "exec", "after-runtime-loss",
+        ]
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["BLABEE_TEST_LOG": log.path]
+        ) { _, new in new }
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        let records = try String(contentsOf: log, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(records.filter { $0 == "official:<exec><after-runtime-loss>" }.count == 1)
+        #expect(!records.contains { $0.hasPrefix("coordinator:") })
+    }
+
+    @Test("a missing stable launcher falls back to native Codex exactly once")
+    func missingStableLauncherPreservesNativeCodex() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        try fixture.manager.enable()
+        try FileManager.default.removeItem(at: fixture.stableLauncher)
+
+        let log = fixture.root.appendingPathComponent("official fallback log")
+        let result = try fixture.runCodexCapturingError(
+            ["resume", "thread id"],
+            environment: ["BLABEE_TEST_LOG": log.path]
+        )
+
+        #expect(result.status == 0)
+        #expect(result.error.isEmpty)
+        let records = try String(contentsOf: log, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        #expect(records.filter { $0 == "official:<resume><thread id>" }.count == 1)
+        guard case .repairRequired = fixture.manager.state() else {
+            Issue.record("a missing stable launcher must require repair")
+            return
+        }
+    }
+
+    @Test("native passthrough preserves argv and clears all managed runtime variables")
     func clearsAllManagedRuntimeVariables() throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
@@ -422,22 +654,31 @@ struct CodexAutoConnectTests {
         let log = fixture.root.appendingPathComponent("environment log")
         let environment = [
             "BLABEE_TEST_LOG": log.path,
+            "BLABEE_COORDINATOR_BINARY": "/stale/coordinator",
             "BLABEE_SOCKET": "/stale/socket",
             "BLABEE_MANAGED_APPROVALS": "stale-approvals",
             "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+            "BLABEE_RUNTIME_IDENTITY": "sha256:stale-runtime",
         ]
 
         #expect(try fixture.runCodex([], environment: environment) == 0)
         #expect(try fixture.runCodex(["--version"], environment: environment) == 0)
         try FileManager.default.removeItem(at: fixture.coordinator)
-        #expect(try fixture.runCodex(["resume"], environment: environment) == 127)
+        #expect(try fixture.runCodex(["resume"], environment: environment) == 0)
 
         let text = try String(contentsOf: log, encoding: .utf8)
-        #expect(text.components(separatedBy: "coordinator-env:<unset><unset><unset>").count - 1 == 2)
-        #expect(!text.contains("official-env:"))
+        let records = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(records.filter { $0 == "official-env:<unset><unset><unset><unset><unset>" }.count == 3)
+        #expect(records.filter { $0.hasPrefix("official:") }.count == 3)
+        #expect(records.filter { $0 == "official:" }.count == 1)
+        #expect(records.filter { $0 == "official:<--version>" }.count == 1)
+        #expect(records.filter { $0 == "official:<resume>" }.count == 1)
+        #expect(!text.contains("coordinator-env:"))
         #expect(!text.contains("stale-approvals"))
         #expect(!text.contains("stale-token"))
+        #expect(!text.contains("stale-runtime"))
         #expect(!text.contains("/stale/socket"))
+        #expect(!text.contains("/stale/coordinator"))
     }
 
     @Test("file-lock contention times out instead of waiting forever")
@@ -577,7 +818,7 @@ struct CodexAutoConnectTests {
         }
     }
 
-    @Test(arguments: ["v1", "v2"])
+    @Test(arguments: ["v1", "v2", "v3"])
     func legacyMetadataRequiresRepairButRemainsRemovable(schema: String) throws {
         let fixture = try AutoConnectFixture()
         defer { fixture.remove() }
@@ -597,13 +838,57 @@ struct CodexAutoConnectTests {
             ofItemAtPath: fixture.managed.path
         )
 
-        guard case .repairRequired = fixture.manager.state() else {
-            Issue.record("legacy \(schema) installation must require a v3 repair")
+        guard case let .repairRequired(reason) = fixture.manager.state() else {
+            Issue.record("legacy \(schema) installation must require a v4 repair")
             return
+        }
+        if schema == "v3" {
+            #expect(reason.contains("이전 자동 연결 실행 경로"))
         }
         try fixture.manager.disable()
         #expect(try Data(contentsOf: fixture.zshRC) == original)
         #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+    }
+
+    @Test("an already-sourced v3 shell can still launch native Codex during v4 repair")
+    func legacyV3KeepsNativePassThroughDuringRepair() throws {
+        let fixture = try AutoConnectFixture()
+        defer { fixture.remove() }
+        let original = Data("export LEGACY=kept\n".utf8)
+        try original.write(to: fixture.zshRC)
+        try fixture.manager.enable()
+        let legacy = legacyManagedData(
+            schema: "v3",
+            coordinatorURL: fixture.coordinator,
+            officialCodexURL: URL(
+                fileURLWithPath: normalizedStablePath(fixture.official),
+                isDirectory: false
+            ),
+            zshRCURL: fixture.zshRC,
+            zshRCWasMissing: false
+        )
+        try legacy.write(to: fixture.managed, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.managed.path
+        )
+
+        let actualNativePath = normalizedStablePath(
+            try fixture.manager.nativeCodexForLaunch()
+        )
+        let expectedNativePath = normalizedStablePath(fixture.official)
+        #expect(actualNativePath == expectedNativePath)
+
+        var damaged = legacy
+        damaged.append(Data("# unexpected drift\n".utf8))
+        try damaged.write(to: fixture.managed, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.managed.path
+        )
+        #expect(throws: CodexAutoConnectError.self) {
+            _ = try fixture.manager.nativeCodexForLaunch()
+        }
     }
 
     @Test("an in-place destination change is detected immediately before replacement")
@@ -1033,9 +1318,7 @@ struct CodexAutoConnectTests {
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        let contents = try String(contentsOf: managed, encoding: .utf8)
-        #expect(contents.contains(normalizedStablePath(stableEntry)))
-        #expect(!contents.contains(fixture.official.path))
+        #expect(try managedOfficialCodexPath(managed) == normalizedStablePath(stableEntry))
     }
 
     @Test("live discovery skips an earlier unsupported Codex candidate")
@@ -1064,9 +1347,8 @@ struct CodexAutoConnectTests {
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        let contents = try String(contentsOf: managed, encoding: .utf8)
-        #expect(contents.contains(supportedEntry.path))
-        #expect(!contents.contains(unsupportedEntry.path))
+        #expect(try managedOfficialCodexPath(managed) == normalizedStablePath(supportedEntry))
+        #expect(try managedOfficialCodexPath(managed) != normalizedStablePath(unsupportedEntry))
     }
 
     @Test("absolute ZDOTDIR is persisted and reused when a later process lacks the environment")
@@ -1279,9 +1561,7 @@ struct CodexAutoConnectTests {
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        #expect(try String(contentsOf: managed, encoding: .utf8).contains(
-            normalizedStablePath(stableEntry)
-        ))
+        #expect(try managedOfficialCodexPath(managed) == normalizedStablePath(stableEntry))
     }
 
     @Test(arguments: [".volta/bin", ".asdf/shims"])
@@ -1316,9 +1596,8 @@ struct CodexAutoConnectTests {
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        let contents = try String(contentsOf: managed, encoding: .utf8)
-        #expect(contents.contains(normalizedStablePath(stable)))
-        #expect(!contents.contains(shim.path))
+        #expect(try managedOfficialCodexPath(managed) == normalizedStablePath(stable))
+        #expect(try managedOfficialCodexPath(managed) != shim.path)
         #expect(!versionPaths.paths.contains(shim.standardizedFileURL.path))
     }
 
@@ -1574,9 +1853,7 @@ struct CodexAutoConnectTests {
         let managed = fixture.home.appendingPathComponent(
             "Library/Application Support/Blabee/shell/v1/codex-auto-connect.zsh"
         )
-        #expect(try String(contentsOf: managed, encoding: .utf8).contains(
-            normalizedStablePath(stableEntry)
-        ))
+        #expect(try managedOfficialCodexPath(managed) == normalizedStablePath(stableEntry))
     }
 
     @Test("official Codex cannot recurse into the coordinator")
@@ -1604,6 +1881,9 @@ private final class AutoConnectFixture {
     var managed: URL {
         applicationSupport.appendingPathComponent("shell/v1/codex-auto-connect.zsh")
     }
+    var stableLauncher: URL {
+        applicationSupport.appendingPathComponent("shell/v1/codex-stable-launcher")
+    }
 
     init(rootName: String = UUID().uuidString, officialIsCoordinator: Bool = false) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(rootName, isDirectory: true)
@@ -1622,12 +1902,12 @@ private final class AutoConnectFixture {
         )
         try writeExecutable(
             coordinator,
-            body: "printf 'coordinator-env:<%s><%s><%s>\\n' \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'coordinator:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
+            body: "printf 'coordinator-env:<%s><%s><%s><%s><%s>\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" \"${BLABEE_RUNTIME_IDENTITY-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'coordinator:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
         )
         if !officialIsCoordinator {
             try writeExecutable(
                 official,
-                body: "if [[ ${1-} == --version ]]; then\n  printf 'codex-cli 0.150.1\\n'\n  if [[ -z ${BLABEE_TEST_LOG-} ]]; then exit 0; fi\nfi\nprintf 'official-env:<%s><%s><%s>\\n' \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official-socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
+                body: "if [[ ${1-} == --version ]]; then\n  printf 'codex-cli 0.150.1\\n'\n  if [[ -z ${BLABEE_TEST_LOG-} ]]; then exit 0; fi\nfi\nprintf 'official-env:<%s><%s><%s><%s><%s>\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" \"${BLABEE_RUNTIME_IDENTITY-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official-socket:%s\\n' \"${BLABEE_SOCKET-unset}\" >> \"$BLABEE_TEST_LOG\"\nprintf 'official:' >> \"$BLABEE_TEST_LOG\"\nfor value in \"$@\"; do printf '<%s>' \"$value\" >> \"$BLABEE_TEST_LOG\"; done\nprintf '\\n' >> \"$BLABEE_TEST_LOG\""
             )
         }
     }
@@ -1650,6 +1930,26 @@ private final class AutoConnectFixture {
         return process.terminationStatus
     }
 
+    func runCodexCapturingError(
+        _ arguments: [String],
+        environment: [String: String]
+    ) throws -> (status: Int32, error: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [
+            "-f", "-c", "source \"$1\"; shift; codex \"$@\"", "test", managed.path,
+        ] + arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        let error = Pipe()
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+        return (
+            process.terminationStatus,
+            String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        )
+    }
+
     func remove() {
         try? FileManager.default.removeItem(at: root)
     }
@@ -1659,13 +1959,31 @@ private enum AutoConnectFixtureError: Error {
     case raceSetup
     case extendedAttribute
     case accessControlList
+    case managedMetadata
 }
 
 private func normalizedStablePath(_ url: URL) -> String {
-    url.deletingLastPathComponent()
-        .resolvingSymlinksInPath()
-        .appendingPathComponent(url.lastPathComponent, isDirectory: false)
-        .path
+    let stable = url.standardizedFileURL
+    guard let resolvedParent = realpath(stable.deletingLastPathComponent().path, nil) else {
+        return stable.path
+    }
+    defer { free(resolvedParent) }
+    return URL(
+        fileURLWithPath: String(cString: resolvedParent),
+        isDirectory: true
+    ).appendingPathComponent(stable.lastPathComponent, isDirectory: false).path
+}
+
+private func managedOfficialCodexPath(_ managed: URL) throws -> String {
+    let prefix = "# official-codex-path-base64: "
+    let contents = try String(contentsOf: managed, encoding: .utf8)
+    guard let line = contents.split(separator: "\n").first(where: { $0.hasPrefix(prefix) }),
+          let data = Data(base64Encoded: String(line.dropFirst(prefix.count))),
+          let path = String(data: data, encoding: .utf8)
+    else {
+        throw AutoConnectFixtureError.managedMetadata
+    }
+    return path
 }
 
 private func legacyManagedData(
@@ -1680,9 +1998,40 @@ private func legacyManagedData(
     let header = "# Blabee Codex Auto Connect \(schema)\n"
     let coordinatorMetadata = Data(coordinatorURL.path.utf8).base64EncodedString()
     let officialMetadata = Data(officialCodexURL.path.utf8).base64EncodedString()
-    let zshRCMetadata = schema == "v2"
-        ? "# zshrc-path-base64: \(Data(zshRCURL.path.utf8).base64EncodedString())\n"
-        : ""
+    let zshRCMetadata = schema == "v1"
+        ? ""
+        : "# zshrc-path-base64: \(Data(zshRCURL.path.utf8).base64EncodedString())\n"
+    if schema == "v3" {
+        return Data((
+            header
+                + "# Generated by Blabee. Do not edit.\n"
+                + "# zshrc-origin: \(zshRCWasMissing ? "missing" : "present")\n"
+                + "# coordinator-path-base64: \(coordinatorMetadata)\n"
+                + "# official-codex-path-base64: \(officialMetadata)\n"
+                + zshRCMetadata
+                + "\n"
+                + "if (( $+aliases[codex] )); then\n"
+                + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=alias\n"
+                + "elif (( $+functions[codex] )) && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v1 \"$@\"' ]] && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v2 \"$@\"' ]] && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v3 \"$@\"' ]]; then\n"
+                + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=function\n"
+                + "else\n"
+                + "  unset BLABEE_CODEX_AUTO_CONNECT_CONFLICT\n"
+                + "  function _blabee_codex_auto_connect_v3 {\n"
+                + "    local _blabee_coordinator=\(coordinator)\n"
+                + "    local _blabee_official=\(official)\n"
+                + "    if [[ ! -x \"$_blabee_coordinator\" ]]; then\n"
+                + "      print -u2 -- \"Blabee 실행기를 찾을 수 없어 Codex를 자동 실행하지 않았습니다. Blabee를 복구하거나 $_blabee_official 을 직접 실행하세요.\"\n"
+                + "      return 127\n"
+                + "    fi\n"
+                + "    (\n"
+                + "      unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
+                + "      exec \"$_blabee_coordinator\" codex-launch -- \"$@\"\n"
+                + "    )\n"
+                + "  }\n"
+                + "  function codex { _blabee_codex_auto_connect_v3 \"$@\" }\n"
+                + "fi\n"
+        ).utf8)
+    }
     return Data((
         header
             + "# Generated by Blabee. Do not edit.\n"
@@ -1703,19 +2052,19 @@ private func legacyManagedData(
             + "    if (( $# == 0 )) || [[ $1 == resume ]]; then\n"
             + "      if [[ ! -x \"$_blabee_coordinator\" ]]; then\n"
             + "        (\n"
-            + "          unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "          unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
             + "          command \"$_blabee_official\" \"$@\"\n"
             + "        )\n"
             + "        return $?\n"
             + "      fi\n"
             + "      (\n"
-            + "        unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "        unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
             + "        command \"$_blabee_coordinator\" managed-codex --codex \"$_blabee_official\" -- \"$@\"\n"
             + "      )\n"
             + "      return $?\n"
             + "    fi\n"
             + "    (\n"
-            + "      unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+            + "      unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
             + "      command \"$_blabee_official\" \"$@\"\n"
             + "    )\n"
             + "  }\n"

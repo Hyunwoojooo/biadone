@@ -37,13 +37,18 @@ struct CodexAutoConnectManager: Sendable {
     private static let processMutex = NSLock()
     private static let openingMarker = "# >>> Blabee Codex Auto Connect v1 >>>"
     private static let closingMarker = "# <<< Blabee Codex Auto Connect v1 <<<"
-    private static let generatedHeader = "# Blabee Codex Auto Connect v3\n"
+    private static let generatedHeader = "# Blabee Codex Auto Connect v4\n"
+    private static let legacyV3GeneratedHeader = "# Blabee Codex Auto Connect v3\n"
     private static let legacyV2GeneratedHeader = "# Blabee Codex Auto Connect v2\n"
     private static let legacyGeneratedHeader = "# Blabee Codex Auto Connect v1\n"
+    private static let stableLauncherHeader = "#!/bin/sh\n# Blabee Codex Stable Launcher v2\n"
+    private static let legacyStableLauncherHeader = "#!/bin/sh\n# Blabee Codex Stable Launcher v1\n"
     private static let maximumZshRCBytes = 256 * 1_024
     private static let maximumManagedFileBytes = 64 * 1_024
+    private static let maximumStableLauncherBytes = 16 * 1_024
     private static let maximumRuntimeApprovalBytes = 64 * 1_024
     private static let maximumPreservedMetadataBytes = 256 * 1_024
+    private static let systemManagedProvenanceAttribute = Data("com.apple.provenance".utf8)
 
     private let homeURL: URL
     private let applicationSupportURL: URL
@@ -234,6 +239,10 @@ struct CodexAutoConnectManager: Sendable {
                 at: managedFileURL,
                 maximumBytes: Self.maximumManagedFileBytes
             )
+            let stableLauncher = try secureFile(
+                at: stableLauncherURL,
+                maximumBytes: Self.maximumStableLauncherBytes
+            )
             let runtimeApprovalFile = try secureFile(
                 at: runtimeApprovalURL,
                 maximumBytes: Self.maximumRuntimeApprovalBytes
@@ -246,7 +255,19 @@ struct CodexAutoConnectManager: Sendable {
             case .disabled:
                 guard let managed else {
                     if runtimeApprovalFile != nil {
-                        return .repairRequired("완료되지 않은 Codex 실행 승인 기록이 남아 있습니다.")
+                        return .repairRequired("완료되지 않은 Codex 자동 연결 실행 파일이 남아 있습니다.")
+                    }
+                    if let stableLauncher {
+                        guard isOwnedStableLauncher(stableLauncher.data) else {
+                            return .conflict("Blabee 고정 실행기 경로에 다른 파일이 있습니다.")
+                        }
+                        guard isUsableStableLauncher(stableLauncher),
+                              currentStableLauncherOfficialCodexURL(
+                                  stableLauncher.data
+                              ) != nil
+                        else {
+                            return .repairRequired("Blabee 고정 실행기가 손상되었습니다.")
+                        }
                     }
                     switch discoveredApproval ?? discoveredCodexApproval() {
                     case .success:
@@ -283,8 +304,18 @@ struct CodexAutoConnectManager: Sendable {
                 )
                 let expectedManaged: Data
                 switch configuration.schema {
-                case .currentV3:
+                case .currentV4:
                     expectedManaged = generatedManagedFile(
+                        zshRCWasMissing: configuration.zshRCWasMissing,
+                        officialCodexURL: installedOfficial,
+                        zshRCURL: targetZshRCURL
+                    )
+                case .legacyV3:
+                    expectedManaged = generatedLegacyV3ManagedFile(
+                        coordinatorURL: URL(
+                            fileURLWithPath: configuration.coordinatorPath,
+                            isDirectory: false
+                        ),
                         zshRCWasMissing: configuration.zshRCWasMissing,
                         officialCodexURL: installedOfficial,
                         zshRCURL: targetZshRCURL
@@ -310,9 +341,26 @@ struct CodexAutoConnectManager: Sendable {
                 guard exactMarker else {
                     return .repairRequired(".zshrc의 Blabee 연결 경로가 오래되었습니다.")
                 }
-                guard configuration.schema == .currentV3 else {
+                guard configuration.schema == .currentV4 else {
                     return .repairRequired(
                         "이전 자동 연결 실행 경로가 남아 있습니다. 자동 연결을 다시 활성화해 갱신해 주세요."
+                    )
+                }
+                guard let stableLauncher else {
+                    return .repairRequired(
+                        "Blabee 고정 실행기가 없습니다. 자동 연결을 다시 활성화해 복구해 주세요."
+                    )
+                }
+                guard isOwnedStableLauncher(stableLauncher.data) else {
+                    return .conflict("Blabee 고정 실행기 경로에 다른 파일이 있습니다.")
+                }
+                guard isUsableStableLauncher(stableLauncher),
+                      stableLauncher.data == generatedStableLauncher(
+                          officialCodexURL: installedOfficial
+                      )
+                else {
+                    return .repairRequired(
+                        "Blabee 고정 실행기가 이전 실행 경로를 사용합니다. 자동 연결을 다시 활성화해 복구해 주세요."
                     )
                 }
                 guard let runtimeApproval = try decodedRuntimeApproval(runtimeApprovalFile),
@@ -386,6 +434,10 @@ struct CodexAutoConnectManager: Sendable {
                 at: managedFileURL,
                 maximumBytes: Self.maximumManagedFileBytes
             )
+            let stableLauncher = try secureFile(
+                at: stableLauncherURL,
+                maximumBytes: Self.maximumStableLauncherBytes
+            )
             let existingApproval = try secureFile(
                 at: runtimeApprovalURL,
                 maximumBytes: Self.maximumRuntimeApprovalBytes
@@ -415,6 +467,11 @@ struct CodexAutoConnectManager: Sendable {
                     "Blabee 관리 파일 형식이 손상되어 자동 복구하지 않았습니다."
                 )
             }
+            if let stableLauncher, !isOwnedStableLauncher(stableLauncher.data) {
+                throw CodexAutoConnectError.conflict(
+                    "Blabee 고정 실행기 경로에 다른 파일이 있어 덮어쓰지 않았습니다."
+                )
+            }
             if let managed,
                managedConfiguration(managed.data)?.schema == .legacyV1,
                case .disabled = layout
@@ -432,15 +489,29 @@ struct CodexAutoConnectManager: Sendable {
             )
             let desiredZshRC = enabledZshRC(prefix: prefix, suffix: suffix)
             let desiredApproval = try runtimeApproval.encodedData()
+            let desiredStableLauncher = generatedStableLauncher(
+                officialCodexURL: runtimeSourceURL
+            )
 
-            // Approval and managed code must be durable before .zshrc begins
-            // sourcing the launch wrapper.
+            // Approval and both launcher layers must be durable before .zshrc
+            // begins sourcing the managed function. The stable launcher path
+            // lets shells that are already open follow a later app replacement
+            // without re-sourcing their zsh startup files.
             if existingApproval?.data != desiredApproval {
                 try atomicWrite(
                     desiredApproval,
                     to: runtimeApprovalURL,
                     expected: existingApproval,
                     defaultMode: 0o600
+                )
+            }
+            if stableLauncher?.data != desiredStableLauncher || stableLauncher?.mode != 0o700 {
+                try atomicWrite(
+                    desiredStableLauncher,
+                    to: stableLauncherURL,
+                    expected: stableLauncher,
+                    defaultMode: 0o700,
+                    replacementMode: 0o700
                 )
             }
             if managed?.data != desiredManaged {
@@ -468,6 +539,10 @@ struct CodexAutoConnectManager: Sendable {
                 at: managedFileURL,
                 maximumBytes: Self.maximumManagedFileBytes
             )
+            let stableLauncher = try secureFile(
+                at: stableLauncherURL,
+                maximumBytes: Self.maximumStableLauncherBytes
+            )
             let runtimeApproval = try secureFile(
                 at: runtimeApprovalURL,
                 maximumBytes: Self.maximumRuntimeApprovalBytes
@@ -476,7 +551,13 @@ struct CodexAutoConnectManager: Sendable {
             try validateZshRCDirectory(targetZshRCURL)
             let zshRC = try secureFile(at: targetZshRCURL, maximumBytes: Self.maximumZshRCBytes)
             let layout = try zshRCLayout(zshRC?.data)
-            if managed == nil, runtimeApproval == nil, case .disabled = layout { return }
+            if managed == nil, runtimeApproval == nil, case .disabled = layout {
+                if stableLauncher == nil { return }
+                if let stableLauncher,
+                   isUsableStableLauncher(stableLauncher),
+                   currentStableLauncherOfficialCodexURL(stableLauncher.data) != nil
+                { return }
+            }
             if let managed, !isOwnedManagedFile(managed.data) {
                 throw CodexAutoConnectError.conflict(
                     "Blabee 관리 파일 경로에 다른 파일이 있어 삭제하지 않았습니다."
@@ -485,6 +566,11 @@ struct CodexAutoConnectManager: Sendable {
             if let managed, managedConfiguration(managed.data) == nil {
                 throw CodexAutoConnectError.conflict(
                     "Blabee 관리 파일 형식이 손상되어 자동 삭제하지 않았습니다."
+                )
+            }
+            if let stableLauncher, !isOwnedStableLauncher(stableLauncher.data) {
+                throw CodexAutoConnectError.conflict(
+                    "Blabee 고정 실행기 경로에 다른 파일이 있어 삭제하지 않았습니다."
                 )
             }
             if let managed,
@@ -500,6 +586,27 @@ struct CodexAutoConnectManager: Sendable {
             }
             let originWasMissing = managed
                 .flatMap { managedConfiguration($0.data)?.zshRCWasMissing } ?? false
+            let retainedOfficialCodexURL = managed
+                .flatMap { managedConfiguration($0.data)?.officialCodexPath }
+                .map { URL(fileURLWithPath: $0, isDirectory: false) }
+
+            // An already-open shell keeps the sourced function after .zshrc is
+            // restored. Leave its stable path as a native-only pass-through so
+            // disabling Blabee cannot make the user's next Codex invocation fail.
+            if let retainedOfficialCodexURL {
+                let passThrough = generatedStableLauncher(
+                    officialCodexURL: retainedOfficialCodexURL
+                )
+                if stableLauncher?.data != passThrough || stableLauncher?.mode != 0o700 {
+                    try atomicWrite(
+                        passThrough,
+                        to: stableLauncherURL,
+                        expected: stableLauncher,
+                        defaultMode: 0o700,
+                        replacementMode: 0o700
+                    )
+                }
+            }
 
             // Stop sourcing managed code before removing the managed file.
             if case let .owned(prefix, suffix, _) = layout, let zshRC {
@@ -521,6 +628,9 @@ struct CodexAutoConnectManager: Sendable {
             if let runtimeApproval {
                 try secureUnlink(runtimeApprovalURL, expected: runtimeApproval)
             }
+            if let stableLauncher, retainedOfficialCodexURL == nil {
+                try secureUnlink(stableLauncherURL, expected: stableLauncher)
+            }
         }
     }
 
@@ -534,6 +644,10 @@ struct CodexAutoConnectManager: Sendable {
 
     private var managedFileURL: URL {
         shellDirectoryURL.appendingPathComponent("codex-auto-connect.zsh", isDirectory: false)
+    }
+
+    private var stableLauncherURL: URL {
+        shellDirectoryURL.appendingPathComponent("codex-stable-launcher", isDirectory: false)
     }
 
     private var runtimeApprovalURL: URL {
@@ -579,7 +693,7 @@ struct CodexAutoConnectManager: Sendable {
                 "Blabee Codex 자동 연결 설정이 없어 실행을 중단했습니다."
             )
         }
-        guard configuration.schema == .currentV3,
+        guard configuration.schema == .currentV4,
               let zshRCPath = configuration.zshRCPath
         else {
             throw CodexAutoConnectError.unavailable(
@@ -600,7 +714,88 @@ struct CodexAutoConnectManager: Sendable {
                 "Blabee Codex 자동 연결 설정이 현재 앱과 일치하지 않습니다."
             )
         }
+        guard let stableLauncher = try secureFile(
+            at: stableLauncherURL,
+            maximumBytes: Self.maximumStableLauncherBytes
+        ), isUsableStableLauncher(stableLauncher),
+        stableLauncher.data == generatedStableLauncher(officialCodexURL: sourceURL)
+        else {
+            throw CodexAutoConnectError.unavailable(
+                "Blabee 고정 실행기가 없거나 이전 앱을 가리킵니다. "
+                    + "Blabee 설정에서 Codex 자동 연결을 다시 활성화해 복구해 주세요."
+            )
+        }
         return configuration
+    }
+
+    /// Keeps an already-sourced v3 shell usable during an app upgrade. v3 is
+    /// the only legacy shell contract that delegates ordinary `codex` back to
+    /// the coordinator through `codex-launch`; rejecting it here would make
+    /// native Codex unavailable until the user opened a new shell. Managed
+    /// approval still requires the current v4 contract above.
+    private func nativeRuntimeConfiguration() throws -> ManagedConfiguration {
+        try validateSecureDirectories()
+        guard let managed = try secureFile(
+            at: managedFileURL,
+            maximumBytes: Self.maximumManagedFileBytes
+        ), let configuration = managedConfiguration(managed.data)
+        else {
+            throw CodexAutoConnectError.unavailable(
+                "Blabee Codex 자동 연결 설정이 없어 실행을 중단했습니다."
+            )
+        }
+        if configuration.schema == .currentV4 {
+            return try runtimeConfiguration()
+        }
+        guard configuration.schema == .legacyV3,
+              let zshRCPath = configuration.zshRCPath,
+              URL(
+                fileURLWithPath: configuration.coordinatorPath,
+                isDirectory: false
+              ).standardizedFileURL == coordinatorURL.standardizedFileURL
+        else {
+            throw CodexAutoConnectError.unavailable(
+                "이전 자동 연결 설정은 실행하지 않습니다. Blabee 설정에서 자동 연결을 복구해 주세요."
+            )
+        }
+        let sourceURL = URL(
+            fileURLWithPath: configuration.officialCodexPath,
+            isDirectory: false
+        )
+        let expected = generatedLegacyV3ManagedFile(
+            coordinatorURL: coordinatorURL,
+            zshRCWasMissing: configuration.zshRCWasMissing,
+            officialCodexURL: sourceURL,
+            zshRCURL: URL(fileURLWithPath: zshRCPath, isDirectory: false)
+        )
+        guard managed.data == expected else {
+            throw CodexAutoConnectError.unsafeFilesystem(
+                "이전 Blabee Codex 자동 연결 설정이 손상되었습니다."
+            )
+        }
+        return configuration
+    }
+
+    /// Resolves the native Codex name path recorded by the opt-in shell
+    /// integration without applying Blabee's managed-mode version allowlist.
+    /// This path is used only for native pass-through; managed approval keeps
+    /// its separate, fail-closed trust gate.
+    func nativeCodexForLaunch() throws -> URL {
+        let configuration = try nativeRuntimeConfiguration()
+        let executable = URL(
+            fileURLWithPath: configuration.officialCodexPath,
+            isDirectory: false
+        ).standardizedFileURL
+        guard executable.path.hasPrefix("/"),
+              executable != coordinatorURL.standardizedFileURL,
+              executable != stableLauncherURL.standardizedFileURL,
+              FileManager.default.isExecutableFile(atPath: executable.path)
+        else {
+            throw CodexAutoConnectError.unavailable(
+                "기록된 공식 Codex 실행 경로를 사용할 수 없습니다."
+            )
+        }
+        return executable
     }
 
     /// Returns a short-lived, revalidated executable token. The common fast
@@ -743,13 +938,70 @@ struct CodexAutoConnectManager: Sendable {
         officialCodexURL: URL,
         zshRCURL: URL
     ) -> Data {
+        let officialCodex = Self.shellQuote(officialCodexURL.path)
+        let coordinatorMetadata = Data(stableLauncherURL.path.utf8).base64EncodedString()
+        let officialMetadata = Data(officialCodexURL.path.utf8).base64EncodedString()
+        let zshRCMetadata = Data(zshRCURL.path.utf8).base64EncodedString()
+        return Data((
+            Self.generatedHeader
+                + "# Generated by Blabee. Do not edit.\n"
+                + "# zshrc-origin: \(zshRCWasMissing ? "missing" : "present")\n"
+                + "# coordinator-path-base64: \(coordinatorMetadata)\n"
+                + "# official-codex-path-base64: \(officialMetadata)\n"
+                + "# zshrc-path-base64: \(zshRCMetadata)\n"
+                + "\n"
+                + "if (( $+aliases[codex] )); then\n"
+                + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=alias\n"
+                + "elif (( $+functions[codex] )) && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v1 \"$@\"' ]] && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v2 \"$@\"' ]] && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v3 \"$@\"' ]] && [[ ${functions[codex]} != '_blabee_codex_auto_connect_v4 \"$@\"' ]]; then\n"
+                + "  typeset -gx BLABEE_CODEX_AUTO_CONNECT_CONFLICT=function\n"
+                + "else\n"
+                + "  unset BLABEE_CODEX_AUTO_CONNECT_CONFLICT\n"
+                + "  function _blabee_codex_auto_connect_v4 {\n"
+                + "    local _blabee_official=\(officialCodex)\n"
+                + "    (\n"
+                + "      unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
+                + "      if [[ -x \"$_blabee_official\" ]]; then\n"
+                + "        exec \"$_blabee_official\" \"$@\"\n"
+                + "      fi\n"
+                + "      print -u2 -- \"공식 Codex 실행 파일을 찾을 수 없습니다. Codex 설치를 확인해 주세요.\"\n"
+                + "      exit 127\n"
+                + "    )\n"
+                + "  }\n"
+                + "  function codex { _blabee_codex_auto_connect_v4 \"$@\" }\n"
+                + "fi\n"
+        ).utf8)
+    }
+
+    private func generatedStableLauncher(officialCodexURL: URL) -> Data {
+        let officialCodex = Self.shellQuote(officialCodexURL.path)
+        let officialMetadata = Data(officialCodexURL.path.utf8).base64EncodedString()
+        return Data((
+            Self.stableLauncherHeader
+                + "# Generated by Blabee. Do not edit.\n"
+                + "# official-codex-path-base64: \(officialMetadata)\n"
+                + "_blabee_official=\(officialCodex)\n"
+                + "if [ ! -x \"$_blabee_official\" ]; then\n"
+                + "  printf '%s\\n' \"공식 Codex 실행 파일을 찾을 수 없습니다. Codex 설치를 확인해 주세요.\" >&2\n"
+                + "  exit 127\n"
+                + "fi\n"
+                + "unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
+                + "exec \"$_blabee_official\" \"$@\"\n"
+        ).utf8)
+    }
+
+    private func generatedLegacyV3ManagedFile(
+        coordinatorURL: URL,
+        zshRCWasMissing: Bool,
+        officialCodexURL: URL,
+        zshRCURL: URL
+    ) -> Data {
         let coordinator = Self.shellQuote(coordinatorURL.path)
         let official = Self.shellQuote(officialCodexURL.path)
         let coordinatorMetadata = Data(coordinatorURL.path.utf8).base64EncodedString()
         let officialMetadata = Data(officialCodexURL.path.utf8).base64EncodedString()
         let zshRCMetadata = Data(zshRCURL.path.utf8).base64EncodedString()
         return Data((
-            Self.generatedHeader
+            Self.legacyV3GeneratedHeader
                 + "# Generated by Blabee. Do not edit.\n"
                 + "# zshrc-origin: \(zshRCWasMissing ? "missing" : "present")\n"
                 + "# coordinator-path-base64: \(coordinatorMetadata)\n"
@@ -770,7 +1022,7 @@ struct CodexAutoConnectManager: Sendable {
                 + "      return 127\n"
                 + "    fi\n"
                 + "    (\n"
-                + "      unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+                + "      unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
                 + "      exec \"$_blabee_coordinator\" codex-launch -- \"$@\"\n"
                 + "    )\n"
                 + "  }\n"
@@ -837,19 +1089,19 @@ struct CodexAutoConnectManager: Sendable {
                 + "    if (( $# == 0 )) || [[ $1 == resume ]]; then\n"
                 + "      if [[ ! -x \"$_blabee_coordinator\" ]]; then\n"
                 + "        (\n"
-                + "          unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+                + "          unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
                 + "          command \"$_blabee_official\" \"$@\"\n"
                 + "        )\n"
                 + "        return $?\n"
                 + "      fi\n"
                 + "      (\n"
-                + "        unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+                + "        unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
                 + "        command \"$_blabee_coordinator\" managed-codex --codex \"$_blabee_official\" -- \"$@\"\n"
                 + "      )\n"
                 + "      return $?\n"
                 + "    fi\n"
                 + "    (\n"
-                + "      unset BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN\n"
+                + "      unset BLABEE_COORDINATOR_BINARY BLABEE_SOCKET BLABEE_MANAGED_APPROVALS BLABEE_MANAGED_CODEX_AUTH_TOKEN BLABEE_RUNTIME_IDENTITY\n"
                 + "      command \"$_blabee_official\" \"$@\"\n"
                 + "    )\n"
                 + "  }\n"
@@ -930,7 +1182,8 @@ struct CodexAutoConnectManager: Sendable {
         else { return nil }
         let schema: ManagedConfigurationSchema
         switch lines[0] {
-        case "# Blabee Codex Auto Connect v3": schema = .currentV3
+        case "# Blabee Codex Auto Connect v4": schema = .currentV4
+        case "# Blabee Codex Auto Connect v3": schema = .legacyV3
         case "# Blabee Codex Auto Connect v2": schema = .legacyV2
         case "# Blabee Codex Auto Connect v1": schema = .legacyV1
         default: return nil
@@ -954,7 +1207,7 @@ struct CodexAutoConnectManager: Sendable {
         else { return nil }
         let zshRCPath: String?
         switch schema {
-        case .currentV3, .legacyV2:
+        case .currentV4, .legacyV3, .legacyV2:
             guard lines[5].hasPrefix(zshRCPrefix) else { return nil }
             guard let zshRCData = Data(
                 base64Encoded: String(lines[5].dropFirst(zshRCPrefix.count))
@@ -1011,8 +1264,39 @@ struct CodexAutoConnectManager: Sendable {
 
     private func isOwnedManagedFile(_ data: Data) -> Bool {
         data.starts(with: Data(Self.generatedHeader.utf8))
+            || data.starts(with: Data(Self.legacyV3GeneratedHeader.utf8))
             || data.starts(with: Data(Self.legacyV2GeneratedHeader.utf8))
             || data.starts(with: Data(Self.legacyGeneratedHeader.utf8))
+    }
+
+    private func isOwnedStableLauncher(_ data: Data) -> Bool {
+        data.starts(with: Data(Self.stableLauncherHeader.utf8))
+            || data.starts(with: Data(Self.legacyStableLauncherHeader.utf8))
+    }
+
+    private func isUsableStableLauncher(_ file: SecureFile) -> Bool {
+        file.mode == 0o700 && isOwnedStableLauncher(file.data)
+    }
+
+    private func currentStableLauncherOfficialCodexURL(_ data: Data) -> URL? {
+        guard let contents = String(data: data, encoding: .utf8) else { return nil }
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+        let prefix = "# official-codex-path-base64: "
+        guard lines.count > 3,
+              lines[0] == "#!/bin/sh",
+              lines[1] == "# Blabee Codex Stable Launcher v2",
+              lines[3].hasPrefix(prefix),
+              let pathData = Data(base64Encoded: String(lines[3].dropFirst(prefix.count))),
+              let path = String(data: pathData, encoding: .utf8),
+              path.hasPrefix("/")
+        else { return nil }
+        // Preserve the recorded spelling exactly. Foundation can rewrite
+        // equivalent macOS paths (for example /private/var to /var) during
+        // standardization, which would make an authentic launcher fail its
+        // byte-for-byte regeneration check.
+        let url = URL(fileURLWithPath: path, isDirectory: false)
+        guard generatedStableLauncher(officialCodexURL: url) == data else { return nil }
+        return url
     }
 
     private func validateExecutables(
@@ -1042,7 +1326,8 @@ struct CodexAutoConnectManager: Sendable {
         }
         let officialIdentity = trustedOfficial.identity
         guard coordinatorIdentity != officialIdentity,
-              officialCodexURL.standardizedFileURL != managedFileURL.standardizedFileURL
+              officialCodexURL.standardizedFileURL != managedFileURL.standardizedFileURL,
+              officialCodexURL.standardizedFileURL != stableLauncherURL.standardizedFileURL
         else {
             throw CodexAutoConnectError.conflict(
                 "공식 Codex 경로가 Blabee 실행 파일 또는 자동 연결 파일을 다시 가리킵니다."
@@ -1052,6 +1337,11 @@ struct CodexAutoConnectManager: Sendable {
            officialIdentity == managedIdentity
         {
             throw CodexAutoConnectError.conflict("공식 Codex 경로가 자동 연결 파일을 다시 가리킵니다.")
+        }
+        if let launcherIdentity = try Self.optionalTargetIdentity(stableLauncherURL),
+           officialIdentity == launcherIdentity
+        {
+            throw CodexAutoConnectError.conflict("공식 Codex 경로가 Blabee 고정 실행기를 다시 가리킵니다.")
         }
     }
 
@@ -1273,6 +1563,7 @@ struct CodexAutoConnectManager: Sendable {
     private func secureFile(at url: URL, maximumBytes: Int) throws -> SecureFile? {
         let stableURL = url.standardizedFileURL
         let protectsRuntimeAuthority = stableURL == managedFileURL.standardizedFileURL
+            || stableURL == stableLauncherURL.standardizedFileURL
             || stableURL == runtimeApprovalURL.standardizedFileURL
         var named = stat()
         guard lstat(url.path, &named) == 0 else {
@@ -1335,13 +1626,14 @@ struct CodexAutoConnectManager: Sendable {
         _ data: Data,
         to destination: URL,
         expected: SecureFile?,
-        defaultMode: mode_t
+        defaultMode: mode_t,
+        replacementMode: mode_t? = nil
     ) throws {
         let directory = destination.deletingLastPathComponent()
         let temporary = directory.appendingPathComponent(
             ".\(destination.lastPathComponent).\(getpid()).\(UUID().uuidString).tmp"
         )
-        let mode = expected?.mode ?? defaultMode
+        let mode = replacementMode ?? expected?.mode ?? defaultMode
         let descriptor = open(
             temporary.path,
             O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK,
@@ -1917,6 +2209,14 @@ struct CodexAutoConnectManager: Sendable {
                 throw CodexAutoConnectError.writeFailed("확장 속성 이름 형식이 손상되었습니다.")
             }
             let name = Data(names[start..<index])
+            if name == systemManagedProvenanceAttribute {
+                // macOS rewrites this system-managed value when metadata is
+                // copied to a new inode. It cannot be byte-preserved by the
+                // application, so exclude it from equality checks while still
+                // preserving every user-managed xattr through fcopyfile.
+                start = index + 1
+                continue
+            }
             var cName = Array(names[start..<index])
             cName.append(0)
             let valueSize = cName.withUnsafeBytes { bytes in
@@ -1961,6 +2261,9 @@ struct CodexAutoConnectManager: Sendable {
         let stable = url.standardizedFileURL
         if stable == managedFileURL.standardizedFileURL {
             return Self.maximumManagedFileBytes
+        }
+        if stable == stableLauncherURL.standardizedFileURL {
+            return Self.maximumStableLauncherBytes
         }
         if stable == runtimeApprovalURL.standardizedFileURL {
             return Self.maximumRuntimeApprovalBytes
@@ -2609,6 +2912,36 @@ struct CodexAutoConnectManager: Sendable {
     }
 }
 
+/// Pins one managed Codex process tree to the first fully approved executable.
+///
+/// The first call may perform the manager's bounded qualification path. Every
+/// later call only revalidates that exact token, so a supported Codex update
+/// cannot silently enter an already-running managed session. The lock covers
+/// both initial selection and subsequent validation, making `next` safe to
+/// share with the primary launcher and auxiliary-session broker.
+final class CodexAutoConnectApprovedExecutableProvider: @unchecked Sendable {
+    private let manager: CodexAutoConnectManager
+    private let stateLock = NSLock()
+    private var approvedExecutable: CodexRuntimeApprovedExecutable?
+
+    init(manager: CodexAutoConnectManager) {
+        self.manager = manager
+    }
+
+    func next() throws -> URL {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        if let approvedExecutable {
+            return try manager.revalidateCodexForSpawn(approvedExecutable)
+        }
+
+        let selected = try manager.approvedCodexForLaunch()
+        approvedExecutable = selected
+        return selected.canonicalURL
+    }
+}
+
 private enum ZshRCLayout {
     case disabled(Data)
     case owned(prefix: Data, suffix: Data, exactMarker: Bool)
@@ -2655,7 +2988,8 @@ struct FileIdentity: Equatable, Sendable {
 private enum ManagedConfigurationSchema: Equatable {
     case legacyV1
     case legacyV2
-    case currentV3
+    case legacyV3
+    case currentV4
 }
 
 private struct ManagedConfiguration {

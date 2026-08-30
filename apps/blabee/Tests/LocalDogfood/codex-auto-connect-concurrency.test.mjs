@@ -17,7 +17,6 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -87,15 +86,6 @@ async function collectRecoveryArtifacts(root, current = root) {
     }
   }
   return artifacts;
-}
-
-async function waitFor(predicate, description, timeoutMilliseconds = 3_000) {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await delay(10);
-  }
-  assert.fail(`timed out waiting for ${description}`);
 }
 
 async function readRuntimeApproval(home) {
@@ -198,7 +188,7 @@ test("separate enable and disable processes serialize without a partial install"
     assert.equal((await lstat(zshRC)).isFile(), true);
     assert.equal((await lstat(managed)).isFile(), true);
     assert.match(await readFile(zshRC, "utf8"), /Blabee Codex Auto Connect v1/);
-    assert.match(await readFile(managed, "utf8"), /Blabee Codex Auto Connect v3/);
+    assert.match(await readFile(managed, "utf8"), /Blabee Codex Auto Connect v4/);
     const runtime = await readRuntimeApproval(home);
     assert.equal(runtime.path, approval);
     assert.equal(
@@ -215,7 +205,7 @@ test("separate enable and disable processes serialize without a partial install"
   assert.deepEqual(await collectRecoveryArtifacts(home), []);
 });
 
-test("separate launch processes serialize one supported drift into a complete approval", async (t) => {
+test("concurrent native launches preserve Codex behavior without managed qualification", async (t) => {
   const coordinator = process.env.BLABEE_COORDINATOR_BINARY ?? defaultCoordinator;
   try {
     await access(coordinator, constants.X_OK);
@@ -230,7 +220,6 @@ test("separate launch processes serialize one supported drift into a complete ap
   const home = join(root, "home");
   const bin = join(home, "bin");
   const gate = join(root, "version-gate");
-  const release = join(gate, "release");
   await mkdir(bin, { recursive: true, mode: 0o700 });
   await mkdir(gate, { mode: 0o700 });
   const codex = join(bin, "codex");
@@ -267,9 +256,6 @@ test("separate launch processes serialize one supported drift into a complete ap
       "#!/bin/sh",
       "if [ \"${1-}\" = --version ]; then",
       "  : > \"${BLABEE_TEST_VERSION_GATE:?}/entered.$$\"",
-      "  while [ ! -e \"$BLABEE_TEST_VERSION_GATE/release\" ]; do",
-      "    /bin/sleep 0.01",
-      "  done",
       "  printf 'codex-cli 0.150.1\\n'",
       "  exit 0",
       "fi",
@@ -282,16 +268,6 @@ test("separate launch processes serialize one supported drift into a complete ap
 
   const first = startLaunch(coordinator, ["--help"], environment);
   const second = startLaunch(coordinator, ["--help"], environment);
-  try {
-    await waitFor(
-      async () => (await readdir(gate)).some((entry) => entry.startsWith("entered.")),
-      "the drift qualification process to enter its version gate",
-    );
-    assert.doesNotThrow(() => process.kill(first.child.pid, 0));
-    assert.doesNotThrow(() => process.kill(second.child.pid, 0));
-  } finally {
-    await writeFile(release, "release");
-  }
 
   const results = await Promise.all([first.result, second.result]);
   for (const result of results) {
@@ -303,14 +279,9 @@ test("separate launch processes serialize one supported drift into a complete ap
 
   const versionEntries = (await readdir(gate))
     .filter((entry) => entry.startsWith("entered."));
-  assert.equal(versionEntries.length, 1, versionEntries.join(","));
+  assert.equal(versionEntries.length, 0, versionEntries.join(","));
   const after = await readRuntimeApproval(home);
-  assert.notDeepEqual(after.data, before.data);
-  assert.equal(
-    after.approval.stable_source_path,
-    before.approval.stable_source_path,
-  );
-  assert.equal(after.approval.canonical_path, await realpath(codex));
-  assert.equal(after.approval.qualified_version, "0.150.1");
+  assert.deepEqual(after.data, before.data);
+  assert.deepEqual(after.approval, before.approval);
   assert.deepEqual(await collectRecoveryArtifacts(home), []);
 });

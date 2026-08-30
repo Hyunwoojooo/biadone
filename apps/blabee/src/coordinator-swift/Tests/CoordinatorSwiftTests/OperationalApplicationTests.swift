@@ -268,10 +268,12 @@ private struct OperationalFixture {
 
 private func operationalFixture(
     dispatchMode: OperationalNextTurnDispatchRecorder.Mode = .succeed,
+    suggestionMode: BlabeeSuggestionMode = .actionOnly,
     initialApprovalAdmissionSequence: Int64 = 0,
     permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
     permissionRequestDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
     maximumPendingPermissionRequests: Int = 8,
+    petConsumerLeaseDurationNanoseconds: UInt64 = 3_000_000_000,
     managedCommandApprovalTimeoutNanoseconds: UInt64 = 30_000_000_000,
     managedCommandApprovalDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
     maximumPendingManagedCommandApprovals: Int = 8
@@ -290,6 +292,7 @@ private func operationalFixture(
     )
     let app = CoordinatorOperationalApplication(
         routing: routing,
+        suggestionMode: suggestionMode,
         secretCorpus: RuntimeSecretCorpus(),
         idGenerator: ids.next,
         wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:00Z") },
@@ -303,6 +306,8 @@ private func operationalFixture(
         permissionRequestDeliveryTimeoutNanoseconds:
             permissionRequestDeliveryTimeoutNanoseconds,
         maximumPendingPermissionRequests: maximumPendingPermissionRequests,
+        petConsumerLeaseDurationNanoseconds:
+            petConsumerLeaseDurationNanoseconds,
         managedCommandApprovalTimeoutNanoseconds:
             managedCommandApprovalTimeoutNanoseconds,
         managedCommandApprovalDeliveryTimeoutNanoseconds:
@@ -319,6 +324,63 @@ private func operationalFixture(
     )
 }
 
+@Test("Operational Hook context exposes one centralized suggestion policy")
+func operationalSuggestionModeContext() async throws {
+    let expectations: [(BlabeeSuggestionMode, String)] = [
+        (.actionOnly, "Do not call it for explanations"),
+        (.smart, "at least two distinct and genuinely useful follow-up"),
+        (.always, "Every eligible main-agent user-facing final response"),
+    ]
+
+    for (index, expectation) in expectations.enumerated() {
+        let (mode, policyMarker) = expectation
+        let fixture = try operationalFixture(suggestionMode: mode)
+        let cwd = "/tmp/blabee-suggestion-mode-\(index)"
+        let sessionID = "session_suggestion_mode_\(index)"
+
+        _ = try await fixture.app.handle(
+            type: "enable_project",
+            payload: operationalData([
+                "cwd": cwd,
+                "project_id": "project_suggestion_mode_\(index)",
+            ])
+        )
+        let sessionStart = try operationalObject(
+            await fixture.app.handle(
+                type: "session_start",
+                payload: operationalData([
+                    "session_id": sessionID,
+                    "cwd": cwd,
+                    "hook_event_name": "SessionStart",
+                ])
+            )
+        )
+        let sessionContext = try #require(sessionStart["additionalContext"] as? String)
+        #expect(sessionContext.contains("suggestion_mode=\(mode.rawValue)"))
+        #expect(sessionContext.contains(policyMarker))
+        #expect(sessionContext.contains("Explicit user instructions that prohibit tool calls"))
+        #expect(sessionContext.contains("exact-output, exact-once, or no-additional-work"))
+
+        let prompt = try operationalObject(
+            await fixture.app.handle(
+                type: "user_prompt_submit",
+                payload: operationalData([
+                    "session_id": sessionID,
+                    "turn_id": "turn_suggestion_mode_\(index)",
+                    "cwd": cwd,
+                    "prompt": "Explain the next design choice",
+                    "hook_event_name": "UserPromptSubmit",
+                ])
+            )
+        )
+        let promptContext = try #require(prompt["additionalContext"] as? String)
+        #expect(promptContext.contains("suggestion_mode=\(mode.rawValue)"))
+        #expect(promptContext.contains(policyMarker))
+        #expect(promptContext.contains("Explicit user instructions that prohibit tool calls"))
+        #expect(promptContext.contains("exact-output, exact-once, or no-additional-work"))
+    }
+}
+
 private func contextValue(_ context: String, key: String) throws -> String {
     let marker = key + "="
     guard let start = context.range(of: marker)?.upperBound else {
@@ -331,7 +393,8 @@ private func contextValue(_ context: String, key: String) throws -> String {
 
 private func operationalBegin(
     _ fixture: OperationalFixture,
-    suffix: String = "alpha"
+    suffix: String = "alpha",
+    activatePetConsumerLease: Bool = true
 ) async throws -> [String: String] {
     let cwd = "/tmp/blabee-operational-\(suffix)"
     let projectID = "project_operational_\(suffix)"
@@ -358,6 +421,9 @@ private func operationalBegin(
     let identifiers = try #require(prompt["identifiers"] as? [String: Any])
     #expect(identifiers["correlation_token"] == nil)
     let context = try #require(prompt["additionalContext"] as? String)
+    if activatePetConsumerLease {
+        try await activateOperationalPetConsumerLease(fixture.app)
+    }
     return [
         "cwd": cwd,
         "project_id": projectID,
@@ -367,6 +433,23 @@ private func operationalBegin(
         "episode_id": try #require(identifiers["episode_id"] as? String),
         "correlation_token": try contextValue(context, key: "correlation_token"),
     ]
+}
+
+private func operationalPetConsumerHeartbeatPayload() throws -> Data {
+    try operationalData([
+        "schema_version": "1.0",
+        "kind": "blabee_pet_snapshot_request",
+        "consumer_heartbeat": true,
+    ])
+}
+
+private func activateOperationalPetConsumerLease(
+    _ app: CoordinatorOperationalApplication
+) async throws {
+    _ = try await app.handle(
+        type: "get_state",
+        payload: operationalPetConsumerHeartbeatPayload()
+    )
 }
 
 private func operationalProposal(
@@ -3970,6 +4053,156 @@ private func waitForOperationalPermissionRequests(
     throw CoordinatorError("test_permission_request_timeout")
 }
 
+@Test("Operational PermissionRequest immediately defers when no Pet consumer is live")
+func operationalPermissionRequestAbsentPetConsumerDefersWithoutCard() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(
+        fixture,
+        suffix: "permission_absent_pet",
+        activatePetConsumerLease: false
+    )
+
+    let response = try operationalObject(
+        await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf native")
+        )
+    )
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "defer_to_codex")
+
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["permission_requests"] as? [[String: Any]])?.isEmpty == true)
+    #expect(ExactJSONInteger.int64(
+        snapshot["permission_notice_count"],
+        minimum: 0
+    ) == 0)
+}
+
+@Test("Operational PermissionRequest immediately defers after the Pet lease becomes stale")
+func operationalPermissionRequestStalePetConsumerDefersWithoutCard() async throws {
+    let fixture = try operationalFixture(
+        petConsumerLeaseDurationNanoseconds: 1_000_000_000
+    )
+    let ids = try await operationalBegin(fixture, suffix: "permission_stale_pet")
+    fixture.cooldownClock.advance(seconds: 1)
+
+    let response = try operationalObject(
+        await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf stale")
+        )
+    )
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "defer_to_codex")
+
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["permission_requests"] as? [[String: Any]])?.isEmpty == true)
+    #expect(ExactJSONInteger.int64(
+        snapshot["permission_notice_count"],
+        minimum: 0
+    ) == 0)
+}
+
+@Test("Operational Pet heartbeat requires the exact typed envelope and stays journal-free")
+func operationalPetHeartbeatRejectsMalformedEnvelopes() async throws {
+    let fixture = try operationalFixture()
+    let loadCountBefore = fixture.journal.loadCount()
+    let invalidRequests: [[String: Any]] = [
+        [
+            "schema_version": "1.0",
+            "kind": "blabee_pet_snapshot_request",
+            "consumer_heartbeat": 1,
+        ],
+        [
+            "schema_version": "1.0",
+            "kind": "blabee_pet_snapshot_request",
+            "consumer_heartbeat": false,
+        ],
+        [
+            "schema_version": "1.0",
+            "kind": "blabee_pet_snapshot_request",
+        ],
+        [
+            "schema_version": "1.0",
+            "kind": "blabee_pet_snapshot_request",
+            "consumer_heartbeat": true,
+            "extra": true,
+        ],
+        [
+            "schema_version": "2.0",
+            "kind": "blabee_pet_snapshot_request",
+            "consumer_heartbeat": true,
+        ],
+    ]
+
+    for request in invalidRequests {
+        do {
+            _ = try await fixture.app.handle(
+                type: "get_state",
+                payload: operationalData(request)
+            )
+            Issue.record("a malformed Pet heartbeat must be rejected")
+        } catch let error as CoordinatorError {
+            #expect(error.code == "pet_snapshot_request_invalid")
+        } catch {
+            Issue.record("unexpected heartbeat error: \(error)")
+        }
+    }
+    #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational PermissionRequest admits one card while the Pet lease is fresh")
+func operationalPermissionRequestFreshPetConsumerAdmitsCard() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_fresh_pet")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf fresh")
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: request,
+        decision: "defer_to_codex",
+        responseID: "permission_response_fresh_pet",
+        hookWaiter: waiter
+    )
+    #expect(roundTrip.hookOutcome["decision"] as? String == "defer_to_codex")
+}
+
+@Test("Operational PermissionRequest drops an unresolved card when the Pet lease expires")
+func operationalPermissionRequestPetLeaseExpiryDropsStaleCard() async throws {
+    let fixture = try operationalFixture(
+        petConsumerLeaseDurationNanoseconds: 1_000_000_000
+    )
+    let ids = try await operationalBegin(fixture, suffix: "permission_expired_pet")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf expire")
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+
+    fixture.cooldownClock.advance(seconds: 1)
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect((snapshot["permission_requests"] as? [[String: Any]])?.isEmpty == true)
+    let response = try operationalObject(await waiter.value)
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "defer_to_codex")
+}
+
 @Test("Operational PermissionRequest relays allow, deny, and native defer without journal writes")
 func operationalPermissionRequestDecisions() async throws {
     let fixture = try operationalFixture()
@@ -5073,9 +5306,161 @@ private func waitForOperationalManagedCommandApprovals(
     throw CoordinatorError("test_managed_command_approval_timeout")
 }
 
+@Test("Operational managed approval immediately defers when no Pet consumer is live")
+func operationalManagedApprovalAbsentPetConsumerDefersWithoutCard() async throws {
+    let fixture = try operationalFixture()
+
+    let response = try operationalObject(
+        await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "absent_pet",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-absent-pet"]
+            )
+        )
+    )
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "decide_in_codex")
+
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect(
+        (snapshot["managed_command_approvals"] as? [[String: Any]])?.isEmpty
+            == true
+    )
+    #expect(ExactJSONInteger.int64(
+        snapshot["managed_command_approval_notice_count"],
+        minimum: 0
+    ) == 0)
+}
+
+@Test("Operational managed approval admits one card while the Pet lease is fresh")
+func operationalManagedApprovalFreshPetConsumerAdmitsCard() async throws {
+    let fixture = try operationalFixture()
+    try await activateOperationalPetConsumerLease(fixture.app)
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "fresh_pet",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-fresh-pet"]
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalManagedCommandApprovals(
+            fixture.app,
+            count: 1
+        ).first
+    )
+    let roundTrip = try await operationalResolveManagedCommandApproval(
+        app: fixture.app,
+        request: request,
+        decision: "decide_in_codex",
+        responseID: "managed_response_fresh_pet",
+        brokerWaiter: waiter
+    )
+    #expect(roundTrip.brokerOutcome["decision"] as? String == "decide_in_codex")
+}
+
+@Test("Operational managed approval returns to Codex when the Pet lease expires")
+func operationalManagedApprovalPetLeaseExpiryDropsStaleCard() async throws {
+    let fixture = try operationalFixture(
+        petConsumerLeaseDurationNanoseconds: 1_000_000_000
+    )
+    try await activateOperationalPetConsumerLease(fixture.app)
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "expired_pet",
+                jsonRPCRequestID: ["type": "string", "value": "rpc-expired-pet"]
+            )
+        )
+    }
+    _ = try await waitForOperationalManagedCommandApprovals(fixture.app, count: 1)
+
+    fixture.cooldownClock.advance(seconds: 1)
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    #expect(
+        (snapshot["managed_command_approvals"] as? [[String: Any]])?.isEmpty
+            == true
+    )
+    #expect(ExactJSONInteger.int64(
+        snapshot["managed_command_approval_notice_count"],
+        minimum: 0
+    ) == 1)
+    let response = try operationalObject(await waiter.value)
+    #expect(Set(response.keys) == ["decision"])
+    #expect(response["decision"] as? String == "decide_in_codex")
+}
+
+@Test("Pet lease expiry preserves a selected managed approval delivery barrier")
+func operationalManagedApprovalPetLeaseExpiryPreservesDelivery() async throws {
+    let fixture = try operationalFixture(
+        petConsumerLeaseDurationNanoseconds: 1_000_000_000
+    )
+    try await activateOperationalPetConsumerLease(fixture.app)
+    let brokerWaiter = Task {
+        try await fixture.app.handle(
+            type: "managed_command_approval",
+            payload: operationalManagedCommandApprovalPayload(
+                suffix: "selected_expired_pet",
+                jsonRPCRequestID: [
+                    "type": "string", "value": "rpc-selected-expired-pet",
+                ]
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalManagedCommandApprovals(
+            fixture.app,
+            count: 1
+        ).first
+    )
+    let resolution = try operationalManagedCommandApprovalResolution(
+        request,
+        decision: "accept_once",
+        responseID: "managed_response_selected_expired_pet"
+    )
+    let resolutionWaiter = Task {
+        try await fixture.app.handle(
+            type: "resolve_managed_command_approval",
+            payload: resolution
+        )
+    }
+    let brokerOutcome = try operationalObject(await brokerWaiter.value)
+    let deliveryToken = try #require(brokerOutcome["delivery_token"] as? String)
+
+    fixture.cooldownClock.advance(seconds: 1)
+    let snapshot = try operationalObject(
+        await fixture.app.handle(type: "get_state", payload: operationalData([:]))
+    )
+    let selected = try #require(
+        (snapshot["managed_command_approvals"] as? [[String: Any]])?.first
+    )
+    #expect(selected["delivery_pending"] as? Bool == true)
+
+    _ = try await fixture.app.handle(
+        type: "ack_managed_command_approval_delivery",
+        payload: operationalManagedCommandApprovalDeliveryAck(
+            request,
+            deliveryToken: deliveryToken
+        )
+    )
+    #expect(
+        try operationalObject(await resolutionWaiter.value)["resolved"] as? Bool
+            == true
+    )
+}
+
 @Test("Operational managed approvals preserve valid macOS private tmp paths")
 func operationalManagedCommandApprovalPreservesPrivateTmpPath() async throws {
     let fixture = try operationalFixture()
+    try await activateOperationalPetConsumerLease(fixture.app)
     let directoryName = "blabee-managed-private-tmp-\(UUID().uuidString.lowercased())"
     let canonicalCWD = "/tmp/\(directoryName)"
     let privateCWD = "/private\(canonicalCWD)"
@@ -5157,6 +5542,7 @@ func operationalManagedCommandApprovalRejectsUnsafeCWD() async throws {
 @Test("Operational managed command approvals are a process-local global FIFO")
 func operationalManagedCommandApprovalFIFO() async throws {
     let fixture = try operationalFixture()
+    try await activateOperationalPetConsumerLease(fixture.app)
     let loadCountBefore = fixture.journal.loadCount()
     let firstWaiter = Task {
         try await fixture.app.handle(
@@ -5253,6 +5639,7 @@ func operationalManagedCommandApprovalFIFO() async throws {
 @Test("Cancelling a managed approval removes its Pet card and advances FIFO")
 func operationalManagedCommandApprovalCancellationAdvancesFIFO() async throws {
     let fixture = try operationalFixture()
+    try await activateOperationalPetConsumerLease(fixture.app)
     let loadCountBefore = fixture.journal.loadCount()
     let firstWaiter = Task {
         try await fixture.app.handle(
@@ -5309,6 +5696,7 @@ func operationalManagedCommandApprovalCapacity() async throws {
     let fixture = try operationalFixture(
         maximumPendingManagedCommandApprovals: 1
     )
+    try await activateOperationalPetConsumerLease(fixture.app)
     let waiter = Task {
         try await fixture.app.handle(
             type: "managed_command_approval",
@@ -5347,6 +5735,7 @@ func operationalManagedCommandApprovalTimeout() async throws {
     let fixture = try operationalFixture(
         managedCommandApprovalTimeoutNanoseconds: 200_000_000
     )
+    try await activateOperationalPetConsumerLease(fixture.app)
     let response = try operationalObject(
         await fixture.app.handle(
             type: "managed_command_approval",
@@ -5366,6 +5755,7 @@ func operationalManagedCommandApprovalDeliveryTimeout() async throws {
     let fixture = try operationalFixture(
         managedCommandApprovalDeliveryTimeoutNanoseconds: 100_000_000
     )
+    try await activateOperationalPetConsumerLease(fixture.app)
     let brokerWaiter = Task {
         try await fixture.app.handle(
             type: "managed_command_approval",
@@ -5417,6 +5807,7 @@ func operationalManagedCommandApprovalDeliveryTimeout() async throws {
 @Test("Operational managed approvals never accept unavailable or session decisions")
 func operationalManagedCommandApprovalDecisionGating() async throws {
     let fixture = try operationalFixture()
+    try await activateOperationalPetConsumerLease(fixture.app)
     let waiter = Task {
         try await fixture.app.handle(
             type: "managed_command_approval",

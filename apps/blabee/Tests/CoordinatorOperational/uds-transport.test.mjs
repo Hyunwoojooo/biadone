@@ -62,6 +62,8 @@ const legacyOperationalProposal = Object.fromEntries(
   legacyOperationalProposalKeys.map((key) => [key, legacyProposal[key]]),
 );
 const hookSessionID = "01a01ece-22b8-7833-9ebf-8ef8d1addc58";
+const fixtureRuntimeIdentity = `sha256:${"1".repeat(64)}`;
+const runtimeRequestTypePrefix = "blabee.runtime-identity.v1/";
 const hookTurnIDs = {
   allow: "01a02e18-df50-73b2-8ba3-000000000001",
   deny: "01a02e18-df50-73b2-8ba3-000000000002",
@@ -85,7 +87,10 @@ after(async () => {
   await cleanupCoordinatorBuild();
 });
 
-async function startFakeCoordinator(handler) {
+async function startFakeCoordinator(
+  handler,
+  { responseRuntimeIdentity = (request) => request.runtime_identity } = {},
+) {
   const directory = await mkdtemp(path.join(tmpdir(), "blabee-t011-uds-client-"));
   await chmod(directory, 0o700);
   const socketPath = path.join(directory, "blabee.sock");
@@ -102,9 +107,14 @@ async function startFakeCoordinator(handler) {
       socket.pause();
       try {
         const request = JSON.parse(buffer.subarray(0, newline).toString("utf8"));
-        const result = await handler(request);
+        assert.equal(request.type.startsWith(runtimeRequestTypePrefix), true);
+        const result = await handler({
+          ...request,
+          type: request.type.slice(runtimeRequestTypePrefix.length),
+        });
         socket.end(`${JSON.stringify({
           request_id: request.request_id,
+          runtime_identity: responseRuntimeIdentity(request),
           ok: true,
           result,
         })}\n`);
@@ -112,6 +122,9 @@ async function startFakeCoordinator(handler) {
         if (typeof error?.coordinatorCode === "string") {
           socket.end(`${JSON.stringify({
             request_id: JSON.parse(buffer.subarray(0, newline).toString("utf8")).request_id,
+            runtime_identity: responseRuntimeIdentity(JSON.parse(
+              buffer.subarray(0, newline).toString("utf8"),
+            )),
             ok: false,
             error: { code: error.coordinatorCode, message: "request failed" },
           })}\n`);
@@ -119,6 +132,55 @@ async function startFakeCoordinator(handler) {
           socket.destroy();
         }
       }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  await chmod(socketPath, 0o600);
+  return {
+    socketPath,
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+      await rm(directory, { force: true, recursive: true });
+    },
+  };
+}
+
+async function startLegacyFakeCoordinator(handler) {
+  const directory = await mkdtemp(path.join(tmpdir(), "blabee-t011-legacy-uds-"));
+  await chmod(directory, 0o700);
+  const socketPath = path.join(directory, "blabee.sock");
+  const legacyTypes = new Set([
+    "hook_event",
+    "emit_decision",
+    "get_state",
+    "select_action",
+    "doctor_status",
+  ]);
+  const server = net.createServer((socket) => {
+    let buffer = Buffer.alloc(0);
+    socket.on("data", async (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const newline = buffer.indexOf(0x0a);
+      if (newline < 0) return;
+      socket.pause();
+      const request = JSON.parse(buffer.subarray(0, newline).toString("utf8"));
+      if (!legacyTypes.has(request.type)) {
+        socket.end(`${JSON.stringify({
+          request_id: request.request_id,
+          ok: false,
+          error: { code: "operational_type_unsupported", message: "unsupported" },
+        })}\n`);
+        return;
+      }
+      await handler(request);
+      socket.end(`${JSON.stringify({
+        request_id: request.request_id,
+        ok: true,
+        result: { accepted: true },
+      })}\n`);
     });
   });
   await new Promise((resolve, reject) => {
@@ -146,7 +208,12 @@ async function runBuiltBinary(
   { environment = {}, input = "", timeoutMs = 15_000 } = {},
 ) {
   const child = spawn(build.binaryPath, arguments_, {
-    env: { ...build.environment, ...environment },
+    env: {
+      ...build.environment,
+      BLABEE_RUNTIME_IDENTITY: fixtureRuntimeIdentity,
+      BLABEE_MANAGED_APPROVALS: "",
+      ...environment,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stdout = [];
@@ -197,7 +264,13 @@ async function startFixtureTransportServer({
   const child = spawn(
     build.binaryPath,
     arguments_,
-    { env: build.environment, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      env: {
+        ...build.environment,
+        BLABEE_RUNTIME_IDENTITY: fixtureRuntimeIdentity,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
   const stderr = [];
   child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
@@ -279,7 +352,13 @@ async function startOperationalApprovalServer() {
       "--socket", socketPath,
       "--authority-root", authorityRootPath,
     ],
-    { env: build.environment, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      env: {
+        ...build.environment,
+        BLABEE_RUNTIME_IDENTITY: fixtureRuntimeIdentity,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
   const stderr = [];
   child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
@@ -343,7 +422,12 @@ async function waitForApprovalSnapshot(socketPath, key, count) {
   throw new Error(`${key} did not reach count ${count}`);
 }
 
-function udsRequest(socketPath, type, payload = {}) {
+function udsRequest(
+  socketPath,
+  type,
+  payload = {},
+  runtimeIdentity = fixtureRuntimeIdentity,
+) {
   return new Promise((resolve, reject) => {
     const request_id = `request_fixture_${Math.random().toString(16).slice(2)}`;
     const socket = net.createConnection(socketPath);
@@ -354,7 +438,12 @@ function udsRequest(socketPath, type, payload = {}) {
     }, 5_000);
     socket.setEncoding("utf8");
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ request_id, type, payload })}\n`);
+      socket.write(`${JSON.stringify({
+        request_id,
+        runtime_identity: runtimeIdentity,
+        type: `${runtimeRequestTypePrefix}${type}`,
+        payload,
+      })}\n`);
     });
     socket.on("data", (chunk) => {
       buffer += chunk;
@@ -387,7 +476,8 @@ function udsRequestExpectingClosedWithoutResponse(socketPath, type, payload) {
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         request_id: "request_fixture_poison",
-        type,
+        runtime_identity: fixtureRuntimeIdentity,
+        type: `${runtimeRequestTypePrefix}${type}`,
         payload,
       })}\n`);
     });
@@ -432,7 +522,8 @@ function sendRequestThenDisconnect(socketPath, type, payload, holdMs = 250) {
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         request_id: `request_disconnect_${Math.random().toString(16).slice(2)}`,
-        type,
+        runtime_identity: fixtureRuntimeIdentity,
+        type: `${runtimeRequestTypePrefix}${type}`,
         payload,
       })}\n`, (error) => {
         if (error) {
@@ -504,6 +595,7 @@ test("Hook forwards official input and emits only official additionalContext out
   const payload = hookPayload("SessionStart", { source: "startup" });
   const fake = await startFakeCoordinator((request) => {
     assert.match(request.request_id, /^request_[0-9a-f-]+$/);
+    assert.match(request.runtime_identity, /^sha256:[0-9a-f]{64}$/);
     assert.equal(request.type, "session_start");
     assert.deepEqual(request.payload, payload);
     return { enabled: true, additionalContext: "Blabee project binding is active." };
@@ -743,7 +835,10 @@ test("Hook stdout write failure sends no permission delivery acknowledgement", a
     const child = spawn(
       build.binaryPath,
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
-      { env: build.environment, stdio: ["pipe", "pipe", "pipe"] },
+      {
+        env: { ...build.environment, BLABEE_MANAGED_APPROVALS: "" },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
     );
     const stderr = [];
     child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
@@ -867,7 +962,10 @@ test("Hook native defer closes stdout before acknowledging delivery", async () =
     const child = spawn(
       build.binaryPath,
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
-      { env: build.environment, stdio: ["pipe", "pipe", "pipe"] },
+      {
+        env: { ...build.environment, BLABEE_MANAGED_APPROVALS: "" },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
     );
     const stdout = [];
     const stderr = [];
@@ -1039,12 +1137,14 @@ test("explicit and environment socket overrides reject relative paths", async ()
 });
 
 test("Hook accepted by a silent daemon still fails open within the command budget", async () => {
+  const build = await buildProductCoordinator();
   const fake = await startFakeCoordinator(
     () => new Promise(() => {}),
   );
   try {
     const startedAt = Date.now();
-    const result = await runBinary(
+    const result = await runBuiltBinary(
+      build,
       ["hook", "SessionStart", "--socket", fake.socketPath],
       { input: JSON.stringify(hookPayload("SessionStart", { source: "startup" })) },
     );
@@ -1299,10 +1399,33 @@ test("UDS server enforces one owner, secure modes, and the high-level allowlist"
     assert.equal(second.code, 1);
     assert.equal(second.signal, null);
 
+    const legacy = await udsRawLine(
+      fixture.socketPath,
+      `${JSON.stringify({
+        request_id: "request_fixture_legacy",
+        type: "get_state",
+        payload: {},
+      })}\n`,
+    );
+    assert.equal(legacy.runtime_identity, fixtureRuntimeIdentity);
+    assert.equal(legacy.ok, false);
+    assert.equal(legacy.error.code, "operational_runtime_identity_mismatch");
+
+    const mismatched = await udsRequest(
+      fixture.socketPath,
+      "get_state",
+      {},
+      `sha256:${"2".repeat(64)}`,
+    );
+    assert.equal(mismatched.runtime_identity, fixtureRuntimeIdentity);
+    assert.equal(mismatched.ok, false);
+    assert.equal(mismatched.error.code, "operational_runtime_identity_mismatch");
+
     await udsRequestExpectingClosedWithoutResponse(fixture.socketPath, "get_state", {
       correlation_token: "request_id",
     });
     const stillAlive = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(stillAlive.runtime_identity, fixtureRuntimeIdentity);
     assert.equal(stillAlive.ok, true);
     assert.equal(stillAlive.result.fixture, "ok");
 
@@ -1351,6 +1474,55 @@ test("UDS server enforces one owner, secure modes, and the high-level allowlist"
     assert.equal(rejected.error.message, "request failed");
   } finally {
     await fixture.close();
+  }
+});
+
+test("a new client cannot dispatch a state-changing request through a legacy server", async () => {
+  let legacyDispatches = 0;
+  const legacy = await startLegacyFakeCoordinator(() => {
+    legacyDispatches += 1;
+  });
+  try {
+    const result = await runBinary(
+      ["hook", "SessionStart", "--socket", legacy.socketPath],
+      {
+        input: JSON.stringify(hookPayload("SessionStart", { source: "startup" })),
+      },
+    );
+    assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
+    assert.equal(
+      legacyDispatches,
+      0,
+      "the prefixed wire type must be rejected before a legacy handler dispatches",
+    );
+  } finally {
+    await legacy.close();
+  }
+});
+
+test("Hook rejects missing or forged runtime identity responses without exposing context", async () => {
+  for (const responseRuntimeIdentity of [
+    () => undefined,
+    () => `sha256:${"9".repeat(64)}`,
+  ]) {
+    let dispatches = 0;
+    const fake = await startFakeCoordinator(
+      () => {
+        dispatches += 1;
+        return { enabled: true, additionalContext: "must-not-reach-codex" };
+      },
+      { responseRuntimeIdentity },
+    );
+    try {
+      const result = await runBinary(
+        ["hook", "UserPromptSubmit", "--socket", fake.socketPath],
+        { input: JSON.stringify(hookPayload("UserPromptSubmit", { prompt: "probe" })) },
+      );
+      assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
+      assert.equal(dispatches, 1);
+    } finally {
+      await fake.close();
+    }
   }
 });
 
@@ -1413,6 +1585,13 @@ test("real Hook allow resolves Pet only after official stdout and delivery ack",
     );
     assert.equal(userPrompt.code, 0);
     assert.notEqual(userPrompt.stdout, "");
+
+    const petHeartbeat = await udsRequest(server.socketPath, "get_state", {
+      schema_version: "1.0",
+      kind: "blabee_pet_snapshot_request",
+      consumer_heartbeat: true,
+    });
+    assert.equal(petHeartbeat.ok, true);
 
     const permissionCompletion = runBuiltBinary(
       productBuild,
@@ -1515,6 +1694,13 @@ test("managed Pet disconnect after selection keeps FIFO barrier until delivery a
     delivery_token: deliveryToken,
   });
   try {
+    const initialPetHeartbeat = await udsRequest(server.socketPath, "get_state", {
+      schema_version: "1.0",
+      kind: "blabee_pet_snapshot_request",
+      consumer_heartbeat: true,
+    });
+    assert.equal(initialPetHeartbeat.ok, true);
+
     const firstBroker = udsRequest(
       server.socketPath,
       "managed_command_approval",
@@ -1543,6 +1729,13 @@ test("managed Pet disconnect after selection keeps FIFO barrier until delivery a
     assert.equal(firstOutcome.result.decision, "accept_once");
     assert.match(firstOutcome.result.delivery_token, /^[A-Za-z0-9_-]{16,512}$/);
     await disconnectedPet;
+
+    const continuedPetHeartbeat = await udsRequest(server.socketPath, "get_state", {
+      schema_version: "1.0",
+      kind: "blabee_pet_snapshot_request",
+      consumer_heartbeat: true,
+    });
+    assert.equal(continuedPetHeartbeat.ok, true);
 
     const [selectedFirst] = await waitForApprovalSnapshot(
       server.socketPath,

@@ -15,6 +15,7 @@ let package = Package(
             name: "CoordinatorSwift",
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
+                .linkedFramework("LocalAuthentication"),
                 .linkedFramework("Security"),
             ]
         ),
@@ -28,6 +29,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("Security"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("SwiftUI"),
             ]

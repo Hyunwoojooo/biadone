@@ -73,6 +73,18 @@ struct PetRiskConfirmation: Sendable, Equatable {
     let optionID: String
 }
 
+struct PetSelectionSubmission: Sendable, Equatable {
+    let identity: PetInteractionIdentity
+    let slot: Int
+    let optionID: String
+}
+
+enum PetActionAccessoryPresentation: Sendable, Equatable {
+    case shortcut(String)
+    case progress
+    case suppressed
+}
+
 @MainActor
 final class PetViewModel: ObservableObject {
     @Published private(set) var snapshot: PetSnapshot? {
@@ -108,6 +120,7 @@ final class PetViewModel: ObservableObject {
     }
     @Published private(set) var localForegroundIdentity: PetInteractionIdentity?
     @Published private(set) var pendingFocusIdentity: PetInteractionIdentity?
+    @Published private(set) var selectionSubmission: PetSelectionSubmission?
     @Published private(set) var riskConfirmation: PetRiskConfirmation?
     @Published private(set) var isExpanded = false {
         didSet {
@@ -148,6 +161,14 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
     @Published private(set) var onboardingError: String?
+    @Published private(set) var suggestionMode: BlabeeSuggestionMode = .smart
+    @Published private(set) var suggestionModeDiagnostic: String? {
+        didSet {
+            if (oldValue == nil) != (suggestionModeDiagnostic == nil) {
+                onPanelLayoutChanged?()
+            }
+        }
+    }
     @Published private(set) var isOnboardingOperationInFlight = false
     @Published private(set) var codexAutoConnectState: CodexAutoConnectState = .unavailable(
         "상태를 확인하지 않았습니다."
@@ -165,6 +186,7 @@ final class PetViewModel: ObservableObject {
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
     private let onboardingAdapter: any PetOnboardingAdapting
+    private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let codexAutoConnectAdapter: any PetCodexAutoConnectAdapting
     private let projectFolderChooser: any PetProjectFolderChoosing
     private let selectionIDGenerator: @Sendable () -> String
@@ -199,6 +221,7 @@ final class PetViewModel: ObservableObject {
         transport: any PetCoordinatorTransport,
         externalApplicationOpener: any PetExternalApplicationOpening,
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
+        suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         codexAutoConnectAdapter: any PetCodexAutoConnectAdapting =
             PetUnavailableCodexAutoConnectAdapter(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
@@ -216,6 +239,7 @@ final class PetViewModel: ObservableObject {
         self.transport = transport
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
+        self.suggestionModeStore = suggestionModeStore
         self.codexAutoConnectAdapter = codexAutoConnectAdapter
         self.projectFolderChooser = projectFolderChooser
         self.processIdentifier = processIdentifier
@@ -226,6 +250,7 @@ final class PetViewModel: ObservableObject {
             .captureFrontmostExternalApplication(
                 excludingProcessIdentifier: processIdentifier
             )
+        applySuggestionModeLoadResult(suggestionModeStore.load())
     }
 
     deinit {
@@ -469,6 +494,12 @@ final class PetViewModel: ObservableObject {
         isShowingOnboarding = false
     }
 
+    func updateSuggestionMode(_ mode: BlabeeSuggestionMode) {
+        suggestionModeStore.save(mode)
+        suggestionMode = mode
+        suggestionModeDiagnostic = nil
+    }
+
     func refreshOnboarding() async {
         guard !isSettingsOperationInFlight else { return }
         isOnboardingOperationInFlight = true
@@ -653,6 +684,20 @@ final class PetViewModel: ObservableObject {
         case .inactive:
             "사용 불가"
         }
+    }
+
+    func actionAccessoryPresentation(
+        interaction: PetInteraction,
+        choice: PetChoice
+    ) -> PetActionAccessoryPresentation {
+        guard let submission = selectionSubmission else {
+            return .shortcut(actionShortcutLabel(interaction: interaction, choice: choice))
+        }
+        guard submission.identity == interaction.identity,
+              submission.slot == choice.slot,
+              submission.optionID == choice.optionID
+        else { return .suppressed }
+        return .progress
     }
 
     func shortcutStatusDescription(for intent: PetShortcutIntent) -> String {
@@ -854,7 +899,27 @@ final class PetViewModel: ObservableObject {
         _ slot: Int,
         interaction identity: PetInteractionIdentity
     ) async {
-        guard fifoHeadInteraction?.identity == identity else { return }
+        guard let interaction = fifoHeadInteraction,
+              interaction.identity == identity,
+              interaction.isSelectionReady,
+              let choice = interaction.choice(slot: slot),
+              choice.enabled,
+              choice.isAction,
+              selectionSubmission == nil
+        else { return }
+        let submission = PetSelectionSubmission(
+            identity: identity,
+            slot: slot,
+            optionID: choice.optionID
+        )
+        selectionSubmission = submission
+        updateHotKeyEligibility()
+        defer {
+            if selectionSubmission == submission {
+                selectionSubmission = nil
+                updateHotKeyEligibility()
+            }
+        }
         if focusedInteraction?.identity != identity {
             await focus(identity)
         }
@@ -993,7 +1058,7 @@ final class PetViewModel: ObservableObject {
         nextSnapshotRequest &+= 1
         let requestNumber = nextSnapshotRequest
         do {
-            let payload = try StrictJSONTransport.data(forJSONObject: [:])
+            let payload = try PetTransportRequestPayload.snapshotWithConsumerHeartbeat()
             let data = try await transport.request(type: "get_state", payload: payload)
             let parsed = try await Task.detached(priority: .utility) {
                 try PetSnapshot.parse(data)
@@ -1198,8 +1263,21 @@ final class PetViewModel: ObservableObject {
         else { return }
         let key = current.identity
         guard inFlightSelectionIdentity == nil else { return }
+        let submission = PetSelectionSubmission(
+            identity: current.identity,
+            slot: choice.slot,
+            optionID: choice.optionID
+        )
+        guard selectionSubmission == nil || selectionSubmission == submission else { return }
+        if selectionSubmission == nil { selectionSubmission = submission }
         inFlightSelectionIdentity = key
         updateHotKeyEligibility()
+        defer {
+            if selectionSubmission == submission {
+                selectionSubmission = nil
+                updateHotKeyEligibility()
+            }
+        }
         lastError = persistentApprovalResolutionError
         do {
             let request = try PetSelectionRequest(
@@ -1239,6 +1317,7 @@ final class PetViewModel: ObservableObject {
               inFlightManagedCommandApprovalID == nil,
               pendingPermissionRequest == nil,
               inFlightPermissionRequestID == nil,
+              selectionSubmission == nil,
               let interaction = authoritativeSelectionInteraction(),
               inFlightSelectionIdentity == nil
         else {
@@ -1290,6 +1369,7 @@ final class PetViewModel: ObservableObject {
 
     private func reloadOnboardingState(operationError: String? = nil) {
         onboardingServiceState = onboardingAdapter.serviceRegistrationState()
+        applySuggestionModeLoadResult(suggestionModeStore.load())
         do {
             configuredProjectPaths = try onboardingAdapter.configuredProjectPaths()
             configuredProjectPathsAreAuthoritative = true
@@ -1304,6 +1384,11 @@ final class PetViewModel: ObservableObject {
                 onboardingError = refreshError
             }
         }
+    }
+
+    private func applySuggestionModeLoadResult(_ result: BlabeeSuggestionModeLoadResult) {
+        suggestionMode = result.mode
+        suggestionModeDiagnostic = result.diagnostic
     }
 
     private func reloadCodexAutoConnectState(operationError: String? = nil) async {

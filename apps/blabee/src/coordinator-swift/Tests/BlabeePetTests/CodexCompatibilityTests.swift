@@ -29,7 +29,7 @@ func codexCompatibilityVersionParsing() {
 
 @Test("Codex compatibility keeps managed use fail closed")
 func codexCompatibilityQualification() {
-    #expect(CodexCompatibility.supportedVersions == ["0.149.1", "0.150.1"])
+    #expect(CodexCompatibility.supportedVersions == ["0.149.1", "0.150.1", "0.151.0"])
 
     for version in CodexCompatibility.supportedVersions {
         let qualification = CodexCompatibility.qualify(version: version)

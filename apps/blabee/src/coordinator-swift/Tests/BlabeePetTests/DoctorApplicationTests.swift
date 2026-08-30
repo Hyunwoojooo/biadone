@@ -72,6 +72,9 @@ private final class DoctorFixture {
     let embeddedCoordinator: URL
     let codex: URL
     let plugin: URL
+    var runtimeIdentityManifest: URL {
+        app.appendingPathComponent("Contents/Resources/assembly-manifest.json")
+    }
     var runtimeCoordinatorPath: URL {
         plugin.appendingPathComponent("runtime/coordinator-path")
     }
@@ -92,6 +95,7 @@ private final class DoctorFixture {
         try makeExecutable(embeddedCoordinator)
         try makeExecutable(codex)
         try writePlugin()
+        try writeRuntimeIdentity()
         processes.pluginPath = plugin.path
     }
 
@@ -123,13 +127,27 @@ private final class DoctorFixture {
         daemonProjects: [[String: Any]]? = [["cwd": "/tmp/blabee-doctor-enabled", "enabled": true]],
         daemonReconciliation: [String: Any]? = nil,
         currentExecutableURL: URL? = nil,
+        currentRuntimeIdentity: String? = nil,
+        installedRuntimeIdentity: ((URL) -> String?)? = nil,
         path: String? = nil
     ) -> DoctorDependencies {
-        DoctorDependencies(
+        let effectiveExecutableURL = currentExecutableURL ?? embeddedCoordinator
+        let installedRuntimeIdentity = installedRuntimeIdentity ?? { executableURL in
+            OperationalRuntimeIdentity.manifestIdentity(forExecutable: executableURL)
+        }
+        return DoctorDependencies(
             environment: [
                 "PATH": path ?? "\(root.path):\(embeddedCoordinator.deletingLastPathComponent().path)",
             ],
-            currentExecutableURL: currentExecutableURL ?? embeddedCoordinator,
+            currentExecutableURL: effectiveExecutableURL,
+            currentRuntimeIdentity: currentRuntimeIdentity
+                ?? installedRuntimeIdentity(
+                    effectiveExecutableURL.resolvingSymlinksInPath()
+                )
+                ?? OperationalRuntimeIdentity.resolve(
+                    executableURL: effectiveExecutableURL, environment: [:]
+                ),
+            installedRuntimeIdentity: installedRuntimeIdentity,
             processRunner: processes.run,
             daemonRequester: { _ in
                 guard let daemonProjects else { throw CoordinatorError("daemon_unavailable") }
@@ -176,7 +194,8 @@ private final class DoctorFixture {
         try writeHooks()
         try makeExecutable(
             plugin.appendingPathComponent("scripts/blabee-launcher"),
-            data: DoctorApplication.bundledLauncherData
+            data: Data(contentsOf: bundledPlugin
+                .appendingPathComponent("scripts/blabee-launcher"))
         )
         try writeRuntimeCoordinatorPath(embeddedCoordinator.path)
     }
@@ -187,6 +206,32 @@ private final class DoctorFixture {
             withIntermediateDirectories: true
         )
         try Data("\(path)\n".utf8).write(to: runtimeCoordinatorPath)
+    }
+
+    func writeRuntimeIdentity() throws {
+        try FileManager.default.createDirectory(
+            at: runtimeIdentityManifest.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try writeJSON([
+            "schema_version": OperationalRuntimeIdentity.assemblyManifestSchemaVersion,
+            "bundle_identifier": "com.biadone.blabee",
+            "hash_phase": "assembled_payload_before_optional_code_signing",
+            "files": [
+                [
+                    "path": "Contents/MacOS/blabee-coordinator",
+                    "sha256": String(repeating: "a", count: 64),
+                    "size": 1,
+                    "mode": "0700",
+                ],
+                [
+                    "path": "Contents/Resources/Plugin/blabee/scripts/blabee-launcher",
+                    "sha256": String(repeating: "b", count: 64),
+                    "size": 1,
+                    "mode": "0755",
+                ],
+            ],
+        ], to: runtimeIdentityManifest)
     }
 
     func writeMCP(includeEnvironment: Bool) throws {
@@ -322,13 +367,13 @@ func doctorArgumentsFailClosed() throws {
 @Test("Doctor keeps the alpha baseline pending and rejects every unapproved Codex version")
 func doctorCodexVersionPolicy() throws {
     let fixture = try DoctorFixture()
-    #expect(DoctorApplication.supportedVersions == ["0.149.1", "0.150.1"])
+    #expect(DoctorApplication.supportedVersions == ["0.149.1", "0.150.1", "0.151.0"])
     var execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "codex_version").status == .actionRequired)
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_alpha_qualification_required")
 
-    for supportedVersion in ["0.149.1", "0.150.1"] {
+    for supportedVersion in ["0.149.1", "0.150.1", "0.151.0"] {
         fixture.processes.versionOutput = "codex-cli \(supportedVersion)\n"
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
@@ -528,10 +573,13 @@ func doctorHookContractMatchesBundledPlugin() throws {
     }
 }
 
-@Test("Doctor launcher bytes match the bundled version 0.1.0 contract")
-func doctorLauncherBytesMatchBundledContract() throws {
+@Test("Doctor launcher digest matches the bundled version 0.1.0 contract")
+func doctorLauncherDigestMatchesBundledContract() throws {
     let launcher = doctorBundledPluginRoot().appendingPathComponent("scripts/blabee-launcher")
-    #expect(try Data(contentsOf: launcher) == DoctorApplication.bundledLauncherData)
+    let digest = SHA256.hash(data: try Data(contentsOf: launcher))
+        .map { String(format: "%02x", $0) }
+        .joined()
+    #expect(digest == DoctorApplication.launcherSHA256)
 }
 
 @Test("Doctor manifest digest matches the bundled version 0.1.0 bytes")
@@ -680,6 +728,45 @@ func doctorMCPRuntimeIdentity() throws {
         .run(arguments: try linked.arguments())
     #expect(try doctorCheck(execution, id: "mcp_runtime").code
         == "mcp_runtime_locator_invalid")
+
+    let missingIdentity = try DoctorFixture()
+    try FileManager.default.removeItem(at: missingIdentity.runtimeIdentityManifest)
+    execution = DoctorApplication(dependencies: missingIdentity.dependencies())
+        .run(arguments: try missingIdentity.arguments())
+    #expect(try doctorCheck(execution, id: "coordinator_runtime").code
+        == "coordinator_runtime_identity_unverified")
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code
+        == "mcp_runtime_identity_manifest_invalid")
+
+    let booleanSize = try DoctorFixture()
+    var booleanManifest = try #require(
+        try JSONSerialization.jsonObject(
+            with: Data(contentsOf: booleanSize.runtimeIdentityManifest)
+        ) as? [String: Any]
+    )
+    var booleanFiles = try #require(booleanManifest["files"] as? [[String: Any]])
+    booleanFiles[0]["size"] = true
+    booleanManifest["files"] = booleanFiles
+    try booleanSize.writeJSON(booleanManifest, to: booleanSize.runtimeIdentityManifest)
+    execution = DoctorApplication(dependencies: booleanSize.dependencies())
+        .run(arguments: try booleanSize.arguments())
+    #expect(try doctorCheck(execution, id: "coordinator_runtime").code
+        == "coordinator_runtime_identity_unverified")
+
+    let unsorted = try DoctorFixture()
+    var unsortedManifest = try #require(
+        try JSONSerialization.jsonObject(
+            with: Data(contentsOf: unsorted.runtimeIdentityManifest)
+        ) as? [String: Any]
+    )
+    unsortedManifest["files"] = Array(try #require(
+        unsortedManifest["files"] as? [[String: Any]]
+    ).reversed())
+    try unsorted.writeJSON(unsortedManifest, to: unsorted.runtimeIdentityManifest)
+    execution = DoctorApplication(dependencies: unsorted.dependencies())
+        .run(arguments: try unsorted.arguments())
+    #expect(try doctorCheck(execution, id: "coordinator_runtime").code
+        == "coordinator_runtime_identity_unverified")
 }
 
 @Test("Doctor distinguishes exact descendant other and unavailable daemon project scopes")
@@ -815,6 +902,35 @@ func doctorJSONIsDeterministicAndRedacted() throws {
         == "coordinator_runtime_ok")
 }
 
+@Test("Doctor compares the process-captured identity after the app is replaced")
+func doctorRejectsAReplacedBundleForAnOlderRunningProcess() throws {
+    let fixture = try DoctorFixture()
+    let oldIdentity = try #require(
+        OperationalRuntimeIdentity.manifestIdentity(
+            forExecutable: fixture.embeddedCoordinator
+        )
+    )
+    let dependencies = fixture.dependencies(currentRuntimeIdentity: oldIdentity)
+
+    try fixture.writeRuntimeIdentity()
+    var object = try #require(
+        try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixture.runtimeIdentityManifest)
+        ) as? [String: Any]
+    )
+    object["hash_phase"] = "assembled_payload_before_optional_code_signing"
+    var files = try #require(object["files"] as? [[String: Any]])
+    files[0]["sha256"] = String(repeating: "c", count: 64)
+    object["files"] = files
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        .write(to: fixture.runtimeIdentityManifest)
+
+    let execution = DoctorApplication(dependencies: dependencies)
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "coordinator_runtime").code
+        == "coordinator_runtime_identity_unverified")
+}
+
 @Test("Doctor process runner drains stderr and captures stdout without a shell command")
 func doctorProcessRunnerDrainsBothPipes() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -891,6 +1007,62 @@ func doctorStatusUsesDedicatedUDSDispatch() async throws {
     let runTask = Task.detached { try server.run(application: spy, secretCorpus: corpus) }
     let client = try UnixDomainSocketClient(socketPath: socketPath)
     let result = try client.request(
+        type: "doctor_status",
+        payload: [:],
+        connectTimeoutMilliseconds: 1_000,
+        responseTimeoutMilliseconds: 2_000
+    )
+    #expect(result["kind"] as? String == "blabee_doctor_status")
+    server.stop()
+    try await runTask.value
+    let counts = await spy.counts()
+    #expect(counts.handle == 0)
+    #expect(counts.doctor == 1)
+}
+
+@Test("UDS runtime identity rejects mismatched clients without replacing the server")
+func udsRuntimeIdentityBoundary() async throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("bdi-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    guard chmod(root.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+    let serverIdentity = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    let clientIdentity = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    let socketPath = root.appendingPathComponent("daemon.sock").path
+    let server = try UnixDomainSocketServer(
+        socketPath: socketPath,
+        runtimeIdentity: serverIdentity
+    )
+    let spy = DoctorTransportSpy()
+    let corpus = RuntimeSecretCorpus()
+    try server.activate()
+    let runTask = Task.detached { try server.run(application: spy, secretCorpus: corpus) }
+    defer { server.stop() }
+
+    let mismatched = try UnixDomainSocketClient(
+        socketPath: socketPath,
+        runtimeIdentity: clientIdentity
+    )
+    do {
+        _ = try mismatched.request(
+            type: "doctor_status",
+            payload: [:],
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        Issue.record("mismatched runtime unexpectedly reached the coordinator")
+    } catch let error as CoordinatorError {
+        #expect(error.code == "operational_runtime_identity_mismatch")
+    }
+
+    let matching = try UnixDomainSocketClient(
+        socketPath: socketPath,
+        runtimeIdentity: serverIdentity
+    )
+    let result = try matching.request(
         type: "doctor_status",
         payload: [:],
         connectTimeoutMilliseconds: 1_000,

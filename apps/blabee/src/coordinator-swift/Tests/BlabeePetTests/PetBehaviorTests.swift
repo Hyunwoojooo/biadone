@@ -54,6 +54,24 @@ private func blabeePetWaitForRequestCount(
     return await transport.requestCount(type: type) >= expectedCount
 }
 
+@Test("BlabeePet snapshot polling carries a bounded consumer heartbeat")
+@MainActor
+func blabeePetSnapshotPollingCarriesConsumerHeartbeat() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+
+    await viewModel.refresh()
+
+    let payload = try #require(await transport.requestPayloads(type: "get_state").first)
+    let object = try petTestObject(payload)
+    #expect(Set(object.keys) == ["schema_version", "kind", "consumer_heartbeat"])
+    #expect(object["schema_version"] as? String == "1.0")
+    #expect(object["kind"] as? String == "blabee_pet_snapshot_request")
+    #expect(object["consumer_heartbeat"] as? Bool == true)
+}
+
 @Test("BlabeePet distinguishes ready from an actual in-flight continuation")
 @MainActor
 func blabeePetReadyAndWorkingPresentation() throws {
@@ -613,6 +631,243 @@ func blabeePetDuplicateSubmitSingleFlight() async throws {
     await second.value
     #expect(await transport.requestCount(type: "select") == 1)
     #expect(opener.opened.count == 1)
+}
+
+@Test("BlabeePet global slot submission owns progress until selection resolves")
+@MainActor
+func blabeePetGlobalSlotSelectionProgress() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let card = PetTestCard(suffix: "global_selection_progress")
+    _ = try await blabeePetFocus(
+        "global_selection_progress",
+        card: card,
+        viewModel: viewModel,
+        transport: transport
+    )
+    let interaction = try #require(viewModel.displayInteraction)
+    let selectedChoice = try #require(interaction.choice(slot: 1))
+    let siblingChoice = try #require(interaction.choice(slot: 2))
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await transport.setSelectionBlocked(true)
+
+    let selection = Task { @MainActor in
+        await viewModel.handleGlobalSlot(1)
+    }
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "select",
+        transport: transport
+    ), "timed out waiting for the blocked global selection request")
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: selectedChoice
+    ) == .progress)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: siblingChoice
+    ) == .suppressed)
+
+    await transport.setSelectionBlocked(false)
+    await selection.value
+
+    #expect(viewModel.selectionSubmission == nil)
+    #expect(await transport.requestCount(type: "select") == 1)
+}
+
+@Test("BlabeePet gives progress to the clicked row and clears it after submission")
+@MainActor
+func blabeePetPanelSelectionProgressOwnershipAndClearing() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let card = PetTestCard(suffix: "selection_progress")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(cards: [card]))
+    let interaction = try #require(viewModel.displayInteraction)
+    let identity = interaction.identity
+    let selectedChoice = try #require(interaction.choice(slot: 1))
+    let siblingChoice = try #require(interaction.choice(slot: 2))
+
+    await transport.enqueue(type: "focus_interaction", response: try petTestFocusResponse())
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [card],
+            foregroundSuffix: "selection_progress"
+        )
+    )
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await transport.setFocusBlocked(true)
+    await transport.setSelectionBlocked(true)
+
+    let selection = Task { @MainActor in
+        await viewModel.focusAndRequestPanelSelection(1, interaction: identity)
+    }
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "focus_interaction",
+        transport: transport
+    ), "timed out waiting for the blocked focus request")
+
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: selectedChoice
+    ) == .progress)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: siblingChoice
+    ) == .suppressed)
+
+    await viewModel.focusAndRequestPanelSelection(2, interaction: identity)
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(await transport.requestCount(type: "select") == 0)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: selectedChoice
+    ) == .progress)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: siblingChoice
+    ) == .suppressed)
+
+    await transport.setFocusBlocked(false)
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "select",
+        transport: transport
+    ), "timed out waiting for the blocked selection request")
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: selectedChoice
+    ) == .progress)
+    #expect(await transport.requestCount(type: "focus_interaction") == 1)
+    #expect(await transport.requestCount(type: "select") == 1)
+
+    let follower = PetTestCard(suffix: "selection_progress_follower")
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [follower],
+        foregroundSuffix: "selection_progress_follower"
+    ))
+    let followerInteraction = try #require(viewModel.displayInteraction)
+    let followerChoice = try #require(followerInteraction.choice(slot: 1))
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: followerInteraction,
+        choice: followerChoice
+    ) == .suppressed)
+    await viewModel.focusAndRequestPanelSelection(
+        1,
+        interaction: followerInteraction.identity
+    )
+    #expect(await transport.requestCount(type: "select") == 1)
+
+    await transport.setSelectionBlocked(false)
+    await selection.value
+
+    #expect(viewModel.selectionSubmission == nil)
+    #expect(viewModel.displayInteraction == nil)
+    #expect(await transport.requestCount(type: "select") == 1)
+}
+
+@Test("BlabeePet clears panel selection progress after an ambiguous failure")
+@MainActor
+func blabeePetPanelSelectionProgressClearsAfterFailure() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let card = PetTestCard(suffix: "selection_progress_failure")
+    let identity = try await blabeePetFocus(
+        "selection_progress_failure",
+        card: card,
+        viewModel: viewModel,
+        transport: transport
+    )
+    let interaction = try #require(viewModel.displayInteraction)
+    let choice = try #require(interaction.choice(slot: 1))
+    await transport.enqueueFailure(type: "select", code: "lost_response")
+    await transport.enqueue(
+        type: "get_state",
+        response: try petTestSnapshotData(
+            cards: [card],
+            foregroundSuffix: "selection_progress_failure"
+        )
+    )
+    await transport.setSelectionBlocked(true)
+
+    let selection = Task { @MainActor in
+        await viewModel.focusAndRequestPanelSelection(1, interaction: identity)
+    }
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "select",
+        transport: transport
+    ), "timed out waiting for the blocked selection request")
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: choice
+    ) == .progress)
+
+    await transport.setSelectionBlocked(false)
+    await selection.value
+
+    #expect(viewModel.selectionSubmission == nil)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: choice
+    ) == .shortcut("사용 불가"))
+    #expect(await transport.requestCount(type: "select") == 1)
+}
+
+@Test("BlabeePet high-risk confirmation never leaves panel selection progress behind")
+@MainActor
+func blabeePetHighRiskConfirmationClearsPanelSelectionProgress() async throws {
+    let transport = PetFakeTransport()
+    let opener = PetFakeApplicationOpener()
+    let viewModel = blabeePetViewModel(transport: transport, opener: opener)
+    let card = PetTestCard(suffix: "selection_progress_risk", risk: "high")
+    let identity = try await blabeePetFocus(
+        "selection_progress_risk",
+        card: card,
+        viewModel: viewModel,
+        transport: transport
+    )
+    let interaction = try #require(viewModel.displayInteraction)
+    let choice = try #require(interaction.choice(slot: 1))
+
+    await viewModel.focusAndRequestPanelSelection(1, interaction: identity)
+
+    #expect(viewModel.riskConfirmation?.slot == 1)
+    #expect(viewModel.selectionSubmission == nil)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: choice
+    ) == .shortcut("Pet 확인"))
+    #expect(await transport.requestCount(type: "select") == 0)
+
+    await transport.enqueue(type: "select", response: try petTestSelectionResponse())
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await transport.setSelectionBlocked(true)
+    let selection = Task { @MainActor in
+        await viewModel.confirmRiskSelection()
+    }
+    try #require(await blabeePetWaitForRequestCount(
+        1,
+        type: "select",
+        transport: transport
+    ), "timed out waiting for the blocked confirmed selection request")
+    #expect(viewModel.riskConfirmation == nil)
+    #expect(viewModel.actionAccessoryPresentation(
+        interaction: interaction,
+        choice: choice
+    ) == .progress)
+
+    await transport.setSelectionBlocked(false)
+    await selection.value
+
+    #expect(viewModel.selectionSubmission == nil)
+    #expect(await transport.requestCount(type: "select") == 1)
 }
 
 @Test("BlabeePet generates a fresh selection id for each newly focused card")

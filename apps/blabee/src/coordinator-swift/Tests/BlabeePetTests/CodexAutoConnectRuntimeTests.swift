@@ -25,7 +25,7 @@ struct CodexAutoConnectRuntimeTests {
     @Test("a supported executable change is requalified once and published")
     func supportedDriftRequalifiesOnce() throws {
         let fixture = try AutoConnectRuntimeFixture(
-            versions: ["0.150.1", "0.149.1"]
+            versions: ["0.150.1", "0.151.0"]
         )
         defer { fixture.remove() }
 
@@ -37,7 +37,7 @@ struct CodexAutoConnectRuntimeTests {
         _ = try fixture.manager.approvedCodexForLaunch()
 
         #expect(fixture.versions.callCount == 2)
-        #expect(updated.qualifiedVersion == "0.149.1")
+        #expect(updated.qualifiedVersion == "0.151.0")
         #expect(try Data(contentsOf: fixture.approval) != before)
     }
 
@@ -59,7 +59,7 @@ struct CodexAutoConnectRuntimeTests {
         #expect(try Data(contentsOf: fixture.approval) == before)
     }
 
-    @Test("disable removes the managed launcher and runtime approval together")
+    @Test("disable removes managed state but keeps a native-only stable launcher")
     func disableRemovesRuntimeApproval() throws {
         let fixture = try AutoConnectRuntimeFixture(versions: ["0.150.1"])
         defer { fixture.remove() }
@@ -67,11 +67,15 @@ struct CodexAutoConnectRuntimeTests {
         try fixture.manager.enable()
         #expect(FileManager.default.fileExists(atPath: fixture.approval.path))
         #expect(FileManager.default.fileExists(atPath: fixture.managed.path))
+        #expect(FileManager.default.fileExists(atPath: fixture.stableLauncher.path))
+        let stableLauncherBeforeDisable = try Data(contentsOf: fixture.stableLauncher)
 
         try fixture.manager.disable()
 
         #expect(!FileManager.default.fileExists(atPath: fixture.approval.path))
         #expect(!FileManager.default.fileExists(atPath: fixture.managed.path))
+        #expect(try Data(contentsOf: fixture.stableLauncher) == stableLauncherBeforeDisable)
+        #expect(fixture.manager.state() == .disabled)
     }
 
     @Test("runtime authority allows deny-only ACLs and rejects permission grants")
@@ -132,6 +136,81 @@ struct CodexAutoConnectRuntimeTests {
         }
     }
 
+    @Test("managed provider qualifies once then reuses the pinned executable")
+    func managedProviderQualifiesOnce() throws {
+        let fixture = try AutoConnectRuntimeFixture(
+            versions: ["0.150.1", "0.151.0"]
+        )
+        defer { fixture.remove() }
+
+        try fixture.manager.enable()
+        try fixture.replaceOfficial(marker: "supported-before-first-managed-launch")
+        let provider = CodexAutoConnectApprovedExecutableProvider(
+            manager: fixture.manager
+        )
+        let executableProvider: ManagedCodexExecutableProvider = provider.next
+
+        let first = try executableProvider()
+        let second = try executableProvider()
+
+        #expect(first == second)
+        #expect(fixture.versions.callCount == 2)
+    }
+
+    @Test("managed provider rejects a newly qualified executable after pinning")
+    func managedProviderRejectsLaterReplacement() throws {
+        let fixture = try AutoConnectRuntimeFixture(
+            versions: ["0.150.1", "0.151.0"]
+        )
+        defer { fixture.remove() }
+
+        try fixture.manager.enable()
+        let provider = CodexAutoConnectApprovedExecutableProvider(
+            manager: fixture.manager
+        )
+        let pinned = try provider.next()
+
+        try fixture.replaceOfficial(marker: "supported-after-managed-launch")
+        let replacement = try fixture.manager.approvedCodexForLaunch()
+        #expect(replacement.canonicalURL == pinned)
+        #expect(replacement.qualifiedVersion == "0.151.0")
+
+        #expect(throws: CodexAutoConnectError.self) {
+            _ = try provider.next()
+        }
+        #expect(fixture.versions.callCount == 2)
+    }
+
+    @Test("concurrent first managed requests share one pinned qualification")
+    func managedProviderSerializesConcurrentFirstCalls() async throws {
+        let fixture = try AutoConnectRuntimeFixture(
+            versions: ["0.150.1", "0.151.0"]
+        )
+        defer { fixture.remove() }
+
+        try fixture.manager.enable()
+        try fixture.replaceOfficial(marker: "concurrent-supported-update")
+        let provider = CodexAutoConnectApprovedExecutableProvider(
+            manager: fixture.manager
+        )
+
+        let paths = try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 0..<16 {
+                group.addTask {
+                    try provider.next().path
+                }
+            }
+            var values: [String] = []
+            for try await value in group {
+                values.append(value)
+            }
+            return values
+        }
+
+        #expect(Set(paths).count == 1)
+        #expect(fixture.versions.callCount == 2)
+    }
+
     private func fileMode(_ url: URL) throws -> mode_t {
         var info = stat()
         guard lstat(url.path, &info) == 0 else {
@@ -160,6 +239,13 @@ private final class AutoConnectRuntimeFixture {
     var managed: URL {
         applicationSupport.appendingPathComponent(
             "shell/v1/codex-auto-connect.zsh",
+            isDirectory: false
+        )
+    }
+
+    var stableLauncher: URL {
+        applicationSupport.appendingPathComponent(
+            "shell/v1/codex-stable-launcher",
             isDirectory: false
         )
     }

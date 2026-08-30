@@ -24,9 +24,11 @@ struct CodexLaunchIntegrationTests {
             "HOME": fixture.home.path,
             "BLABEE_LAUNCH_CAPTURE": fixture.capture.path,
             "BLABEE_FAKE_EXIT_CODE": "37",
+            "BLABEE_COORDINATOR_BINARY": "/stale/coordinator",
             "BLABEE_SOCKET": "/stale/socket",
             "BLABEE_MANAGED_APPROVALS": "stale-approvals",
             "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+            "BLABEE_RUNTIME_IDENTITY": "sha256:stale-runtime",
         ]) { _, fixtureValue in fixtureValue }
         let output = Pipe()
         let error = Pipe()
@@ -53,7 +55,9 @@ struct CodexLaunchIntegrationTests {
         #expect(capture.contains("arg=<probe-mode>"))
         #expect(capture.contains("arg=<two words>"))
         #expect(capture.contains("arg=<*[x]>"))
-        #expect(capture.contains("env=<unset><unset><unset>"))
+        #expect(capture.contains("env=<unset><unset><unset><unset><unset>"))
+        #expect(!capture.contains("/stale/coordinator"))
+        #expect(!capture.contains("stale-runtime"))
         #expect(!capture.contains("--version"))
     }
 }
@@ -153,10 +157,12 @@ private final class CodexLaunchIntegrationFixture {
           printf 'cwd=<%s>\\n' "$PWD"
           printf 'argc=<%s>\\n' "$#"
           for value in "$@"; do printf 'arg=<%s>\\n' "$value"; done
-          printf 'env=<%s><%s><%s>\\n' \
+          printf 'env=<%s><%s><%s><%s><%s>\\n' \
+            "${BLABEE_COORDINATOR_BINARY-unset}" \
             "${BLABEE_SOCKET-unset}" \
             "${BLABEE_MANAGED_APPROVALS-unset}" \
-            "${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}"
+            "${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}" \
+            "${BLABEE_RUNTIME_IDENTITY-unset}"
         } > "$BLABEE_LAUNCH_CAPTURE"
         exit "$BLABEE_FAKE_EXIT_CODE"
         """
