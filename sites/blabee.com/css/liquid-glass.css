@@ -1,0 +1,609 @@
+/*
+ * Blabee liquid-glass comparison variant.
+ * The canonical Quiet Signal page remains flat; this layer is scoped to
+ * body.liquid-glass and maps the current macOS PetView surface hierarchy.
+ */
+
+.liquid-glass {
+  --glass-radius-panel: 30px;
+  --glass-radius-section: 20px;
+  --glass-radius-row: 18px;
+  --glass-radius-key: 8px;
+  --glass-rim-width: 0.75px;
+  --glass-panel-fill: rgba(8, 9, 11, 0.68);
+  --glass-inset: rgba(255, 255, 255, 0.065);
+  --glass-inset-emphasized: rgba(255, 255, 255, 0.10);
+  --glass-inset-rim: rgba(255, 255, 255, 0.13);
+  --glass-accent-rim: rgba(254, 231, 21, 0.32);
+  --glass-rim-top: rgba(255, 255, 255, 0.24);
+  --glass-rim-middle: rgba(255, 255, 255, 0.08);
+  --glass-rim-bottom: rgba(0, 0, 0, 0.34);
+  --glass-blur: 28px;
+  --glass-saturation: 135%;
+  --glass-section-shadow: 0 30px 72px rgba(0, 0, 0, 0.46);
+  background: #000000;
+}
+
+.liquid-glass .hero,
+.liquid-glass .section,
+.liquid-glass .signup-section,
+.liquid-glass .site-footer {
+  position: relative;
+  background-color: #000000;
+}
+
+/* The copy uses one weak reading pane; the product demo remains the strongest hero surface. */
+.liquid-glass .hero-copy {
+  position: relative;
+  isolation: isolate;
+}
+
+.liquid-glass .hero-copy::before {
+  position: absolute;
+  z-index: -1;
+  inset: -34px -28px;
+  border: var(--glass-rim-width) solid transparent;
+  border-radius: var(--glass-radius-panel);
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.008) 50%, rgba(8, 9, 11, 0.16) 82%) padding-box,
+    linear-gradient(rgba(8, 9, 11, 0.48), rgba(8, 9, 11, 0.48)) padding-box,
+    linear-gradient(180deg, var(--glass-rim-top), var(--glass-rim-middle) 48%, var(--glass-rim-bottom)) border-box;
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  -webkit-backdrop-filter: blur(18px) saturate(122%);
+  backdrop-filter: blur(18px) saturate(122%);
+}
+
+/* The sticky header is the only page-level chrome with a soft material. */
+.liquid-glass .glass-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  background: rgba(8, 9, 11, 0.52);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.liquid-glass .glass-header.is-scrolled {
+  border-bottom-color: rgba(255, 255, 255, 0.13);
+  background: rgba(8, 9, 11, 0.72);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+/* Strong material: one blurred outer shell per major page region. */
+.liquid-glass .glass-panel,
+.liquid-glass .section-benefits .section-grid,
+.liquid-glass .section-how > .container,
+.liquid-glass .section-beta-scope .section-grid,
+.liquid-glass .section-faq .section-grid,
+.liquid-glass .signup-grid {
+  border: var(--glass-rim-width) solid transparent;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.055),
+      rgba(255, 255, 255, 0.012) 42%,
+      rgba(8, 9, 11, 0.20) 78%
+    ) padding-box,
+    linear-gradient(var(--glass-panel-fill), var(--glass-panel-fill)) padding-box,
+    linear-gradient(
+      180deg,
+      var(--glass-rim-top),
+      var(--glass-rim-middle) 48%,
+      var(--glass-rim-bottom)
+    ) border-box;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+.liquid-glass .section-benefits .section-grid,
+.liquid-glass .section-how > .container,
+.liquid-glass .section-beta-scope .section-grid,
+.liquid-glass .section-faq .section-grid,
+.liquid-glass .signup-grid {
+  border-radius: var(--glass-radius-panel);
+  padding: clamp(28px, 3.5vw, 48px);
+  box-shadow:
+    var(--glass-section-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.liquid-glass .section-beta-scope::before {
+  display: none;
+}
+
+.liquid-glass .section-beta-scope .section-grid {
+  position: relative;
+  overflow: clip;
+}
+
+.liquid-glass .section-beta-scope .section-grid::before {
+  position: absolute;
+  top: 34px;
+  bottom: 34px;
+  left: 0;
+  width: 6px;
+  border-radius: 0 6px 6px 0;
+  background: var(--yellow);
+  content: "";
+}
+
+.liquid-glass .demo-window.glass-panel {
+  overflow: hidden;
+  border-radius: var(--glass-radius-panel);
+  box-shadow:
+    0 28px 64px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.liquid-glass .demo-window .window-chrome {
+  height: 44px;
+  margin: 12px 12px 0;
+  border-bottom: 0;
+}
+
+.liquid-glass .demo-window .terminal {
+  background: transparent;
+}
+
+.liquid-glass .decision-panel.glass-panel {
+  overflow: hidden;
+  border-radius: var(--glass-radius-panel);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.54),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+/* Brand, primary actions, and the 32px decision signal stay opaque. */
+.liquid-glass .brand-mark,
+.liquid-glass .button-yellow,
+.liquid-glass .decision-bar {
+  background: var(--yellow);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-glass .decision-bar {
+  position: relative;
+  z-index: 2;
+}
+
+/* Inset surfaces mirror PetView but never stack another blur. */
+.liquid-glass .glass-inset {
+  border: var(--glass-rim-width) solid var(--glass-inset-rim);
+  background: var(--glass-inset);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-glass .glass-inset-section {
+  border-radius: var(--glass-radius-section);
+}
+
+.liquid-glass .glass-inset-row {
+  border-radius: var(--glass-radius-row);
+}
+
+.liquid-glass .glass-inset-emphasized {
+  border-color: var(--glass-accent-rim);
+  background: var(--glass-inset-emphasized);
+}
+
+.liquid-glass .glass-key {
+  border: var(--glass-rim-width) solid var(--glass-inset-rim);
+  border-radius: var(--glass-radius-key);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.liquid-glass .decision-options {
+  gap: 10px;
+  padding: 10px;
+  transition:
+    max-height 280ms ease,
+    opacity 180ms ease,
+    padding-block 280ms ease;
+}
+
+.liquid-glass .product-demo[data-demo-state="working"] .decision-options,
+.liquid-glass .product-demo[data-demo-state="completed"] .decision-options {
+  padding-block: 0;
+}
+
+.liquid-glass .decision-option {
+  border-top: var(--glass-rim-width) solid var(--glass-inset-rim);
+  transition:
+    border-color 130ms ease,
+    background-color 130ms ease,
+    color 130ms ease,
+    transform 130ms ease;
+}
+
+.liquid-glass .decision-option:hover,
+.liquid-glass .decision-option:focus-visible,
+.liquid-glass .decision-option.is-selected,
+.liquid-glass .product-demo[data-demo-state="review"] .decision-option[data-choice="2"] {
+  border-color: var(--yellow);
+  background: var(--yellow);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.liquid-glass .terminal-detail.glass-inset {
+  border-left: 2px solid var(--yellow);
+}
+
+/* Secondary glass is weaker; inner controls never stack another blur. */
+.liquid-glass .glass-soft {
+  border: var(--glass-rim-width) solid var(--glass-inset-rim);
+  border-radius: var(--glass-radius-section);
+  background: rgba(8, 9, 11, 0.52);
+  -webkit-backdrop-filter: blur(14px) saturate(118%);
+  backdrop-filter: blur(14px) saturate(118%);
+}
+
+.liquid-glass .editorial-list,
+.liquid-glass .steps-list,
+.liquid-glass .scope-table,
+.liquid-glass .faq-list {
+  overflow: hidden;
+  border: var(--glass-rim-width) solid var(--glass-inset-rim);
+  border-radius: var(--glass-radius-section);
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.liquid-glass .editorial-list,
+.liquid-glass .scope-table,
+.liquid-glass .faq-list {
+  display: grid;
+  gap: 0;
+  padding: 0;
+}
+
+.liquid-glass .editorial-row,
+.liquid-glass .steps-list > li,
+.liquid-glass .scope-table > div,
+.liquid-glass .faq-list details {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-glass .editorial-row {
+  padding: 28px 26px;
+  border-bottom: var(--glass-rim-width) solid var(--glass-inset-rim);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.liquid-glass .editorial-row:last-child {
+  border-bottom: 0;
+}
+
+.liquid-glass .steps-list {
+  gap: 0;
+  padding: 0;
+}
+
+.liquid-glass .steps-list > li,
+.liquid-glass .steps-list > li + li,
+.liquid-glass .steps-list > li:last-child {
+  min-height: 315px;
+  padding: 28px;
+  border-right: var(--glass-rim-width) solid var(--glass-inset-rim);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.liquid-glass .steps-list > li:last-child {
+  border-right: 0;
+}
+
+.liquid-glass .scope-table > div {
+  min-height: 96px;
+  padding: 18px 22px;
+  border-bottom: var(--glass-rim-width) solid var(--glass-inset-rim);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.liquid-glass .scope-table > div:last-child {
+  border-bottom: 0;
+}
+
+.liquid-glass .faq-list details {
+  overflow: hidden;
+  border-bottom: var(--glass-rim-width) solid var(--glass-inset-rim);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.liquid-glass .faq-list details:last-child {
+  border-bottom: 0;
+}
+
+.liquid-glass .faq-list summary {
+  padding-inline: 20px;
+}
+
+.liquid-glass .faq-list details > p {
+  padding: 0 52px 28px 20px;
+}
+
+.liquid-glass .signup-form.glass-soft {
+  padding: 32px;
+  background: var(--glass-inset);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-glass .signup-form input[type="email"],
+.liquid-glass .agent-options label,
+.liquid-glass .form-error,
+.liquid-glass .form-success {
+  border-color: var(--glass-inset-rim);
+  background: var(--glass-inset);
+}
+
+.liquid-glass .agent-options label:first-child {
+  border-radius: var(--glass-radius-key) 0 0 var(--glass-radius-key);
+}
+
+.liquid-glass .agent-options label:last-child {
+  border-radius: 0 var(--glass-radius-key) var(--glass-radius-key) 0;
+}
+
+.liquid-glass .agent-options label:has(input:checked),
+.liquid-glass .form-submit {
+  background: var(--yellow);
+}
+
+.liquid-glass .faq-list details {
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.liquid-glass .faq-list details[open] {
+  margin: 0;
+  padding: 0;
+  background: var(--glass-inset-emphasized);
+  box-shadow: inset 3px 0 0 var(--yellow);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-glass .faq-list summary:focus-visible {
+  outline-offset: -4px;
+}
+
+.liquid-glass .footer-inner {
+  padding: 20px 26px;
+  border: var(--glass-rim-width) solid var(--glass-inset-rim);
+  border-radius: var(--glass-radius-section);
+  background: rgba(8, 9, 11, 0.52);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  -webkit-backdrop-filter: blur(14px) saturate(118%);
+  backdrop-filter: blur(14px) saturate(118%);
+}
+
+/* Desktop hero sheets share one row and one visual baseline. */
+@media (min-width: 1101px) {
+  .liquid-glass .hero-grid {
+    align-items: stretch;
+  }
+
+  .liquid-glass .hero-copy {
+    display: flex;
+    align-self: stretch;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .liquid-glass .hero-copy::before {
+    inset: 0 -28px;
+  }
+
+  .liquid-glass .demo-window.glass-panel {
+    height: 100%;
+  }
+
+  .liquid-glass .product-demo figcaption {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+  }
+}
+
+/* Browsers without material support receive an intentional opaque hierarchy. */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .liquid-glass .glass-header,
+  .liquid-glass .glass-header.is-scrolled,
+  .liquid-glass .hero-copy::before,
+  .liquid-glass .glass-panel,
+  .liquid-glass .glass-soft,
+  .liquid-glass .section-benefits .section-grid,
+  .liquid-glass .section-how > .container,
+  .liquid-glass .section-beta-scope .section-grid,
+  .liquid-glass .section-faq .section-grid,
+  .liquid-glass .signup-grid,
+  .liquid-glass .footer-inner {
+    border-color: var(--glass-inset-rim);
+    background: #111216;
+  }
+}
+
+/* Mirrors macOS Reduce Transparency: no blur, opaque controls, same hierarchy. */
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass .glass-header,
+  .liquid-glass .glass-header.is-scrolled,
+  .liquid-glass .hero-copy::before,
+  .liquid-glass .glass-panel,
+  .liquid-glass .glass-soft,
+  .liquid-glass .section-benefits .section-grid,
+  .liquid-glass .section-how > .container,
+  .liquid-glass .section-beta-scope .section-grid,
+  .liquid-glass .section-faq .section-grid,
+  .liquid-glass .signup-grid,
+  .liquid-glass .footer-inner {
+    border-color: rgba(243, 239, 228, 0.18);
+    background: #111216;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .liquid-glass .glass-inset,
+  .liquid-glass .editorial-list,
+  .liquid-glass .editorial-row,
+  .liquid-glass .steps-list,
+  .liquid-glass .steps-list > li,
+  .liquid-glass .scope-table,
+  .liquid-glass .scope-table > div,
+  .liquid-glass .faq-list,
+  .liquid-glass .faq-list details,
+  .liquid-glass .signup-form input[type="email"],
+  .liquid-glass .agent-options label,
+  .liquid-glass .form-error,
+  .liquid-glass .form-success {
+    background: #1c1d22;
+  }
+
+  .liquid-glass .glass-inset-emphasized {
+    border-color: var(--glass-accent-rim);
+  }
+}
+
+@media (max-width: 900px) {
+  .liquid-glass .section-benefits .section-grid,
+  .liquid-glass .section-how > .container,
+  .liquid-glass .section-beta-scope .section-grid,
+  .liquid-glass .section-faq .section-grid,
+  .liquid-glass .signup-grid {
+    border-radius: 26px;
+    padding: 32px;
+  }
+
+  .liquid-glass .section-benefits .section-grid,
+  .liquid-glass .section-beta-scope .section-grid,
+  .liquid-glass .section-faq .section-grid,
+  .liquid-glass .signup-grid {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+
+  .liquid-glass .section-heading {
+    max-width: 650px;
+  }
+
+  .liquid-glass .section-heading-wide {
+    display: block;
+  }
+
+  .liquid-glass .section-heading-wide .section-intro {
+    margin-top: 22px;
+  }
+
+  .liquid-glass .steps-list {
+    grid-template-columns: 1fr;
+  }
+
+  .liquid-glass .steps-list > li,
+  .liquid-glass .steps-list > li + li,
+  .liquid-glass .steps-list > li:last-child {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: var(--glass-rim-width) solid var(--glass-inset-rim);
+  }
+
+  .liquid-glass .steps-list > li:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .liquid-glass .hero-copy::before {
+    inset: -20px -10px;
+    border-radius: 24px;
+  }
+
+  .liquid-glass .section-benefits .section-grid,
+  .liquid-glass .section-how > .container,
+  .liquid-glass .section-beta-scope .section-grid,
+  .liquid-glass .section-faq .section-grid,
+  .liquid-glass .signup-grid {
+    border-radius: 24px;
+    padding: 20px;
+  }
+
+  .liquid-glass .demo-window.glass-panel {
+    border-radius: 24px;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.56);
+  }
+
+  .liquid-glass .decision-panel.glass-panel {
+    border-radius: 24px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.52);
+  }
+
+  .liquid-glass .signup-form.glass-soft {
+    padding: 24px;
+  }
+
+  .liquid-glass .editorial-row {
+    padding: 24px 18px;
+  }
+
+  .liquid-glass .steps-list > li,
+  .liquid-glass .steps-list > li + li,
+  .liquid-glass .steps-list > li:last-child {
+    min-height: auto;
+    padding: 24px 18px 28px 52px;
+  }
+
+  .liquid-glass .steps-list .step-signal {
+    top: 58px;
+    left: 18px;
+  }
+
+  .liquid-glass .scope-table > div {
+    padding: 16px;
+  }
+
+  .liquid-glass .faq-list summary {
+    padding-inline: 16px;
+  }
+
+  .liquid-glass .faq-list details > p {
+    padding: 0 36px 24px 16px;
+  }
+
+  .liquid-glass .agent-options label:first-child {
+    border-radius: var(--glass-radius-key) var(--glass-radius-key) 0 0;
+  }
+
+  .liquid-glass .agent-options label:last-child {
+    border-radius: 0 0 var(--glass-radius-key) var(--glass-radius-key);
+  }
+
+  .liquid-glass .footer-inner {
+    padding: 18px 20px;
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass .glass-header,
+  .liquid-glass .decision-options,
+  .liquid-glass .decision-option,
+  .liquid-glass .faq-list details {
+    transition: none !important;
+  }
+
+  .liquid-glass .decision-option:hover,
+  .liquid-glass .decision-option:focus-visible,
+  .liquid-glass .decision-option.is-selected {
+    transform: none;
+  }
+}

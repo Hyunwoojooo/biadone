@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#000000">
+    <meta name="color-scheme" content="dark">
+    <meta name="robots" content="noindex, follow">
+    <title>Blabee — One small decision. Don’t go back to the terminal.</title>
+    <meta
+      name="description"
+      content="Direct the next step in Codex from your Mac with one shortcut. Join the Blabee macOS private beta."
+    >
+    <link rel="canonical" href="https://blabee.com/">
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Blabee">
+    <meta property="og:url" content="https://blabee.com/">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="Blabee — One small decision. Don’t go back to the terminal.">
+    <meta
+      property="og:description"
+      content="Direct the next step in Codex from your Mac with one shortcut. Join the Blabee macOS private beta."
+    >
+    <meta property="og:image" content="https://blabee.com/assets/og-blabee.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta
+      property="og:image:alt"
+      content="One small decision. Don’t go back to the terminal. Blabee for Codex on macOS."
+    >
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Blabee — One small decision. Don’t go back to the terminal.">
+    <meta
+      name="twitter:description"
+      content="Direct the next step in Codex from your Mac with one shortcut. Join the Blabee macOS private beta."
+    >
+    <meta name="twitter:image" content="https://blabee.com/assets/og-blabee.png">
+    <meta
+      name="twitter:image:alt"
+      content="One small decision. Don’t go back to the terminal. Blabee for Codex on macOS."
+    >
+
+    <link rel="stylesheet" href="/css/style.css?v=20260831a">
+    <link rel="stylesheet" href="/css/liquid-glass.css?v=20260901b">
+    <script defer src="/js/vendor/gsap.min.js?v=3.15.0"></script>
+    <script defer src="/js/vendor/ScrollTrigger.min.js?v=3.15.0"></script>
+    <script type="module" src="/js/main.js?v=20260830e"></script>
+  </head>
+  <body class="liquid-glass">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header glass-header" data-site-header>
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="Blabee home">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="/assets/blabee-menu-bar.svg" width="28" height="24" alt="">
+          </span>
+          <span class="brand-wordmark">Blabee</span>
+        </a>
+
+        <div class="header-actions">
+          <a class="button button-small button-yellow header-cta" href="#beta">Mac beta</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="signal-dot" aria-hidden="true"></span><span>FOR CODEX · macOS</span></p>
+            <h1 id="hero-title">
+              <span>One small decision.</span>
+              <span>Don’t go back to the terminal.</span>
+            </h1>
+            <p class="hero-description">When Codex has useful next actions, Blabee surfaces them on your Mac. Respond with one shortcut—without breaking your flow.</p>
+            <div class="hero-actions">
+              <a class="button button-yellow" href="#beta">Join the Mac beta ↗</a>
+              <span class="beta-note">macOS · Private beta</span>
+            </div>
+          </div>
+
+          <figure
+            class="product-demo"
+            tabindex="0"
+            data-product-demo
+            data-demo-state="decision"
+            aria-label="A demo of Blabee's 32-pixel top bar dropping open with four next actions and sending a shortcut choice back to the same agent session"
+          >
+            <div class="demo-window glass-panel">
+              <div class="window-chrome glass-inset glass-inset-section" aria-hidden="true">
+                <div class="traffic-lights"><span></span><span></span><span></span></div>
+                <span class="window-title" aria-hidden="true"></span>
+                <span class="window-spacer"></span>
+              </div>
+
+              <div class="terminal" aria-live="off">
+                <div class="terminal-context">
+                  <span class="terminal-context-label" aria-hidden="true"></span>
+                  <span class="terminal-context-agent">Codex</span>
+                </div>
+                <p class="terminal-prompt"><span aria-hidden="true">›</span> <span data-demo-prompt>Implement email login with secure sessions</span></p>
+                <div class="terminal-log" data-demo-log>
+                  <p><span class="log-ok" aria-hidden="true">✓</span> Read app/api/auth/login/route.ts</p>
+                  <p><span class="log-ok" aria-hidden="true">✓</span> Edited lib/auth/session.ts</p>
+                  <p><span class="log-running" aria-hidden="true">→</span> pnpm test -- auth</p>
+                </div>
+                <div class="terminal-status">
+                  <span class="status-pulse" aria-hidden="true"></span>
+                  <span data-demo-status>Running 12 auth tests</span>
+                </div>
+                <button class="terminal-detail-button" type="button" data-demo-details hidden>View details</button>
+                <div class="terminal-detail glass-inset glass-inset-section" data-demo-detail-panel hidden>
+                  <p><span class="log-warning" aria-hidden="true">⚠</span> Session cookie rotation is missing</p>
+                </div>
+              </div>
+
+              <div class="decision-panel glass-panel" aria-label="Blabee choices">
+                <div class="decision-bar">
+                  <img src="/assets/blabee-menu-bar.svg" width="28" height="24" alt="">
+                  <span aria-hidden="true">Blabee</span>
+                  <span class="decision-bar-keys" aria-hidden="true">⌥1 · ⌥2 · ⌥3 · ⌥4</span>
+                </div>
+                <div class="decision-options" data-decision-options>
+                  <button class="decision-option glass-inset glass-inset-row glass-inset-emphasized" type="button" data-choice="1">
+                    <kbd class="glass-key">⌥1</kbd>
+                    <span>Implement logout</span>
+                    <small>From Codex</small>
+                  </button>
+                  <button class="decision-option glass-inset glass-inset-row" type="button" data-choice="2">
+                    <kbd class="glass-key">⌥2</kbd>
+                    <span>Review auth architecture</span>
+                  </button>
+                  <button class="decision-option glass-inset glass-inset-row" type="button" data-choice="3">
+                    <kbd class="glass-key">⌥3</kbd>
+                    <span>Add session rotation tests</span>
+                  </button>
+                  <button class="decision-option glass-inset glass-inset-row" type="button" data-choice="4">
+                    <kbd class="glass-key">⌥4</kbd>
+                    <span>Inspect auth edge cases</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <figcaption><span class="caption-rule" aria-hidden="true"></span><span>One shortcut. Same session. Keep going.</span></figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section section-benefits" aria-labelledby="benefits-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">FOR THE LONG RUN</p>
+            <h2 id="benefits-title">
+              <span>Codex keeps working.</span>
+              <span>So can you.</span>
+            </h2>
+            <p class="section-intro">Built for people who hand off a task, move to another window, and do not want to keep watching the terminal.</p>
+          </div>
+          <div class="editorial-list">
+            <article class="editorial-row">
+              <span class="row-number">01</span>
+              <div><h3>Keep your flow in another window</h3><p>Stay in your browser or document without checking the Codex screen over and over.</p></div>
+            </article>
+            <article class="editorial-row">
+              <span class="row-number">02</span>
+              <div><h3>Look only when it matters</h3><p>Blabee appears quietly when Codex has useful next actions for you.</p></div>
+            </article>
+            <article class="editorial-row">
+              <span class="row-number">03</span>
+              <div><h3>See the next actions, not a long reply</h3><p>Choose quickly from up to four next actions Codex provides.</p></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-how" aria-labelledby="how-title">
+        <div class="container">
+          <div class="section-heading section-heading-wide">
+            <p class="eyebrow">HOW IT WORKS</p>
+            <h2 id="how-title">Three steps. Then work moves again.</h2>
+            <p class="section-intro">Blabee does not decide for you. It surfaces Codex’s next actions and keeps your choice in the same session.</p>
+          </div>
+          <ol class="steps-list">
+            <li>
+              <span class="step-number">01</span>
+              <div class="step-signal" aria-hidden="true"><span></span></div>
+              <h3>Codex has useful next actions</h3>
+              <p>Codex prepares two to four genuine ways to continue the current work.</p>
+            </li>
+            <li>
+              <span class="step-number">02</span>
+              <div class="step-signal" aria-hidden="true"><span></span></div>
+              <h3>Blabee surfaces the ranked actions</h3>
+              <p>Review the next actions Codex prepared and choose with your configured shortcut.</p>
+            </li>
+            <li>
+              <span class="step-number">03</span>
+              <div class="step-signal" aria-hidden="true"><span></span></div>
+              <h3>The same session continues</h3>
+              <p>Your choice becomes a new user turn in the original Codex session.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section section-beta-scope" aria-labelledby="scope-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">CURRENT PRIVATE BETA</p>
+            <h2 id="scope-title">What we are testing now</h2>
+            <p class="section-intro">We are validating the core loop with a small group before a public download.</p>
+          </div>
+          <dl class="scope-table">
+            <div><dt>SUPPORT</dt><dd>Codex · macOS</dd></div>
+            <div><dt>CORE LOOP</dt><dd>Surface choices · choose with a shortcut · continue in the same session</dd></div>
+            <div><dt>ACCESS</dt><dd>Private installation guidance for selected users</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="section section-faq" aria-labelledby="faq-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">FAQ</p>
+            <h2 id="faq-title">A few things worth knowing</h2>
+            <p class="section-intro">Straight answers based on the current private beta.</p>
+          </div>
+          <div class="faq-list">
+            <details>
+              <summary><span>Does Blabee create the next actions?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Codex creates the choices. Blabee surfaces them and sends your selection back to the original session.</p>
+            </details>
+            <details>
+              <summary><span>Does it open a new Codex session?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Your selection is delivered as a new user turn in the original Codex session.</p>
+            </details>
+            <details>
+              <summary><span>Does Blabee appear after every Codex response?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. It appears only when Codex has useful next actions for the current response and the current session is correctly bound.</p>
+            </details>
+            <details>
+              <summary><span>Does the beta support Claude Code?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>The current private beta is Codex-first. Support for other agents is not confirmed yet.</p>
+            </details>
+            <details>
+              <summary><span>Do I need another AI API key?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Blabee does not add a separate LLM API key or inference service.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="signup-section" id="beta" aria-labelledby="signup-title">
+        <div class="container signup-grid">
+          <div class="signup-copy">
+            <p class="eyebrow eyebrow-dark">PRIVATE BETA FOR MAC</p>
+            <h2 id="signup-title">
+              <span>Decide fast.</span>
+              <span>Keep building.</span>
+            </h2>
+            <p>The current private beta focuses on the core Codex loop for macOS. Selected users will receive installation timing and guidance.</p>
+          </div>
+
+          <form class="signup-form glass-soft" data-beta-form data-endpoint="">
+            <div class="form-field">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required disabled data-js-required>
+            </div>
+
+            <fieldset disabled data-js-required>
+              <legend>Coding agent you use today</legend>
+              <div class="agent-options">
+                <label><input type="radio" name="agent" value="codex" checked><span>Codex</span></label>
+                <label><input type="radio" name="agent" value="claude-code"><span>Claude Code</span></label>
+                <label><input type="radio" name="agent" value="both"><span>Both</span></label>
+              </div>
+            </fieldset>
+
+            <p class="tool-note">The current private beta supports Codex first.</p>
+            <button class="button button-dark form-submit" type="submit" disabled data-js-required>
+              <span data-submit-label>Join the Mac beta ↗</span>
+            </button>
+            <noscript>
+              <p class="noscript-note" data-no-js-form-message>JavaScript is required to submit the private beta application.</p>
+            </noscript>
+            <p class="privacy-note">No spam—only beta invites and important product updates.</p>
+            <p class="form-error" role="alert" data-form-error hidden>We couldn’t save your application. Check your email and try again.</p>
+
+            <div class="form-success" role="status" data-form-success hidden>
+              <strong>You’re on the beta list.</strong>
+              <p>We’ll let you know as soon as Blabee is ready for you.</p>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <a class="brand footer-brand" href="#top" aria-label="Back to Blabee home">
+          <span class="brand-mark" aria-hidden="true"><img src="/assets/blabee-menu-bar.svg" width="28" height="24" alt=""></span>
+          <span class="brand-wordmark">Blabee</span>
+        </a>
+        <p>Shortcut control for Codex on macOS.</p>
+        <p>© 2026 Blabee</p>
+      </div>
+    </footer>
+  </body>
+</html>
