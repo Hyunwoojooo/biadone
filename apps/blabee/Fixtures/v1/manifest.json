@@ -20,12 +20,6 @@
       "valid": true
     },
     {
-      "name": "valid_decision_proposal_legacy",
-      "file": "contracts/valid/decision-proposal-legacy.json",
-      "schema": "decision_proposal",
-      "valid": true
-    },
-    {
       "name": "valid_decision_packet_rollback_disabled",
       "file": "contracts/valid/decision-packet-rollback-disabled.json",
       "schema": "decision_packet",

@@ -10,9 +10,86 @@ private let hookEvents: [String: String] = [
 ]
 private let supportedMCPProtocolVersion = "2025-06-18"
 
+struct HookRequestAttempt: Equatable, Sendable {
+    let connectTimeoutMilliseconds: Int32
+    let responseTimeoutMilliseconds: Int32
+}
+
+enum HookRequestOutcome {
+    case response([String: Any])
+    case queuedPromptUnavailable
+    case unavailable
+}
+
+enum HookRequestPolicy {
+    private static let queuedPromptPrimaryAttempt = HookRequestAttempt(
+        connectTimeoutMilliseconds: 400,
+        responseTimeoutMilliseconds: 3_900
+    )
+    private static let queuedPromptRetryAttempt = HookRequestAttempt(
+        connectTimeoutMilliseconds: 400,
+        responseTimeoutMilliseconds: 1_900
+    )
+    private static let ambiguousResponseErrorCodes: Set<String> = [
+        "operational_response_timeout",
+        "operational_transport_closed",
+        "operational_transport_failed",
+    ]
+
+    static func perform(
+        eventName: String,
+        payload: [String: Any],
+        request: (HookRequestAttempt) throws -> [String: Any]
+    ) -> HookRequestOutcome {
+        guard isExactQueuedPromptSubmit(eventName: eventName, payload: payload) else {
+            let attempt = HookRequestAttempt(
+                connectTimeoutMilliseconds: 2_000,
+                responseTimeoutMilliseconds: eventName == "PermissionRequest"
+                    ? 55_000
+                    : 5_000
+            )
+            do {
+                return .response(try request(attempt))
+            } catch {
+                return .unavailable
+            }
+        }
+
+        do {
+            return .response(try request(queuedPromptPrimaryAttempt))
+        } catch {
+            guard isAmbiguousResponseFailure(error) else { return .unavailable }
+        }
+
+        do {
+            return .response(try request(queuedPromptRetryAttempt))
+        } catch {
+            return .queuedPromptUnavailable
+        }
+    }
+
+    private static func isExactQueuedPromptSubmit(
+        eventName: String,
+        payload: [String: Any]
+    ) -> Bool {
+        guard eventName == "UserPromptSubmit",
+              payload["hook_event_name"] as? String == "UserPromptSubmit",
+              let prompt = payload["prompt"] as? String,
+              case .exact = QueuedPromptEnvelope.classify(prompt)
+        else { return false }
+        return true
+    }
+
+    private static func isAmbiguousResponseFailure(_ error: Error) -> Bool {
+        guard let error = error as? CoordinatorError else { return false }
+        return ambiguousResponseErrorCodes.contains(error.code)
+    }
+}
+
 func runHookCommand(arguments: [String]) {
-    // Hooks are deliberately fail-open. Invalid input, an unavailable daemon,
-    // a timeout, and a rejected result all produce exit 0 with empty stdout.
+    // Ordinary Hooks are deliberately fail-open. Only an exact Blabee queued
+    // prompt gets one bounded response-loss retry and a safe no-action context
+    // when both attempts fail.
     do {
         guard let eventName = arguments.first,
               let requestType = hookEvents[eventName]
@@ -33,12 +110,32 @@ func runHookCommand(arguments: [String]) {
             limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
         )
         let client = try UnixDomainSocketClient(socketPath: socketPath)
-        let result = try client.request(
-            type: requestType,
-            payload: payload,
-            connectTimeoutMilliseconds: 2_000,
-            responseTimeoutMilliseconds: eventName == "PermissionRequest" ? 55_000 : 5_000
-        )
+        let outcome = HookRequestPolicy.perform(
+            eventName: eventName,
+            payload: payload
+        ) { attempt in
+            try client.request(
+                type: requestType,
+                payload: payload,
+                connectTimeoutMilliseconds: attempt.connectTimeoutMilliseconds,
+                responseTimeoutMilliseconds: attempt.responseTimeoutMilliseconds
+            )
+        }
+        let result: [String: Any]
+        switch outcome {
+        case .response(let value):
+            result = value
+        case .queuedPromptUnavailable:
+            try writeStandardOutputJSON([
+                "hookSpecificOutput": [
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": QueuedPromptEnvelope.unavailableAdditionalContext,
+                ],
+            ])
+            return
+        case .unavailable:
+            return
+        }
         guard result["enabled"] as? Bool != false else { return }
 
         if eventName == "PermissionRequest" {
@@ -66,15 +163,6 @@ func runHookCommand(arguments: [String]) {
                 code: "permission_turn_id_invalid"
             )
             switch decision {
-            case "allow":
-                try writeStandardOutputJSON([
-                    "hookSpecificOutput": [
-                        "hookEventName": "PermissionRequest",
-                        "decision": [
-                            "behavior": "allow",
-                        ],
-                    ],
-                ])
             case "deny":
                 try writeStandardOutputJSON([
                     "hookSpecificOutput": [
@@ -318,17 +406,10 @@ private func validateEmitDecisionWrapper(_ wrapper: [String: Any]) throws {
         "reported_side_effects",
     ]
     let rankedProposalKeys = commonProposalKeys.union(["next_actions"])
-    let legacyProposalKeys = commonProposalKeys.union([
-        "recommended_next",
-        "alternative_next",
-        "pause_capsule",
-    ])
     let suppliedProposalKeys = Set(proposal.keys)
     let rankedActions = proposal["next_actions"] as? [[String: Any]]
-    let hasValidProposalShape = suppliedProposalKeys == legacyProposalKeys
-        || (suppliedProposalKeys == rankedProposalKeys
-            && rankedActions.map { (2...4).contains($0.count) } == true)
-    guard hasValidProposalShape,
+    guard suppliedProposalKeys == rankedProposalKeys,
+          rankedActions.map({ (2...4).contains($0.count) }) == true,
           proposal["schema_version"] as? String == "1.0",
           proposal["interaction_kind"] as? String == "blabee_decision",
           let proposalID = proposal["proposal_id"] as? String,

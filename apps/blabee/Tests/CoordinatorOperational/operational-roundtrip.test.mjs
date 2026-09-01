@@ -7,10 +7,14 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
+  utimes,
+  writeFile,
 } from "node:fs/promises";
 import net from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
@@ -33,12 +37,26 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function readFileEventually(filePath, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      return await readFile(filePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await delay(20);
+  }
+  assert.fail(`timed out waiting for ${filePath}`);
+}
+
 function spawnBuiltBinary(
   build,
   arguments_,
-  { environment = {}, input = "", timeoutMs = 15_000 } = {},
+  { cwd, environment = {}, input = "", timeoutMs = 15_000 } = {},
 ) {
   const child = spawn(build.binaryPath, arguments_, {
+    cwd,
     env: {
       ...build.environment,
       BLABEE_RUNTIME_IDENTITY: OPERATIONAL_TEST_RUNTIME_IDENTITY,
@@ -312,14 +330,20 @@ function proposal(ids, suffix) {
       status: "completed",
       summary: `Operational boundary ${suffix} is ready`,
     },
-    recommended_next: {
-      title: `Continue ${suffix}`,
-      objective: `Perform the verified ${suffix} continuation`,
-      constraints: ["Keep the binding exact"],
-      done_when: [`The ${suffix} continuation completes`],
-    },
-    alternative_next: null,
-    pause_capsule: { resume_first: `Resume from ${suffix}` },
+    next_actions: [
+      {
+        title: `Continue ${suffix}`,
+        objective: `Perform the verified ${suffix} continuation`,
+        constraints: ["Keep the binding exact"],
+        done_when: [`The ${suffix} continuation completes`],
+      },
+      {
+        title: `Review ${suffix}`,
+        objective: `Review the verified ${suffix} continuation`,
+        constraints: ["Keep the review bounded"],
+        done_when: [`The ${suffix} review completes`],
+      },
+    ],
     reported_side_effects: [],
   };
 }
@@ -453,6 +477,127 @@ async function readStorageArtifacts(databasePath) {
   return Buffer.concat(values);
 }
 
+test("managed Codex live trust pins once, execs fallback exactly, and reaps the inherited pin", async () => {
+  const build = await buildCoordinator();
+  const canonicalTemporaryDirectory = await realpath(tmpdir());
+  const fixtureRoot = await mkdtemp(
+    path.join(canonicalTemporaryDirectory, "blabee-managed-fallback-"),
+  );
+  await chmod(fixtureRoot, 0o700);
+  const binPath = path.join(fixtureRoot, "bin");
+  const homePath = path.join(fixtureRoot, "home");
+  await Promise.all([
+    mkdir(binPath, { mode: 0o700 }),
+    mkdir(homePath, { mode: 0o700 }),
+  ]);
+  const candidatePath = path.join(binPath, "codex");
+  const markerPath = path.join(fixtureRoot, "fallback-result.json");
+  const releasePath = path.join(fixtureRoot, "fallback-release");
+  await cp(build.binaryPath, candidatePath);
+  await chmod(candidatePath, 0o500);
+  const environment = {
+    PATH: binPath,
+    HOME: homePath,
+    TMPDIR: `${fixtureRoot}${path.sep}`,
+    NVM_BIN: "",
+    ASDF_DATA_DIR: "",
+    VOLTA_HOME: "",
+    BLABEE_COORDINATOR_BINARY: "/private/untrusted/coordinator",
+    BLABEE_SOCKET: "/private/untrusted/socket",
+    BLABEE_MANAGED_APPROVALS: "1",
+    BLABEE_MANAGED_CODEX_AUTH_TOKEN: "must-not-survive",
+    BLABEE_RUNTIME_IDENTITY: "must-not-survive",
+    BLABEE_TEST_SAFE_ENVIRONMENT: "preserved",
+    BLABEE_TEST_FALLBACK_RELEASE: releasePath,
+  };
+
+  let fallbackRun;
+  try {
+    const forwarded = ["argument with spaces", "--literal=$()"];
+    fallbackRun = spawnBuiltBinary(
+      build,
+      [
+        "managed-codex-fallback-test",
+        "--marker", markerPath,
+        "--",
+        ...forwarded,
+      ],
+      { cwd: fixtureRoot, environment, timeoutMs: 20_000 },
+    );
+    const result = JSON.parse(await readFileEventually(markerPath));
+    const pinnedPath = result.argv[0];
+    const pinnedDirectory = path.dirname(pinnedPath);
+    assert.equal(fallbackRun.child.exitCode, null);
+    assert.equal(result.cwd, fixtureRoot);
+    assert.deepEqual(result.forwarded, forwarded);
+    assert.equal(result.safe_environment, "preserved");
+    assert.deepEqual(result.stripped_environment_still_present, []);
+    assert.deepEqual(result.argv.slice(1, 3), [
+      "managed-codex-fallback-test-target",
+      "--marker",
+    ]);
+    assert.equal(await realpath(result.argv[3]), await realpath(markerPath));
+    assert.deepEqual(result.argv.slice(4), [
+      "--",
+      ...forwarded,
+    ]);
+    assert.equal(await realpath(path.dirname(pinnedDirectory)), fixtureRoot);
+    assert.match(path.basename(pinnedDirectory), /^blabee-managed-codex\./);
+    assert.equal((await stat(pinnedDirectory)).mode & 0o777, 0o700);
+    assert.equal((await stat(pinnedPath)).mode & 0o777, 0o500);
+
+    const old = new Date(Date.now() - 120_000);
+    await utimes(pinnedDirectory, old, old);
+    const liveQualification = await runBuiltBinary(
+      build,
+      ["managed-codex-qualification-test"],
+      { cwd: fixtureRoot, environment, timeoutMs: 20_000 },
+    );
+    assert.deepEqual(
+      {
+        code: liveQualification.code,
+        signal: liveQualification.signal,
+        stderr: liveQualification.stderr,
+      },
+      { code: 0, signal: null, stderr: "" },
+    );
+    assert.equal((await stat(pinnedDirectory)).mode & 0o777, 0o700);
+
+    await writeFile(releasePath, "release\n", { mode: 0o600 });
+    const fallback = await fallbackRun.completion;
+    fallbackRun = undefined;
+    assert.deepEqual(
+      { code: fallback.code, signal: fallback.signal, stderr: fallback.stderr },
+      { code: 37, signal: null, stderr: "" },
+    );
+
+    await utimes(pinnedDirectory, old, old);
+    const finalQualification = await runBuiltBinary(
+      build,
+      ["managed-codex-qualification-test"],
+      { cwd: fixtureRoot, environment, timeoutMs: 20_000 },
+    );
+    assert.deepEqual(
+      {
+        code: finalQualification.code,
+        signal: finalQualification.signal,
+        stderr: finalQualification.stderr,
+      },
+      { code: 0, signal: null, stderr: "" },
+    );
+    await assert.rejects(
+      stat(pinnedDirectory),
+      (error) => error?.code === "ENOENT",
+    );
+  } finally {
+    if (fallbackRun?.child.exitCode === null && fallbackRun?.child.signalCode === null) {
+      fallbackRun.child.kill("SIGKILL");
+      await fallbackRun.completion.catch(() => {});
+    }
+    await rm(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next turns without leakage", async () => {
   const server = await startOperationalServer();
   const productBuild = await buildProductCoordinator();
@@ -461,6 +606,11 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     productBinary.includes(Buffer.from("operational-roundtrip-test-server")),
     false,
     "the integration server mode must be compiled out of the product binary",
+  );
+  assert.equal(
+    productBinary.includes(Buffer.from("managed-codex-fallback-test")),
+    false,
+    "the managed Codex fallback fixture must be compiled out of the product binary",
   );
   let stopped = false;
   try {
@@ -611,7 +761,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       server.enabledProjectPath,
     );
     assertOpaqueQueuedPrompt(firstQueuedPrompt, {
-      action: firstProposal.recommended_next,
+      action: firstProposal.next_actions[0],
       continuationID: firstSelection.result.outcome.continuation_id,
       enabledProjectPath: server.enabledProjectPath,
       identifiers: { ...ids, ...firstWaiting.interaction },
@@ -667,7 +817,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       secondUserPrompt.stdout.split(secondIds.correlation_token).length - 1,
       1,
     );
-    const canonicalFirstAction = canonicalJSON(firstProposal.recommended_next);
+    const canonicalFirstAction = canonicalJSON(firstProposal.next_actions[0]);
     assert.equal(
       secondDesignatedContext.endsWith(
         `${QUEUED_ACTION_CONTEXT_MARKER}${canonicalFirstAction}`,
@@ -684,7 +834,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     assert.equal(queuedActionJSON, canonicalFirstAction);
     assert.deepEqual(
       JSON.parse(queuedActionJSON),
-      canonicalJSONObject(firstProposal.recommended_next),
+      canonicalJSONObject(firstProposal.next_actions[0]),
     );
 
     const secondProposal = proposal(secondIds, "two");
@@ -742,7 +892,7 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
       server.enabledProjectPath,
     );
     assertOpaqueQueuedPrompt(secondQueuedPrompt, {
-      action: secondProposal.recommended_next,
+      action: secondProposal.next_actions[0],
       continuationID: secondSelection.result.outcome.continuation_id,
       enabledProjectPath: server.enabledProjectPath,
       identifiers: { ...secondIds, ...secondWaiting.interaction },

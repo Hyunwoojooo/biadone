@@ -1162,81 +1162,36 @@ func blabeePetPermissionNotificationOwnership() async throws {
     #expect(payloadObject["decision"] as? String == "deny")
 }
 
-@Test("BlabeePet sends one Hook allow decision without queue metadata")
+@Test("BlabeePet ignores a Hook decision after its visible FIFO head changes")
 @MainActor
-func blabeePetPermissionAllowOnceResolution() async throws {
+func blabeePetPermissionDecisionRequiresExactVisibleHead() async throws {
     let transport = PetFakeTransport()
     let viewModel = blabeePetViewModel(
         transport: transport,
         opener: PetFakeApplicationOpener()
     )
-    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
-        cards: [],
-        permissionRequests: [PetTestPermissionRequest(
-            suffix: "allow_once",
-            arrivalSequence: 41,
-            allowOnceAvailable: true
-        )],
-        permissionNoticeCount: 1
-    ))
-    let displayedRequest = try #require(viewModel.pendingPermissionRequest)
-    await transport.enqueue(
-        type: "resolve_permission_request",
-        response: try petTestPermissionResolutionResponse(
-            .allow,
-            requestID: displayedRequest.requestID
-        )
-    )
-    await transport.enqueue(
-        type: "get_state",
-        response: try petTestSnapshotData(cards: [], permissionNoticeCount: 1)
-    )
-
-    await viewModel.resolvePermissionRequest(.allow, for: displayedRequest)
-
-    #expect(await transport.requestCount(type: "resolve_permission_request") == 1)
-    let payload = try #require(
-        await transport.requestPayloads(type: "resolve_permission_request").first
-    )
-    let object = try petTestObject(payload)
-    #expect(object["decision"] as? String == "allow")
-    #expect(object["arrival_sequence"] == nil)
-    #expect(object["allow_once_available"] == nil)
-}
-
-@Test("BlabeePet rejects unavailable or stale Hook allow clicks")
-@MainActor
-func blabeePetPermissionAllowOnceRequiresExactVisibleHead() async throws {
-    let transport = PetFakeTransport()
-    let viewModel = blabeePetViewModel(
-        transport: transport,
-        opener: PetFakeApplicationOpener()
-    )
-    let unavailable = PetTestPermissionRequest(
-        suffix: "allow_unavailable",
-        arrivalSequence: 51,
-        allowOnceAvailable: false
+    let previous = PetTestPermissionRequest(
+        suffix: "previous_head",
+        arrivalSequence: 51
     )
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
-        permissionRequests: [unavailable]
+        permissionRequests: [previous]
     ))
-    let unavailableDisplayed = try #require(viewModel.pendingPermissionRequest)
-    await viewModel.resolvePermissionRequest(.allow, for: unavailableDisplayed)
-    #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
+    let previouslyDisplayed = try #require(viewModel.pendingPermissionRequest)
 
     let replacement = PetTestPermissionRequest(
-        suffix: "allow_replacement",
+        suffix: "replacement_head",
         arrivalSequence: 52
     )
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
         permissionRequests: [replacement]
     ))
-    await viewModel.resolvePermissionRequest(.deny, for: unavailableDisplayed)
+    await viewModel.resolvePermissionRequest(.deny, for: previouslyDisplayed)
     #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
     #expect(viewModel.pendingPermissionRequest?.requestID
-        == "permission_allow_replacement")
+        == "permission_replacement_head")
 }
 
 @Test("BlabeePet preserves approval delivery errors after snapshot recovery")

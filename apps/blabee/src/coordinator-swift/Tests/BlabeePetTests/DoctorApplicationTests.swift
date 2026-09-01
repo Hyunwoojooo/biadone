@@ -26,6 +26,21 @@ private final class DoctorFakeProcesses {
     var malformedPluginList = false
     var pluginPath = ""
     var invocations: [[String]] = []
+    var hookTrustStatus = "trusted"
+    var hookTrustIsManaged = false
+    var hookTrustEnabled = true
+    var hookTrustPluginID = "blabee@test"
+    var hookTrustSource = "plugin"
+    var hookTrustMissingEvent: String?
+    var hookTrustDuplicateEvent: String?
+    var hookTrustSourcePath: String?
+    var hookTrustMalformed = false
+    var hookTrustThrows = false
+    var hookTrustCWD: String?
+    var hookTrustErrors: [Any] = []
+    var hookTrustWarnings: Any = [String]()
+    var hookTrustCurrentHash: String?
+    var hookTrustInvocations = 0
 
     func run(
         executable: URL,
@@ -63,6 +78,55 @@ private final class DoctorFakeProcesses {
             options: [.sortedKeys]
         )
         return DoctorProcessResult(exitCode: 0, stdout: data)
+    }
+
+    func inspectHooks(
+        executable: URL,
+        projectURL: URL,
+        timeoutMilliseconds: Int
+    ) throws -> Data {
+        #expect(executable.path.hasPrefix("/"))
+        #expect(timeoutMilliseconds == 5_000)
+        hookTrustInvocations += 1
+        if hookTrustThrows {
+            throw CoordinatorError("doctor_hook_trust_timeout")
+        }
+        if hookTrustMalformed { return Data("[]".utf8) }
+
+        let sourcePath = hookTrustSourcePath
+            ?? URL(fileURLWithPath: pluginPath, isDirectory: true)
+                .appendingPathComponent("hooks/hooks.json").path
+        let events = ["permissionRequest", "sessionStart", "userPromptSubmit", "stop"]
+        var hooks = events.compactMap { event -> [String: Any]? in
+            guard event != hookTrustMissingEvent else { return nil }
+            return [
+                "currentHash": hookTrustCurrentHash ?? "trusted-hash-\(event)",
+                "enabled": hookTrustEnabled,
+                "eventName": event,
+                "isManaged": hookTrustIsManaged,
+                "pluginId": hookTrustPluginID,
+                "source": hookTrustSource,
+                "sourcePath": sourcePath,
+                "trustStatus": hookTrustStatus,
+            ]
+        }
+        if let duplicate = hookTrustDuplicateEvent,
+           let hook = hooks.first(where: { $0["eventName"] as? String == duplicate })
+        {
+            hooks.append(hook)
+        }
+        return try StrictJSONTransport.data(forJSONObject: [
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": [
+                "data": [[
+                    "cwd": hookTrustCWD ?? projectURL.standardizedFileURL.path,
+                    "errors": hookTrustErrors,
+                    "hooks": hooks,
+                    "warnings": hookTrustWarnings,
+                ]],
+            ],
+        ])
     }
 }
 
@@ -149,6 +213,7 @@ private final class DoctorFixture {
                 ),
             installedRuntimeIdentity: installedRuntimeIdentity,
             processRunner: processes.run,
+            hookTrustRequester: processes.inspectHooks,
             daemonRequester: { _ in
                 guard let daemonProjects else { throw CoordinatorError("daemon_unavailable") }
                 var status: [String: Any] = [
@@ -217,6 +282,7 @@ private final class DoctorFixture {
             "schema_version": OperationalRuntimeIdentity.assemblyManifestSchemaVersion,
             "bundle_identifier": "com.biadone.blabee",
             "hash_phase": "assembled_payload_before_optional_code_signing",
+            "compatible_previous_runtimes": [],
             "files": [
                 [
                     "path": "Contents/MacOS/blabee-coordinator",
@@ -867,7 +933,7 @@ func doctorReconciliationStatus() throws {
         == "reconciliation_status_unavailable")
 }
 
-@Test("Doctor JSON is deterministic redacted and always requires explicit hook review")
+@Test("Doctor JSON is deterministic redacted and accepts trusted Blabee hooks")
 func doctorJSONIsDeterministicAndRedacted() throws {
     let fixture = try DoctorFixture()
     let execution = DoctorApplication(dependencies: fixture.dependencies())
@@ -880,8 +946,9 @@ func doctorJSONIsDeterministicAndRedacted() throws {
     #expect(text.contains("\"overall_status\":\"action_required\""))
     #expect(!text.contains(fixture.root.path))
     #expect(!text.contains("project_id"))
-    #expect(try doctorCheck(execution, id: "hook_trust").status == .actionRequired)
-    #expect(try doctorCheck(execution, id: "hook_trust").summary.contains("/hooks"))
+    #expect(try doctorCheck(execution, id: "hook_trust").status == .pass)
+    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
+    #expect(fixture.processes.hookTrustInvocations == 1)
     #expect(execution.exitCode == 2)
 
     let mismatched = DoctorApplication(dependencies: fixture.dependencies(
@@ -900,6 +967,131 @@ func doctorJSONIsDeterministicAndRedacted() throws {
     )).run(arguments: try fixture.arguments())
     #expect(try doctorCheck(symlinked, id: "coordinator_runtime").code
         == "coordinator_runtime_ok")
+}
+
+@Test("Doctor exits successfully when every check including Hook trust passes")
+func doctorPassesWithTrustedHooksAndHealthyRuntime() throws {
+    let fixture = try DoctorFixture()
+    fixture.processes.versionOutput = "codex-cli 0.151.0\n"
+    let execution = DoctorApplication(dependencies: fixture.dependencies(
+        daemonReconciliation: [
+            "state": "healthy",
+            "consecutive_failure_count": 0,
+            "quarantined_initial_activation_count": 0,
+            "last_error_code": NSNull(),
+            "milliseconds_until_retry": NSNull(),
+        ]
+    )).run(arguments: try fixture.arguments())
+
+    #expect(execution.report.overallStatus == .pass)
+    #expect(execution.exitCode == 0)
+    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
+    #expect(execution.report.checks.allSatisfy { $0.status == .pass })
+}
+
+@Test("Doctor fails closed for unsafe or unavailable Blabee hook trust states")
+func doctorHookTrustFailsClosed() throws {
+    let fixture = try DoctorFixture()
+
+    func hookCheck() throws -> DoctorCheck {
+        try doctorCheck(
+            DoctorApplication(dependencies: fixture.dependencies())
+                .run(arguments: fixture.arguments()),
+            id: "hook_trust"
+        )
+    }
+
+    fixture.processes.hookTrustStatus = "untrusted"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustStatus = "modified"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustStatus = "trusted"
+    fixture.processes.hookTrustIsManaged = true
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustStatus = "managed"
+    fixture.processes.hookTrustIsManaged = false
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustStatus = "trusted"
+    fixture.processes.hookTrustIsManaged = false
+    fixture.processes.hookTrustEnabled = false
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustEnabled = true
+    fixture.processes.hookTrustSource = "config"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustSource = "plugin"
+    fixture.processes.hookTrustPluginID = "another-plugin@test"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustPluginID = "blabee@test"
+    fixture.processes.hookTrustMissingEvent = "stop"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustMissingEvent = nil
+    fixture.processes.hookTrustDuplicateEvent = "stop"
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustDuplicateEvent = nil
+    let mismatchedHooks = fixture.root
+        .appendingPathComponent("other/hooks/hooks.json")
+    try FileManager.default.createDirectory(
+        at: mismatchedHooks.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("different-hook-definition".utf8).write(to: mismatchedHooks)
+    fixture.processes.hookTrustSourcePath = mismatchedHooks.path
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustSourcePath = nil
+    fixture.processes.hookTrustCWD = fixture.root.appendingPathComponent("other-project").path
+    #expect(try hookCheck().code == "hook_trust_unavailable")
+
+    fixture.processes.hookTrustCWD = nil
+    fixture.processes.hookTrustWarnings = 1
+    #expect(try hookCheck().code == "hook_trust_unavailable")
+
+    fixture.processes.hookTrustWarnings = [String]()
+    fixture.processes.hookTrustErrors = ["hook discovery failed"]
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustErrors = []
+    fixture.processes.hookTrustCurrentHash = ""
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustCurrentHash = String(repeating: "h", count: 257)
+    #expect(try hookCheck().code == "hook_review_required")
+
+    fixture.processes.hookTrustCurrentHash = nil
+    fixture.processes.hookTrustMalformed = true
+    #expect(try hookCheck().code == "hook_trust_unavailable")
+
+    fixture.processes.hookTrustMalformed = false
+    fixture.processes.hookTrustThrows = true
+    #expect(try hookCheck().code == "hook_trust_unavailable")
+}
+
+@Test("Doctor accepts Codex-managed Blabee hooks")
+func doctorHookTrustAcceptsManagedHooks() throws {
+    let fixture = try DoctorFixture()
+    fixture.processes.hookTrustStatus = "managed"
+    fixture.processes.hookTrustIsManaged = true
+    let execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
+}
+
+@Test("Doctor ignores unrelated Hook warnings when Blabee hooks are trusted")
+func doctorHookTrustIgnoresUnrelatedWarnings() throws {
+    let fixture = try DoctorFixture()
+    fixture.processes.hookTrustWarnings = ["another plugin has a deprecated hook"]
+    let execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
 }
 
 @Test("Doctor compares the process-captured identity after the app is replaced")
@@ -964,6 +1156,85 @@ func doctorProcessRunnerDrainsBothPipes() throws {
     #expect(String(data: result.stdout, encoding: .utf8) == "doctor-stdout-ok\n")
 }
 
+@Test("Doctor Hook trust inspector follows the bounded App Server handshake")
+func doctorHookTrustInspectorUsesOfficialHandshake() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("bdh-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("fake-codex")
+    let script = #"""
+    #!/bin/sh
+    [ "$1" = "app-server" ] || exit 11
+    [ "$2" = "--listen" ] || exit 12
+    [ "$3" = "stdio://" ] || exit 13
+    IFS= read -r initialize || exit 14
+    case "$initialize" in *'"method":"initialize"'*) ;; *) exit 15 ;; esac
+    printf '%s\n' '{"id":1,"result":{}}'
+    IFS= read -r initialized || exit 16
+    case "$initialized" in *'"method":"initialized"'*) ;; *) exit 17 ;; esac
+    IFS= read -r hooks || exit 18
+    case "$hooks" in *'"method":"hooks/list"'*) ;; *) exit 19 ;; esac
+    printf '%s\n' '{"method":"server/notice","params":{}}'
+    printf '%s\n' '{"id":2,"result":{"data":[]}}'
+    while IFS= read -r ignored; do :; done
+    """#
+    try Data(script.utf8).write(to: executable)
+    guard chmod(executable.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+
+    let response = try DoctorHookTrustInspector.inspect(
+        executable: executable,
+        projectURL: root,
+        timeoutMilliseconds: 2_000
+    )
+    let object = try StrictJSONTransport.object(from: response)
+    #expect(ExactJSONInteger.int64(object["id"]) == 2)
+}
+
+@Test("Doctor Hook trust inspector times out and reaps its exact child")
+func doctorHookTrustInspectorReapsTimedOutChild() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("bdht-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("fake-codex")
+    let pidFile = root.appendingPathComponent("pid")
+    let script = #"""
+    #!/bin/sh
+    printf '%s' "$$" > '\#(pidFile.path)'
+    IFS= read -r initialize || exit 21
+    printf '%s\n' '{"id":1,"result":{}}'
+    IFS= read -r initialized || exit 22
+    IFS= read -r hooks || exit 23
+    while IFS= read -r ignored; do :; done
+    """#
+    try Data(script.utf8).write(to: executable)
+    guard chmod(executable.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+
+    do {
+        _ = try DoctorHookTrustInspector.inspect(
+            executable: executable,
+            projectURL: root,
+            timeoutMilliseconds: 300
+        )
+        Issue.record("timed-out Hook inspector unexpectedly completed")
+    } catch {
+        #expect(error.coordinatorError.code == "doctor_hook_trust_timeout")
+    }
+    // A very short timeout can fire before the fixture reaches its first
+    // instruction. If it did start, its exact PID must already be gone.
+    if let pidText = try? String(contentsOf: pidFile, encoding: .utf8),
+       let pid = Int32(pidText)
+    {
+        #expect(kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
+    }
+}
+
 private actor DoctorTransportSpy: CoordinatorOperationalHandling {
     private var handleCalls = 0
     private var doctorCalls = 0
@@ -988,6 +1259,33 @@ private actor DoctorTransportSpy: CoordinatorOperationalHandling {
     func millisecondsUntilNextDeadline() async -> Int32? { nil }
 
     func counts() -> (handle: Int, doctor: Int) { (handleCalls, doctorCalls) }
+}
+
+private actor RuntimeCompatibilityTransportSpy: CoordinatorOperationalHandling {
+    private var handledTypes: [String] = []
+    private var doctorCalls = 0
+
+    func handle(type: String, payload: Data) async throws -> Data {
+        _ = try StrictJSONTransport.object(from: payload)
+        handledTypes.append(type)
+        if type == "emit_decision" {
+            throw CoordinatorError("runtime_compatibility_fixture_failure")
+        }
+        return try StrictJSONTransport.data(forJSONObject: ["handled_type": type])
+    }
+
+    func doctorStatus(payload: Data) async throws -> Data {
+        _ = try StrictJSONTransport.object(from: payload)
+        doctorCalls += 1
+        return try StrictJSONTransport.data(forJSONObject: ["doctor": true])
+    }
+
+    func processTime() async throws -> [Data] { [] }
+    func millisecondsUntilNextDeadline() async -> Int32? { nil }
+
+    func counts() -> (handledTypes: [String], doctor: Int) {
+        (handledTypes, doctorCalls)
+    }
 }
 
 @Test("UDS doctor_status uses its dedicated read-only protocol method")
@@ -1073,5 +1371,109 @@ func udsRuntimeIdentityBoundary() async throws {
     try await runTask.value
     let counts = await spy.counts()
     #expect(counts.handle == 0)
+    #expect(counts.doctor == 1)
+}
+
+@Test("UDS admits only signed previous Hook operations and echoes the old identity")
+func udsRuntimeIdentityCompatibilityBoundary() async throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("bdc-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    guard chmod(root.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+    let currentIdentity = "sha256:" + String(repeating: "1", count: 64)
+    let previousIdentity = "sha256:" + String(repeating: "2", count: 64)
+    let unknownIdentity = "sha256:" + String(repeating: "3", count: 64)
+    let socketPath = root.appendingPathComponent("daemon.sock").path
+    let server = try UnixDomainSocketServer(
+        socketPath: socketPath,
+        runtimeIdentity: currentIdentity,
+        compatiblePreviousRuntimes: [
+            OperationalRuntimeCompatibilityPolicy(
+                runtimeIdentity: previousIdentity,
+                allowedRequestTypes: [
+                    "emit_decision", "session_start", "stop", "user_prompt_submit",
+                ]
+            ),
+        ]
+    )
+    let spy = RuntimeCompatibilityTransportSpy()
+    let corpus = RuntimeSecretCorpus()
+    try server.activate()
+    let runTask = Task.detached { try server.run(application: spy, secretCorpus: corpus) }
+    defer { server.stop() }
+
+    let previous = try UnixDomainSocketClient(
+        socketPath: socketPath,
+        runtimeIdentity: previousIdentity
+    )
+    let safeResult = try previous.request(
+        type: "session_start",
+        payload: [:],
+        connectTimeoutMilliseconds: 1_000,
+        responseTimeoutMilliseconds: 2_000
+    )
+    #expect(safeResult["handled_type"] as? String == "session_start")
+
+    do {
+        _ = try previous.request(
+            type: "doctor_status",
+            payload: [:],
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        Issue.record("previous runtime reached a blocked operation")
+    } catch let error as CoordinatorError {
+        #expect(error.code == "operational_runtime_request_not_compatible")
+    }
+
+    do {
+        _ = try previous.request(
+            type: "emit_decision",
+            payload: [:],
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        Issue.record("fixture application error unexpectedly succeeded")
+    } catch let error as CoordinatorError {
+        // Seeing the application error proves the response echoed the old
+        // accepted identity; otherwise the client reports identity mismatch.
+        #expect(error.code == "runtime_compatibility_fixture_failure")
+    }
+
+    let unknown = try UnixDomainSocketClient(
+        socketPath: socketPath,
+        runtimeIdentity: unknownIdentity
+    )
+    do {
+        _ = try unknown.request(
+            type: "session_start",
+            payload: [:],
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        Issue.record("unknown runtime unexpectedly reached the coordinator")
+    } catch let error as CoordinatorError {
+        #expect(error.code == "operational_runtime_identity_mismatch")
+    }
+
+    let current = try UnixDomainSocketClient(
+        socketPath: socketPath,
+        runtimeIdentity: currentIdentity
+    )
+    let currentResult = try current.request(
+        type: "doctor_status",
+        payload: [:],
+        connectTimeoutMilliseconds: 1_000,
+        responseTimeoutMilliseconds: 2_000
+    )
+    #expect(currentResult["doctor"] as? Bool == true)
+
+    server.stop()
+    try await runTask.value
+    let counts = await spy.counts()
+    #expect(counts.handledTypes == ["session_start", "emit_decision"])
     #expect(counts.doctor == 1)
 }

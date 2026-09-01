@@ -2,9 +2,99 @@ import CoordinatorSwift
 import Darwin
 import Dispatch
 import Foundation
+import OSLog
 import Security
 
 typealias ManagedCodexExecutableProvider = @Sendable () throws -> URL
+typealias ManagedCodexAppServerDiagnosticsFactory = @Sendable () ->
+    ManagedCodexAppServerDiagnostics
+
+/// Drains App Server stderr away from the interactive terminal. The captured
+/// bytes remain available in macOS unified logging for local diagnostics, but
+/// are private and capped per child so a noisy App Server cannot corrupt the
+/// TUI or create an unbounded in-memory/logging workload.
+final class ManagedCodexAppServerDiagnostics: @unchecked Sendable {
+    typealias Recorder = @Sendable (Data) -> Void
+
+    static let maximumRecordedBytes = 256 * 1_024
+
+    let childPipe = Pipe()
+
+    private static let logger = Logger(
+        subsystem: "com.biadone.blabee",
+        category: "managed-codex-app-server"
+    )
+    private let recorder: Recorder
+    private let maximumBytes: Int
+    private let stateLock = NSLock()
+    private let drained = DispatchGroup()
+    private var recordedBytes = 0
+    private var reachedEnd = false
+    private var parentWriterClosed = false
+
+    init(
+        maximumBytes: Int = maximumRecordedBytes,
+        recorder: @escaping Recorder = { data in
+            let message = String(decoding: data, as: UTF8.self)
+            logger.error("\(message, privacy: .private)")
+        }
+    ) {
+        self.maximumBytes = max(0, maximumBytes)
+        self.recorder = recorder
+        drained.enter()
+        childPipe.fileHandleForReading.readabilityHandler = { [self] handle in
+            consume(handle.availableData)
+        }
+    }
+
+    func closeParentWriter() {
+        stateLock.lock()
+        guard !parentWriterClosed else {
+            stateLock.unlock()
+            return
+        }
+        parentWriterClosed = true
+        stateLock.unlock()
+        try? childPipe.fileHandleForWriting.close()
+    }
+
+    func waitUntilDrained(timeout: DispatchTime) -> Bool {
+        drained.wait(timeout: timeout) == .success
+    }
+
+    private func consume(_ data: Data) {
+        if data.isEmpty {
+            finishReading()
+            return
+        }
+
+        let captured: Data
+        stateLock.lock()
+        let available = max(0, maximumBytes - recordedBytes)
+        let count = min(available, data.count)
+        captured = count == 0 ? Data() : data.prefix(count)
+        recordedBytes += count
+        stateLock.unlock()
+
+        // Continue draining after the cap is reached. Discarding excess bytes
+        // avoids back-pressure on Codex while bounding Blabee's own work.
+        if !captured.isEmpty { recorder(captured) }
+    }
+
+    private func finishReading() {
+        stateLock.lock()
+        guard !reachedEnd else {
+            stateLock.unlock()
+            return
+        }
+        reachedEnd = true
+        stateLock.unlock()
+
+        childPipe.fileHandleForReading.readabilityHandler = nil
+        try? childPipe.fileHandleForReading.close()
+        drained.leave()
+    }
+}
 
 enum ManagedCodexChildStartState: Equatable {
     case notStarted
@@ -888,12 +978,18 @@ private final class ManagedCodexAuxiliarySession: @unchecked Sendable {
     let id = UUID()
     private let process: Process
     private let bridge: ManagedCodexAppServerBridge
+    private let appServerDiagnostics: ManagedCodexAppServerDiagnostics
     private let stateLock = NSLock()
     private var stopped = false
 
-    init(process: Process, bridge: ManagedCodexAppServerBridge) {
+    init(
+        process: Process,
+        bridge: ManagedCodexAppServerBridge,
+        appServerDiagnostics: ManagedCodexAppServerDiagnostics
+    ) {
         self.process = process
         self.bridge = bridge
+        self.appServerDiagnostics = appServerDiagnostics
     }
 
     func run() throws {
@@ -925,6 +1021,8 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
     private let brokerEpoch: String
     private let approvedExecutableProvider: ManagedCodexExecutableProvider?
     private let resumeConflictReporter: ManagedCodexResumeConflictObserver.Reporter
+    private let appServerDiagnosticsFactory:
+        ManagedCodexAppServerDiagnosticsFactory
     private let maximumSessions: Int
     private let stateLock = NSLock()
     private let workGroup = DispatchGroup()
@@ -943,6 +1041,10 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         resumeConflictReporter: @escaping ManagedCodexResumeConflictObserver.Reporter = {
             _ in
         },
+        appServerDiagnosticsFactory: @escaping
+            ManagedCodexAppServerDiagnosticsFactory = {
+                ManagedCodexAppServerDiagnostics()
+            },
         maximumSessions: Int = 4
     ) {
         self.admission = admission
@@ -952,6 +1054,7 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         self.brokerEpoch = brokerEpoch
         self.approvedExecutableProvider = approvedExecutableProvider
         self.resumeConflictReporter = resumeConflictReporter
+        self.appServerDiagnosticsFactory = appServerDiagnosticsFactory
         self.maximumSessions = max(1, min(4, maximumSessions))
     }
 
@@ -1104,13 +1207,14 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
     ) throws -> ManagedCodexAuxiliarySession {
         let appServerInput = Pipe()
         let appServerOutput = Pipe()
+        let appServerDiagnostics = appServerDiagnosticsFactory()
         let process = Process()
         process.executableURL = executable
         process.arguments = ["app-server", "--listen", "stdio://"]
         process.standardInput = appServerInput
         process.standardOutput = appServerOutput
-        process.standardError = FileHandle.standardError
-        process.environment = ManagedCodexLauncher.childEnvironment(
+        process.standardError = appServerDiagnostics.childPipe
+        process.environment = try ManagedCodexLauncher.childEnvironment(
             environment,
             authenticationToken: nil,
             coordinatorSocketPath: coordinatorSocketPath
@@ -1130,6 +1234,7 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         do {
             try process.run()
             started = true
+            appServerDiagnostics.closeParentWriter()
             try? appServerInput.fileHandleForReading.close()
             try? appServerOutput.fileHandleForWriting.close()
 
@@ -1157,9 +1262,11 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
             )
             return ManagedCodexAuxiliarySession(
                 process: process,
-                bridge: bridge
+                bridge: bridge,
+                appServerDiagnostics: appServerDiagnostics
             )
         } catch {
+            appServerDiagnostics.closeParentWriter()
             connection.close()
             try? appServerInput.fileHandleForWriting.close()
             try? appServerOutput.fileHandleForReading.close()
@@ -1215,7 +1322,11 @@ struct ManagedCodexLauncher {
     func run(
         arguments rawArguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        approvedExecutableProvider: ManagedCodexExecutableProvider? = nil
+        approvedExecutableProvider: ManagedCodexExecutableProvider? = nil,
+        appServerDiagnosticsFactory: @escaping
+            ManagedCodexAppServerDiagnosticsFactory = {
+                ManagedCodexAppServerDiagnostics()
+            }
     ) throws -> Int32 {
         let arguments = try ManagedCodexLauncherArguments(
             rawArguments,
@@ -1240,13 +1351,14 @@ struct ManagedCodexLauncher {
         let admission = ManagedCodexListenerAdmission(listener: listener)
         let appServerInput = Pipe()
         let appServerOutput = Pipe()
+        let appServerDiagnostics = appServerDiagnosticsFactory()
         let appServer = Process()
         appServer.executableURL = executable
         appServer.arguments = ["app-server", "--listen", "stdio://"]
         appServer.standardInput = appServerInput
         appServer.standardOutput = appServerOutput
-        appServer.standardError = FileHandle.standardError
-        appServer.environment = Self.childEnvironment(
+        appServer.standardError = appServerDiagnostics.childPipe
+        appServer.environment = try Self.childEnvironment(
             environment,
             authenticationToken: nil,
             coordinatorSocketPath: arguments.coordinatorSocketPath
@@ -1261,18 +1373,31 @@ struct ManagedCodexLauncher {
         tui.standardInput = FileHandle.standardInput
         tui.standardOutput = FileHandle.standardOutput
         tui.standardError = FileHandle.standardError
-        tui.environment = Self.childEnvironment(
+        tui.environment = try Self.childEnvironment(
             environment,
             authenticationToken: token,
             coordinatorSocketPath: arguments.coordinatorSocketPath
         )
 
+        if let approvedExecutableProvider {
+            do {
+                let revalidated = try approvedExecutableProvider()
+                guard revalidated == executable else {
+                    throw CoordinatorError("managed_codex_executable_changed")
+                }
+            } catch {
+                admission.stop()
+                throw error
+            }
+        }
         do {
             try appServer.run()
             childStartState = .started
+            appServerDiagnostics.closeParentWriter()
             try? appServerInput.fileHandleForReading.close()
             try? appServerOutput.fileHandleForWriting.close()
         } catch {
+            appServerDiagnostics.closeParentWriter()
             admission.stop()
             throw CoordinatorError("managed_codex_app_server_unavailable")
         }
@@ -1362,7 +1487,8 @@ struct ManagedCodexLauncher {
                 coordinatorSocketPath: arguments.coordinatorSocketPath,
                 brokerEpoch: brokerEpoch,
                 approvedExecutableProvider: approvedExecutableProvider,
-                resumeConflictReporter: resumeConflictReporter
+                resumeConflictReporter: resumeConflictReporter,
+                appServerDiagnosticsFactory: appServerDiagnosticsFactory
             )
             shutdown.attach(auxiliaryBroker)
             auxiliaryBroker.start()
@@ -1414,8 +1540,8 @@ struct ManagedCodexLauncher {
         _ inherited: [String: String],
         authenticationToken: String?,
         coordinatorSocketPath: String
-    ) -> [String: String] {
-        var child = inherited
+    ) throws -> [String: String] {
+        var child = try ManagedCodexLaunchEnvironment.validated(inherited)
         child["BLABEE_MANAGED_APPROVALS"] = "1"
         child["BLABEE_SOCKET"] = coordinatorSocketPath
         if let authenticationToken {

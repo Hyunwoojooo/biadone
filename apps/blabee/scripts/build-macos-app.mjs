@@ -67,6 +67,23 @@ const requiredLaunchAgentValues = Object.freeze({
   ProgramArguments: ["Contents/MacOS/blabee-coordinator", "service"],
   RunAtLoad: true,
 });
+const runtimeIdentityInspectionSchemaVersion =
+  "blabee.runtime-identity-inspection.v2";
+const runtimeIdentityPattern = /^sha256:[0-9a-f]{64}$/u;
+const maximumCompatiblePreviousApps = 2;
+const compatiblePreviousRequestTypes = Object.freeze([
+  "emit_decision",
+  "session_start",
+  "stop",
+  "user_prompt_submit",
+]);
+
+function isCanonicalSHA256(value) {
+  return typeof value === "string"
+    && value.length === 71
+    && Buffer.byteLength(value, "utf8") === 71
+    && runtimeIdentityPattern.test(value);
+}
 
 function fail(message) {
   throw new Error(message);
@@ -270,17 +287,138 @@ async function collectManifestFiles(bundleRoot, current = bundleRoot) {
   return files.sort((left, right) => compareNames(left.path, right.path));
 }
 
-async function writeAssemblyManifest(bundleRoot) {
+async function writeAssemblyManifest(bundleRoot, compatiblePreviousRuntimes) {
   const manifestPath = join(bundleRoot, "Contents", "Resources", "assembly-manifest.json");
   const manifest = {
-    schema_version: "blabee.macos-app-assembly.v1",
+    schema_version: "blabee.macos-app-assembly.v2",
     bundle_identifier: "com.biadone.blabee",
     hash_phase: "assembled_payload_before_optional_code_signing",
+    compatible_previous_runtimes: compatiblePreviousRuntimes,
     files: await collectManifestFiles(bundleRoot),
   };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
   await chmod(manifestPath, 0o644);
   return manifest;
+}
+
+function snapshotCompatiblePreviousApps(values) {
+  if (!Array.isArray(values)) {
+    fail("compatible previous apps must be an array");
+  }
+  const snapshot = Array.from(values);
+  if (snapshot.length > maximumCompatiblePreviousApps) {
+    fail(`at most ${maximumCompatiblePreviousApps} compatible previous apps are supported`);
+  }
+  return Object.freeze(snapshot);
+}
+
+export async function inspectSignedRuntimeIdentity({
+  coordinatorBinaryPath,
+  appPath,
+} = {}) {
+  const coordinator = requireAbsolutePath(
+    coordinatorBinaryPath,
+    "runtime identity inspector binary",
+  );
+  const requestedApp = requireAbsolutePath(appPath, "compatible previous app");
+  if (basename(requestedApp) !== bundleName) {
+    fail(`compatible previous app must end with ${bundleName}`);
+  }
+  await requireExecutableFile(coordinator, "runtime identity inspector binary");
+  await requireDirectory(requestedApp, "compatible previous app");
+  const canonicalApp = await realpath(requestedApp);
+  if (basename(canonicalApp) !== bundleName) {
+    fail(`compatible previous app must resolve to ${bundleName}`);
+  }
+
+  let result;
+  try {
+    result = await execFile(
+      coordinator,
+      ["runtime-identity", "--app", canonicalApp],
+      {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        timeout: 15_000,
+      },
+    );
+  } catch (error) {
+    fail(`compatible previous app identity inspection failed: ${error.message}`);
+  }
+  if (result.stderr !== "") {
+    fail("compatible previous app identity inspection wrote unexpected stderr");
+  }
+  if (
+    typeof result.stdout !== "string"
+    || !result.stdout.endsWith("\n")
+    || result.stdout.slice(0, -1).includes("\n")
+  ) {
+    fail("compatible previous app identity inspection returned invalid framing");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(result.stdout.slice(0, -1));
+  } catch {
+    fail("compatible previous app identity inspection returned invalid JSON");
+  }
+  if (payload === null || Array.isArray(payload) || typeof payload !== "object") {
+    fail("compatible previous app identity inspection must return a JSON object");
+  }
+  const keys = Object.keys(payload).sort(compareNames);
+  if (
+    JSON.stringify(keys)
+    !== JSON.stringify([
+      "assembly_manifest_sha256",
+      "runtime_identity",
+      "schema_version",
+    ])
+  ) {
+    fail("compatible previous app identity inspection returned unexpected keys");
+  }
+  if (payload.schema_version !== runtimeIdentityInspectionSchemaVersion) {
+    fail("compatible previous app identity inspection returned an unsupported schema");
+  }
+  if (!isCanonicalSHA256(payload.runtime_identity)) {
+    fail("compatible previous app identity inspection returned an invalid identity");
+  }
+  if (!isCanonicalSHA256(payload.assembly_manifest_sha256)) {
+    fail("compatible previous app identity inspection returned an invalid manifest digest");
+  }
+  return {
+    app: canonicalApp,
+    runtimeIdentity: payload.runtime_identity,
+    assemblyManifestSHA256: payload.assembly_manifest_sha256,
+  };
+}
+
+async function resolveCompatiblePreviousRuntimes(coordinator, values) {
+  const inspected = [];
+  const seenApps = new Set();
+  const seenIdentities = new Set();
+  for (const value of values) {
+    const result = await inspectSignedRuntimeIdentity({
+      coordinatorBinaryPath: coordinator,
+      appPath: value,
+    });
+    if (seenApps.has(result.app)) {
+      fail(`compatible previous app was provided more than once: ${result.app}`);
+    }
+    seenApps.add(result.app);
+    if (seenIdentities.has(result.runtimeIdentity)) {
+      fail(`compatible previous apps resolved to a duplicate runtime identity: ${result.runtimeIdentity}`);
+    }
+    seenIdentities.add(result.runtimeIdentity);
+    inspected.push(result);
+  }
+  inspected.sort((left, right) => compareNames(left.runtimeIdentity, right.runtimeIdentity));
+  return {
+    apps: inspected.map((entry) => entry.app),
+    policies: inspected.map((entry) => ({
+      runtime_identity: entry.runtimeIdentity,
+      allowed_request_types: [...compatiblePreviousRequestTypes],
+    })),
+  };
 }
 
 async function adhocSignAndVerify(bundlePath) {
@@ -313,7 +451,11 @@ export async function assembleMacOSApp({
   sourceRoot = defaultSourceRoot,
   adhocSign = false,
   cleanupOnFailure = true,
+  compatiblePreviousApps = [],
 } = {}) {
+  const compatiblePreviousAppsSnapshot = snapshotCompatiblePreviousApps(
+    compatiblePreviousApps,
+  );
   const binary = requireAbsolutePath(binaryPath, "--binary");
   const requestedOutput = requireAbsolutePath(outputPath, "--output");
   const requestedSourceRoot = requireAbsolutePath(sourceRoot, "source root");
@@ -404,17 +546,19 @@ export async function assembleMacOSApp({
     await chmod(join(contents, "Library"), 0o755);
     await chmod(launchAgents, 0o755);
 
+    const stagedCoordinator = join(macOS, "blabee-coordinator");
+    await copyFileWithMode(binary, stagedCoordinator, 0o755);
+    const compatiblePrevious = await resolveCompatiblePreviousRuntimes(
+      stagedCoordinator,
+      compatiblePreviousAppsSnapshot,
+    );
+
     await copyFileWithMode(
       sourceInfoPlist,
       join(contents, "Info.plist"),
       0o644,
     );
     await validateInfoPlist(join(contents, "Info.plist"));
-    await copyFileWithMode(
-      binary,
-      join(macOS, "blabee-coordinator"),
-      0o755,
-    );
     await copyFileWithMode(
       sourceLaunchAgent,
       join(staging, launchAgentRelativePath),
@@ -438,7 +582,10 @@ export async function assembleMacOSApp({
       join(resources, "Plugin", "blabee"),
       join("Contents", "Resources", "Plugin", "blabee"),
     );
-    const manifest = await writeAssemblyManifest(staging);
+    const manifest = await writeAssemblyManifest(
+      staging,
+      compatiblePrevious.policies,
+    );
     if (adhocSign) await adhocSignAndVerify(staging);
 
     try {
@@ -459,6 +606,7 @@ export async function assembleMacOSApp({
       output,
       signed: adhocSign,
       manifest,
+      compatiblePreviousApps: compatiblePrevious.apps,
     };
   } catch (error) {
     if (cleanupOnFailure) {
@@ -476,6 +624,7 @@ export async function assembleMacOSApp({
 function parseCLIArguments(values) {
   let binaryPath;
   let outputPath;
+  const compatiblePreviousApps = [];
   let adhocSign = false;
   let help = false;
   for (let index = 0; index < values.length; index += 1) {
@@ -489,7 +638,11 @@ function parseCLIArguments(values) {
       help = true;
       continue;
     }
-    if (value !== "--binary" && value !== "--output") {
+    if (
+      value !== "--binary"
+      && value !== "--output"
+      && value !== "--compatible-previous-app"
+    ) {
       fail(`unsupported argument: ${value}`);
     }
     if (index + 1 >= values.length || values[index + 1].startsWith("--")) {
@@ -500,19 +653,31 @@ function parseCLIArguments(values) {
     if (value === "--binary") {
       if (binaryPath !== undefined) fail("--binary may be provided only once");
       binaryPath = argument;
-    } else {
+    } else if (value === "--output") {
       if (outputPath !== undefined) fail("--output may be provided only once");
       outputPath = argument;
+    } else {
+      compatiblePreviousApps.push(argument);
+      if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
+        fail(`--compatible-previous-app may be provided at most ${maximumCompatiblePreviousApps} times`);
+      }
     }
   }
-  return { binaryPath, outputPath, adhocSign, help };
+  return {
+    binaryPath,
+    outputPath,
+    adhocSign,
+    help,
+    compatiblePreviousApps,
+  };
 }
 
 function usage() {
   return [
     "Usage:",
-    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--adhoc-sign]",
+    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--compatible-previous-app /absolute/path/to/Blabee.app] [--adhoc-sign]",
     "",
+    "--compatible-previous-app may be repeated at most twice; raw runtime identity values are not accepted.",
     "The output parent must already exist. The script never writes to /Applications.",
   ].join("\n");
 }

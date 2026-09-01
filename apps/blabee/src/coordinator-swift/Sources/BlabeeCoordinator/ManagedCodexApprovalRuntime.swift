@@ -433,6 +433,10 @@ private struct ManagedCodexApprovalSocketRequest {
         cancellation: ManagedCodexApprovalCancellation
     ) throws -> [String: Any] {
         try cancellation.check()
+        let runtimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+        guard OperationalRuntimeIdentity.isValid(runtimeIdentity) else {
+            throw CoordinatorError("operational_runtime_identity_invalid")
+        }
         var socketInfo = stat()
         guard lstat(socketPath, &socketInfo) == 0,
               socketInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK),
@@ -514,7 +518,8 @@ private struct ManagedCodexApprovalSocketRequest {
         let requestID = "request_" + UUID().uuidString.lowercased()
         var requestData = try StrictJSONTransport.data(forJSONObject: [
             "request_id": requestID,
-            "type": type,
+            "runtime_identity": runtimeIdentity,
+            "type": operationalRuntimeRequestTypePrefix + type,
             "payload": payload,
         ])
         guard requestData.count < Self.maximumMessageBytes else {
@@ -543,9 +548,13 @@ private struct ManagedCodexApprovalSocketRequest {
                 maximumDepth: 72
             )
         )
-        guard response["request_id"] as? String == requestID,
-              let ok = response["ok"] as? Bool
-        else {
+        guard response["request_id"] as? String == requestID else {
+            throw CoordinatorError("operational_response_invalid")
+        }
+        guard response["runtime_identity"] as? String == runtimeIdentity else {
+            throw CoordinatorError("operational_runtime_identity_mismatch")
+        }
+        guard let ok = response["ok"] as? Bool else {
             throw CoordinatorError("operational_response_invalid")
         }
         if !ok {

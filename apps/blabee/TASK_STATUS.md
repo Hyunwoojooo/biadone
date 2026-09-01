@@ -1,6 +1,6 @@
 # Blabee 작업 현황
 
-업데이트: 2026-08-26
+업데이트: 2026-09-01
 
 ## 현재 단계
 
@@ -25,7 +25,7 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | T-011 운영 어댑터와 Plugin | 구현·자동/지연 세션 연결·제품 결합·신규 세션 및 cache 회전 실환경 완료 | `npm run test:t011` 28/28과 Swift Operational/UDS 회귀가 통과했다. `UserPromptSubmit` 지연 등록, 비활성 프로젝트 비등록, 교차 프로젝트 세션 충돌 거부, 뒤늦은 `SessionStart` identity 유지, 실제 Hook/UDS 지연 연결 두 경계를 검증했다. Hook/MCP는 Plugin-local launcher와 fail-closed locator를 사용한다. `build/local-dogfood-hook-guard-v1`의 source·app·marketplace·설치 cache Hook SHA-256 `76ad962b…c66e`가 일치하며, 새 Codex 세션 `01a03216-…`에서 UserPromptSubmit과 답변 종료가 code 127 없이 통과했다. 그 세션이 guarded command를 보유한 채 cache root를 제거하자 같은 세션이 `CACHE_ROTATION_SESSION_OK`로 끝났고, 네 Hook 직접 실행도 모두 exit 0·빈 stdout/stderr·입력 비노출이었다. 재설치 후 새 세션 `01a03218-…`이 Blabee 경계를 다시 받아 최신 Plugin 자동 연결도 별도로 확인했다. 설치 전부터 열린 세션의 최신 Plugin 재연결, sleep, SMAppService·공개 배포는 추가 실환경 검증 범위다. |
 | T-015 비차단 Stop·queue 새 턴 | 소스·계약·실제 두 세션 dogfood 완료 | Stop은 빈 stdout으로 즉시 끝나고 1·2는 exact session에 한 번 큐잉한다. 큐 메시지 digest가 정확히 일치하는 reentrant `UserPromptSubmit` 또는 queue receipt만 transport 완료 근거로 인정하며, 같은 세션의 무관한 프롬프트는 이전 dispatch를 완료하지 않는다. Operational 24/24, queue process 6/6, Pet 108/108, v1 계약 114/114, 제품 UDS 왕복과 Swift 189/189+XCTest 5/5가 통과했다. `build/local-dogfood-async-next-turn-v1`로 app·service·Plugin·Pet을 교체한 실제 Codex `0.149.0` 두 세션에서 원래 답변이 정상 종료됐고, FIFO A→B 선택 뒤 같은 session의 새 turn·episode에서 `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK`가 완료됐다. |
 | T-010 네이티브 macOS Pet | 기존 floating UI 실제 macOS 자격 조건부 완료, 메뉴바 FIFO 최신 빌드 교체·실제 선택 완료 | 평상시 전달받은 Blabee SVG 아이콘만 유지하고 attention에는 우상단 red overlay badge를 표시하며, 새 결정·권한 이벤트에서 아이콘 아래 패널을 자동 표시한다. 여러 세션은 `routing.pending` FIFO 선두만 표시·focus·선택하며 선두 선택 후 다음 세션을 자동 focus한다. 선택 불가 선두의 추월과 follower 직접 focus/selection은 fail-closed하고, 기존 authoritative foreground는 자동으로 빼앗지 않는다. 자동 focus 응답이 일시적으로 유실되어도 코디네이터 전면이 없거나 같은 FIFO 선두이면 다음 poll에서 재시도하고, 다른 authoritative foreground가 있으면 빼앗지 않는다. 최신 `BlabeePetTests` 108/108, 전체 Swift Testing 189/189+XCTest 5/5, 앱 패키징 8/8이 통과했다. 현재 service PID 15492와 Pet PID 15853은 `build/local-dogfood-hook-guard-v1`에서 실행 중이며, service는 실사용 교체를 위한 임시 `launchctl submit` job이다. 두 실제 세션 FIFO 선택·다음 세션 승격은 앞선 저널에서 확인했다. 비활성 메뉴바 패널은 Computer Use AX가 붙지 않아 픽셀·자동 열림/닫힘을 직접 캡처하지 못했으며, 다중 디스플레이·Spaces·키보드 레이아웃·sleep·Terminal/VS Code/Orca 복귀도 미검증이다. |
-| T-012a 읽기 전용 Doctor 기반 | 구현·자동 계약 검증 완료, 공개 배포 미승인 | `doctor_status`는 일반 operational 경로와 journal/time 변경을 우회한다. Doctor 18/18, Operational 15/15, T-011 26/26, v1 계약 114/114가 통과했다. 최종 로컬 Doctor에서 app·embedded coordinator·Plugin 설치/구조·Plugin-local MCP runtime·daemon·project 검사가 통과했다. Codex `0.149.0` allowlist가 비어 있어 전체는 실패로, Hook 해시 검토는 사용자 조치 필요로 의도대로 보고했다. signed Keychain·DMG·공증·터미널 매트릭스와 path/process-group hardening은 미완료이다. |
+| T-012a 읽기 전용 Doctor 기반 (2026-08-22 최초 기록) | 구현·자동 계약 검증 완료, 공개 배포 미승인 | `doctor_status`는 일반 operational 경로와 journal/time 변경을 우회한다. Doctor 18/18, Operational 15/15, T-011 26/26, v1 계약 114/114가 통과했다. 당시 로컬 Doctor에서 app·embedded coordinator·Plugin 설치/구조·Plugin-local MCP runtime·daemon·project 검사가 통과했다. 당시 Codex `0.149.0` allowlist가 비어 있어 전체는 실패했고, Hook 해시 검토도 사용자 조치 필요로 보고했다. 현재 정책과 검증 결과는 표 아래 2026-09-01 후속 기록이 대체한다. signed Keychain·DMG·공증·터미널 매트릭스와 path/process-group hardening은 미완료이다. |
 | T-012b-1 로컬 앱 번들 기반 | 로컬 조립·ad-hoc 자격 완료, 공개 배포 미승인 | `Blabee.app`에 고정 plist, 단일 release 실행 파일, exact Contracts/Plugin과 assembly manifest를 포함한다. 패키징 5/5, Swift Pet/Doctor/진입 55/55, T-011 24/24, 계약 114/114가 통과했다. 실제 번들은 `adhoc,runtime`과 deep/strict 검증을 통과했고 Info.plist 변조 후 서명 검증은 실패했다. 로컬 dogfood는 output root에서만 실행했으며 `/Applications`, launchd, Developer ID, 공증, DMG는 건드리지 않음 |
 | T-012b-2 제품 service·정적 LaunchAgent | foreground 제품 자격 완료, 자동 시작 미승인 | `service`는 exact app/Resources/real Contracts와 Application Support 고정 경로만 사용하고 추가 인자·환경 경로 우회를 거부한다. strict `service.json`과 정적 LaunchAgent exact 네 키를 구현했다. Product 10/10, 패키징 7/7, T-011 24/24와 ad-hoc strict 서명 계약이 통과했다. 후속 dogfood에서 primary login Keychain과 임시 `launchctl submit` service는 실행했지만, 번들 정적 LaunchAgent 또는 `SMAppService` 등록과 로그인 자동 시작은 실행하지 않음 |
 | T-012b-3a 프로젝트 설정 writer | 안전한 설정 변경 계약 자격 완료, 제품 UI·자동 시작 미승인 | exact 앱 전용 `project-settings`, current-user 0700/0600·single-link 경계, mutex+flock, strict locked RMW, file/directory fsync와 atomic rename을 구현했다. reader도 Application Support ancestor symlink를 거부한다. Writer 12/12, fresh reader+writer 23/23, Swift Pet 78/78, 이 단계 완료 당시 전체 Swift Testing 150/150+XCTest 5/5, release build와 패키징 7/7 통과. 후속 dogfood에서 foreground service와 primary login Keychain을 실행했지만 SMAppService·launchctl·자동 시작은 실행하지 않음 |
@@ -34,7 +34,36 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | 설명 전용 음성 계약 | 완료 | 결정 제안·대기 0건, 파일 변경 없음, 마지막 메시지 `M0_EXPLAINED` |
 | 플러그인 구조 | 실제 로컬 설치·신뢰·회전 조건부 완료 | 실제 Codex CLI `0.149.0`의 격리 lifecycle과 실제 사용자 marketplace/Plugin 설치를 통과했다. 현재 활성 selector는 `blabee@blabee-local-dogfood-dbc4be6d1786` 하나이며 네 guarded Hook은 `/hooks`에서 각각 검토·신뢰했다. 설치 cache 제거 뒤 fail-open과 재설치 후 새 세션 연결도 통과했다. 제공 Python validator는 PyYAML 부재로 실행하지 않았고 공개 배포 신뢰 UX는 별도 |
 | PermissionRequest 제품 동작 | Hook·관리형 소스 자동 계약 검증 완료, 설치본 App Server 실사용 왕복 미검증 | Hook Pet은 FIFO 선두의 지원 가능한 command형 요청에 `거절`, `Codex에서 직접 결정`만 제공하고 Hook allow를 출력하지 않는다. 관리형 Pet FIFO는 `이번만 허용`, `거절`, `Codex에서 직접 결정`을 별도 카드로 제공하고 원본 `environmentId`를 표시한다. 120 Unicode scalar 이하의 안전한 단일 행 명령만 생략 없이 표시하며 그 밖에는 원래 Codex TUI로 반환한다. 두 경로 모두 대기 상한 8개, exact binding·response ID 멱등성, journal 비영속과 native fallback을 구현했고 `acceptForSession`은 지원하지 않는다. 실제 설치본 App Server 왕복은 아직 미검증이다. |
-| App Server 일회 승인 관리형 실행 | 소스·자동 계약 검증 완료, 설치본 live dogfood 미검증 | Codex `0.149.1`의 `item/commandExecution/requestApproval` 형태만 엄격히 파싱하고 문자열·정수 request ID와 원본 바이트를 보존한다. `blabee-codex`는 인증된 localhost WebSocket TUI와 stdio App Server를 중계하며, 관리형 FIFO 선택을 `accept`·`decline` 또는 원본 TUI 전달로 변환한다. 사용자 결정 120초·브로커 125초·socket 130초의 순서화된 상한을 적용하며, 무응답·오류·8개 상한 초과는 원래 Codex로 반환한다. request ID 기억이 256개에 도달하면 그 연결은 이후 승인을 전부 네이티브 TUI에 맡긴다. `acceptForSession`, 추가 권한, 네트워크·실행 정책 변경, 표시할 수 없는 명령은 합성하지 않는다. 관리형 집중 테스트 30/30과 최종 제품 테스트 310/310이 통과했다. Pet 선택 receipt는 App Server 전달이나 명령 실행 성공의 증거가 아니다. |
+| App Server 일회 승인 관리형 실행 | 소스·자동 계약 검증 완료, 설치본 live dogfood 미검증 | 지원 Codex `0.149.1`·`0.150.1`·`0.151.0`의 `item/commandExecution/requestApproval` 계약을 엄격히 파싱하고 문자열·정수 request ID와 원본 바이트를 보존한다. `blabee-codex`는 인증된 localhost WebSocket TUI와 stdio App Server를 중계하며, 관리형 FIFO 선택을 `accept`·`decline` 또는 원본 TUI 전달로 변환한다. 사용자 결정 120초·브로커 130초·socket 135초의 순서화된 상한을 적용하며, 무응답·오류·8개 상한 초과는 원래 Codex로 반환한다. request ID 기억이 256개에 도달하면 그 연결은 이후 승인을 전부 네이티브 TUI에 맡긴다. `acceptForSession`, 추가 권한, 네트워크·실행 정책 변경, 표시할 수 없는 명령은 합성하지 않는다. 초기 관리형 자격은 집중 30/30·제품 310/310, 최신 runtime identity 회귀는 집중 12/12·전체 Swift Testing 445/445+XCTest 5/5를 통과했다. Pet 선택 receipt는 App Server 전달이나 명령 실행 성공의 증거가 아니다. |
+| 관리형 Codex Medium 신뢰 경계 | 소스·단위·프로세스 통합 검증 완료, 설치본 live dogfood 미검증 | 버전 probe를 private process group·64 KiB bounded output·TERM→KILL·direct-child reap으로 격리하고, canonical current-user/non-writable/no-grant-ACL pin parent와 첫 App Server 실행 직전 재검증을 추가했다. `blabee-codex` 진입 wrapper는 coordinator 실행 전에 `DYLD_*`·`__XPC_DYLD_*`·`LD_*` loader override를 값 노출 없이 거부하고, 환경 수집·검사 실패도 fail-closed한다. 내부 경계도 같은 정책을 재검증하며 probe·App Server·TUI·보조 세션·fallback은 같은 검증된 환경 snapshot을 사용한다. PATH와 `$HOME/.local/bin/codex`, 정상 종료·timeout·output flood의 direct/descendant 정리, unsafe temp parent를 단위 검증했다. 생성 wrapper의 선행 거부와 test-harness 실제 process에서 live provider→pin→재검증→`execve` fallback의 argv·cwd·환경 제거·exit 37, 실행 중 lease 보존·종료 뒤 회수도 통과했다. 최종 자동 검증은 XCTest 5/5 + Swift Testing 420/420, Node 268/268, T-011 46/46, dogfood 5/5이며 독립 보안 QA에서 신규 Critical/High/Medium/Low finding은 없었다. |
+
+위 T-012a 표 행은 2026-08-22 최초 검증 기록이다. 2026-09-01 후속으로
+“Hook은 항상 수동 검토” 정책을 교체했다. Doctor는
+Codex App Server `hooks/list`만 읽기 전용으로 조회하며, 현재 Blabee 네 Hook의
+활성화·신뢰 상태와 설치 source 대비 cache 바이트가 모두 정확할 때만
+`hook_trust_ok`로 통과한다. 집중 29/29와 전체 Swift Testing 434/434+XCTest 5/5,
+정상 fixture의 전체 exit `0`, 실제 설치 상태의 `hook_trust_ok`를 확인했다. 새
+dogfood 빌드로 교체한 뒤 Doctor 전체 exit `0`을 확인하는 실사용 게이트는 남아 있다.
+
+같은 날 runtime 회전 후속으로 signed assembly manifest v2와 이전 runtime의 제한적
+UDS 호환을 구현했다. raw identity 대신 검증된 이전 `Blabee.app`을 입력받고, 이전
+identity에는 `session_start`·`user_prompt_submit`·`emit_decision`·`stop`만 허용한다.
+검사기와 번들은 같은 private coordinator snapshot을 사용하고 inspector v2가 같은
+검증 manifest에서 wire identity와 manifest digest를 함께 반환한다. 전체 Swift
+Testing 441/441+XCTest 5/5와 Node 276/276가 통과했다. 현재 v1 앱을 명시적으로
+허용하는 `build/local-dogfood-runtime-compat-v2-20260901`을 별도로
+서명·검증했지만, 열린 세션 보존을 위해 실행 중 앱·service·Plugin은 교체하지 않았다.
+실제 구 Hook/MCP→새 service 왕복과 session drain 뒤 이전 cache 정리는 활성화
+게이트로 남아 있다.
+
+같은 날 관리형 App Server 승인 전용 UDS client의 runtime identity 누락 회귀도
+수정했다. 선택 요청과 delivery ack가 모두 v1 namespaced type과 process-cached
+current identity를 보내고, 응답의 request ID와 exact identity를 확인한 뒤에만
+결정·token·application error를 해석한다. 실제 strict server 성공·ack, application
+error의 byte-exact Codex 복귀, 다른 server identity의 dispatch 전 거부와 forged
+positive response 거부를 검증했다. 집중 12/12, 전체 Swift Testing 445/445+XCTest
+5/5와 release build가 통과했다. 설치본 live Pet→App Server 왕복은 계속 별도
+실사용 게이트이며 실행 중 앱·service·Plugin은 교체하지 않았다.
 
 실제 계약 픽스처에서 관찰한 순서는 다음과 같다.
 
@@ -58,13 +87,13 @@ project_enabled
 
 ## 확정된 제품 결정
 
-1. 결정 카드는 반고정 구조다. `1`은 패킷별 권장 작업, `2`는 패킷별 대안 작업 또는 비활성, `3`은 보류, `4`는 사람이 입력한 직전 작업 프롬프트 직전으로 롤백이다.
+1. 새 결정 카드는 우선순위가 매겨진 실행 가능한 다음 항목 2~4개다. `1`은 가장 권장하는 작업이고 `2`~`4`는 순서대로 차선이다. 보류와 롤백은 새 숫자 슬롯의 고정 의미로 발행하지 않으며, 과거 고정 네 슬롯 패킷은 journal replay 호환 목적으로만 읽는다.
 2. 1·2 선택은 숫자만 전달하지 않는다. 코디네이터가 봉인된 패킷에서 작업의 제목·목표·제약·완료 기준 전체를 다시 읽고, 같은 Codex 세션의 새 사용자 턴으로 큐잉한다. Stop Hook은 Codex의 현재 답변 완료를 막지 않는다.
 3. 사람이 직접 입력한 프롬프트와 Pet이 큐잉한 새 프롬프트는 모두 새 에피소드와 롤백 기준선을 만든다. Pet action의 binding은 선택이 만들어진 원본 에피소드를 보존해 출처를 추적한다.
 4. 공개 v0.1 자동 롤백 후보는 깨끗한 작업 트리에서 시작하고 범위가 완전한 프롬프트 에피소드 하나다. ignored 파일, 하위 모듈, LFS, 저장소 밖 파일, 크기 초과, 동시 편집, 브랜치·HEAD 변경, 외부 부수 효과가 있으면 비활성화한다.
-5. 센티널은 격리된 M0 smoke test에만 사용한다. 운영 결정 제안 채널은 프로젝트 로컬 MCP `emit_decision`이다.
+5. M0 센티널과 실행 스파이크는 2026-08-31 활성 트리에서 제거했다. 운영 결정 제안 채널은 프로젝트 로컬 MCP `emit_decision`이다.
 6. 지원 가능한 command형 Hook 권한 요청은 Pet의 별도 2선택 카드로 중계한다. Hook에서는 `거절`과 `Codex에서 직접 결정`만 제공한다. `이번만 허용`은 관리형 App Server의 단일 요청 `accept`로만 제공하고 세션·전역 허용은 만들지 않는다. 실패·만료·재시작에서는 Codex 네이티브 승인 체계로 반환하며 앱 복귀는 best-effort다.
-7. 현재 로컬 실험 기준은 Codex `0.149.0`이다. Hook/MCP와 `codex queue`의 exact 출력·세션 라우팅을 버전별 계약 테스트로 확인한 뒤 지원 허용 목록에 넣는다.
+7. 현재 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. Hook/MCP, `codex queue`, 관리형 App Server의 exact 출력·세션 라우팅을 각 버전 계약 테스트로 확인한 경우에만 목록에 유지하거나 추가한다.
 8. 일반 로컬 코디네이터 연결은 2초, Hook 응답은 5초, Pet 선택은 큐 프로세스 10초보다 긴 12초로 제한한다. 실패해도 완료 중인 Codex 답변은 막지 않으며, 60초에 한 번 알리고 120초에 자동 선택 없이 만료해 늦은 입력을 거부한다.
 9. 여러 세션의 패킷은 `routing.pending` FIFO 대기열에 둔다. Pet은 선두 카드만 표시·focus·선택하고, 전면 대상 없이 선두가 선택 가능하면 대기열 길이와 관계없이 자동 focus한다. 선두가 제거되면 다음 카드로 자동 진행하며 뒤 카드는 직접 선택할 수 없다.
 10. Blabee는 별도 LLM API 키나 추론 서비스를 요구하지 않는다.

@@ -39,7 +39,6 @@ struct PetTestPermissionRequest: Sendable, Equatable {
     var toolName: String = "Bash"
     var requestDescription: String? = "테스트 명령 실행 권한이 필요합니다."
     var commandPreview: String? = "npm test"
-    var allowOnceAvailable: Bool = true
     var deliveryPending: Bool = false
 }
 
@@ -251,7 +250,6 @@ func petTestSnapshotObject(
             "tool_name": request.toolName,
             "description": request.requestDescription ?? NSNull(),
             "command_preview": request.commandPreview ?? NSNull(),
-            "allow_once_available": request.allowOnceAvailable,
             "delivery_pending": request.deliveryPending,
         ]
     }

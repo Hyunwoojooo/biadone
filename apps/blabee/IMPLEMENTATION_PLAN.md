@@ -21,7 +21,7 @@
 8. 의미 있는 대안이 없을 때 2번이 `disabled_reason`과 함께 비활성화되고 `action_id`나 실행 본문을 갖지 않으며 다른 의미로 재사용되지 않는지 검증한다.
 9. 60초 알림, 120초 패킷 만료, 자동 선택 없음, 재개 캡슐 저장, 만료 후 입력 거부를 검증한다.
 10. 로컬 코디네이터 연결을 2초로 제한하고, 데몬 장애나 연결 시간 초과가 발생하면 Blabee 자동 동작만 끈 채 일반 Codex를 계속 사용할 수 있는지 검증한다.
-11. `PermissionRequest`의 알림과 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀를 검증한다. Hook 요청에는 원래 PID/창 identity가 없다는 한계를 표시하고, 허용/거부 왕복은 격리된 역량 측정만 수행하며 공개 v0.1 기능에는 연결하지 않는다.
+11. `PermissionRequest`의 알림과 권한 요청 화면으로 돌아가기 위한 best-effort 앱 복귀를 검증한다. Hook 요청에는 원래 PID/창 identity가 없다는 한계를 표시하고, Hook은 거절·Codex 직접 결정만 중계하며 허용은 별도 관리형 App Server의 단일 요청 `accept`로만 제공한다.
 12. Swift 헬퍼, TypeScript/Node 헬퍼, 소형 독립형 바이너리를 동일한 제한 health fixture로 측정하고 시작 지연, 배포 크기, IPC, 재시작 복구, 서명·공증, 진단성과 메모리 사용량을 기록한다. 정식 JSON 파서가 없는 후보의 결과는 프로토콜 동등성 근거로 사용하지 않는다.
 
 완료 조건:
@@ -66,7 +66,7 @@
 8. Codex 네이티브 질문/권한 요청을 Blabee 결정 패킷과 다른 상호작용 종류와 ID로 보존한다.
 9. **조건부 완료 — T-007b-A/A2/B1/B2:** SQLite 이벤트·패킷·검증 원장, Keychain freshness high-water, Swift 의미 projection, 세션 queue·foreground·continuous deadline projection을 구현했다. foreground와 monotonic anchor는 의도적으로 비영속이며 재시작 때 fail-closed한다.
 10. **구현·자동·실제 두 세션 도그푸드 완료 — T-015:** T-011의 Skill·Hook·로컬 MCP·Swift 단일 UDS owner 기반은 유지하되 Stop waiter와 finalization self-check를 제거한다. Stop은 결정 유무만 저장하고 즉시 끝나며, Pet 1·2 선택은 봉인된 action을 exact Codex session의 새 사용자 턴으로 한 번 큐잉한다. 새 `UserPromptSubmit`은 새 turn·prompt·episode·baseline을 만들고 queue receipt와 작업 outcome을 분리한다. 과거 `same_turn_stop`은 저널 replay에만 허용한다. `build/local-dogfood-async-next-turn-v1`로 app·service·Plugin·Pet을 교체한 실제 Codex `0.149.0` 두 세션에서 A→B FIFO 선택, `queued_next_turn` receipt, 같은 session의 새 turn·episode, `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK` 완료를 관찰했다. 전송 완료 이벤트는 의도대로 `work_outcome_status = not_recorded`를 유지했고 실제 Codex 출력으로 작업 성공을 별도 확인했다.
-11. 현재 로컬 기준 Codex `0.149.0`의 Hook/MCP/queue 계약을 고정하고 지원 버전 허용 목록을 만든다.
+11. **조건부 완료:** `0.149.0` 로컬 실험은 역사적 증거로 보존하고, 현재 지원 허용 목록은 `0.149.1`·`0.150.1`·`0.151.0`으로 고정한다. Hook/MCP/queue/App Server의 버전별 계약을 재검증한 경우에만 목록을 유지하거나 확장한다.
 12. `blabee doctor`에 앱, 데몬, 플러그인, Hook 신뢰 설정, Codex 버전/허용 목록, 프로젝트 활성화 여부 검사를 추가한다.
 
 완료 조건:
@@ -223,7 +223,7 @@ T-012a 실행 결과:
 
 - `blabee-coordinator doctor`와 operational state를 변경하지 않는 전용 UDS `doctor_status`를 구현했다.
 - Codex exact 버전, Plugin 설치/version/local source와 v0.1.0 manifest·MCP·Hook·launcher·Skill 계약, PATH coordinator identity, 앱/daemon/프로젝트 범위를 fail-closed로 검사한다.
-- Hook 신뢰는 자동 추정하지 않고 항상 `/hooks` 수동 검토를 요구한다. 지원 allowlist는 아직 비어 있다.
+- Hook 신뢰는 Codex App Server `hooks/list`를 읽기 전용으로 조회한다. 현재 Blabee Plugin의 네 Hook이 정확히 하나씩 활성화되어 있고 Codex가 `trusted` 또는 `managed`로 보고하며 활성 cache의 `hooks.json`이 설치 source와 byte-exact로 일치할 때만 통과한다. 누락·중복·비활성·변경·미신뢰·프로토콜 오류는 `/hooks` 검토가 필요한 `action_required`로 fail-closed한다. Codex 비공개 trust 설정이나 hash 계산 규칙은 직접 읽거나 재현하지 않는다.
 - Doctor 18/18, Operational 15/15, T-011 23/23, v1 계약 114/114가 통과했다. 실제 signed app·Keychain·DMG·공증·버전 승인·터미널 매트릭스와 공개용 TOCTOU/process-group hardening은 후속 단계다.
 
 T-012b-1 실행 결과:
@@ -233,6 +233,16 @@ T-012b-1 실행 결과:
 - 정확한 `com.biadone.blabee`의 `Blabee.app` 무인자 실행과 정상 LaunchServices PSN만 Pet 모드로 연결하고, 기존 명령과 일반 CLI 무인자/legacy 인자는 그대로 유지한다.
 - 패키징 5/5, Swift Pet/Doctor/진입 55/55, T-011 23/23, v1 계약 114/114가 통과했다. 실제 release 앱은 entitlement 없이 `adhoc,runtime` 서명과 deep/strict 검증을 통과했고 Info.plist 변조 후 검증은 실패했다.
 - 이 단계는 로컬 조립 자격이다. `/Applications`, PATH, 셸 설정, launchd/로그인 항목, Keychain, Developer ID, 공증, Gatekeeper, DMG를 변경하거나 승인하지 않는다.
+
+T-012b-1 runtime 회전 후속 — 2026-09-01:
+
+- assembly manifest를 v2로 올리고, 서명 검증된 이전 `Blabee.app`에서 직접 계산한 runtime identity와 그 identity에 허용할 exact operation을 함께 봉인한다. raw identity 입력, 중복 경로·identity, 정렬되지 않은 정책, 세 개 이상의 이전 앱과 이전 manifest의 호환 목록 자동 상속은 거부한다.
+- 현재 runtime은 기존 전체 UDS allowlist를 유지한다. 이전 runtime은 `session_start`, `user_prompt_submit`, `emit_decision`, `stop`만 사용할 수 있고, 성공 및 application error response는 승인된 이전 identity를 echo한다. 미승인 identity와 그 밖의 operation은 application dispatch 전에 거부한다.
+- dogfood summary v2는 `assembly_manifest_sha256`과 서명 후 계산한 `wire_runtime_identity`를 분리한다. 후자는 CDHash와 manifest digest를 결합한 실제 UDS identity다. inspector v2가 두 값을 같은 검증 manifest snapshot에서 반환하며 summary는 별도 재읽기를 하지 않는다.
+- assembler는 coordinator를 private staging에 먼저 고정하고 같은 바이트로 이전 앱 검사와 번들 조립을 수행한다. caller-owned 이전 앱 목록도 첫 `await` 전에 복사해 최대 두 개 제한을 고정한다.
+- 전체 Swift Testing 441/441+XCTest 5/5와 전체 Node 276/276, 실제 signed v1/v2 통합 조립·deep/strict 검증을 통과했다. `build/local-dogfood-runtime-compat-v2-20260901`은 현재 `queued-ref-v1` 앱 identity 하나를 명시적으로 허용하는 비활성 검증 산출물이며 실행 중 앱·service·Plugin은 교체하지 않았다.
+- 관리형 App Server 승인 전용 취소 가능 UDS client도 동일한 v1 namespace·runtime identity·exact response identity 계약으로 정렬했다. 실제 strict server의 선택·delivery ack, matching-identity application error, server identity mismatch와 forged positive response를 검증했다. downstream write 전 선택 실패만 원본 Codex 요청 바이트로 복귀하고, write 뒤 ack 실패는 중복 처리를 막기 위해 재시도·네이티브 fallback·bridge 종료 없이 coordinator의 미확정 전달 상태로 남긴다. 전체 Swift Testing 445/445+XCTest 5/5와 release build를 통과했으며 실행 중 앱·service·Plugin은 교체하지 않았다.
+- 실제 열린 구 Hook/MCP 프로세스→새 service의 교차-generation 실사용 왕복과 session drain 뒤 이전 cache 제거는 별도 활성화 gate다. 동일 UID 악성 프로세스 인증과 Developer ID publisher anchor도 이 로컬 ad-hoc rotation 계약의 보장 범위가 아니다.
 
 T-012b-2 실행 결과:
 
@@ -281,13 +291,14 @@ Pet에는 Hook 큐와 분리한 process-local FIFO를 표시하며 `이번만 �
 설치본에서 실제 Codex App Server/Pet 왕복은 아직 검증하지 않았으므로 공개 사용
 가능 상태로 표시하지 않는다.
 
-현재 계약 기준은 Codex `0.149.1`이다. 관리형 대기는 도착 시점부터 사용자 결정
-120초, 브로커 125초, socket 130초의 순서화된 상한과 동시 8개로 제한하며 Pet에는
+현재 코드의 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. 관리형
+대기는 도착 시점부터 사용자 결정 120초, 브로커 130초, socket 135초의 순서화된 상한과 동시 8개로 제한하며 Pet에는
 원본 환경 ID도 표시한다. 한 연결에서 기억한 승인 request
 ID가 256개에 도달하면 오래된 ID를 버리지 않고 이후 요청을 전부 공식 TUI에 맡기는
 단방향 native-only 모드로 전환한다. Pet 선택 접수, App Server 응답 전달, 실제 명령
-실행 결과는 각각 별도 증거다. 관리형 집중 테스트 30/30과 최종 제품 테스트 310/310이
-통과했지만 설치본 live dogfood는 수행하지 않았다.
+실행 결과는 각각 별도 증거다. 초기 관리형 자격 당시 집중 30/30과 제품 310/310이
+통과했고, 최신 runtime identity 회귀에서는 집중 12/12와 전체 Swift Testing
+445/445+XCTest 5/5가 통과했다. 설치본 live dogfood는 수행하지 않았다.
 
 1. 설치본의 격리된 실제 Codex 세션에서 `accept`·`decline`·원본 TUI 전달과 두 요청 FIFO를 검증한다.
 2. 공식 TUI 동작을 유지하면서 네이티브 질문과 승인을 Pet에도 표시하고, 명시적인 별도 릴리스 게이트를 통과한 뒤에만 응답 중계를 검토한다.

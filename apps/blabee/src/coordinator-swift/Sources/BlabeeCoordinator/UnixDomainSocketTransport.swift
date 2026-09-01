@@ -7,7 +7,34 @@ import Foundation
 import Security
 
 private let operationalMaximumMessageBytes = 1_048_576
-private let operationalRuntimeRequestTypePrefix = "blabee.runtime-identity.v1/"
+let operationalRuntimeRequestTypePrefix = "blabee.runtime-identity.v1/"
+private let operationalCompatiblePreviousRequestTypes: Set<String> = [
+    "emit_decision",
+    "session_start",
+    "stop",
+    "user_prompt_submit",
+]
+
+struct OperationalRuntimeCompatibilityPolicy: Equatable, Sendable {
+    let runtimeIdentity: String
+    let allowedRequestTypes: [String]
+}
+
+struct OperationalRuntimeIdentitySnapshot: Equatable, Sendable {
+    let runtimeIdentity: String
+    let compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
+
+    func allowedRequestTypes(forCompatibleIdentity identity: String) -> Set<String>? {
+        compatiblePreviousRuntimes.first(where: {
+            $0.runtimeIdentity == identity
+        }).map { Set($0.allowedRequestTypes) }
+    }
+}
+
+struct OperationalInstalledRuntimeInspection: Equatable, Sendable {
+    let snapshot: OperationalRuntimeIdentitySnapshot
+    let assemblyManifestSHA256: String
+}
 
 struct OperationalCodeSignatureEvidence: Equatable, Sendable {
     let identifier: String
@@ -36,25 +63,34 @@ struct OperationalCodeSignatureVerifier: Sendable {
 /// environment/filesystem fallback. `current` is captured once per process so
 /// neither Security.framework nor the filesystem is queried per UDS request.
 enum OperationalRuntimeIdentity {
-    static let assemblyManifestSchemaVersion = "blabee.macos-app-assembly.v1"
+    static let legacyAssemblyManifestSchemaVersion = "blabee.macos-app-assembly.v1"
+    static let assemblyManifestSchemaVersion = "blabee.macos-app-assembly.v2"
     static let assemblyManifestFileName = "assembly-manifest.json"
     static let environmentKey = "BLABEE_RUNTIME_IDENTITY"
     static let expectedBundleIdentifier = "com.biadone.blabee"
-    static let currentResolution: Result<String, CoordinatorError> = {
-        let identity = resolve()
-        guard isValid(identity) else {
+    static let currentSnapshotResolution: Result<
+        OperationalRuntimeIdentitySnapshot,
+        CoordinatorError
+    > = {
+        guard let snapshot = resolveSnapshot(), isValid(snapshot.runtimeIdentity) else {
             return .failure(CoordinatorError("operational_runtime_identity_unverified"))
         }
-        return .success(identity)
+        return .success(snapshot)
     }()
+    static let currentResolution: Result<String, CoordinatorError> =
+        currentSnapshotResolution.map(\.runtimeIdentity)
     static let current = (try? currentResolution.get()) ?? ""
 
     static func requireCurrent() throws -> String {
         try currentResolution.get()
     }
 
+    static func requireCurrentSnapshot() throws -> OperationalRuntimeIdentitySnapshot {
+        try currentSnapshotResolution.get()
+    }
+
     static func isValid(_ value: String) -> Bool {
-        value.range(
+        value.utf8.count == 71 && value.range(
             of: "^sha256:[0-9a-f]{64}$",
             options: .regularExpression
         ) != nil
@@ -65,22 +101,40 @@ enum OperationalRuntimeIdentity {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         signatureVerifier: OperationalCodeSignatureVerifier = .live
     ) -> String {
+        resolveSnapshot(
+            executableURL: executableURL,
+            environment: environment,
+            signatureVerifier: signatureVerifier
+        )?.runtimeIdentity ?? ""
+    }
+
+    static func resolveSnapshot(
+        executableURL: URL? = Bundle.main.executableURL,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        signatureVerifier: OperationalCodeSignatureVerifier = .live
+    ) -> OperationalRuntimeIdentitySnapshot? {
         if let executableURL,
            packagedAppURL(forExecutable: executableURL) != nil
         {
             // A packaged coordinator must never silently downgrade to an
             // environment or inode identity. The process-cached resolution
             // converts this invalid value into a typed initialization failure.
-            return packagedIdentity(
+            return packagedSnapshot(
                 forExecutable: executableURL,
                 signatureVerifier: signatureVerifier
-            ) ?? ""
+            )
         }
+        let identity: String
         if let configured = environment[environmentKey], isValid(configured) {
-            return configured
+            identity = configured
+        } else {
+            identity = executableURL.flatMap(filesystemIdentity(forExecutable:))
+                ?? digest("blabee-runtime-unavailable-v1")
         }
-        return executableURL.flatMap(filesystemIdentity(forExecutable:))
-            ?? digest("blabee-runtime-unavailable-v1")
+        return OperationalRuntimeIdentitySnapshot(
+            runtimeIdentity: identity,
+            compatiblePreviousRuntimes: []
+        )
     }
 
     /// Computes the identity of an installed packaged coordinator using its
@@ -98,17 +152,49 @@ enum OperationalRuntimeIdentity {
         forExecutable executableURL: URL,
         signatureVerifier: OperationalCodeSignatureVerifier
     ) -> String? {
+        installedInspection(
+            forExecutable: executableURL,
+            signatureVerifier: signatureVerifier
+        )?.snapshot.runtimeIdentity
+    }
+
+    static func installedSnapshot(
+        forExecutable executableURL: URL,
+        signatureVerifier: OperationalCodeSignatureVerifier = .live
+    ) -> OperationalRuntimeIdentitySnapshot? {
+        installedInspection(
+            forExecutable: executableURL,
+            signatureVerifier: signatureVerifier
+        )?.snapshot
+    }
+
+    static func installedInspection(
+        forExecutable executableURL: URL,
+        signatureVerifier: OperationalCodeSignatureVerifier = .live
+    ) -> OperationalInstalledRuntimeInspection? {
         guard packagedAppURL(forExecutable: executableURL) != nil,
-              let manifestData = validatedManifestData(forExecutable: executableURL),
+              let manifest = validatedManifest(forExecutable: executableURL),
               let evidence = signatureVerifier.installedCode(
                 executableURL,
-                manifestData
+                manifest.data
               ),
               validSignatureEvidence(evidence, executableURL: executableURL)
         else { return nil }
-        return combine(
+        let manifestDigest = Data(SHA256.hash(data: manifest.data))
+        guard let identity = combine(
             cdHash: evidence.cdHash,
-            manifestDigest: Data(SHA256.hash(data: manifestData))
+            manifestDigest: manifestDigest
+        ),
+        !manifest.compatiblePreviousRuntimes.contains(where: {
+            $0.runtimeIdentity == identity
+        })
+        else { return nil }
+        return OperationalInstalledRuntimeInspection(
+            snapshot: OperationalRuntimeIdentitySnapshot(
+                runtimeIdentity: identity,
+                compatiblePreviousRuntimes: manifest.compatiblePreviousRuntimes
+            ),
+            assemblyManifestSHA256: digest(manifest.data)
         )
     }
 
@@ -126,7 +212,7 @@ enum OperationalRuntimeIdentity {
     }
 
     static func manifestIdentity(forExecutable executableURL: URL) -> String? {
-        guard let data = validatedManifestData(forExecutable: executableURL)
+        guard let data = validatedManifest(forExecutable: executableURL)?.data
         else { return nil }
         return digest(data)
     }
@@ -138,23 +224,31 @@ enum OperationalRuntimeIdentity {
             .appendingPathComponent(assemblyManifestFileName)
     }
 
-    private static func packagedIdentity(
+    private static func packagedSnapshot(
         forExecutable executableURL: URL,
         signatureVerifier: OperationalCodeSignatureVerifier
-    ) -> String? {
-        guard let manifestData = validatedManifestData(forExecutable: executableURL),
+    ) -> OperationalRuntimeIdentitySnapshot? {
+        guard let manifest = validatedManifest(forExecutable: executableURL),
               let running = signatureVerifier.runningCode(),
               let installed = signatureVerifier.installedCode(
                 executableURL,
-                manifestData
+                manifest.data
               ),
               validSignatureEvidence(running, executableURL: executableURL),
               validSignatureEvidence(installed, executableURL: executableURL),
               running.cdHash == installed.cdHash
         else { return nil }
-        return combine(
+        guard let identity = combine(
             cdHash: running.cdHash,
-            manifestDigest: Data(SHA256.hash(data: manifestData))
+            manifestDigest: Data(SHA256.hash(data: manifest.data))
+        ),
+        !manifest.compatiblePreviousRuntimes.contains(where: {
+            $0.runtimeIdentity == identity
+        })
+        else { return nil }
+        return OperationalRuntimeIdentitySnapshot(
+            runtimeIdentity: identity,
+            compatiblePreviousRuntimes: manifest.compatiblePreviousRuntimes
         )
     }
 
@@ -171,12 +265,19 @@ enum OperationalRuntimeIdentity {
         return app
     }
 
-    private static func validatedManifestData(forExecutable executableURL: URL) -> Data? {
+    private static func validatedManifest(
+        forExecutable executableURL: URL
+    ) -> (
+        data: Data,
+        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
+    )? {
         guard let candidate = manifestURL(forExecutable: executableURL),
               let data = readManifestData(at: candidate),
-              validAssemblyManifest(data)
+              let compatiblePreviousRuntimes = compatibilityPolicies(
+                inAssemblyManifest: data
+              )
         else { return nil }
-        return data
+        return (data, compatiblePreviousRuntimes)
     }
 
     private static func readManifestData(at url: URL) -> Data? {
@@ -208,20 +309,45 @@ enum OperationalRuntimeIdentity {
         return data.count == Int(info.st_size) ? data : nil
     }
 
-    private static func validAssemblyManifest(_ data: Data) -> Bool {
-        guard let value = try? JSONSerialization.jsonObject(with: data),
-              let object = value as? [String: Any],
-              Set(object.keys) == Set([
-                "schema_version", "bundle_identifier", "hash_phase", "files",
-              ]),
-              object["schema_version"] as? String == assemblyManifestSchemaVersion,
+    static func compatibilityPolicies(
+        inAssemblyManifest data: Data
+    ) -> [OperationalRuntimeCompatibilityPolicy]? {
+        guard let object = try? StrictJSONTransport.object(
+                from: data,
+                limits: StrictJSONLimits(
+                    maximumBytes: 1_048_576,
+                    maximumDepth: 72
+                )
+              ),
+              let schemaVersion = object["schema_version"] as? String,
               object["bundle_identifier"] as? String == expectedBundleIdentifier,
               object["hash_phase"] as? String
                 == "assembled_payload_before_optional_code_signing",
               let files = object["files"] as? [[String: Any]],
               !files.isEmpty,
               files.count <= 4_096
-        else { return false }
+        else { return nil }
+        let compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
+        switch schemaVersion {
+        case legacyAssemblyManifestSchemaVersion:
+            guard Set(object.keys) == Set([
+                "schema_version", "bundle_identifier", "hash_phase", "files",
+            ]) else { return nil }
+            compatiblePreviousRuntimes = []
+        case assemblyManifestSchemaVersion:
+            guard Set(object.keys) == Set([
+                "schema_version", "bundle_identifier", "hash_phase",
+                "compatible_previous_runtimes", "files",
+            ]),
+            let compatibility = object["compatible_previous_runtimes"]
+                as? [[String: Any]],
+            compatibility.count <= 2,
+            let parsed = parseCompatibilityPolicies(compatibility)
+            else { return nil }
+            compatiblePreviousRuntimes = parsed
+        default:
+            return nil
+        }
         var paths = Set<String>()
         var previousPath: String?
         for file in files {
@@ -243,11 +369,53 @@ enum OperationalRuntimeIdentity {
                   previousPath.map({
                     $0.utf16.lexicographicallyPrecedes(path.utf16)
                   }) ?? true
-            else { return false }
+            else { return nil }
             previousPath = path
         }
-        return paths.contains("Contents/MacOS/blabee-coordinator")
-            && paths.contains("Contents/Resources/Plugin/blabee/scripts/blabee-launcher")
+        guard paths.contains("Contents/MacOS/blabee-coordinator"),
+              paths.contains("Contents/Resources/Plugin/blabee/scripts/blabee-launcher")
+        else { return nil }
+        return compatiblePreviousRuntimes
+    }
+
+    private static func parseCompatibilityPolicies(
+        _ values: [[String: Any]]
+    ) -> [OperationalRuntimeCompatibilityPolicy]? {
+        var identities = Set<String>()
+        var previousIdentity: String?
+        var policies: [OperationalRuntimeCompatibilityPolicy] = []
+        for value in values {
+            guard Set(value.keys) == Set([
+                "runtime_identity", "allowed_request_types",
+            ]),
+            let identity = value["runtime_identity"] as? String,
+            isValid(identity),
+            identities.insert(identity).inserted,
+            previousIdentity.map({
+                $0.utf16.lexicographicallyPrecedes(identity.utf16)
+            }) ?? true,
+            let requestTypes = value["allowed_request_types"] as? [String],
+            !requestTypes.isEmpty,
+            requestTypes.count <= operationalCompatiblePreviousRequestTypes.count
+            else { return nil }
+            var seenRequestTypes = Set<String>()
+            var previousRequestType: String?
+            for requestType in requestTypes {
+                guard operationalCompatiblePreviousRequestTypes.contains(requestType),
+                      seenRequestTypes.insert(requestType).inserted,
+                      previousRequestType.map({
+                        $0.utf16.lexicographicallyPrecedes(requestType.utf16)
+                      }) ?? true
+                else { return nil }
+                previousRequestType = requestType
+            }
+            policies.append(OperationalRuntimeCompatibilityPolicy(
+                runtimeIdentity: identity,
+                allowedRequestTypes: requestTypes
+            ))
+            previousIdentity = identity
+        }
+        return policies
     }
 
     private static func filesystemIdentity(forExecutable url: URL) -> String? {
@@ -492,14 +660,17 @@ struct UnixDomainSocketClient {
         )
         defer { close(descriptor) }
         setNoSigPipe(descriptor)
+        let responseDeadline = monotonicDeadline(
+            afterMilliseconds: responseTimeoutMilliseconds
+        )
         try writeAll(
             requestData,
             descriptor: descriptor,
-            timeoutMilliseconds: responseTimeoutMilliseconds
+            deadline: responseDeadline
         )
         let responseData = try readOneLine(
             descriptor: descriptor,
-            timeoutMilliseconds: responseTimeoutMilliseconds
+            deadline: responseDeadline
         )
         let response = try StrictJSONTransport.object(
             from: responseData,
@@ -552,6 +723,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
 
     private let socketPath: String
     private let runtimeIdentity: String
+    private let compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
     private let lockDescriptor: Int32
     private let admissionGate = ConnectionAdmissionGate(limit: 64)
     private let stateLock = NSLock()
@@ -562,23 +734,38 @@ final class UnixDomainSocketServer: @unchecked Sendable {
 
     init(
         socketPath: String,
-        runtimeIdentity: String? = nil
+        runtimeIdentity: String? = nil,
+        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]? = nil
     ) throws {
         guard socketPath.hasPrefix("/") else {
             throw CoordinatorError("operational_socket_invalid", "socket path must be absolute")
         }
-        let resolvedRuntimeIdentity: String
+        let resolvedSnapshot: OperationalRuntimeIdentitySnapshot
         if let runtimeIdentity {
-            resolvedRuntimeIdentity = runtimeIdentity
+            resolvedSnapshot = OperationalRuntimeIdentitySnapshot(
+                runtimeIdentity: runtimeIdentity,
+                compatiblePreviousRuntimes: compatiblePreviousRuntimes ?? []
+            )
         } else {
-            resolvedRuntimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+            let currentSnapshot = try OperationalRuntimeIdentity.requireCurrentSnapshot()
+            resolvedSnapshot = OperationalRuntimeIdentitySnapshot(
+                runtimeIdentity: currentSnapshot.runtimeIdentity,
+                compatiblePreviousRuntimes: compatiblePreviousRuntimes
+                    ?? currentSnapshot.compatiblePreviousRuntimes
+            )
         }
-        guard OperationalRuntimeIdentity.isValid(resolvedRuntimeIdentity) else {
+        guard OperationalRuntimeIdentity.isValid(resolvedSnapshot.runtimeIdentity),
+              Self.validCompatibilityPolicies(
+                resolvedSnapshot.compatiblePreviousRuntimes,
+                currentIdentity: resolvedSnapshot.runtimeIdentity
+              )
+        else {
             throw CoordinatorError("operational_runtime_identity_invalid")
         }
         try validateUnixSocketPathLength(socketPath)
         self.socketPath = socketPath
-        self.runtimeIdentity = resolvedRuntimeIdentity
+        self.runtimeIdentity = resolvedSnapshot.runtimeIdentity
+        self.compatiblePreviousRuntimes = resolvedSnapshot.compatiblePreviousRuntimes
 
         let socketURL = URL(fileURLWithPath: socketPath, isDirectory: false)
         let parent = socketURL.deletingLastPathComponent()
@@ -678,13 +865,15 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             setNoSigPipe(descriptor)
             let gate = admissionGate
             let serverRuntimeIdentity = runtimeIdentity
+            let serverCompatiblePreviousRuntimes = compatiblePreviousRuntimes
             Task.detached(priority: .userInitiated) {
                 defer { gate.release() }
                 await Self.handleConnection(
                     descriptor: descriptor,
                     application: application,
                     secretCorpus: secretCorpus,
-                    runtimeIdentity: serverRuntimeIdentity
+                    runtimeIdentity: serverRuntimeIdentity,
+                    compatiblePreviousRuntimes: serverCompatiblePreviousRuntimes
                 )
             }
         }
@@ -724,12 +913,14 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         descriptor: Int32,
         application: any CoordinatorOperationalHandling,
         secretCorpus: RuntimeSecretCorpus,
-        runtimeIdentity: String
+        runtimeIdentity: String,
+        compatiblePreviousRuntimes: [OperationalRuntimeCompatibilityPolicy]
     ) async {
         defer { close(descriptor) }
         guard peerHasCurrentEffectiveUserID(descriptor) else { return }
 
         var requestID = "unknown"
+        var responseRuntimeIdentity = runtimeIdentity
         let requestSecretCorpus = RuntimeSecretCorpus()
         do {
             let line = try readOneLine(descriptor: descriptor, timeoutMilliseconds: 5_000)
@@ -741,10 +932,27 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                 )
             )
             requestID = try safeRequestID(request["request_id"])
-            guard request["runtime_identity"] as? String == runtimeIdentity else {
-                // Legacy clients omit the field. They are rejected rather than
-                // silently crossing a running-build boundary.
+            guard let requestRuntimeIdentity = request["runtime_identity"] as? String,
+                  OperationalRuntimeIdentity.isValid(requestRuntimeIdentity)
+            else {
                 throw CoordinatorError("operational_runtime_identity_mismatch")
+            }
+            let compatibleAllowedRequestTypes: Set<String>?
+            if requestRuntimeIdentity == runtimeIdentity {
+                compatibleAllowedRequestTypes = nil
+            } else {
+                guard let allowedRequestTypes = compatiblePreviousRuntimes
+                    .first(where: {
+                        $0.runtimeIdentity == requestRuntimeIdentity
+                    })?.allowedRequestTypes
+                else {
+                    throw CoordinatorError("operational_runtime_identity_mismatch")
+                }
+                compatibleAllowedRequestTypes = Set(allowedRequestTypes)
+                // An accepted old client verifies responses against its own
+                // identity. Echo only identities admitted by the signed
+                // manifest, including application-level failures below.
+                responseRuntimeIdentity = requestRuntimeIdentity
             }
             guard let wireType = request["type"] as? String,
                   wireType.hasPrefix(operationalRuntimeRequestTypePrefix)
@@ -759,6 +967,11 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                   let payload = request["payload"] as? [String: Any]
             else {
                 throw CoordinatorError("operational_request_invalid")
+            }
+            if let compatibleAllowedRequestTypes,
+               !compatibleAllowedRequestTypes.contains(type)
+            {
+                throw CoordinatorError("operational_runtime_request_not_compatible")
             }
 
             // Never add unvalidated client material to the daemon-wide corpus:
@@ -799,7 +1012,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             try secretCorpus.assertNoKnownSecret(in: resultData)
             try writeOperationalJSON([
                 "request_id": requestID,
-                "runtime_identity": runtimeIdentity,
+                "runtime_identity": responseRuntimeIdentity,
                 "ok": true,
                 "result": result,
             ],
@@ -810,7 +1023,7 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             let failure = error.coordinatorError
             try? writeOperationalJSON([
                 "request_id": requestID,
-                "runtime_identity": runtimeIdentity,
+                "runtime_identity": responseRuntimeIdentity,
                 "ok": false,
                 "error": [
                     "code": safeErrorCode(failure.code),
@@ -821,6 +1034,40 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             secretCorpus: secretCorpus,
             requestSecretCorpus: requestSecretCorpus)
         }
+    }
+
+    private static func validCompatibilityPolicies(
+        _ policies: [OperationalRuntimeCompatibilityPolicy],
+        currentIdentity: String
+    ) -> Bool {
+        guard policies.count <= 2 else { return false }
+        var identities = Set<String>()
+        var previousIdentity: String?
+        for policy in policies {
+            guard OperationalRuntimeIdentity.isValid(policy.runtimeIdentity),
+                  policy.runtimeIdentity != currentIdentity,
+                  identities.insert(policy.runtimeIdentity).inserted,
+                  previousIdentity.map({
+                    $0.utf16.lexicographicallyPrecedes(policy.runtimeIdentity.utf16)
+                  }) ?? true,
+                  !policy.allowedRequestTypes.isEmpty,
+                  policy.allowedRequestTypes.count
+                    <= operationalCompatiblePreviousRequestTypes.count
+            else { return false }
+            var requestTypes = Set<String>()
+            var previousRequestType: String?
+            for requestType in policy.allowedRequestTypes {
+                guard operationalCompatiblePreviousRequestTypes.contains(requestType),
+                      requestTypes.insert(requestType).inserted,
+                      previousRequestType.map({
+                        $0.utf16.lexicographicallyPrecedes(requestType.utf16)
+                      }) ?? true
+                else { return false }
+                previousRequestType = requestType
+            }
+            previousIdentity = policy.runtimeIdentity
+        }
+        return true
     }
 
     private enum ApprovalConnectionRace: Sendable {
@@ -1368,6 +1615,13 @@ private func readOneLine(
     timeoutMilliseconds: Int32
 ) throws -> Data {
     let deadline = monotonicDeadline(afterMilliseconds: timeoutMilliseconds)
+    return try readOneLine(descriptor: descriptor, deadline: deadline)
+}
+
+private func readOneLine(
+    descriptor: Int32,
+    deadline: UInt64
+) throws -> Data {
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 16 * 1024)
     while true {
@@ -1408,6 +1662,14 @@ private func writeAll(
     timeoutMilliseconds: Int32
 ) throws {
     let deadline = monotonicDeadline(afterMilliseconds: timeoutMilliseconds)
+    try writeAll(data, descriptor: descriptor, deadline: deadline)
+}
+
+private func writeAll(
+    _ data: Data,
+    descriptor: Int32,
+    deadline: UInt64
+) throws {
     var offset = 0
     while offset < data.count {
         let remaining = remainingMilliseconds(until: deadline)

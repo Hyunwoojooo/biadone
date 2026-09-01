@@ -2,6 +2,7 @@
 
 상태: 읽기 전용 진단 기반 구현 및 자동 계약 검증 통과, 공개 배포 게이트는 진행 중
 작성일: 2026-08-22
+최종 업데이트: 2026-09-01
 
 ## 결과
 
@@ -22,12 +23,12 @@ stdout/stderr, 환경 변수, 로컬 경로, 세션·토큰·프로젝트 ID는 
 - 설치 source와 `--plugin` 검사 대상의 동일 directory identity
 - Plugin v0.1.0 manifest, MCP, 4개 Hook, launcher, Skill과 agent metadata의 exact 계약
 - PATH의 MCP coordinator와 앱 내장 coordinator의 동일 file identity
-- Hook 신뢰 수동 검토 필요 여부
+- Codex App Server `hooks/list`가 보고한 Blabee Hook 활성화·신뢰 상태
 - daemon의 읽기 전용 계약 호환 상태와 현재 프로젝트 활성화 범위
 
-지원 버전 allowlist는 아직 비어 있다. `0.148.0`은 alpha 기준이지만 추가 승인이
-필요한 `action_required`, `0.149.0`을 포함한 나머지 버전은 `fail`이다. 관찰된
-호환성 실행을 제품 지원 승인으로 확대하지 않는다.
+현재 지원 버전 allowlist는 `0.149.1`, `0.150.1`, `0.151.0`이다. 역사적 alpha
+기준인 `0.148.0`은 추가 승인이 필요한 `action_required`, 그 밖의 미승인 버전은
+`fail`이다. 관찰된 호환성 실행을 제품 지원 승인으로 자동 확대하지 않는다.
 
 ## 읽기 전용 daemon 계약
 
@@ -43,11 +44,16 @@ Plugin 정적 구조는 fail-closed로 검사한다. 설치 record의 `version=0
 source, manifest/MCP/Hook 필드, launcher exact bytes와 실행 bit, Skill 파일 SHA-256,
 Skill directory exact entry set을 확인한다. 숫자 `0/1`은 JSON Boolean으로 받지 않는다.
 
-이 검사는 Hook 신뢰 승인이 아니다. Plugin을 설치·활성화해도 현재 Hook definition
-hash가 자동 신뢰되는 것은 아니므로 Doctor는 항상 Codex `/hooks` 수동 검토를
-`action_required`로 반환한다.
+Doctor는 Hook을 직접 승인하거나 Codex의 비공개 신뢰 파일·hash 계산 규칙을
+재현하지 않는다. 대신 공식 App Server의 `hooks/list`를 읽기 전용으로 호출한다.
+현재 Plugin ID에 정확히 속한 네 이벤트(`permissionRequest`, `sessionStart`,
+`userPromptSubmit`, `stop`)가 모두 활성화되어 있고, Codex가 `trusted` 또는
+`managed`로 보고하며, 활성 cache의 `hooks.json` 바이트가 설치 source와 일치할
+때만 `hook_trust_ok`로 통과한다. 하나라도 누락·중복·비활성·변경·미신뢰이거나
+응답을 안전하게 확인하지 못하면 `/hooks` 검토가 필요한 `action_required`로
+fail-closed한다.
 
-## 검증 결과
+## 최초 검증 결과 (2026-08-22)
 
 - Doctor 집중 Swift 테스트: 18/18 통과
 - Swift Operational 필터: 15/15 통과
@@ -56,9 +62,23 @@ hash가 자동 신뢰되는 것은 아니므로 Doctor는 항상 Codex `/hooks` 
 - v1 계약 테스트: 114/114 통과
 - 실제 로컬 Doctor 실행: 안정적인 JSON과 exit `1` 확인
 
-현재 로컬 실행의 실패는 예상된 결과다. `/Applications/Blabee.app`, 설치된 Blabee
+당시 로컬 실행의 실패는 예상된 결과였다. `/Applications/Blabee.app`, 설치된 Blabee
 Plugin, PATH의 제품 coordinator, 제품 daemon이 없고 Codex `0.149.0`은 지원
 allowlist에 없었다. 저장소의 `Plugin/blabee` 정적 계약만 통과했다.
+
+### 2026-09-01 Hook 신뢰 후속 검증
+
+- Doctor 집중 Swift 테스트: 29/29 통과
+- Swift 전체: Swift Testing 434/434 + XCTest 5/5 통과
+- 정상 버전·앱·Plugin·daemon·프로젝트·reconciliation·Hook fixture에서 Doctor
+  전체 `pass`, exit `0` 확인
+- 현재 설치된 Codex와 Plugin을 대상으로 한 실제 읽기 전용 조회에서
+  `hook_trust_ok` 확인
+
+실제 조회에는 새 debug Doctor와 기존 실행 중인 dogfood 앱·서비스를 함께 사용했기
+때문에 전체 보고서는 runtime identity와 daemon 항목에서 실패했다. 이는 Hook 조회
+실패가 아니며, 새 소스를 dogfood 앱으로 교체한 뒤 전체 exit `0`을 확인하는 작업은
+별도 실사용 게이트로 남긴다.
 
 ## 남은 T-012 게이트
 
@@ -66,7 +86,8 @@ allowlist에 없었다. 저장소의 `Plugin/blabee` 정적 계약만 통과했�
 2. signed Data Protection Keychain/access group과 `LAContext`를 제품 daemon에 연결한다.
 3. Developer ID 서명, 공증, DMG, 설치·제거·업데이트 흐름을 구현한다.
 4. Codex 버전별 계약 시험 뒤 exact allowlist를 승인한다.
-5. 사용자가 `/hooks`에서 현재 Hook hash를 검토하고 신뢰한다.
+5. Doctor가 `hook_review_required` 또는 `hook_trust_unavailable`을 보고할 때
+   사용자가 `/hooks`에서 현재 Hook 상태를 검토한다.
 6. Terminal, iTerm, VS Code 터미널, Orca와 sleep/재시작 매트릭스를 통과한다.
 
 ## 공개 배포 전 잔여 위험

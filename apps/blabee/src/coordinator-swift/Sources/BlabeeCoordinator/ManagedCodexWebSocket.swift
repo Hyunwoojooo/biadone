@@ -40,6 +40,21 @@ enum ManagedCodexWebSocketError: Error, Equatable, CustomStringConvertible {
 
 func managedCodexCoordinatorError(_ error: Error) -> CoordinatorError {
     if let error = error as? CoordinatorError { return error }
+    if let error = error as? CodexRuntimeTrustError {
+        switch error {
+        case .changedDuringInspection,
+             .changedDuringQualification,
+             .approvalDrift:
+            return CoordinatorError("managed_codex_executable_changed")
+        case .unsupportedVersion:
+            return CoordinatorError("managed_codex_version_unsupported")
+        case .invalidRecord,
+             .invalidSource,
+             .unsafePath,
+             .dynamicShim:
+            return CoordinatorError("managed_codex_executable_unsafe")
+        }
+    }
     guard let error = error as? ManagedCodexWebSocketError else {
         return error.coordinatorError
     }

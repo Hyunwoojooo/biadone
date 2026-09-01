@@ -170,24 +170,11 @@ final class PetViewModel: ObservableObject {
         }
     }
     @Published private(set) var isOnboardingOperationInFlight = false
-    @Published private(set) var codexAutoConnectState: CodexAutoConnectState = .unavailable(
-        "상태를 확인하지 않았습니다."
-    )
-    @Published private(set) var codexAutoConnectCanEnable = false
-    @Published private(set) var codexAutoConnectError: String? {
-        didSet {
-            if (oldValue == nil) != (codexAutoConnectError == nil) {
-                onPanelLayoutChanged?()
-            }
-        }
-    }
-    @Published private(set) var isCodexAutoConnectOperationInFlight = false
 
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
     private let onboardingAdapter: any PetOnboardingAdapting
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
-    private let codexAutoConnectAdapter: any PetCodexAutoConnectAdapting
     private let projectFolderChooser: any PetProjectFolderChoosing
     private let selectionIDGenerator: @Sendable () -> String
     private let permissionResponseIDGenerator: @Sendable () -> String
@@ -222,8 +209,6 @@ final class PetViewModel: ObservableObject {
         externalApplicationOpener: any PetExternalApplicationOpening,
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
-        codexAutoConnectAdapter: any PetCodexAutoConnectAdapting =
-            PetUnavailableCodexAutoConnectAdapter(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         selectionIDGenerator: @escaping @Sendable () -> String = {
@@ -240,7 +225,6 @@ final class PetViewModel: ObservableObject {
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
         self.suggestionModeStore = suggestionModeStore
-        self.codexAutoConnectAdapter = codexAutoConnectAdapter
         self.projectFolderChooser = projectFolderChooser
         self.processIdentifier = processIdentifier
         self.selectionIDGenerator = selectionIDGenerator
@@ -380,65 +364,27 @@ final class PetViewModel: ObservableObject {
     }
 
     var canRegisterOnboardingService: Bool {
-        onboardingServiceState == .notRegistered && !isSettingsOperationInFlight
+        onboardingServiceState == .notRegistered && !isOnboardingOperationInFlight
     }
 
     var canUnregisterOnboardingService: Bool {
         (onboardingServiceState == .enabled
             || onboardingServiceState == .requiresApproval)
-            && !isSettingsOperationInFlight
+            && !isOnboardingOperationInFlight
     }
 
     var canOpenOnboardingSystemSettings: Bool {
-        onboardingServiceState == .requiresApproval && !isSettingsOperationInFlight
+        onboardingServiceState == .requiresApproval && !isOnboardingOperationInFlight
     }
 
     var canMutateOnboardingProjects: Bool {
         guard configuredProjectPathsAreAuthoritative else { return false }
         return switch onboardingServiceState {
         case .notRegistered, .enabled, .requiresApproval:
-            !isSettingsOperationInFlight
+            !isOnboardingOperationInFlight
         case .notFound, .unknown:
             false
         }
-    }
-
-    var canEnableCodexAutoConnect: Bool {
-        guard !isSettingsOperationInFlight, codexAutoConnectCanEnable else {
-            return false
-        }
-        return switch codexAutoConnectState {
-        case .disabled, .repairRequired:
-            true
-        case .enabled, .conflict, .unavailable:
-            false
-        }
-    }
-
-    var canDisableCodexAutoConnect: Bool {
-        guard !isSettingsOperationInFlight else { return false }
-        return switch codexAutoConnectState {
-        case .enabled, .repairRequired:
-            true
-        case .disabled, .conflict, .unavailable:
-            false
-        }
-    }
-
-    var canRepairCodexAutoConnect: Bool {
-        guard !isSettingsOperationInFlight, codexAutoConnectCanEnable else {
-            return false
-        }
-        if case .repairRequired = codexAutoConnectState { return true }
-        return false
-    }
-
-    var canMutateCodexAutoConnect: Bool {
-        canEnableCodexAutoConnect || canDisableCodexAutoConnect
-    }
-
-    private var isSettingsOperationInFlight: Bool {
-        isOnboardingOperationInFlight || isCodexAutoConnectOperationInFlight
     }
 
     func attachHotKeyRegistry(_ registry: PetHotKeyRegistry) {
@@ -501,52 +447,10 @@ final class PetViewModel: ObservableObject {
     }
 
     func refreshOnboarding() async {
-        guard !isSettingsOperationInFlight else { return }
+        guard !isOnboardingOperationInFlight else { return }
         isOnboardingOperationInFlight = true
         reloadOnboardingState()
-        await reloadCodexAutoConnectState()
         isOnboardingOperationInFlight = false
-    }
-
-    func refreshCodexAutoConnect() async {
-        guard !isSettingsOperationInFlight else { return }
-        isCodexAutoConnectOperationInFlight = true
-        await reloadCodexAutoConnectState()
-        isCodexAutoConnectOperationInFlight = false
-    }
-
-    func enableCodexAutoConnect() async {
-        guard canEnableCodexAutoConnect else { return }
-        isCodexAutoConnectOperationInFlight = true
-        let operationError: String?
-        do {
-            try await codexAutoConnectAdapter.enable()
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
-        }
-        applyCodexAutoConnectSnapshot(
-            codexAutoConnectAdapter.snapshot,
-            operationError: operationError
-        )
-        isCodexAutoConnectOperationInFlight = false
-    }
-
-    func disableCodexAutoConnect() async {
-        guard canDisableCodexAutoConnect else { return }
-        isCodexAutoConnectOperationInFlight = true
-        let operationError: String?
-        do {
-            try await codexAutoConnectAdapter.disable()
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
-        }
-        applyCodexAutoConnectSnapshot(
-            codexAutoConnectAdapter.snapshot,
-            operationError: operationError
-        )
-        isCodexAutoConnectOperationInFlight = false
     }
 
     func registerOnboardingService() async {
@@ -959,7 +863,6 @@ final class PetViewModel: ObservableObject {
               !request.deliveryPending,
               inFlightPermissionRequestID == nil
         else { return }
-        if decision == .allow, !request.allowOnceAvailable { return }
         inFlightPermissionRequestID = request.requestID
         updateHotKeyEligibility()
         lastError = persistentApprovalResolutionError
@@ -1389,23 +1292,6 @@ final class PetViewModel: ObservableObject {
     private func applySuggestionModeLoadResult(_ result: BlabeeSuggestionModeLoadResult) {
         suggestionMode = result.mode
         suggestionModeDiagnostic = result.diagnostic
-    }
-
-    private func reloadCodexAutoConnectState(operationError: String? = nil) async {
-        await codexAutoConnectAdapter.refresh()
-        applyCodexAutoConnectSnapshot(
-            codexAutoConnectAdapter.snapshot,
-            operationError: operationError
-        )
-    }
-
-    private func applyCodexAutoConnectSnapshot(
-        _ snapshot: PetCodexAutoConnectSnapshot,
-        operationError: String? = nil
-    ) {
-        codexAutoConnectState = snapshot.state
-        codexAutoConnectCanEnable = snapshot.canEnable
-        codexAutoConnectError = operationError
     }
 
     private func requiresRiskConfirmation(

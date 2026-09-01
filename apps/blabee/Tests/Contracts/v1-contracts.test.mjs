@@ -194,7 +194,7 @@ test("selection requests contain identifiers only and cannot smuggle action mean
   }
 });
 
-test("decision proposal supports ranked next actions while keeping the cached legacy shape", async () => {
+test("decision proposal requires two to four ranked next actions", async () => {
   const suite = await suitePromise;
   const proposalCases = suite.fixtureManifest.cases.filter(
     (item) => item.valid && schemaIs(item, "decision_proposal"),
@@ -204,19 +204,11 @@ test("decision proposal supports ranked next actions while keeping the cached le
     (item) => item.name === "valid_decision_proposal",
     "the ranked decision proposal",
   );
-  const legacyCase = caseFor(
-    suite,
-    (item) => item.name === "valid_decision_proposal_legacy",
-    "the cached legacy decision proposal",
-  );
-  assert.equal(proposalCases.length >= 2, true);
+  assert.equal(proposalCases.length, 1);
   assert.equal(rankedCase.value.next_actions.length, 3);
   assert.equal(Object.hasOwn(rankedCase.value, "recommended_next"), false);
   assert.equal(Object.hasOwn(rankedCase.value, "alternative_next"), false);
   assert.equal(Object.hasOwn(rankedCase.value, "pause_capsule"), false);
-  assert.equal(Object.hasOwn(legacyCase.value, "next_actions"), false);
-  assert.equal(Object.hasOwn(legacyCase.value, "recommended_next"), true);
-  assert.equal(Object.hasOwn(legacyCase.value, "pause_capsule"), true);
 
   const validator = fixtureValidator(suite.compiled, rankedCase);
   const twoActions = clone(rankedCase.value);
@@ -241,7 +233,14 @@ test("decision proposal supports ranked next actions while keeping the cached le
   const mixed = clone(rankedCase.value);
   mixed.recommended_next = clone(mixed.next_actions[0]);
   mixed.alternative_next = clone(mixed.next_actions[1]);
-  assertSchemaResult(validator, mixed, false, "ranked and cached fields cannot be mixed");
+  assertSchemaResult(validator, mixed, false, "legacy fields cannot accompany ranked actions");
+
+  const legacy = clone(rankedCase.value);
+  legacy.recommended_next = clone(legacy.next_actions[0]);
+  legacy.alternative_next = clone(legacy.next_actions[1]);
+  legacy.pause_capsule = { resume_first: "Re-open the cached result" };
+  delete legacy.next_actions;
+  assertSchemaResult(validator, legacy, false, "legacy proposal shape");
 });
 
 test("decision packets preserve legacy fixed slots and accept two to four ranked actions", async () => {

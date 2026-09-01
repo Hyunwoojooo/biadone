@@ -1,7 +1,7 @@
 # Blabee Codex 우선 MVP 기술 명세
 
 상태: M0 연동 계약 조건부 승인, T-006 v1 계약 확정, 스마트 후속 제안 정책 추가
-날짜: 2026-08-30
+날짜: 2026-08-31
 제품 원문: `blabase_decision_layer_product_plan_ko.md`
 후속 제안 정책: `SMART_FOLLOW_UP_POLICY.md`
 
@@ -34,7 +34,7 @@ Codex 작업
 7. Pet은 `"1"` 같은 숫자 문자열만 보내지 않는다. `packet_id`, `revision`, `option_id`와 선택한 작업의 목표·제약·완료 기준 전체를 확인한 뒤 같은 Codex 세션의 새 사용자 턴으로 큐잉한다. 이 새 프롬프트는 새 작업 에피소드와 기준선을 만든다.
 8. 롤백은 `episode_root_prompt_id`에 해당하는 **직전 사람이 입력한 작업 프롬프트 직전**의 `episode_baseline_checkpoint_id`로 복원한다. 모델 프롬프트가 롤백 구현이 되어서는 안 된다.
 9. 공개 v0.1의 롤백 범위는 깨끗한 작업 트리에서 시작한 사용자 프롬프트 에피소드 한 개뿐이다. Pet의 숫자 항목 선택도 사람이 명시적으로 승인해 큐잉한 새 프롬프트이므로 실행 직전 새 롤백 기준선을 판단한다.
-10. 공개 v0.1의 Hook `PermissionRequest`는 정확히 검증된 `permission_mode: default`의 짧고 안전한 단일 행 `Bash` 요청에만 Pet에서 `이번만 허용`, `거절`, `Codex에서 직접 결정`을 제공한다. `이번만 허용`은 그 Hook 요청 하나에만 공식 `allow` 응답을 만들며 세션 허용으로 확대하지 않는다. 숨은·알 수 없는 필드, 다른 tool 종류, MCP·`apply_patch`, 길거나 여러 행인 명령, 실패·만료·재시작·모호한 전달은 결정 없이 Codex 네이티브 승인 체계로 돌려준다. Hook 요청에는 원래 PID/창 identity가 없어 앱 복귀는 best-effort다.
+10. 공개 v0.1의 Hook `PermissionRequest`는 정확히 검증된 `permission_mode: default`의 짧고 안전한 단일 행 `Bash` 요청에만 Pet에서 `거절`, `Codex에서 직접 결정`을 제공하며 공식 `allow` 응답은 만들지 않는다. `이번만 허용`은 사용자가 명시적으로 시작한 관리형 App Server 요청의 `accept`로만 제공한다. 숨은·알 수 없는 필드, 다른 tool 종류, MCP·`apply_patch`, 길거나 여러 행인 명령, 실패·만료·재시작·모호한 전달은 결정 없이 Codex 네이티브 승인 체계로 돌려준다. Hook 요청에는 원래 PID/창 identity가 없어 앱 복귀는 best-effort다.
 11. Blabee MVP는 별도의 LLM API 키나 추론 서비스를 추가하지 않는다.
 12. 모든 영속 제품 데이터는 로컬 우선으로 저장한다.
 13. 알파 기준 Codex `0.148.0`을 고정하고, 공개 배포에서는 지원 버전 허용 목록, `blabee doctor`, 주간·신규 버전·릴리스 전 호환성 점검을 함께 운영한다.
@@ -86,7 +86,7 @@ Codex 작업
  macOS Pet (NSStatusItem + SwiftUI/AppKit 비활성 NSPanel)
 ```
 
-Blabee는 Codex Plugin/Hook 레이어에서 통합되므로 어떤 터미널 호스트를 사용하는지는 중요하지 않다. 자동 연결은 네이티브 Codex 위에 Plugin/Hook을 얹는 편의 기능이며 기본 CLI의 실행 의미를 관리형 App Server 경로로 바꾸지 않는다. 앱은 OCR, AppleScript 터미널 자동화, 합성 터미널 키 입력을 핵심 경로로 사용해서는 안 된다.
+Blabee는 Codex Plugin/Hook 레이어에서 통합되므로 어떤 터미널 호스트를 사용하는지는 중요하지 않다. 일반 `codex` 명령과 셸 설정은 변경하지 않으며, App Server 권한 중계는 사용자가 `blabee-codex`를 명시적으로 실행한 경우에만 사용한다. 앱은 OCR, AppleScript 터미널 자동화, 합성 터미널 키 입력을 핵심 경로로 사용해서는 안 된다.
 
 ### T-011 구현 경계
 
@@ -124,13 +124,20 @@ process-static cache이므로 Pet poll이나 UDS 요청마다 앱 전체를 다�
 SwiftPM·test처럼 제품 `.app/Contents/MacOS/blabee-coordinator`가 아닌 실행만 격리된
 fallback identity를 사용할 수 있다. 새 UDS request type은
 `blabee.runtime-identity.v1/` namespace를 사용하고 같은 identity를 별도 필드로
-보낸다. 서버는 두 값을 실제 operation dispatch 전에 검사하고 response에도 같은
-identity를 넣는다. 따라서 new-client/old-server와 old-client/new-server 혼합은
-mutation 전에 거부된다.
+보낸다. 현재 runtime identity는 기존 전체 operation을 사용할 수 있다. 서명된
+assembly manifest v2가 명시적으로 승인한 이전 runtime identity는
+`session_start`, `user_prompt_submit`, `emit_decision`, `stop` 네 operation만 사용할
+수 있고, 성공과 application error response에는 승인된 요청 identity를 그대로
+돌려준다. 그 밖의 이전·미확인 runtime과 Pet·Doctor·프로젝트 설정·권한 승인
+operation은 dispatch 전에 거부한다. 호환 identity는 raw hash 입력이 아니라 검증된
+이전 `Blabee.app`에서 계산하고, 자동 상속하지 않으며 최대 두 개만 현재 서명
+manifest에 넣는다. 따라서 실행 중인 이전 Hook/MCP 세션을 짧게 보존하면서도 새
+client→구 server 및 미승인 구 client→새 server 혼합은 mutation 전에 거부된다.
 
 dogfood summary의 `runtime.identity.assembly_manifest_sha256`은 manifest digest
 입력의 정적 진단값이며 UDS `runtime_identity` 자체가 아니다. 실제 wire identity는
-실행 중 CDHash까지 결합해야 하므로 summary는
+서명 후 패키지 coordinator의 inspector v2가 같은 검증 manifest snapshot으로 계산한
+`runtime.identity.wire_runtime_identity`에 별도로 기록한다. summary는
 `strategy: process_cached_signed_code_and_manifest_v1`과
 `resolved_at_process_start: true`로 이 차이를 명시한다.
 
@@ -174,7 +181,7 @@ Pet의 숫자 항목 선택은 현재 Codex 응답을 다시 열지 않는다. �
 
 ### PermissionRequest
 
-지원 가능한 Codex Hook `PermissionRequest`는 일반 결정 카드와 분리된 process-local 대기에 둔다. 자동 허용 범위를 넓히지 않기 위해 최상위 입력은 필수 `session_id`·`turn_id`·`cwd`·`hook_event_name`·`permission_mode`·`tool_name`·`tool_input`과 선택적 `transcript_path`·`model`만 받고, `hook_event_name: PermissionRequest`, `permission_mode: default`, `tool_name: Bash`를 정확히 요구한다. `tool_input`도 `command` 또는 `command`+`description`만 허용한다. 전체 명령이 120 Unicode scalar 이하의 NFC 안전 단일 행일 때만 Pet이 `이번만 허용`, `거절`, `Codex에서 직접 결정`을 표시한다. `이번만 허용`은 현재 request/project/session/turn에만 공식 Hook `allow`로 응답하며 세션 허용 규칙을 만들지 않는다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool 종류, 긴·여러 행·제어/방향성 문자를 포함한 명령은 카드에 일부만 표시하지 않고 빈 Hook stdout으로 Codex 네이티브 승인 체계에 맡긴다.
+지원 가능한 Codex Hook `PermissionRequest`는 일반 결정 카드와 분리된 process-local 대기에 둔다. 자동 허용 범위를 넓히지 않기 위해 최상위 입력은 필수 `session_id`·`turn_id`·`cwd`·`hook_event_name`·`permission_mode`·`tool_name`·`tool_input`과 선택적 `transcript_path`·`model`만 받고, `hook_event_name: PermissionRequest`, `permission_mode: default`, `tool_name: Bash`를 정확히 요구한다. `tool_input`도 `command` 또는 `command`+`description`만 허용한다. 전체 명령이 120 Unicode scalar 이하의 NFC 안전 단일 행일 때만 Pet이 `거절`, `Codex에서 직접 결정`을 표시한다. Hook 경로는 공식 `allow`를 생성하지 않는다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool 종류, 긴·여러 행·제어/방향성 문자를 포함한 명령은 카드에 일부만 표시하지 않고 빈 Hook stdout으로 Codex 네이티브 승인 체계에 맡긴다.
 
 Pet은 빈 진단 조회와 구분되는 exact typed
 `blabee_pet_snapshot_request` heartbeat를 보낸다. coordinator는 마지막 heartbeat를
@@ -194,7 +201,7 @@ Hook과 관리형 App Server 요청은 request ID와 transport provenance를 공
 전역 FIFO 선두가 아닌 요청은 거부한다. raw `tool_input`은 저장·로그·snapshot에
 넣지 않고, 안전한 공식 `tool_input.command` 전체를 표시할 수 있을 때만 Pet 중계를
 제공한다. Pet 선택 뒤에도 해당 요청은 delivery ack 또는 10초 delivery timeout
-전까지 전역 FIFO 선두로 남는다. Hook CLI가 allow/deny 공식 JSON을 stdout에
+전까지 전역 FIFO 선두로 남는다. Hook CLI가 deny 공식 JSON을 stdout에
 성공적으로 쓰거나 직접 결정의 빈 stdout EOF를 명시적으로 전달한 뒤 exact delivery
 ack를 보낸 경우에만 Pet receipt를 반환한다. 이 receipt도 Codex의 stdout 소비나
 명령 실행·완료·성공 증거는 아니다. write·EOF·ack 실패나 불명확한 결과를 자동으로
@@ -642,35 +649,44 @@ JSON-RPC 메시지와 지원하지 않는 요청은 원래 TUI로 그대로 전�
 실행 중인 TUI에 붙지 않으며 이 wrapper로 새로 시작하거나 `resume`한 세션만 관리한다.
 브로커와 자식 프로세스의 상태는 journal에 저장하거나 daemon 재시작 뒤 재생하지 않는다.
 
-반대로 `codex-with-blabee`와 자동 연결의 기본 `codex` 경로는 관리형 App Server를
-시작하지 않는다. 실행 직전에 `BLABEE_COORDINATOR_BINARY`, `BLABEE_SOCKET`,
-`BLABEE_MANAGED_APPROVALS`, `BLABEE_MANAGED_CODEX_AUTH_TOKEN`,
-`BLABEE_RUNTIME_IDENTITY`를 제거하고 같은 argv의 정확한 외부 네이티브 Codex를
-실행한다. 이 환경 정리는 이전 관리형 자식이나 중첩 셸의 stale transport·인증 상태가
-네이티브 Codex에 섞이지 않게 하며 Codex 자체의 Plugin/Hook 의미는 변경하지 않는다.
+반대로 일반 `codex` 경로는 Blabee가 만든 native passthrough를 통하지 않는다.
+사용자 셸에서 공식 Codex를 직접 실행하며 Blabee는 argv나 환경을 정리하거나 바꾸지
+않는다. Codex 자체의 Plugin/Hook 의미도 그대로 유지된다.
 
-관리형 실행은 fallback을 고려하기 전에 인자 문법을 검증하고 exact native Codex
-executable을 resolve한 뒤 trust·지원 버전 자격을 확인한다. invalid syntax, executable
+관리형 실행은 fallback을 고려하기 전에 인자 문법을 검증하고 첫 번째로 발견된 native
+Codex source를 확정한 뒤 trust 검사를 통과한 비공개 고정 복사본으로 지원 버전을
+확인한다. `blabee-codex` 진입 wrapper는 coordinator를 실행하기 전에 `DYLD_*`,
+`__XPC_DYLD_*`, `LD_*` loader override를 값 노출 없이 거부하고, coordinator도 같은
+override와 직렬화 불가능한 환경을 fail-closed한다. wrapper 검사 자체의 오류도
+no-match로 취급하지 않는다. probe·App Server·TUI·보조
+세션·fallback은 같은 검증된 snapshot을 사용한다. 일반 `codex` 환경은 변경하지 않는다. pin parent는
+canonical current-user directory, group·other 비쓰기와 grant
+ACL 없음 및 생성 전후 identity 안정성을 요구한다. 지원 버전 probe는 private
+session/process group과 64 KiB bounded output을 사용하고 정상 종료·timeout·출력 초과
+모두에서 descendant를 TERM→KILL한 뒤 direct child를 reap한다. invalid syntax, executable
 resolution 실패, trust·allowlist 실패에는 안전한 fallback target이 확정되지 않았으므로
-fail-closed한다. 이 자격을 통과한 exact executable을 보유한 뒤 token·listener 같은
+fail-closed한다. 이 자격을 통과한 비공개 고정 복사본을 보유한 뒤 token·listener 같은
 준비 단계가 **첫 관리형 Codex 자식 프로세스 시작 전** 실패한 경우에만 같은 argv로
 네이티브 Codex를 정확히 한 번 실행할 수 있다. 첫 자식이 시작된 뒤에는 사용자 작업이
 이미 시작됐을 가능성이 있으므로 bridge·daemon·Pet·App Server 실패를 이유로
 네이티브 Codex를 자동 재실행하지 않는다. 이때는 실패를 보고하고 다음 사용자가 시작한
 호출에서 네이티브 경로를 선택하게 한다. 관리형 자식이 signal로 종료되면 상위 실행기는
 POSIX shell 관례의 `128 + signal` 상태를 반환한다.
+첫 App Server의 `Process.run()` 직전에도 같은 provider가 고정 복사본 identity·모드·ACL·
+네이티브 형식을 다시 확인하며, 이 재검증 실패는 child start state를 `notStarted`로
+유지해 위의 단일 fallback 경계 밖에서 중복 자식을 만들지 않는다.
 
 일반 `requestUserInput`과 지원하지 않는 권한 입력은 원래 Codex UI에 남겨 둔다.
 Hook MVP는 앞 절의 엄격한 입력 검증을 통과한 짧은 단일 행 `Bash`
-`PermissionRequest`에만 3선택 권한 카드를 제공하고, 그 `이번만 허용`을 공식 Hook
-`allow`로 응답한다. 관리형 브로커의 `이번만 허용`은 원본 App Server request ID를
-소유하고 서버가 `accept`를 제공한 때만 `accept`로 전송한다. 두 경로 모두 세션 허용은
-제공하지 않으며 `acceptForSession`은 표시·저장·전송하지 않는다. Hook은 앞 절의
+`PermissionRequest`에만 `거절`, `Codex에서 직접 결정` 2선택 권한 카드를 제공하고
+공식 Hook `allow`는 응답하지 않는다. 관리형 브로커의 `이번만 허용`은 원본 App Server
+request ID를 소유하고 서버가 `accept`를 제공한 때만 `accept`로 전송한다. 두 경로 모두
+세션 허용은 제공하지 않으며 `acceptForSession`은 표시·저장·전송하지 않는다. Hook은 앞 절의
 coordinator 50초·CLI 55초·launcher 57초·Codex Hook 60초 예산을 사용하고, 관리형 요청은 120초
 무응답에서 원래 TUI로 돌아간다. daemon 오류, 대기 상한 초과 또는 모호한 입력도
 원본 요청을 TUI로 전달하며 자동 재시도하지 않는다.
 
-Pet 버튼 선택의 내부 접수, Hook CLI의 allow/deny 공식 JSON stdout write 또는 직접
+Pet 버튼 선택의 내부 접수, Hook CLI의 deny 공식 JSON stdout write 또는 직접
 결정의 빈 stdout EOF, 브로커의 App Server 응답 stream write, Codex/App Server의 응답
 소비와 명령 실행·완료는 서로 다른 증거다. Hook과 관리형 카드의 Pet 성공 receipt는
 각각 exact delivery token과 binding으로 해당 write 또는 EOF가 확인된 뒤에만 반환하지만,
@@ -762,11 +778,11 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - Codex 네이티브 승인 정책을 최우선으로 따른다.
 - 기본 네이티브 경로에서 Blabee의 설치 상태, 지원 버전 allowlist, trust·승인 기록 또는 daemon 상태는 Blabee 기능의 사용 가능성만 결정한다. 네이티브 Codex 자체의 실행 허가로 사용하지 않는다. 명시적 관리형 실험의 사전 자격 검증은 아래 별도 계약이 소유한다.
 - 기본 Codex 명령은 정확한 외부 네이티브 실행 파일로 전달하며 Blabee 내부 실행기나 셸 함수로 재귀 진입해서는 안 된다.
-- 관리형 실험 모드는 valid syntax와 trust·지원 버전 검사를 통과한 exact native executable을 먼저 확정한다. 그 뒤 token·listener 준비가 첫 Codex 자식 시작 전에 실패한 경우만 네이티브 fallback하며, 그 밖의 사전 검증 실패와 자식 시작 뒤 실패에는 동일 요청을 자동 재실행하지 않는다.
+- 관리형 실험 모드는 valid syntax와 trust 검사를 통과한 native source에서 사용자 전용 고정 복사본을 만들고, 그 복사본으로 지원 버전을 확인한다. 그 뒤 token·listener 준비가 첫 Codex 자식 시작 전에 실패한 경우만 같은 고정 복사본으로 네이티브 fallback하며, 그 밖의 사전 검증 실패와 자식 시작 뒤 실패에는 동일 요청을 자동 재실행하지 않는다.
 - 일반 결정 카드 선택은 다음 작업에 대한 사용자 지시일 뿐 명령·파일·네트워크 권한 승인이 아니다. 권한 승인은 별도 PermissionRequest 카드 또는 Codex 네이티브 승인 체계가 소유한다.
 - 위험도가 `high` 또는 `critical`이면 해당 카드의 전역 숫자 단축키를 비활성화하고 Pet의 펼친 위험 확인을 거쳐야만 작업 지시를 보낼 수 있다. 이 확인도 Codex 네이티브 승인을 대신하지 않는다.
 - PermissionRequest 카드에는 전역 숫자 단축키를 등록하지 않으며, 사용자가 현재 카드 안의 버튼을 직접 눌러야 한다.
-- Hook 카드의 `이번만 허용`은 정확한 `default`/`Bash` 입력과 허용된 필드만 가진 단일 요청의 공식 `allow`로만 변환한다. 관리형 App Server 카드의 `이번만 허용`은 정확히 바인딩된 원본 요청의 `accept`로만 변환한다. 두 경로 모두 세션 허용과 `acceptForSession`을 생성하지 않는다. 숨은·알 수 없는 필드, MCP·`apply_patch`와 지원하지 않는 요청은 Codex 네이티브 승인 체계가 소유한다.
+- Hook 카드는 `거절`과 `Codex에서 직접 결정`만 제공하며 공식 `allow`를 생성하지 않는다. 관리형 App Server 카드의 `이번만 허용`은 정확히 바인딩된 원본 요청의 `accept`로만 변환한다. 두 경로 모두 세션 허용과 `acceptForSession`을 생성하지 않는다. 숨은·알 수 없는 필드, MCP·`apply_patch`와 지원하지 않는 요청은 Codex 네이티브 승인 체계가 소유한다.
 - 허용 대상 명령은 120 Unicode scalar 이하의 NFC 안전 단일 행 문자열만 받아 Pet에 생략 없이 전부 표시한다. 그보다 길거나 여러 행이거나 제어·방향성 문자가 포함된 명령은 Blabee가 판단하지 않는다.
 - Hook과 관리형 App Server 권한 요청은 공통 `arrival_sequence`의 전역 FIFO 선두 하나만 Pet에서 표시·focus·선택할 수 있다. 요청 종류나 세션이 뒤 요청의 추월 근거가 될 수 없다.
 - Hook 실패 시 일반 Codex 사용은 계속 허용하되, 자동 실행은 차단한다.
@@ -783,7 +799,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - Blabee coordinator·daemon·고정 실행기·승인 기록이 없거나 손상되고, Codex 버전이 Blabee allowlist 밖이거나 trust 검증이 실패해도 기본 `codex`가 정확한 외부 네이티브 Codex를 한 번 실행한다.
 - `codex resume`, `codex fork`, `codex exec`, `codex plugin`, 프롬프트 실행, `-C`와 사용자가 명시한 `--remote`의 argv·cwd·TTY·표준 입출력·signal·종료 상태가 Blabee 미설치 상태와 같다.
 - Blabee 오류가 네이티브 Codex를 종료 코드 `78`이나 Blabee 전용 오류로 차단하지 않는다.
-- 명시적 관리형 실험 모드는 invalid syntax, executable resolution, trust·allowlist 실패를 fail-closed한다. 자격이 확인된 exact executable을 보유한 상태에서 token·listener 준비가 첫 자식 시작 전에 실패한 경우만 네이티브 fallback하며, 시작 뒤 실패에는 네이티브 자동 재실행을 하지 않는다.
+- 명시적 관리형 실험 모드는 invalid syntax, executable resolution, trust·allowlist 실패를 fail-closed한다. 자격이 확인된 비공개 고정 복사본을 보유한 상태에서 token·listener 준비가 첫 자식 시작 전에 실패한 경우만 그 복사본으로 네이티브 fallback하며, 시작 뒤 실패에는 네이티브 자동 재실행을 하지 않는다.
 - 로컬 dogfood 준비는 항상 ad-hoc 서명된 앱을 만들고 unsigned 산출물이나 서명 실패를 정상 결과로 보고하지 않는다.
 - `action_only`에서는 설명·아키텍처·상태 프롬프트가 제안 카드를 열지 않는다. `smart`에서는 설명·분석에 서로 다른 유용한 후속 항목이 2개 이상일 때만 열고, 단순 상태 확인에는 열지 않는다. `always`도 의미 없는 항목을 만들어 계약 개수를 채우지 않는다.
 - 조건에 맞는 작업 턴이 완료되면 해당 세션과 턴에 연결된 유효한 패킷 하나를 생성한다.
@@ -792,7 +808,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - 현재 ranked 생성 경로의 모든 숫자 항목은 실행 가능한 완전한 action을 가지며, frozen v1의 비활성 고정 슬롯 형태는 구버전 캐시·저널 호환에만 사용한다.
 - 새 `pet_action`은 `queued_next_turn` 전용으로 교차 바인딩과 중복 전송을 거부한다. 과거 `same_turn_stop` runtime event는 저널 재생만 허용한다. `internal_format_repair` 제출 토큰은 재사용·만료·다른 프로젝트·세션·에피소드 사용, `source_turn_id`·`source_prompt_id` 불일치를 거부하며 사람의 새 프롬프트로 오인하지 않는다. dispatch 후 deadline 초과는 작업 결과 `unknown`과 자동 재시도 금지로 처리한다.
 - 내부 형식 보정은 같은 결정 경계에서 최대 한 번만 시도하고, 다시 실패하면 일반 결과만 보여 주며 단일 키 실행을 끈다.
-- 일반 Codex 네이티브 선택지는 Blabee 결정 카드의 1·2·3·4로 재해석하지 않는다. 엄격한 검증을 통과한 Hook PermissionRequest와 관리형 App Server command approval만 별도 3선택 권한 카드로 표시하고, 나머지는 Codex 네이티브 승인 체계에 남긴다.
+- 일반 Codex 네이티브 선택지는 Blabee 결정 카드의 1·2·3·4로 재해석하지 않는다. 엄격한 검증을 통과한 Hook PermissionRequest는 별도 2선택 권한 카드로, 관리형 App Server command approval은 별도 3선택 권한 카드로 표시하고, 나머지는 Codex 네이티브 승인 체계에 남긴다.
 - 보조 `나중에 결정`은 다른 턴을 시작하지 않는다.
 - 롤백은 숫자 슬롯과 별도인 후속 안전 기능이다. 검증된 체크포인트가 없으면 절대 활성화하지 않고, 공개 v0.1에서 기존 작업 트리·제외 경로·외부 부수 효과 등 범위를 증명할 수 없으면 비활성화한다.
 - Pet 숫자 항목 선택이 큐잉한 새 `UserPromptSubmit`은 새 `episode_id`와 `episode_baseline_checkpoint_id`를 만든다. 큐 메시지 안의 action binding은 선택이 생긴 원본 에피소드 identity를 보존한다.
@@ -803,10 +819,11 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - 일반 로컬 코디네이터 연결은 2초, 일반 Hook CLI 응답은 5초 안에 성립하지 않으면 fail-open한다. launcher의 내부 hard deadline은 `SessionStart`·`UserPromptSubmit` 7초, `Stop` 5초다. 사용자의 권한 결정을 기다리는 `PermissionRequest`는 coordinator 50초, Hook CLI 55초, launcher 57초를 차례로 적용하며 실패하면 빈 stdout으로 Codex의 기존 승인 화면에 돌려보낸다. 어떤 경로도 자동 선택이나 롤백을 실행하지 않는다. Pet의 명시적 선택은 10초 queue 실행 제한을 포함하도록 12초를 기다린다.
 - Hook launcher는 1 MiB 이하의 완전한 성공 stdout만 공개하고 stderr를 공개하지 않는다. timeout, nonzero·signal 종료, 부분 출력, 열린 pipe·descendant 잔존, 출력 상한 초과는 빈 stdout·stderr와 exit 0으로 수렴하며 소유 process group을 제한 시간 안에 정리한다. MCP는 같은 실패를 성공으로 숨기지 않는다.
 - Pet의 typed heartbeat가 만든 process-local 3초 lease가 없으면 Hook 권한 요청과 관리형 App Server command approval은 카드·FIFO·notice를 만들지 않고 즉시 Codex 직접 결정으로 돌아간다. lease 만료는 두 경로의 미선택 요청만 해제하고 이미 노출된 delivery token의 exact-once 상태를 보존한다.
-- 패키지 UDS client와 server는 서명 검증된 CDHash+assembly-manifest runtime identity와 `blabee.runtime-identity.v1/` request-type namespace가 모두 일치할 때만 operation을 dispatch한다. old/new runtime 혼합은 mutation 전에 거부되고 identity는 process-cached되어 poll마다 재hash하지 않는다.
+- 패키지 UDS client와 server는 서명 검증된 CDHash+assembly-manifest runtime identity와 `blabee.runtime-identity.v1/` request-type namespace를 검사한다. 현재 identity는 전체 allowlist를, manifest v2가 명시적으로 승인한 최대 두 개의 이전 identity는 `session_start`·`user_prompt_submit`·`emit_decision`·`stop`만 사용한다. 승인된 이전 요청의 response는 그 요청 identity를 echo하고 나머지 old/new 혼합은 mutation 전에 거부한다. identity와 호환 정책은 같은 서명 manifest snapshot에서 process-cached되어 poll마다 재hash하지 않는다.
+- 취소 가능한 관리형 App Server 승인 client도 선택 요청과 delivery ack 모두 같은 runtime identity와 v1 namespace를 사용한다. 응답은 `request_id`와 exact `runtime_identity`를 먼저 대조한 뒤에만 `ok`, application error, decision과 delivery token을 해석한다. App Server로 응답을 쓰기 전 선택 요청의 cancellation·transport·request ID·identity·application 실패는 승인으로 바꾸거나 재시도하지 않고 원본 요청 바이트를 Codex 네이티브 승인 화면으로 돌려보낸다. downstream write가 성공한 뒤의 delivery ack는 정확히 한 번만 시도하며, ack 실패는 재시도·네이티브 fallback·정상 bridge 종료를 일으키지 않고 coordinator의 미확정 전달 상태로 남긴다.
 - Keychain freshness checkpoint보다 오래되거나 같은 sequence/head가 다른 authentic DB, DB·키 loss, anchor 누락/손상에서는 event를 반환하거나 저장 파일을 자동 생성하지 않는다.
 - freshness `pending + target DB`는 전체 authenticated replay 뒤에만 finalize하고, `pending + source DB`는 정확히 같은 canonical batch 재시도 외에는 자동 취소·진행하지 않는다.
-- 지원 가능한 Hook PermissionRequest와 관리형 App Server command approval은 각자의 exact binding을 유지한 별도 3선택 카드로 응답하되, 공통 `arrival_sequence`의 전역 FIFO 선두 하나만 표시한다. 지원하지 않거나 실패한 요청은 Codex 네이티브 승인 체계로 반환한다. 앱 복귀는 polling 시점의 frontmost 외부 앱을 사용하는 best-effort다.
+- 지원 가능한 Hook PermissionRequest는 deny/native defer 2선택으로, 관리형 App Server command approval은 `accept_once`·`decline`·`decide_in_codex` 3선택으로 각자의 exact binding을 유지해 응답하되, 공통 `arrival_sequence`의 전역 FIFO 선두 하나만 표시한다. 지원하지 않거나 실패한 요청은 Codex 네이티브 승인 체계로 반환한다. 앱 복귀는 polling 시점의 frontmost 외부 앱을 사용하는 best-effort다.
 - 기본 CLI는 동일한 Plugin 경로를 통해 Terminal, iTerm, VS Code 터미널, Orca에서 동작한다.
 - 터미널에 다시 진입하지 않고 저위험 결정 루프를 연속 세 번 완료한다.
 - 별도의 Blabee LLM API 자격 증명이 필요하지 않다.
@@ -817,8 +834,8 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 
 1. 임시 최종 메시지 센티널은 M0의 격리된 1회성 실험에만 사용한다. 운영 결정 제안 채널은 번들 로컬 MCP 도구다.
 2. 체크포인트 한도는 파일당 16 MiB, 체크포인트당 128 MiB, 프로젝트당 1 GiB다. 종료된 에피소드부터 정리하고 활성·보류 기준선, 대기 패킷 참조, 최신 복구 스냅샷은 보호한다. 무시 파일, 하위 모듈, LFS, 저장소 밖 경로와 외부 부수 효과는 공개 v0.1 복원 범위에서 제외한다.
-3. 실제 Codex에서 엄격히 검증된 Hook PermissionRequest의 `allow`·거절·직접 결정과 숨은/알 수 없는 필드·지원하지 않는 tool·timeout·서비스 재시작 fallback을 검증한다. 관리형 App Server에서는 `accept`·`decline`·원래 TUI 전달을 별도로 검증하고, 두 요청 종류가 동시에 대기할 때 공통 `arrival_sequence`대로만 전면화되는지 확인한다. Pet 선택 접수, Hook 공식 stdout write 또는 직접 결정 EOF, App Server response write, 실제 명령 완료도 별도 증거로 검증한다. 원래 PID/창 identity가 없어 정확한 원래 창 복귀는 약속하지 않는다.
-4. 현재 로컬 알파 실험 기준은 Codex `0.149.0`이다. 공개 배포는 지원 버전 허용 목록과 `blabee doctor` 검사를 사용하고, 주간·새 Codex 버전 발견 시·Blabee 릴리스 전에 Hook/MCP/queue 계약 검사를 실행한다.
+3. 실제 Codex에서 엄격히 검증된 Hook PermissionRequest의 거절·직접 결정, legacy `allow` 거부와 숨은/알 수 없는 필드·지원하지 않는 tool·timeout·서비스 재시작 fallback을 검증한다. 관리형 App Server에서는 `accept`·`decline`·원래 TUI 전달을 별도로 검증하고, 두 요청 종류가 동시에 대기할 때 공통 `arrival_sequence`대로만 전면화되는지 확인한다. Pet 선택 접수, Hook deny stdout write 또는 직접 결정 EOF, App Server response write, 실제 명령 완료도 별도 증거로 검증한다. 원래 PID/창 identity가 없어 정확한 원래 창 복귀는 약속하지 않는다.
+4. 현재 코드의 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. `0.149.0`은 과거 로컬 알파 실험 증거로만 남긴다. 공개 배포는 이 허용 목록과 `blabee doctor` 검사를 함께 사용하고, 주간·새 Codex 버전 발견 시·Blabee 릴리스 전에 Hook/MCP/queue/App Server 계약 검사를 다시 실행한다.
 5. Stop은 카드를 공개한 뒤 즉시 끝난다. Pet 카드 대기 중 60초에 한 번 알리고 120초에 패킷을 만료한다. 자동 선택은 하지 않으며 재개 캡슐을 저장하고 늦은 입력을 거부한다.
 6. 여러 Hook 세션의 패킷은 각각 만료 시간을 갖는 FIFO 대기열에 보관하고, Pet은 선두 카드 하나에만 표시·focus·선택·전역 단축키를 연결한다. 선두가 제거되면 다음 카드로 자동 진행하며 뒤 카드는 추월할 수 없다.
 

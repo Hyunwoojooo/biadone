@@ -23,6 +23,8 @@ import { prepareLocalDogfood } from "../../scripts/prepare-local-dogfood.mjs";
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const preparationScript = join(repositoryRoot, "scripts", "prepare-local-dogfood.mjs");
+const defaultWireRuntimeIdentity = `sha256:${"d".repeat(64)}`;
+const defaultInspectedManifestDigest = `sha256:${"e".repeat(64)}`;
 
 function compareNames(left, right) {
   if (left < right) return -1;
@@ -60,6 +62,17 @@ async function makeWorkspace(t, prefix = "blabee-local-dogfood-") {
     binary,
     [
       "#!/bin/sh",
+      'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
+      `  identity='${defaultWireRuntimeIdentity}'`,
+      `  manifest_digest='${defaultInspectedManifestDigest}'`,
+      '  if [ -f "$3/runtime-identity.txt" ]; then identity=$(/bin/cat "$3/runtime-identity.txt"); fi',
+      '  if [ -f "$3/Contents/Resources/assembly-manifest.json" ]; then',
+      '    manifest_hex=$(/usr/bin/shasum -a 256 "$3/Contents/Resources/assembly-manifest.json" | /usr/bin/awk \'{print $1}\')',
+      '    manifest_digest="sha256:$manifest_hex"',
+      "  fi",
+      "  printf '{\"assembly_manifest_sha256\":\"%s\",\"runtime_identity\":\"%s\",\"schema_version\":\"blabee.runtime-identity-inspection.v2\"}\\n' \"$manifest_digest\" \"$identity\"",
+      "  exit 0",
+      "fi",
       "if [ \"${1-}\" = doctor ]; then printf 'path=%s\\n' \"$PATH\"; fi",
       "if [ \"${1-}\" = managed-codex ]; then printf 'coordinator=%s;path=%s\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"$PATH\"; fi",
       "printf 'socket=%s;args=%s\\n' \"${BLABEE_SOCKET-unset}\" \"$*\"",
@@ -72,6 +85,13 @@ async function makeWorkspace(t, prefix = "blabee-local-dogfood-") {
     binary,
     output: join(root, "prepared dogfood"),
   };
+}
+
+async function makePreviousApp(root, parentName, runtimeIdentity) {
+  const app = join(root, parentName, "Blabee.app");
+  await mkdir(app, { recursive: true });
+  await writeFile(join(app, "runtime-identity.txt"), `${runtimeIdentity}\n`);
+  return app;
 }
 
 function runCodex(args, env) {
@@ -173,7 +193,6 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     "marketplace.json",
   );
   const coordinatorShim = join(canonicalOutput, "bin", "blabee-coordinator");
-  const codexLauncher = join(canonicalOutput, "bin", "codex-with-blabee");
   const managedCodexLauncher = join(canonicalOutput, "bin", "blabee-codex");
   const projectSettingsLauncher = join(
     canonicalOutput,
@@ -186,7 +205,6 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     bundledCoordinator,
     marketplaceManifestPath,
     coordinatorShim,
-    codexLauncher,
     managedCodexLauncher,
     projectSettingsLauncher,
     serviceLauncher,
@@ -200,11 +218,14 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     assert.equal(metadata.isSymbolicLink(), false, path);
   }
   assert.equal((await lstat(coordinatorShim)).mode & 0o777, 0o755);
-  assert.equal((await lstat(codexLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(managedCodexLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(projectSettingsLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(serviceLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(petLauncher)).mode & 0o777, 0o755);
+  await assert.rejects(
+    lstat(join(canonicalOutput, "bin", "codex-with-blabee")),
+    { code: "ENOENT" },
+  );
   assert.equal((await lstat(marketplaceRuntime)).isSymbolicLink(), false);
   assert.equal((await lstat(marketplaceRuntime)).isDirectory(), true);
   assert.equal((await lstat(marketplaceRuntime)).mode & 0o777, 0o700);
@@ -286,7 +307,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
 
   const summary = JSON.parse(await readFile(result.summaryPath, "utf8"));
   assert.deepEqual(summary, result.summary);
-  assert.equal(summary.schema_version, "blabee.local-dogfood-preparation.v1");
+  assert.equal(summary.schema_version, "blabee.local-dogfood-preparation.v2");
   assert.equal(summary.preparation_only, true);
   assert.equal(summary.signed, true);
   await execFile(
@@ -312,30 +333,13 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal(summary.codex.hook_trust.review_command, "/hooks");
   assert.equal(summary.codex.hook_trust.bypass_hook_trust, false);
   assert.equal(summary.codex.marketplace_identity_suffix, expectedMarketplaceSuffix);
-  assert.equal(summary.codex.launch.environment.BLABEE_SOCKET, "unset_by_launcher");
-  assert.equal(
-    summary.codex.launch.environment.BLABEE_COORDINATOR_BINARY,
-    "unset_by_launcher",
-  );
-  assert.equal(
-    summary.codex.launch.environment.BLABEE_RUNTIME_IDENTITY,
-    "unset_by_launcher",
-  );
-  assert.equal(
-    summary.codex.launch.environment.BLABEE_MANAGED_APPROVALS,
-    "unset_by_launcher",
-  );
-  assert.equal(
-    summary.codex.launch.environment.BLABEE_MANAGED_CODEX_AUTH_TOKEN,
-    "unset_by_launcher",
-  );
-  assert.equal(summary.codex.launch.mode, "native_codex");
-  assert.equal(summary.codex.launch.environment.PATH_prepend, undefined);
+  assert.equal("codex_launcher" in summary.paths, false);
+  assert.equal("launch" in summary.codex, false);
   assert.equal(summary.paths.managed_codex_launcher, managedCodexLauncher);
   assert.equal(summary.paths.runtime_identity_manifest, runtimeIdentityManifest);
   assert.equal(
     summary.runtime.identity.source_manifest_schema_version,
-    "blabee.macos-app-assembly.v1",
+    "blabee.macos-app-assembly.v2",
   );
   assert.equal(
     summary.runtime.identity.strategy,
@@ -351,6 +355,12 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     summary.runtime.identity.assembly_manifest_sha256,
     `sha256:${await digest(runtimeIdentityManifest)}`,
   );
+  assert.equal(
+    summary.runtime.identity.wire_runtime_identity,
+    defaultWireRuntimeIdentity,
+  );
+  assert.deepEqual(summary.runtime.identity.compatible_previous_apps, []);
+  assert.deepEqual(summary.runtime.identity.compatible_previous_runtimes, []);
   assert.deepEqual(summary.codex.managed_launch, {
     argv: [managedCodexLauncher],
     environment: {
@@ -391,6 +401,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   }
   assert.equal(summary.runbook.steps[4].keep_running, true);
   assert.match(summary.runbook.steps[4].stop_instruction, /ctrl_c/);
+  assert.deepEqual(summary.runbook.steps[5].argv, ["codex"]);
   assert.equal(summary.runbook.steps[6].input, "/hooks");
   assert.equal(summary.runbook.steps[6].trust_bypass_allowed, false);
   assert.deepEqual(
@@ -467,30 +478,6 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
 
   const fakeBin = join(fixture.root, "fake-bin");
   await mkdir(fakeBin);
-  const fakeCodex = join(fakeBin, "codex");
-  await writeFile(
-    fakeCodex,
-    [
-      "#!/bin/sh",
-      "printf 'native-codex;coordinator=%s;runtime=%s;socket=%s;managed=%s;auth=%s;args=%s\\n' \"${BLABEE_COORDINATOR_BINARY-unset}\" \"${BLABEE_RUNTIME_IDENTITY-unset}\" \"${BLABEE_SOCKET-unset}\" \"${BLABEE_MANAGED_APPROVALS-unset}\" \"${BLABEE_MANAGED_CODEX_AUTH_TOKEN-unset}\" \"$*\"",
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  const launched = await execFile(codexLauncher, ["resume", "session-id"], {
-    env: {
-      PATH: fakeBin,
-      BLABEE_COORDINATOR_BINARY: "/tmp/stale-coordinator",
-      BLABEE_RUNTIME_IDENTITY: `sha256:${"f".repeat(64)}`,
-      BLABEE_SOCKET: "/tmp/stale-blabee.sock",
-      BLABEE_MANAGED_APPROVALS: "stale-approvals",
-      BLABEE_MANAGED_CODEX_AUTH_TOKEN: "stale-auth-token",
-    },
-  });
-  assert.equal(
-    launched.stdout,
-    "native-codex;coordinator=unset;runtime=unset;socket=unset;managed=unset;auth=unset;args=resume session-id\n",
-  );
 
   const managedLaunch = await execFile(
     managedCodexLauncher,
@@ -506,9 +493,58 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     ].join("\n"),
   );
 
+  await assert.rejects(
+    execFile(
+      managedCodexLauncher,
+      ["resume", "must-not-reach-coordinator"],
+      {
+        env: {
+          PATH: fakeBin,
+          BLABEE_SOCKET: "/tmp/stale-blabee.sock",
+          GREP_OPTIONS: "--blabee-invalid-option",
+          LD_LIBRARY_PATH: "/private/untrusted-loader-path",
+        },
+      },
+    ),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, "");
+      assert.equal(error.stderr, "managed_codex_environment_unsafe\n");
+      return true;
+    },
+  );
+
+  const managedCodexWrapperText = await readFile(managedCodexLauncher, "utf8");
+  const failingScanner = join(fakeBin, "failing-loader-scanner");
+  await writeFile(failingScanner, "#!/bin/sh\nexit 2\n", { mode: 0o700 });
+  for (const [label, systemScanner] of [
+    ["environment", "/usr/bin/env"],
+    ["matcher", "/usr/bin/grep"],
+  ]) {
+    const scannerFailureLauncher = join(
+      fakeBin,
+      `blabee-codex-${label}-scanner-failure`,
+    );
+    await writeFile(
+      scannerFailureLauncher,
+      managedCodexWrapperText.replace(systemScanner, `'${failingScanner}'`),
+      { mode: 0o700 },
+    );
+    await assert.rejects(
+      execFile(scannerFailureLauncher, ["resume", "must-not-reach-coordinator"], {
+        env: { PATH: fakeBin },
+      }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.equal(error.stdout, "");
+        assert.equal(error.stderr, "managed_codex_environment_unsafe\n");
+        return true;
+      },
+    );
+  }
+
   const generatedText = await Promise.all([
     readFile(coordinatorShim, "utf8"),
-    readFile(codexLauncher, "utf8"),
     readFile(managedCodexLauncher, "utf8"),
     readFile(projectSettingsLauncher, "utf8"),
     readFile(serviceLauncher, "utf8"),
@@ -529,6 +565,112 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     output: join(await realpath(fixture.root), "prepared from cli"),
     summary: join(await realpath(fixture.root), "prepared from cli", "dogfood-summary.json"),
   });
+});
+
+test("preparation passes verified previous apps into the signed app and records both identity layers", async (t) => {
+  const fixture = await makeWorkspace(t, "blabee-local-dogfood-compatible-");
+  const previousIdentity = `sha256:${"7".repeat(64)}`;
+  const previousApp = join(fixture.root, "previous", "Blabee.app");
+  await mkdir(previousApp, { recursive: true });
+  await writeFile(join(previousApp, "runtime-identity.txt"), `${previousIdentity}\n`);
+
+  const result = await prepareLocalDogfood({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+    compatiblePreviousApps: [previousApp],
+  });
+  const canonicalPreviousApp = await realpath(previousApp);
+  const expectedPolicy = {
+    runtime_identity: previousIdentity,
+    allowed_request_types: [
+      "emit_decision",
+      "session_start",
+      "stop",
+      "user_prompt_submit",
+    ],
+  };
+  assert.equal(
+    result.summary.runtime.identity.wire_runtime_identity,
+    defaultWireRuntimeIdentity,
+  );
+  assert.match(
+    result.summary.runtime.identity.assembly_manifest_sha256,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+  assert.notEqual(
+    result.summary.runtime.identity.wire_runtime_identity,
+    result.summary.runtime.identity.assembly_manifest_sha256,
+  );
+  assert.deepEqual(
+    result.summary.runtime.identity.compatible_previous_apps,
+    [canonicalPreviousApp],
+  );
+  assert.deepEqual(
+    result.summary.runtime.identity.compatible_previous_runtimes,
+    [expectedPolicy],
+  );
+  const manifest = JSON.parse(await readFile(
+    join(result.output, "Blabee.app", "Contents", "Resources", "assembly-manifest.json"),
+    "utf8",
+  ));
+  assert.deepEqual(manifest.compatible_previous_runtimes, [expectedPolicy]);
+});
+
+test("preparation CLI accepts one or two previous apps and rejects a third or raw identity", async (t) => {
+  const fixture = await makeWorkspace(t, "blabee-local-dogfood-compatible-cli-");
+  const help = await execFile(process.execPath, [preparationScript, "--help"]);
+  assert.match(help.stdout, /may be repeated at most twice/);
+  assert.match(help.stdout, /raw runtime identity values are not accepted/);
+  const previousApps = await Promise.all(["1", "2", "3"].map(
+    (character, index) => makePreviousApp(
+      fixture.root,
+      `previous-cli-${index}`,
+      `sha256:${character.repeat(64)}`,
+    ),
+  ));
+  for (const count of [1, 2]) {
+    const output = join(fixture.root, `prepared-cli-${count}`);
+    const argumentsList = [
+      preparationScript,
+      "--binary",
+      fixture.binary,
+      "--output",
+      output,
+    ];
+    for (const app of previousApps.slice(0, count)) {
+      argumentsList.push("--compatible-previous-app", app);
+    }
+    const execution = await execFile(process.execPath, argumentsList);
+    const result = JSON.parse(execution.stdout);
+    const summary = JSON.parse(await readFile(result.summary, "utf8"));
+    assert.equal(summary.runtime.identity.compatible_previous_apps.length, count);
+    assert.equal(summary.runtime.identity.compatible_previous_runtimes.length, count);
+  }
+
+  const rejectedOutput = join(fixture.root, "prepared-cli-rejected");
+  await assert.rejects(
+    execFile(process.execPath, [
+      preparationScript,
+      "--binary",
+      fixture.binary,
+      "--output",
+      rejectedOutput,
+      ...previousApps.flatMap((app) => ["--compatible-previous-app", app]),
+    ]),
+    /may be provided at most 2 times/,
+  );
+  await assert.rejects(
+    execFile(process.execPath, [
+      preparationScript,
+      "--binary",
+      fixture.binary,
+      "--output",
+      rejectedOutput,
+      "--compatible-previous-runtime-identity",
+      `sha256:${"4".repeat(64)}`,
+    ]),
+    /unsupported argument/,
+  );
 });
 
 test("two prepared marketplaces coexist and complete the real Codex lifecycle in an isolated CODEX_HOME", async (t) => {

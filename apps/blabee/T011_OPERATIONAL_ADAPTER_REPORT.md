@@ -38,7 +38,9 @@ Blabee는 별도 LLM API나 API key를 요구하지 않는다. Codex가 만든 �
 
 Pet은 14개 exact identity 필드로 현재 `waiting` 전면 카드를 먼저 명시적으로 설정하고, 이어서 v1 `blabee_selection_request`의 16개 필드를 모두 제출한다. coordinator는 현재 packet·revision·option과 9-field binding을 byte-exact로 확인하며 `select` 요청 자체로 전면 카드를 바꾸지 못하게 한다.
 
-반고정 슬롯은 다음과 같다.
+아래 반고정 슬롯은 이 보고서 작성 당시의 역사적 T-011 검증 대상이다. 현재 새 제안은
+우선순위가 매겨진 실행 작업 2~4개만 발행하며, 아래 형태는 frozen packet 및 journal
+replay 호환에서만 읽는다.
 
 1. 패킷별 동적 권장 작업
 2. 패킷별 동적 대안 또는 `no_safe_meaningful_alternative` 비활성
@@ -117,13 +119,20 @@ Swift 빌드는 통과했지만 기존 `kSecUseAuthenticationUIFail`의 macOS 11
 
 ### 로컬 도그푸딩 준비 도구
 
-`scripts/prepare-local-dogfood.mjs`는 명시한 새 절대 output root 하나에 다음 자료만 준비한다.
+아래 목록은 T-011 구현 당시의 산출물 기록이다. 당시
+`scripts/prepare-local-dogfood.mjs`는 명시한 새 절대 output root 하나에 다음 자료만
+준비했다.
 
 - 기존 macOS assembler가 만든 `Blabee.app`
 - marketplace root 내부의 `.agents/plugins/marketplace.json`과 자체 `plugins/blabee` 복사본
 - MCP의 PATH 검색을 위한 `bin/blabee-coordinator`와 Hook용 `BLABEE_COORDINATOR_BINARY`를 함께 설정하는 `bin/codex-with-blabee`
 - exact app binary를 실행하는 `blabee-project-settings`, foreground `blabee-service`, `blabee-pet` wrapper. Codex·service·Pet·project-settings wrapper는 상속된 `BLABEE_SOCKET`을 지워 오래된 개발 socket으로 연결되지 않게 한다.
 - preflight → 고유 marketplace 추가 → Plugin 추가 → 절대 프로젝트 활성화 → 전용 터미널 foreground service → 대상 프로젝트 Codex → `/hooks` exact hash 수동 신뢰 → Pet → 대표 프롬프트 순서를 배열로 고정한 `dogfood-summary.json`
+
+이후 기본 Codex 불변 원칙에 맞춰 dogfood 전용 native passthrough
+`bin/codex-with-blabee`는 제거했다. 현재 준비 도구의 일반 실행 단계는 사용자 셸의
+`codex`를 직접 사용하고, App Server 관리형 실험만 명시적 `bin/blabee-codex`로
+진입한다.
 
 준비 도구는 기존 output·symlink·특수 파일을 덮어쓰지 않고 저장소 또는 시스템 임시 디렉터리의 새 자식 경로만 받는다. output의 canonical absolute path SHA-256 앞 12자리로 marketplace 이름을 분리하며, 서로 다른 두 output의 marketplace를 하나의 격리 `CODEX_HOME`에 동시에 추가하고 설치·제거하는 시험을 통과했다. 실제 `CODEX_HOME`, Application Support, `/Applications`, Keychain, launchd를 변경하지 않으며 Plugin 설치·프로젝트 활성화·service·Pet도 실행하지 않는다. Hook 신뢰 우회도 사용하지 않는다.
 

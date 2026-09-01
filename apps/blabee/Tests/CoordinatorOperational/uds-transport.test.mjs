@@ -29,10 +29,6 @@ const proposal = JSON.parse(await readFile(
   new URL("../../Fixtures/v1/contracts/valid/decision-proposal.json", import.meta.url),
   "utf8",
 ));
-const legacyProposal = JSON.parse(await readFile(
-  new URL("../../Fixtures/v1/contracts/valid/decision-proposal-legacy.json", import.meta.url),
-  "utf8",
-));
 const operationalProposalKeys = [
   "schema_version",
   "interaction_kind",
@@ -59,7 +55,12 @@ const legacyOperationalProposalKeys = [
   "reported_side_effects",
 ];
 const legacyOperationalProposal = Object.fromEntries(
-  legacyOperationalProposalKeys.map((key) => [key, legacyProposal[key]]),
+  legacyOperationalProposalKeys.map((key) => {
+    if (key === "recommended_next") return [key, proposal.next_actions[0]];
+    if (key === "alternative_next") return [key, proposal.next_actions[1]];
+    if (key === "pause_capsule") return [key, { resume_first: "Re-open the cached result" }];
+    return [key, proposal[key]];
+  }),
 );
 const hookSessionID = "01a01ece-22b8-7833-9ebf-8ef8d1addc58";
 const fixtureRuntimeIdentity = `sha256:${"1".repeat(64)}`;
@@ -621,13 +622,13 @@ test("Hook forwards official input and emits only official additionalContext out
   }
 });
 
-test("all Hook events forward official-shaped payloads and map exact public outputs", async () => {
+test("Hook events map exact public outputs and reject legacy allow", async () => {
   const assistantMessage = "sensitive assistant message must not reach adapter output";
   const payloads = {
     UserPromptSubmit: hookPayload("UserPromptSubmit", {
       prompt: "Continue the fictional implementation.",
     }),
-    PermissionAllow: hookPayload("PermissionRequest", {
+    PermissionLegacyAllow: hookPayload("PermissionRequest", {
       turn_id: hookTurnIDs.allow,
       tool_name: "Bash",
       tool_input: { command: "fictional-allow-command" },
@@ -697,18 +698,18 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       },
     });
 
-    const permissionAllow = await runBinary(
+    const permissionLegacyAllow = await runBinary(
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
-      { input: JSON.stringify(payloads.PermissionAllow) },
+      { input: JSON.stringify(payloads.PermissionLegacyAllow) },
     );
-    assert.deepEqual(JSON.parse(permissionAllow.stdout), {
-      hookSpecificOutput: {
-        hookEventName: "PermissionRequest",
-        decision: {
-          behavior: "allow",
-        },
+    assert.deepEqual(
+      {
+        code: permissionLegacyAllow.code,
+        stderr: permissionLegacyAllow.stderr,
+        stdout: permissionLegacyAllow.stdout,
       },
-    });
+      { code: 0, stderr: "", stdout: "" },
+    );
 
     const permissionDeny = await runBinary(
       ["hook", "PermissionRequest", "--socket", fake.socketPath],
@@ -761,18 +762,7 @@ test("all Hook events forward official-shaped payloads and map exact public outp
 
     assert.deepEqual(received, [
       { type: "user_prompt_submit", payload: payloads.UserPromptSubmit },
-      { type: "permission_request", payload: payloads.PermissionAllow },
-      {
-        type: "ack_permission_request_delivery",
-        payload: {
-          schema_version: "1.0",
-          kind: "blabee_permission_request_delivery_ack",
-          request_id: "permission_request_allow",
-          session_id: hookSessionID,
-          turn_id: hookTurnIDs.allow,
-          delivery_token: "permission_delivery_allow_token_1234",
-        },
-      },
+      { type: "permission_request", payload: payloads.PermissionLegacyAllow },
       { type: "permission_request", payload: payloads.PermissionDeny },
       {
         type: "ack_permission_request_delivery",
@@ -801,7 +791,7 @@ test("all Hook events forward official-shaped payloads and map exact public outp
       { type: "stop", payload: payloads.StopNoDecision },
     ]);
     for (const result of [
-      userPrompt, permissionAllow, permissionDeny, permissionDefer,
+      userPrompt, permissionLegacyAllow, permissionDeny, permissionDefer,
       stopBlock, stopNoDecision,
     ]) {
       assert.equal(result.stdout.includes(assistantMessage), false);
@@ -817,7 +807,7 @@ test("Hook stdout write failure sends no permission delivery acknowledgement", a
   const fake = await startFakeCoordinator((request) => {
     if (request.type === "permission_request") {
       return {
-        decision: "allow",
+        decision: "deny",
         delivery_token: "permission_delivery_stdout_failure_1234",
         request_id: "permission_request_stdout_failure",
         session_id: hookSessionID,
@@ -1009,7 +999,7 @@ test("Hook rejects malformed internal delivery identifiers without acknowledgeme
   const fake = await startFakeCoordinator((request) => {
     if (request.type === "permission_request") {
       return {
-        decision: "allow",
+        decision: "deny",
         delivery_token: "permission_delivery_bad_identifier_1234",
         request_id: "permission_request_bad_identifier",
         session_id: "e\u0301-session-not-nfc",
@@ -1157,12 +1147,11 @@ test("Hook accepted by a silent daemon still fails open within the command budge
   }
 });
 
-test("MCP exposes the complete proposal schema and never echoes correlation tokens", async () => {
+test("MCP requires the ranked proposal schema and never echoes correlation tokens", async () => {
   let forwardedCalls = 0;
-  const expectedForwardedProposals = [operationalProposal, legacyOperationalProposal];
   const fake = await startFakeCoordinator((request) => {
     assert.equal(request.type, "emit_decision");
-    assert.deepEqual(request.payload.proposal, expectedForwardedProposals[forwardedCalls]);
+    assert.deepEqual(request.payload.proposal, operationalProposal);
     forwardedCalls += 1;
     return { accepted: true, status: "waiting_for_selection" };
   });
@@ -1176,12 +1165,12 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
     proposal: operationalProposal,
   };
   const legacyArguments = {
-    project_id: legacyProposal.project_id,
-    session_id: legacyProposal.session_id,
-    source_turn_id: legacyProposal.source_turn_id,
-    source_prompt_id: legacyProposal.source_prompt_id,
-    episode_id: legacyProposal.episode_id,
-    correlation_token: legacyProposal.correlation_token,
+    project_id: proposal.project_id,
+    session_id: proposal.session_id,
+    source_turn_id: proposal.source_turn_id,
+    source_prompt_id: proposal.source_prompt_id,
+    episode_id: proposal.episode_id,
+    correlation_token: proposal.correlation_token,
     proposal: legacyOperationalProposal,
   };
   const messages = [
@@ -1263,9 +1252,11 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
       accepted: true,
       status: "waiting_for_selection",
     });
+    assert.equal(responses[3].result.isError, true);
     assert.deepEqual(responses[3].result.structuredContent, {
-      accepted: true,
-      status: "waiting_for_selection",
+      accepted: false,
+      error_code: "coordinator_unavailable_or_rejected",
+      retryable: false,
     });
     assert.equal(responses[4].result.isError, true);
     assert.deepEqual(responses[4].result.structuredContent, {
@@ -1273,7 +1264,7 @@ test("MCP exposes the complete proposal schema and never echoes correlation toke
       error_code: "coordinator_unavailable_or_rejected",
       retryable: false,
     });
-    assert.equal(forwardedCalls, 2, "invalid exact-key wrappers must not reach UDS");
+    assert.equal(forwardedCalls, 1, "legacy and invalid exact-key wrappers must not reach UDS");
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
   } finally {
     await fake.close();
@@ -1568,7 +1559,7 @@ test("Hook approval peer disconnect cancels waiters and releases UDS admission",
   }
 });
 
-test("real Hook allow resolves Pet only after official stdout and delivery ack", async () => {
+test("real Hook deny resolves Pet only after official stdout and delivery ack", async () => {
   const server = await startOperationalApprovalServer();
   try {
     const productBuild = await buildProductCoordinator();
@@ -1622,7 +1613,7 @@ test("real Hook allow resolves Pet only after official stdout and delivery ack",
         project_id: request.project_id,
         session_id: request.session_id,
         turn_id: request.turn_id,
-        decision: "allow",
+        decision: "deny",
       },
     );
     const [permission, resolved] = await Promise.all([
@@ -1636,12 +1627,15 @@ test("real Hook allow resolves Pet only after official stdout and delivery ack",
     assert.deepEqual(JSON.parse(permission.stdout), {
       hookSpecificOutput: {
         hookEventName: "PermissionRequest",
-        decision: { behavior: "allow" },
+        decision: {
+          behavior: "deny",
+          message: "Blabee에서 사용자가 거절했습니다.",
+        },
       },
     });
     assert.equal(resolved.ok, true);
     assert.deepEqual(resolved.result, {
-      decision: "allow",
+      decision: "deny",
       request_id: request.request_id,
       resolved: true,
       response_id: "permission_response_live_stdout",

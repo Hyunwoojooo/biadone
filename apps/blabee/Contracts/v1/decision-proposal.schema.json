@@ -21,33 +21,8 @@
     "boundary_sequence",
     "task_goal",
     "outcome",
+    "next_actions",
     "reported_side_effects"
-  ],
-  "oneOf": [
-    {
-      "required": [
-        "next_actions"
-      ],
-      "properties": {
-        "next_actions": {},
-        "recommended_next": false,
-        "alternative_next": false,
-        "pause_capsule": false
-      }
-    },
-    {
-      "required": [
-        "recommended_next",
-        "alternative_next",
-        "pause_capsule"
-      ],
-      "properties": {
-        "recommended_next": {},
-        "alternative_next": {},
-        "pause_capsule": {},
-        "next_actions": false
-      }
-    }
   ],
   "properties": {
     "schema_version": {
@@ -121,33 +96,6 @@
       "uniqueItems": true,
       "items": {
         "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
-      }
-    },
-    "recommended_next": {
-      "description": "Legacy proposal field accepted for cached v1 clients.",
-      "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
-    },
-    "alternative_next": {
-      "description": "Legacy proposal field accepted for cached v1 clients.",
-      "oneOf": [
-        {
-          "$ref": "https://schemas.blabee.local/contracts/v1/action.schema.json"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "pause_capsule": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "resume_first"
-      ],
-      "properties": {
-        "resume_first": {
-          "$ref": "https://schemas.blabee.local/contracts/v1/common.schema.json#/$defs/non_empty_string"
-        }
       }
     },
     "reported_side_effects": {

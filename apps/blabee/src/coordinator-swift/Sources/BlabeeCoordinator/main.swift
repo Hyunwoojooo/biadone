@@ -1016,157 +1016,58 @@ private func runTransportFixture(arguments: [String]) throws {
 }
 #endif
 
-enum CodexAutoConnectCommandOperation: String, Sendable {
-    case status
-    case enable
-    case disable
-
-    init(arguments: [String]) throws {
-        guard arguments.count == 1,
-              let operation = Self(rawValue: arguments[0])
-        else {
-            throw CoordinatorError(
-                "invalid_arguments",
-                "codex-auto-connect requires exactly one of: status, enable, disable"
-            )
-        }
-        self = operation
-    }
-}
-
-struct CodexAutoConnectCommandResponse: Equatable, Sendable {
-    let operation: CodexAutoConnectCommandOperation
-    let state: CodexAutoConnectState
-
-    func outputData() throws -> Data {
-        let stateValue: String
-        let detail: Any
-        switch state {
-        case .disabled:
-            stateValue = "disabled"
-            detail = NSNull()
-        case .enabled:
-            stateValue = "enabled"
-            detail = NSNull()
-        case let .repairRequired(message):
-            stateValue = "repair_required"
-            detail = message
-        case let .conflict(message):
-            stateValue = "conflict"
-            detail = message
-        case let .unavailable(message):
-            stateValue = "unavailable"
-            detail = message
-        }
-        var data = try JSONSerialization.data(
-            withJSONObject: [
-                "detail": detail,
-                "ok": true,
-                "operation": operation.rawValue,
-                "schema_version": "1.0",
-                "state": stateValue,
-            ],
-            options: [.sortedKeys, .withoutEscapingSlashes]
-        )
-        data.append(0x0A)
-        return data
-    }
-}
-
-struct CodexAutoConnectCommandApplication: Sendable {
-    let manager: CodexAutoConnectManager
-
-    func run(arguments: [String]) throws -> CodexAutoConnectCommandResponse {
-        let operation = try CodexAutoConnectCommandOperation(arguments: arguments)
-        switch operation {
-        case .status:
-            break
-        case .enable:
-            try manager.enable()
-        case .disable:
-            try manager.disable()
-        }
-        return CodexAutoConnectCommandResponse(
-            operation: operation,
-            state: manager.state()
-        )
-    }
-}
-
-private func runCodexAutoConnectCommand(arguments: [String]) throws {
-    do {
-        let manager = try CodexAutoConnectManager.live()
-        let response = try CodexAutoConnectCommandApplication(manager: manager)
-            .run(arguments: arguments)
-        try FileHandle.standardOutput.write(contentsOf: response.outputData())
-    } catch let error as CoordinatorError {
-        throw error
-    } catch {
-        throw CoordinatorError("codex_auto_connect_failed", error.localizedDescription)
-    }
-}
-
-func codexAutoConnectLaunchCoordinatorError(_ error: Error) -> CoordinatorError {
-    if let error = error as? CoordinatorError { return error }
-    guard let error = error as? CodexAutoConnectError else {
-        return error.coordinatorError
-    }
-    let code: String
-    switch error {
-    case .conflict:
-        code = "codex_auto_connect_conflict"
-    case .unavailable:
-        code = "codex_auto_connect_unavailable"
-    case .unsafeFilesystem, .writeFailed:
-        code = "codex_auto_connect_repair_required"
-    }
-    return CoordinatorError(code)
-}
-
-private func runCodexLaunch(arguments: [String]) throws {
-    guard arguments.first == "--" else {
-        throw CoordinatorError(
-            "invalid_arguments",
-            "codex-launch requires -- before Codex arguments"
-        )
-    }
-    let codexArguments = Array(arguments.dropFirst())
-    let manager = try CodexAutoConnectManager.liveForRuntime()
-    let executable = try manager.nativeCodexForLaunch()
-    try runResolvedNativeCodexLaunch(
-        executable: executable,
-        arguments: codexArguments
-    )
-}
+private let managedCodexFallbackRemovedEnvironmentNames = [
+    "BLABEE_COORDINATOR_BINARY",
+    "BLABEE_SOCKET",
+    "BLABEE_MANAGED_APPROVALS",
+    "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+    "BLABEE_RUNTIME_IDENTITY",
+]
 
 private func runResolvedNativeCodexLaunch(
     executable: URL,
-    arguments: [String]
+    arguments: [String],
+    environment: [String: String]
 ) throws {
-    for name in [
-        "BLABEE_COORDINATOR_BINARY",
-        "BLABEE_SOCKET",
-        "BLABEE_MANAGED_APPROVALS",
-        "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
-        "BLABEE_RUNTIME_IDENTITY",
-    ] {
-        unsetenv(name)
+    var launchEnvironment = try ManagedCodexLaunchEnvironment.validated(
+        environment
+    )
+    for name in managedCodexFallbackRemovedEnvironmentNames {
+        launchEnvironment.removeValue(forKey: name)
     }
     var cArguments = ([executable.path] + arguments).map { strdup($0) }
     guard !cArguments.contains(where: { $0 == nil }) else {
         for case let pointer? in cArguments { free(pointer) }
-        throw CoordinatorError("codex_auto_connect_exec_failed")
+        throw CoordinatorError("managed_codex_exec_failed")
     }
     cArguments.append(nil)
     defer {
         for case let pointer? in cArguments { free(pointer) }
     }
-    let result = cArguments.withUnsafeMutableBufferPointer { buffer in
-        execv(executable.path, buffer.baseAddress)
+    let environmentStrings = launchEnvironment.keys.sorted().map {
+        "\($0)=\(launchEnvironment[$0]!)"
+    }
+    var cEnvironment = environmentStrings.map { strdup($0) }
+    guard !cEnvironment.contains(where: { $0 == nil }) else {
+        for case let pointer? in cEnvironment { free(pointer) }
+        throw CoordinatorError("managed_codex_exec_failed")
+    }
+    cEnvironment.append(nil)
+    defer {
+        for case let pointer? in cEnvironment { free(pointer) }
+    }
+    let result = cArguments.withUnsafeMutableBufferPointer { argumentBuffer in
+        cEnvironment.withUnsafeMutableBufferPointer { environmentBuffer in
+            execve(
+                executable.path,
+                argumentBuffer.baseAddress,
+                environmentBuffer.baseAddress
+            )
+        }
     }
     guard result == 0 else {
         throw CoordinatorError(
-            "codex_auto_connect_exec_failed",
+            "managed_codex_exec_failed",
             "승인된 Codex 실행 파일을 시작하지 못했습니다."
         )
     }
@@ -1175,6 +1076,7 @@ private func runResolvedNativeCodexLaunch(
 func runExplicitManagedCodexLaunch(
     arguments: [String],
     managedRun: ([String]) throws -> Int32,
+    revalidateNativeExecutable: (URL) throws -> URL,
     nativeRun: (URL, [String]) throws -> Int32
 ) throws -> Int32 {
     do {
@@ -1183,11 +1085,321 @@ func runExplicitManagedCodexLaunch(
         guard failure.childStartState == .notStarted else {
             throw failure.underlyingError
         }
+        let revalidated = try revalidateNativeExecutable(
+            failure.nativeExecutableURL
+        )
+        guard revalidated == failure.nativeExecutableURL else {
+            throw CoordinatorError("managed_codex_executable_changed")
+        }
         return try nativeRun(
-            failure.nativeExecutableURL,
+            revalidated,
             failure.tuiArguments
         )
     }
+}
+
+#if BLABEE_JOURNAL_TEST_HARNESS
+private func managedCodexFallbackTestTemporaryDirectory(
+    environment: [String: String]
+) throws -> URL {
+    guard let temporaryPath = environment["TMPDIR"],
+          temporaryPath.hasPrefix("/"),
+          let resolvedTemporary = realpath(temporaryPath, nil)
+    else { throw CoordinatorError("operational_test_path_unsafe") }
+    defer { free(resolvedTemporary) }
+    return URL(
+        fileURLWithPath: String(cString: resolvedTemporary),
+        isDirectory: true
+    ).standardizedFileURL
+}
+
+private func managedCodexFallbackTestMarker(
+    arguments: [String],
+    environment: [String: String]
+) throws -> (url: URL, forwarded: [String]) {
+    guard arguments.count >= 4,
+          arguments[0] == "--marker",
+          arguments[2] == "--",
+          arguments[1].hasPrefix("/")
+    else { throw CoordinatorError("invalid_arguments") }
+    let temporary = try managedCodexFallbackTestTemporaryDirectory(
+        environment: environment
+    )
+    let requestedMarker = URL(
+        fileURLWithPath: arguments[1],
+        isDirectory: false
+    ).standardizedFileURL
+    let requestedParent = requestedMarker.deletingLastPathComponent()
+    guard let resolvedParent = realpath(requestedParent.path, nil) else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    defer { free(resolvedParent) }
+    let markerParent = URL(
+        fileURLWithPath: String(cString: resolvedParent),
+        isDirectory: true
+    ).standardizedFileURL
+    guard markerParent.path == temporary.path else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    guard !requestedMarker.lastPathComponent.isEmpty else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    let marker = markerParent.appendingPathComponent(
+        requestedMarker.lastPathComponent,
+        isDirectory: false
+    )
+    var markerInfo = stat()
+    guard lstat(marker.path, &markerInfo) != 0, errno == ENOENT else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    return (marker, Array(arguments.dropFirst(3)))
+}
+
+private func managedCodexFallbackTestRelease(
+    environment: [String: String]
+) throws -> URL? {
+    guard let rawRelease = environment["BLABEE_TEST_FALLBACK_RELEASE"] else {
+        return nil
+    }
+    guard rawRelease.hasPrefix("/") else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    let temporary = try managedCodexFallbackTestTemporaryDirectory(
+        environment: environment
+    )
+    let requested = URL(
+        fileURLWithPath: rawRelease,
+        isDirectory: false
+    ).standardizedFileURL
+    let requestedParent = requested.deletingLastPathComponent()
+    guard let resolvedParent = realpath(requestedParent.path, nil) else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    defer { free(resolvedParent) }
+    let parent = URL(
+        fileURLWithPath: String(cString: resolvedParent),
+        isDirectory: true
+    ).standardizedFileURL
+    guard parent.path == temporary.path,
+          !requested.lastPathComponent.isEmpty
+    else { throw CoordinatorError("operational_test_path_unsafe") }
+    let release = parent.appendingPathComponent(
+        requested.lastPathComponent,
+        isDirectory: false
+    )
+    var releaseInfo = stat()
+    guard lstat(release.path, &releaseInfo) != 0, errno == ENOENT else {
+        throw CoordinatorError("operational_test_path_unsafe")
+    }
+    return release
+}
+
+private func runManagedCodexFallbackTest(
+    arguments: [String],
+    environment: [String: String]
+) throws -> Int32 {
+    let fixture = try managedCodexFallbackTestMarker(
+        arguments: arguments,
+        environment: environment
+    )
+    let provider = try ManagedCodexApprovedExecutableProvider.live(
+        environment: environment,
+        pinParentURL: try managedCodexFallbackTestTemporaryDirectory(
+            environment: environment
+        )
+    )
+    return try runExplicitManagedCodexLaunch(
+        arguments: arguments,
+        managedRun: { _ in
+            let executable = try provider.next()
+            throw ManagedCodexLaunchFailure(
+                childStartState: .notStarted,
+                nativeExecutableURL: executable,
+                tuiArguments: [
+                    "managed-codex-fallback-test-target",
+                    "--marker", fixture.url.path,
+                    "--",
+                ] + fixture.forwarded,
+                underlyingError: CoordinatorError(
+                    "managed_codex_test_pre_child_failure"
+                )
+            )
+        },
+        revalidateNativeExecutable: { expected in
+            let current = try provider.next()
+            guard current == expected else {
+                throw CoordinatorError("managed_codex_executable_changed")
+            }
+            return current
+        },
+        nativeRun: { executable, arguments in
+            try runResolvedNativeCodexLaunch(
+                executable: executable,
+                arguments: arguments,
+                environment: environment
+            )
+            return 0
+        }
+    )
+}
+
+private func runManagedCodexFallbackTestTarget(
+    arguments: [String],
+    environment: [String: String]
+) throws -> Int32 {
+    let fixture = try managedCodexFallbackTestMarker(
+        arguments: arguments,
+        environment: environment
+    )
+    let strippedEnvironmentStillPresent =
+        managedCodexFallbackRemovedEnvironmentNames.filter {
+            getenv($0) != nil
+        }
+    let safeEnvironment = getenv("BLABEE_TEST_SAFE_ENVIRONMENT").map {
+        String(cString: $0)
+    }
+    let result: [String: Any] = [
+        "argv": CommandLine.arguments,
+        "cwd": FileManager.default.currentDirectoryPath,
+        "forwarded": fixture.forwarded,
+        "safe_environment": safeEnvironment ?? "",
+        "stripped_environment_still_present": strippedEnvironmentStillPresent,
+    ]
+    let data = try JSONSerialization.data(
+        withJSONObject: result,
+        options: [.sortedKeys]
+    )
+    try data.write(to: fixture.url, options: [.atomic])
+    if let release = try managedCodexFallbackTestRelease(
+        environment: environment
+    ) {
+        let deadline = DispatchTime.now().uptimeNanoseconds + 20_000_000_000
+        while true {
+            var releaseInfo = stat()
+            if lstat(release.path, &releaseInfo) == 0 {
+                guard releaseInfo.st_mode & mode_t(S_IFMT)
+                        == mode_t(S_IFREG),
+                      releaseInfo.st_uid == geteuid(),
+                      releaseInfo.st_nlink == 1
+                else {
+                    throw CoordinatorError("operational_test_path_unsafe")
+                }
+                break
+            }
+            guard errno == ENOENT,
+                  DispatchTime.now().uptimeNanoseconds < deadline
+            else {
+                throw CoordinatorError("operational_test_release_timeout")
+            }
+            usleep(10_000)
+        }
+    }
+    return 37
+}
+
+private func runManagedCodexQualificationTest(
+    environment: [String: String]
+) throws {
+    let provider = try ManagedCodexApprovedExecutableProvider.live(
+        environment: environment,
+        pinParentURL: try managedCodexFallbackTestTemporaryDirectory(
+            environment: environment
+        )
+    )
+    _ = try provider.next()
+}
+#endif
+
+struct RuntimeIdentityInspectionArguments: Equatable, Sendable {
+    let appURL: URL
+
+    init(_ arguments: [String]) throws {
+        guard arguments.count == 2, arguments[0] == "--app" else {
+            throw CoordinatorError(
+                "runtime_identity_inspection_arguments_invalid",
+                "runtime-identity requires exactly: --app /absolute/Blabee.app"
+            )
+        }
+        let path = arguments[1]
+        guard path.hasPrefix("/"),
+              !path.contains("\0"),
+              path.utf8.count <= 4_096,
+              !path.split(
+                  separator: "/",
+                  omittingEmptySubsequences: false
+              ).contains(where: { $0 == "." || $0 == ".." })
+        else {
+            throw CoordinatorError("runtime_identity_inspection_app_invalid")
+        }
+        let appURL = URL(fileURLWithPath: path, isDirectory: true)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        guard appURL.lastPathComponent == "Blabee.app",
+              appURL.pathExtension.lowercased() == "app"
+        else {
+            throw CoordinatorError("runtime_identity_inspection_app_invalid")
+        }
+        self.appURL = appURL
+    }
+}
+
+struct RuntimeIdentityInspectionResponse: Equatable, Sendable {
+    static let schemaVersion = "blabee.runtime-identity-inspection.v2"
+    let runtimeIdentity: String
+    let assemblyManifestSHA256: String
+
+    func outputData() throws -> Data {
+        guard OperationalRuntimeIdentity.isValid(runtimeIdentity),
+              OperationalRuntimeIdentity.isValid(assemblyManifestSHA256)
+        else {
+            throw CoordinatorError("runtime_identity_inspection_result_invalid")
+        }
+        var data = try JSONSerialization.data(
+            withJSONObject: [
+                "assembly_manifest_sha256": assemblyManifestSHA256,
+                "runtime_identity": runtimeIdentity,
+                "schema_version": Self.schemaVersion,
+            ],
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        data.append(0x0A)
+        return data
+    }
+}
+
+struct RuntimeIdentityInspectionApplication {
+    var installedInspection: (URL) -> OperationalInstalledRuntimeInspection?
+
+    func run(arguments: [String]) throws -> RuntimeIdentityInspectionResponse {
+        let parsed = try RuntimeIdentityInspectionArguments(arguments)
+        let executableURL = parsed.appURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("blabee-coordinator", isDirectory: false)
+        guard let inspection = installedInspection(executableURL),
+              OperationalRuntimeIdentity.isValid(
+                inspection.snapshot.runtimeIdentity
+              ),
+              OperationalRuntimeIdentity.isValid(
+                inspection.assemblyManifestSHA256
+              )
+        else {
+            throw CoordinatorError("runtime_identity_inspection_unverified")
+        }
+        return RuntimeIdentityInspectionResponse(
+            runtimeIdentity: inspection.snapshot.runtimeIdentity,
+            assemblyManifestSHA256: inspection.assemblyManifestSHA256
+        )
+    }
+}
+
+private func runRuntimeIdentityInspection(arguments: [String]) throws {
+    let response = try RuntimeIdentityInspectionApplication(
+        installedInspection: {
+            OperationalRuntimeIdentity.installedInspection(forExecutable: $0)
+        }
+    ).run(arguments: arguments)
+    try FileHandle.standardOutput.write(contentsOf: response.outputData())
 }
 
 do {
@@ -1211,6 +1423,8 @@ do {
         let execution = DoctorApplication().run(arguments: arguments)
         try FileHandle.standardOutput.write(contentsOf: execution.outputData())
         if execution.exitCode != 0 { exit(execution.exitCode) }
+    case "runtime-identity":
+        try runRuntimeIdentityInspection(arguments: Array(commandLine.dropFirst(2)))
     case "hook":
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":
@@ -1218,38 +1432,43 @@ do {
     case "managed-codex":
         let status: Int32
         do {
+            let arguments = Array(commandLine.dropFirst(2))
+            let environment = ProcessInfo.processInfo.environment
+            // Syntax and socket validation must precede executable discovery.
+            // Invalid managed invocations never become native fallback calls.
+            _ = try ManagedCodexLauncherArguments(
+                arguments,
+                environment: environment
+            )
+            let provider = try ManagedCodexApprovedExecutableProvider.live(
+                environment: environment
+            )
             status = try runExplicitManagedCodexLaunch(
-                arguments: Array(commandLine.dropFirst(2)),
+                arguments: arguments,
                 managedRun: { arguments in
-                    let environment = ProcessInfo.processInfo.environment
-                    // Keep syntax/socket validation ahead of managed trust
-                    // discovery so an invalid invocation is never made
-                    // fallback-eligible by an unrelated runtime condition.
-                    _ = try ManagedCodexLauncherArguments(
-                        arguments,
-                        environment: environment
-                    )
-                    let manager = try CodexAutoConnectManager.liveForRuntime(
-                        environment: environment
-                    )
-                    let provider = CodexAutoConnectApprovedExecutableProvider(
-                        manager: manager
-                    )
                     return try ManagedCodexLauncher().run(
                         arguments: arguments,
                         environment: environment,
                         approvedExecutableProvider: provider.next
                     )
                 },
+                revalidateNativeExecutable: { expected in
+                    let current = try provider.next()
+                    guard current == expected else {
+                        throw CoordinatorError("managed_codex_executable_changed")
+                    }
+                    return current
+                },
                 nativeRun: { executable, arguments in
                     do {
                         try runResolvedNativeCodexLaunch(
                             executable: executable,
-                            arguments: arguments
+                            arguments: arguments,
+                            environment: environment
                         )
                         return 0
                     } catch {
-                        throw codexAutoConnectLaunchCoordinatorError(error)
+                        throw error.coordinatorError
                     }
                 }
             )
@@ -1257,15 +1476,27 @@ do {
             throw managedCodexCoordinatorError(error)
         }
         if status != 0 { exit(status) }
-    case "codex-auto-connect":
-        try runCodexAutoConnectCommand(arguments: Array(commandLine.dropFirst(2)))
-    case "codex-launch":
-        do {
-            try runCodexLaunch(arguments: Array(commandLine.dropFirst(2)))
-        } catch {
-            throw codexAutoConnectLaunchCoordinatorError(error)
-        }
     #if BLABEE_JOURNAL_TEST_HARNESS
+    case "--version":
+        try FileHandle.standardOutput.write(
+            contentsOf: Data("codex-cli 0.150.1\n".utf8)
+        )
+    case "managed-codex-fallback-test":
+        let status = try runManagedCodexFallbackTest(
+            arguments: Array(commandLine.dropFirst(2)),
+            environment: ProcessInfo.processInfo.environment
+        )
+        if status != 0 { exit(status) }
+    case "managed-codex-fallback-test-target":
+        let status = try runManagedCodexFallbackTestTarget(
+            arguments: Array(commandLine.dropFirst(2)),
+            environment: ProcessInfo.processInfo.environment
+        )
+        if status != 0 { exit(status) }
+    case "managed-codex-qualification-test":
+        try runManagedCodexQualificationTest(
+            environment: ProcessInfo.processInfo.environment
+        )
     case "transport-test-server":
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))
     case "operational-roundtrip-test-server":

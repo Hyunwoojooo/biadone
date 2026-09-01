@@ -21,7 +21,6 @@ import { NdjsonClient } from "../lib/ndjson-client.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const QUALIFICATION_ROOT = resolve(dirname(SCRIPT_PATH), "..");
-const BLABEE_ROOT = resolve(QUALIFICATION_ROOT, "../../..");
 const NODE_SOURCE = join(
   QUALIFICATION_ROOT,
   "runtimes",
@@ -35,9 +34,7 @@ const SWIFT_SOURCE = join(
   "Coordinator.swift",
 );
 const C_BASELINE_SOURCE = join(
-  BLABEE_ROOT,
-  "spikes",
-  "m0",
+  QUALIFICATION_ROOT,
   "runtimes",
   "c",
   "coordinator.c",
@@ -869,7 +866,7 @@ async function qualifyCBaseline(candidate, buildDirectory, options) {
       selection_eligible: false,
       status: "measured",
       toolchain: candidate.toolchain,
-      protocol_scope: "M0 health only; no JSON journal/replay parity",
+      protocol_scope: "health baseline only; no JSON journal/replay parity",
       cold_start_plus_health_roundtrip: summarize(latencies),
       sustained_health_roundtrip: summarize(sustained),
       rss_after_sustained_load: processRss(client.child.pid),

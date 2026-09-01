@@ -6,6 +6,22 @@ import Testing
 
 @Suite("OperationalRuntimeIdentity", .serialized)
 struct OperationalRuntimeIdentityTests {
+    @Test("runtime identity syntax is byte exact")
+    func runtimeIdentitySyntaxIsByteExact() {
+        let valid = "sha256:" + String(repeating: "a", count: 64)
+        #expect(OperationalRuntimeIdentity.isValid(valid))
+        for invalid in [
+            valid + "\n",
+            valid + "\r",
+            valid + "\u{2028}",
+            valid + "\u{2029}",
+            "sha256:" + String(repeating: "A", count: 64),
+            valid + "a",
+        ] {
+            #expect(!OperationalRuntimeIdentity.isValid(invalid))
+        }
+    }
+
     @Test("signed identity combiner is stable and binds both inputs")
     func signedIdentityCombiner() throws {
         let cdHash = Data((0..<20).map(UInt8.init))
@@ -75,6 +91,16 @@ struct OperationalRuntimeIdentityTests {
             forExecutable: fixture.executable,
             signatureVerifier: verifier
         ) == expected)
+        let inspection = try #require(
+            OperationalRuntimeIdentity.installedInspection(
+                forExecutable: fixture.executable,
+                signatureVerifier: verifier
+            )
+        )
+        #expect(inspection.snapshot.runtimeIdentity == expected)
+        #expect(inspection.assemblyManifestSHA256 == "sha256:" + manifestDigest
+            .map { String(format: "%02x", $0) }
+            .joined())
     }
 
     @Test("packaged signature failure never downgrades to environment or filesystem identity")
@@ -172,6 +198,171 @@ struct OperationalRuntimeIdentityTests {
         #expect(actual == expected)
     }
 
+    @Test("assembly manifest v1 stays compatible while v2 carries bounded policies")
+    func assemblyManifestCompatibilityPolicies() throws {
+        let firstIdentity = "sha256:" + String(repeating: "1", count: 64)
+        let secondIdentity = "sha256:" + String(repeating: "2", count: 64)
+        let requestTypes = [
+            "emit_decision", "session_start", "stop", "user_prompt_submit",
+        ]
+        let legacy = try runtimeIdentityManifestData(
+            schemaVersion: OperationalRuntimeIdentity.legacyAssemblyManifestSchemaVersion,
+            compatibility: nil
+        )
+        #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+            inAssemblyManifest: legacy
+        ) == [])
+
+        let current = try runtimeIdentityManifestData(compatibility: [
+            [
+                "runtime_identity": firstIdentity,
+                "allowed_request_types": requestTypes,
+            ],
+            [
+                "runtime_identity": secondIdentity,
+                "allowed_request_types": ["stop"],
+            ],
+        ])
+        #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+            inAssemblyManifest: current
+        ) == [
+            OperationalRuntimeCompatibilityPolicy(
+                runtimeIdentity: firstIdentity,
+                allowedRequestTypes: requestTypes
+            ),
+            OperationalRuntimeCompatibilityPolicy(
+                runtimeIdentity: secondIdentity,
+                allowedRequestTypes: ["stop"]
+            ),
+        ])
+    }
+
+    @Test("assembly manifest v2 rejects malformed compatibility policies")
+    func assemblyManifestRejectsMalformedCompatibilityPolicies() throws {
+        let firstIdentity = "sha256:" + String(repeating: "1", count: 64)
+        let secondIdentity = "sha256:" + String(repeating: "2", count: 64)
+        let thirdIdentity = "sha256:" + String(repeating: "3", count: 64)
+        let validTypes = [
+            "emit_decision", "session_start", "stop", "user_prompt_submit",
+        ]
+        let malformedPolicies: [Any] = [
+            [[
+                "runtime_identity": "sha256:not-a-digest",
+                "allowed_request_types": validTypes,
+            ]],
+            [[
+                "runtime_identity": firstIdentity,
+                "allowed_request_types": ["doctor_status"],
+            ]],
+            [[
+                "runtime_identity": firstIdentity,
+                "allowed_request_types": ["stop", "stop"],
+            ]],
+            [[
+                "runtime_identity": firstIdentity,
+                "allowed_request_types": ["user_prompt_submit", "stop"],
+            ]],
+            [
+                [
+                    "runtime_identity": firstIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+                [
+                    "runtime_identity": firstIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+            ],
+            [
+                [
+                    "runtime_identity": secondIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+                [
+                    "runtime_identity": firstIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+            ],
+            [
+                [
+                    "runtime_identity": firstIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+                [
+                    "runtime_identity": secondIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+                [
+                    "runtime_identity": thirdIdentity,
+                    "allowed_request_types": ["stop"],
+                ],
+            ],
+        ]
+
+        for compatibility in malformedPolicies {
+            let data = try runtimeIdentityManifestData(compatibility: compatibility)
+            #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+                inAssemblyManifest: data
+            ) == nil)
+        }
+
+        let legacyWithCompatibility = try runtimeIdentityManifestData(
+            schemaVersion: OperationalRuntimeIdentity.legacyAssemblyManifestSchemaVersion,
+            compatibility: []
+        )
+        #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+            inAssemblyManifest: legacyWithCompatibility
+        ) == nil)
+        let missingV2Compatibility = try runtimeIdentityManifestData(compatibility: nil)
+        #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+            inAssemblyManifest: missingV2Compatibility
+        ) == nil)
+
+        let validV2 = try runtimeIdentityManifestData(compatibility: [])
+        var duplicateKeyText = String(decoding: validV2, as: UTF8.self)
+        duplicateKeyText.insert(
+            contentsOf: "\"schema_version\":\"\(OperationalRuntimeIdentity.assemblyManifestSchemaVersion)\",",
+            at: duplicateKeyText.index(after: duplicateKeyText.startIndex)
+        )
+        #expect(OperationalRuntimeIdentity.compatibilityPolicies(
+            inAssemblyManifest: Data(duplicateKeyText.utf8)
+        ) == nil)
+    }
+
+    @Test("packaged snapshot binds current and previous policies to one manifest")
+    func packagedSnapshotBindsCompatibilityPolicies() throws {
+        let previousIdentity = "sha256:" + String(repeating: "4", count: 64)
+        let requestTypes = [
+            "emit_decision", "session_start", "stop", "user_prompt_submit",
+        ]
+        let fixture = try RuntimeIdentityFixture(compatiblePreviousRuntimes: [[
+            "runtime_identity": previousIdentity,
+            "allowed_request_types": requestTypes,
+        ]])
+        defer { fixture.remove() }
+        let evidence = OperationalCodeSignatureEvidence(
+            identifier: OperationalRuntimeIdentity.expectedBundleIdentifier,
+            cdHash: Data(repeating: 0x55, count: 20),
+            executableURL: fixture.executable
+        )
+        let verifier = OperationalCodeSignatureVerifier(
+            runningCode: { evidence },
+            installedCode: { _, _ in evidence }
+        )
+
+        let snapshot = try #require(OperationalRuntimeIdentity.resolveSnapshot(
+            executableURL: fixture.executable,
+            environment: [:],
+            signatureVerifier: verifier
+        ))
+        #expect(OperationalRuntimeIdentity.isValid(snapshot.runtimeIdentity))
+        #expect(snapshot.compatiblePreviousRuntimes == [
+            OperationalRuntimeCompatibilityPolicy(
+                runtimeIdentity: previousIdentity,
+                allowedRequestTypes: requestTypes
+            ),
+        ])
+    }
+
     @Test("live verifier accepts a valid signed bundle and rejects sealed manifest drift")
     func liveInstalledSignatureVerification() throws {
         let fixture = try RuntimeIdentityFixture(useMachOExecutable: true)
@@ -192,13 +383,46 @@ struct OperationalRuntimeIdentityTests {
     }
 }
 
+private func runtimeIdentityManifestData(
+    schemaVersion: String = OperationalRuntimeIdentity.assemblyManifestSchemaVersion,
+    compatibility: Any?
+) throws -> Data {
+    var object: [String: Any] = [
+        "schema_version": schemaVersion,
+        "bundle_identifier": OperationalRuntimeIdentity.expectedBundleIdentifier,
+        "hash_phase": "assembled_payload_before_optional_code_signing",
+        "files": [
+            [
+                "path": "Contents/MacOS/blabee-coordinator",
+                "sha256": String(repeating: "a", count: 64),
+                "size": 18,
+                "mode": "0755",
+            ],
+            [
+                "path": "Contents/Resources/Plugin/blabee/scripts/blabee-launcher",
+                "sha256": String(repeating: "b", count: 64),
+                "size": 1,
+                "mode": "0755",
+            ],
+        ],
+    ]
+    if let compatibility {
+        object["compatible_previous_runtimes"] = compatibility
+    }
+    return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+}
+
 private struct RuntimeIdentityFixture {
     let root: URL
     let executable: URL
     let manifestURL: URL
     let manifestData: Data
 
-    init(useMachOExecutable: Bool = false) throws {
+    init(
+        useMachOExecutable: Bool = false,
+        schemaVersion: String = OperationalRuntimeIdentity.assemblyManifestSchemaVersion,
+        compatiblePreviousRuntimes: [[String: Any]] = []
+    ) throws {
         root = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("bri-\(UUID().uuidString.prefix(8))", isDirectory: true)
         executable = root.appendingPathComponent(
@@ -251,12 +475,11 @@ private struct RuntimeIdentityFixture {
             options: 0
         )
         try plistData.write(to: infoPlist)
-        manifestData = try JSONSerialization.data(
-            withJSONObject: [
-                "schema_version": OperationalRuntimeIdentity.assemblyManifestSchemaVersion,
-                "bundle_identifier": OperationalRuntimeIdentity.expectedBundleIdentifier,
-                "hash_phase": "assembled_payload_before_optional_code_signing",
-                "files": [
+        var manifest: [String: Any] = [
+            "schema_version": schemaVersion,
+            "bundle_identifier": OperationalRuntimeIdentity.expectedBundleIdentifier,
+            "hash_phase": "assembled_payload_before_optional_code_signing",
+            "files": [
                     [
                         "path": "Contents/MacOS/blabee-coordinator",
                         "sha256": String(repeating: "a", count: 64),
@@ -269,8 +492,13 @@ private struct RuntimeIdentityFixture {
                         "size": 1,
                         "mode": "0755",
                     ],
-                ],
             ],
+        ]
+        if schemaVersion != OperationalRuntimeIdentity.legacyAssemblyManifestSchemaVersion {
+            manifest["compatible_previous_runtimes"] = compatiblePreviousRuntimes
+        }
+        manifestData = try JSONSerialization.data(
+            withJSONObject: manifest,
             options: [.sortedKeys]
         )
         try manifestData.write(to: manifestURL)

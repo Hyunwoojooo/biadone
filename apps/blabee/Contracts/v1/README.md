@@ -18,7 +18,7 @@ T-006은 이 문서 형태와 패킷 내부 의미를 고정한다. T-007a 참�
 
 v1 JSON Schema의 `identifier` 정의는 문자열 형태와 길이만 고정한다. 코디네이터 의미 계층에서 새로 생성·저장하는 식별자는 NFC 정규형이어야 하고, 이미 저장된 식별자를 가리키는 값은 UTF-8 바이트가 정확히 같아야 한다. 이는 Swift `String`의 canonical-equivalence 비교가 서로 다른 wire ID를 같은 키로 취급하지 못하게 하는 의미 불변식이며, 고정된 v1 스키마 해시를 변경하지 않는다.
 
-새 결정 제안은 `next_actions`에 실제로 실행할 수 있는 다음 작업을 우선순위 순서대로 2~4개 담는다. 배열의 첫 항목이 가장 권장하는 작업이고 뒤로 갈수록 현재 우선순위가 낮아진다. 의미 없는 작업을 개수만 맞추기 위해 추가할 수 없다. 이미 열린 Codex 세션이 캐시한 `recommended_next`·`alternative_next`·`pause_capsule` 제안 형태도 계속 읽지만, 새 도구 스키마는 `next_actions`만 발행한다.
+새 결정 제안은 `next_actions`에 실제로 실행할 수 있는 다음 작업을 우선순위 순서대로 2~4개 담는다. 배열의 첫 항목이 가장 권장하는 작업이고 뒤로 갈수록 현재 우선순위가 낮아진다. 의미 없는 작업을 개수만 맞추기 위해 추가할 수 없다. `recommended_next`·`alternative_next`·`pause_capsule`을 쓰는 구형 제안 입력은 더 이상 받지 않는다. 이는 공개 배포 전 dogfood 계약 정리이며, 해당 구형 Skill을 캐시한 세션은 Plugin 갱신 뒤 다시 시작해야 한다. 이미 현재 Plugin Skill은 `next_actions`만 생성한다. 다만 과거에 이미 봉인되어 저널에 저장된 고정 네 슬롯 패킷은 아래 호환 규칙으로 계속 재생한다.
 
 새 결정 패킷은 `decision_layout: "ranked_next_actions"`를 명시하고, `choices`에 2~4개의 실행 작업만 정확한 순위 순서로 가진다. 슬롯 1은 `recommended_action`, 슬롯 2~4는 `alternative_action`이며 모든 항목이 활성 상태와 봉인된 `action` 본문을 가진다. 숫자 1~4는 이 작업 배열에만 대응한다. 새 패킷에서 Pet 패널을 닫거나 바깥을 클릭하는 동작은 선택 요청이나 저널 이벤트를 만들지 않는 로컬 표시 동작이다.
 

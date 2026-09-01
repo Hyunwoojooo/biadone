@@ -148,21 +148,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 reason: "제품 앱 온보딩 환경을 확인할 수 없습니다: \(error)"
             )
         }
-        let codexAutoConnectAdapter: any PetCodexAutoConnectAdapting
-        do {
-            codexAutoConnectAdapter = try PetLiveCodexAutoConnectAdapter()
-        } catch {
-            codexAutoConnectAdapter = PetUnavailableCodexAutoConnectAdapter(
-                reason: "Codex 자동 연결 환경을 확인할 수 없습니다: \(error)"
-            )
-        }
         let suggestionModeStore = BlabeeSuggestionModeStore()
         let viewModel = PetViewModel(
             transport: transport,
             externalApplicationOpener: opener,
             onboardingAdapter: onboardingAdapter,
             suggestionModeStore: suggestionModeStore,
-            codexAutoConnectAdapter: codexAutoConnectAdapter,
             projectFolderChooser: PetOpenPanelProjectFolderChooser()
         )
         let store = PetUserDefaultsShortcutStore()

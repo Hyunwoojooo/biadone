@@ -455,28 +455,43 @@ private func activateOperationalPetConsumerLease(
 private func operationalProposal(
     _ ids: [String: String],
     suffix: String,
-    alternative: Bool = true
+    actionCount: Int = 4
 ) -> [String: Any] {
-    [
+    precondition((2...4).contains(actionCount))
+    let actions: [[String: Any]] = [
+        [
+            "title": "Recommended \(suffix)",
+            "objective": "Run recommended work \(suffix)",
+            "constraints": ["Keep the binding exact"],
+            "done_when": ["The focused test passes"],
+        ],
+        [
+            "title": "Alternative \(suffix)",
+            "objective": "Run alternative work \(suffix)",
+            "constraints": ["Do not reinterpret slot two"],
+            "done_when": ["The alternative is recorded"],
+        ],
+        [
+            "title": "Follow-up \(suffix)",
+            "objective": "Run follow-up work \(suffix)",
+            "constraints": ["Do not reinterpret slot three"],
+            "done_when": ["The follow-up is recorded"],
+        ],
+        [
+            "title": "Deferred \(suffix)",
+            "objective": "Run deferred work \(suffix)",
+            "constraints": ["Do not reinterpret slot four"],
+            "done_when": ["The deferred action is recorded"],
+        ],
+    ]
+    return [
         "schema_version": "1.0",
         "proposal_id": "proposal_operational_\(suffix)",
         "correlation_token": ids["correlation_token"]!,
         "interaction_kind": "blabee_decision",
         "task_goal": "Operational goal \(suffix)",
         "outcome": ["status": "completed", "summary": "Operational summary \(suffix)"],
-        "recommended_next": [
-            "title": "Recommended \(suffix)",
-            "objective": "Run recommended work \(suffix)",
-            "constraints": ["Keep the binding exact"],
-            "done_when": ["The focused test passes"],
-        ],
-        "alternative_next": alternative ? [
-            "title": "Alternative \(suffix)",
-            "objective": "Run alternative work \(suffix)",
-            "constraints": ["Do not reinterpret slot two"],
-            "done_when": ["The alternative is recorded"],
-        ] : NSNull(),
-        "pause_capsule": ["resume_first": "Re-open the operational report"],
+        "next_actions": Array(actions.prefix(actionCount)),
         "reported_side_effects": [],
     ]
 }
@@ -1707,7 +1722,7 @@ func operationalRankedSlotFourQueuesNextTurn() async throws {
 func operationalPacketSelectionAndCompletion() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture)
-    let proposal = operationalProposal(ids, suffix: "first", alternative: false)
+    let proposal = operationalProposal(ids, suffix: "first", actionCount: 2)
     let wrapper = operationalWrapper(ids, proposal: proposal)
     let acceptedData = try await fixture.app.handle(
         type: "emit_decision",
@@ -1717,9 +1732,10 @@ func operationalPacketSelectionAndCompletion() async throws {
     let accepted = try operationalObject(acceptedData)
     let packet = try #require(accepted["packet"] as? [String: Any])
     #expect((packet["checkpoint"] as? [String: Any])?["coverage"] as? String == "unavailable")
+    #expect(packet["decision_layout"] as? String == "ranked_next_actions")
     let choices = try #require(packet["choices"] as? [[String: Any]])
-    #expect(choices[1]["enabled"] as? Bool == false)
-    #expect(choices[3]["disabled_reason"] as? String == "rollback_not_enabled_in_build")
+    #expect(choices.count == 2)
+    #expect(choices.allSatisfy { $0["enabled"] as? Bool == true })
 
     var conflict = proposal
     conflict["task_goal"] = "Different body"
@@ -1779,7 +1795,8 @@ func operationalPacketSelectionAndCompletion() async throws {
         #expect(!dispatch.message.contains(forbidden))
     }
 
-    let selectedAction = try #require(proposal["recommended_next"] as? [String: Any])
+    let selectedActions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let selectedAction = selectedActions[0]
     let canonicalAction = try operationalData(selectedAction)
     let canonicalActionText = try #require(String(data: canonicalAction, encoding: .utf8))
 
@@ -1845,6 +1862,7 @@ func operationalPacketSelectionAndCompletion() async throws {
 
     // If SQLite committed the claim but its response was lost, routing must
     // recover the exact durable tuple before exposing the hidden action.
+    let loadsBeforeLostResponseRecovery = fixture.journal.loadCount()
     fixture.journal.loseNextCommittedResponse(
         eventType: "queued_action_context_claimed"
     )
@@ -1852,6 +1870,7 @@ func operationalPacketSelectionAndCompletion() async throws {
         type: "user_prompt_submit",
         payload: operationalData(queuedPromptPayload)
     )
+    #expect(fixture.journal.loadCount() == loadsBeforeLostResponseRecovery + 2)
     let queuedPrompt = try operationalObject(queuedPromptData)
     #expect(queuedPrompt["prompt_origin"] as? String == "blabee_next_turn")
     let queuedContext = try #require(queuedPrompt["additionalContext"] as? String)
@@ -1975,15 +1994,18 @@ func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
         "prompt": dispatch.message,
         "hook_event_name": "UserPromptSubmit",
     ]
+    let loadsBeforeRestoredPrompt = fixture.journal.loadCount()
     let restoredPrompt = try operationalObject(
         await restartedApp.handle(
             type: "user_prompt_submit",
             payload: operationalData(restoredPayload)
         )
     )
+    #expect(fixture.journal.loadCount() == loadsBeforeRestoredPrompt + 1)
     #expect(restoredPrompt["prompt_origin"] as? String == "blabee_next_turn")
     let restoredContext = try #require(restoredPrompt["additionalContext"] as? String)
-    let selectedAction = try #require(proposal["recommended_next"] as? [String: Any])
+    let selectedActions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let selectedAction = selectedActions[0]
     let canonicalActionText = try #require(String(
         data: operationalData(selectedAction),
         encoding: .utf8
@@ -2024,12 +2046,14 @@ func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
         monotonicInstantGenerator: secondRestartCooldownClock.nowNanoseconds,
         stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
     )
+    let loadsBeforeSameTurnRecovery = fixture.journal.loadCount()
     let sameTurnAfterRestart = try operationalObject(
         await secondRestartApp.handle(
             type: "user_prompt_submit",
             payload: operationalData(restoredPayload)
         )
     )
+    #expect(fixture.journal.loadCount() == loadsBeforeSameTurnRecovery + 1)
     #expect(sameTurnAfterRestart["prompt_origin"] as? String == "blabee_next_turn")
     #expect(
         (sameTurnAfterRestart["additionalContext"] as? String)?
@@ -2053,6 +2077,70 @@ func operationalQueuedActionSurvivesRestartBeforeDelivery() async throws {
         (replayAfterRestart["additionalContext"] as? String)?
             .contains(canonicalActionText) == false
     )
+}
+
+@Test("Operational queued action normal delivery performs one journal load")
+func operationalQueuedActionDeliveryUsesOneAuthorityLoad() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "queued_one_load")
+    _ = try await fixture.app.handle(
+        type: "emit_decision",
+        payload: operationalData(operationalWrapper(
+            ids,
+            proposal: operationalProposal(ids, suffix: "queued_one_load")
+        ))
+    )
+    _ = try await fixture.app.handle(
+        type: "stop",
+        payload: operationalStop(
+            ids: ids,
+            active: false,
+            message: "One-load card is ready"
+        )
+    )
+    let interaction = try await waitForOperationalInteraction(
+        fixture.app,
+        state: "waiting"
+    )
+    _ = try await fixture.app.handle(
+        type: "select",
+        payload: operationalData(operationalSelection(interaction, slot: 1))
+    )
+    let dispatch = try #require(
+        await fixture.nextTurnDispatcher.recordedRequests().first
+    )
+    let queuedPayload: [String: Any] = [
+        "session_id": ids["session_id"]!,
+        "turn_id": "turn_operational_queued_one_load_delivery",
+        "cwd": ids["cwd"]!,
+        "prompt": dispatch.message,
+        "hook_event_name": "UserPromptSubmit",
+    ]
+
+    let loadsBeforeDelivery = fixture.journal.loadCount()
+    let delivered = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData(queuedPayload)
+    )
+    #expect(fixture.journal.loadCount() == loadsBeforeDelivery + 1)
+    #expect(
+        try operationalObject(delivered)["prompt_origin"] as? String
+            == "blabee_next_turn"
+    )
+
+    let loadsBeforeSameTurnRetry = fixture.journal.loadCount()
+    let sameTurnRetry = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData(queuedPayload)
+    )
+    #expect(sameTurnRetry == delivered)
+    #expect(fixture.journal.loadCount() == loadsBeforeSameTurnRetry)
+
+    let claimCount = try fixture.journal.load().events.filter { data in
+        (try operationalObject(data)["event_type"] as? String)
+            == "queued_action_context_claimed"
+    }.count
+    #expect(claimCount == 1)
 }
 
 @Test("Operational rejects a pre-claim full-action queue prompt after restart")
@@ -2080,7 +2168,8 @@ func operationalRejectsLegacyFullActionQueuePromptAfterRestart() async throws {
     )
 
     let proposal = operationalProposal(ids, suffix: "legacy_queued_prompt")
-    let action = try #require(proposal["recommended_next"] as? [String: Any])
+    let actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    let action = actions[0]
     let actionJSON = try operationalData(action)
     let actionText = try #require(String(data: actionJSON, encoding: .utf8))
     let legacyQueuedPrompt =
@@ -2181,8 +2270,8 @@ func operationalQueuedActionUsesLatestPromptWorkingDirectory() async throws {
     #expect(queuedContext.contains("Recommended queued_moved_cwd"))
 }
 
-@Test("Operational pause closes the card without dispatching a new turn")
-func operationalPauseDoesNotDispatch() async throws {
+@Test("Operational lower-ranked actions dispatch a new turn")
+func operationalLowerRankedActionDispatches() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "next_turn_pause")
     _ = try await fixture.app.handle(
@@ -2210,11 +2299,11 @@ func operationalPauseDoesNotDispatch() async throws {
             payload: operationalData(operationalSelection(interaction, slot: 3))
         )
     )
-    #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "pause")
-    #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
+    #expect((selected["outcome"] as? [String: Any])?["kind"] as? String == "next_turn")
+    #expect(await fixture.nextTurnDispatcher.recordedRequests().count == 1)
     let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.values.first?.closed == true)
-    #expect(state.continuations.isEmpty)
+    #expect(state.continuations.count == 1)
 }
 
 @Test("Operational dispatch failure is explicit and the committed selection is not retried")
@@ -3314,7 +3403,7 @@ func operationalCompletionAndStagedActivationRetry() async throws {
 
     fixture.cooldownClock.advance(milliseconds: 500)
     _ = try await fixture.app.processTime()
-    let secondInteraction = try await waitForOperationalInteraction(
+    _ = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
@@ -3322,8 +3411,14 @@ func operationalCompletionAndStagedActivationRetry() async throws {
     journalSnapshot = try fixture.journal.load()
     #expect(journalSnapshot.documents.count == 2)
     _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 3))
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_queued_partial_retry_cleanup",
+            "cwd": ids["cwd"]!,
+            "prompt": "Close the promoted partial-retry boundary",
+            "hook_event_name": "UserPromptSubmit",
+        ])
     )
     state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.count == 2)
@@ -3375,7 +3470,7 @@ func operationalCommittedCompletionResponseLoss() async throws {
     fixture.cooldownClock.advance(milliseconds: 250)
     _ = try await fixture.app.processTime()
 
-    let secondInteraction = try await waitForOperationalInteraction(
+    _ = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
@@ -3390,8 +3485,14 @@ func operationalCommittedCompletionResponseLoss() async throws {
     #expect(eventTypes.filter { $0 == "decision_packet_sealed" }.count == 2)
 
     _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 3))
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_queued_completion_loss_cleanup",
+            "cwd": ids["cwd"]!,
+            "prompt": "Close the promoted completion-loss boundary",
+            "hook_event_name": "UserPromptSubmit",
+        ])
     )
     let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.count == 2)
@@ -3444,14 +3545,20 @@ func operationalCompletionTimeoutPromotionInterleaving() async throws {
 
     fixture.clock.advance(seconds: 300)
     _ = try await fixture.app.processTime()
-    let secondInteraction = try await waitForOperationalInteraction(
+    _ = try await waitForOperationalInteraction(
         fixture.app,
         boundarySequence: 2,
         state: "waiting"
     )
     _ = try await fixture.app.handle(
-        type: "select",
-        payload: operationalData(operationalSelection(secondInteraction, slot: 3))
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_queued_timeout_cleanup",
+            "cwd": ids["cwd"]!,
+            "prompt": "Close the promoted timeout boundary",
+            "hook_event_name": "UserPromptSubmit",
+        ])
     )
     state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
     #expect(state.boundaries.count == 2)
@@ -3518,44 +3625,6 @@ func operationalCommittedSelectionResponseLoss() async throws {
     #expect(state.boundaries.values.first?.closed == true)
     #expect(state.continuations.values.first?.transport?.status == .timedOutUnknown)
 
-    let pauseFixture = try operationalFixture()
-    let pauseIDs = try await operationalBegin(pauseFixture, suffix: "select_loss_pause")
-    _ = try await pauseFixture.app.handle(
-        type: "emit_decision",
-        payload: operationalData(operationalWrapper(
-            pauseIDs,
-            proposal: operationalProposal(pauseIDs, suffix: "select_loss_pause")
-        ))
-    )
-    let pauseWait = Task {
-        try await pauseFixture.app.handle(
-            type: "stop",
-            payload: operationalStop(
-                ids: pauseIDs,
-                active: false,
-                message: "selection pause response loss"
-            )
-        )
-    }
-    let pauseInteraction = try await waitForOperationalInteraction(
-        pauseFixture.app,
-        state: "waiting"
-    )
-    pauseFixture.journal.loseNextCommittedResponse(
-        eventType: "decision_selection_claimed",
-        failFollowingLoads: 1
-    )
-    await expectOperationalError("simulated_load_failure") {
-        _ = try await pauseFixture.app.handle(
-            type: "select",
-            payload: operationalData(operationalSelection(pauseInteraction, slot: 3))
-        )
-    }
-    _ = try await pauseFixture.app.processTime()
-    #expect(try operationalObject(await pauseWait.value)["status"] as? String == "decision_available")
-    state = try CoordinatorSemanticReplay.replay(pauseFixture.journal.load())
-    #expect(state.boundaries.values.first?.closed == true)
-
     let retryFixture = try operationalFixture()
     let retryIDs = try await operationalBegin(retryFixture, suffix: "select_uncommitted_retry")
     _ = try await retryFixture.app.handle(
@@ -3607,11 +3676,11 @@ func operationalOversizedQueuedActionFailsBeforeActivation() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "oversized_action")
     var proposal = operationalProposal(ids, suffix: "oversized_action")
-    var action = try #require(proposal["recommended_next"] as? [String: Any])
-    action["constraints"] = (0..<8).map { index in
+    var actions = try #require(proposal["next_actions"] as? [[String: Any]])
+    actions[0]["constraints"] = (0..<8).map { index in
         String(repeating: Character(String(index)), count: 8_192)
     }
-    proposal["recommended_next"] = action
+    proposal["next_actions"] = actions
 
     await expectOperationalError("invalid_proposal") {
         _ = try await fixture.app.handle(
@@ -3631,8 +3700,8 @@ func operationalOversizedQueuedActionFailsBeforeActivation() async throws {
     #expect(await fixture.nextTurnDispatcher.recordedRequests().isEmpty)
 }
 
-@Test("Operational proposal and full Pet binding fail closed while pause remains available")
-func operationalValidationAndPause() async throws {
+@Test("Operational requires ranked proposals and full Pet binding fails closed")
+func operationalRankedValidationAndSelectionBinding() async throws {
     let fixture = try operationalFixture()
     await expectOperationalError("project_path_invalid") {
         _ = try await fixture.app.handle(
@@ -3641,10 +3710,24 @@ func operationalValidationAndPause() async throws {
         )
     }
     let ids = try await operationalBegin(fixture, suffix: "validation")
+
+    var legacy = operationalProposal(ids, suffix: "legacy")
+    let legacyActions = legacy.removeValue(forKey: "next_actions") as! [[String: Any]]
+    legacy["recommended_next"] = legacyActions[0]
+    legacy["alternative_next"] = legacyActions[1]
+    legacy["pause_capsule"] = ["resume_first": "Re-open the operational report"]
+    await expectOperationalError("invalid_request_shape") {
+        _ = try await fixture.app.handle(
+            type: "emit_decision",
+            payload: operationalData(operationalWrapper(ids, proposal: legacy))
+        )
+    }
+    #expect(try fixture.journal.load().journalSequence == 0)
+
     var invalid = operationalProposal(ids, suffix: "invalid")
-    var action = invalid["recommended_next"] as! [String: Any]
-    action["done_when"] = []
-    invalid["recommended_next"] = action
+    var invalidActions = invalid["next_actions"] as! [[String: Any]]
+    invalidActions[0]["done_when"] = []
+    invalid["next_actions"] = invalidActions
     await expectOperationalError("invalid_proposal") {
         _ = try await fixture.app.handle(
             type: "emit_decision",
@@ -3655,9 +3738,9 @@ func operationalValidationAndPause() async throws {
 
     let token = ids["correlation_token"]!
     var leaked = operationalProposal(ids, suffix: "leaked")
-    var leakedAction = leaked["recommended_next"] as! [String: Any]
-    leakedAction["objective"] = "Echo \(token) into a packet"
-    leaked["recommended_next"] = leakedAction
+    var leakedActions = leaked["next_actions"] as! [[String: Any]]
+    leakedActions[0]["objective"] = "Echo \(token) into a packet"
+    leaked["next_actions"] = leakedActions
     await expectOperationalError("raw_continuation_token_forbidden") {
         _ = try await fixture.app.handle(
             type: "emit_decision",
@@ -3668,10 +3751,9 @@ func operationalValidationAndPause() async throws {
     #expect(try fixture.journal.load().documents.isEmpty)
 
     var valid = leaked
-    var validAction = valid["recommended_next"] as! [String: Any]
-    validAction["objective"] = "A safe objective after the rejected retry"
-    valid["recommended_next"] = validAction
-    valid["alternative_next"] = NSNull()
+    var validActions = valid["next_actions"] as! [[String: Any]]
+    validActions[0]["objective"] = "A safe objective after the rejected retry"
+    valid["next_actions"] = validActions
     _ = try await fixture.app.handle(
         type: "emit_decision",
         payload: operationalData(operationalWrapper(ids, proposal: valid))
@@ -3679,14 +3761,14 @@ func operationalValidationAndPause() async throws {
     let stopTask = Task {
         try await fixture.app.handle(
             type: "stop",
-            payload: operationalStop(ids: ids, active: false, message: "pause packet ready")
+            payload: operationalStop(ids: ids, active: false, message: "ranked packet ready")
         )
     }
     let interaction = try await waitForOperationalInteraction(fixture.app, state: "waiting")
     let before = try fixture.journal.load().journalSequence
-    let validPauseSelection = try operationalSelection(interaction, slot: 3)
-    for key in validPauseSelection.keys {
-        var omitted = validPauseSelection
+    let validActionSelection = try operationalSelection(interaction, slot: 3)
+    for key in validActionSelection.keys {
+        var omitted = validActionSelection
         omitted.removeValue(forKey: key)
         await expectOperationalError("contract_validation_failed") {
             _ = try await fixture.app.handle(type: "select", payload: operationalData(omitted))
@@ -3697,34 +3779,26 @@ func operationalValidationAndPause() async throws {
         "project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
         "episode_root_prompt_id", "episode_baseline_checkpoint_id", "decision_boundary_id",
     ] {
-        var tampered = validPauseSelection
+        var tampered = validActionSelection
         tampered[key] = "tampered_\(key)"
         await expectAnyOperationalError {
             _ = try await fixture.app.handle(type: "select", payload: operationalData(tampered))
         }
         #expect(try fixture.journal.load().journalSequence == before)
     }
-    var sequenceTampered = validPauseSelection
+    var sequenceTampered = validActionSelection
     sequenceTampered["boundary_sequence"] = 2
     await expectAnyOperationalError {
         _ = try await fixture.app.handle(type: "select", payload: operationalData(sequenceTampered))
     }
     #expect(try fixture.journal.load().journalSequence == before)
 
-    await expectOperationalError("decision_option_disabled") {
-        _ = try await fixture.app.handle(
-            type: "select",
-            payload: operationalData(operationalSelection(interaction, slot: 4))
-        )
-    }
-    #expect(try fixture.journal.load().journalSequence == before)
-
     _ = try await fixture.app.handle(
         type: "select",
-        payload: operationalData(validPauseSelection)
+        payload: operationalData(validActionSelection)
     )
-    let paused = try operationalObject(await stopTask.value)
-    #expect(paused["status"] as? String == "decision_available")
+    let stopped = try operationalObject(await stopTask.value)
+    #expect(stopped["status"] as? String == "decision_available")
     #expect(try CoordinatorSemanticReplay.replay(fixture.journal.load()).boundaries.values.first?.closed == true)
 }
 
@@ -3735,9 +3809,9 @@ func operationalPromptOnlyProposalCorrection() async throws {
     let proposal = operationalProposal(ids, suffix: "prompt_correction")
 
     var secretBearingProposal = proposal
-    var secretBearingAction = secretBearingProposal["recommended_next"] as! [String: Any]
-    secretBearingAction["objective"] = "Do not persist \(ids["correlation_token"]!)"
-    secretBearingProposal["recommended_next"] = secretBearingAction
+    var secretBearingActions = secretBearingProposal["next_actions"] as! [[String: Any]]
+    secretBearingActions[0]["objective"] = "Do not persist \(ids["correlation_token"]!)"
+    secretBearingProposal["next_actions"] = secretBearingActions
     var secretBearingWrongPrompt = operationalWrapper(ids, proposal: secretBearingProposal)
     secretBearingWrongPrompt["source_prompt_id"] = "prompt_transcribed_incorrectly"
     await expectOperationalError("raw_continuation_token_forbidden") {
@@ -4203,13 +4277,13 @@ func operationalPermissionRequestPetLeaseExpiryDropsStaleCard() async throws {
     #expect(response["decision"] as? String == "defer_to_codex")
 }
 
-@Test("Operational PermissionRequest relays allow, deny, and native defer without journal writes")
+@Test("Operational PermissionRequest relays deny and native defer without journal writes")
 func operationalPermissionRequestDecisions() async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "permission_decisions")
     let loadCountBefore = fixture.journal.loadCount()
 
-    for (index, decision) in ["allow", "deny", "defer_to_codex"].enumerated() {
+    for (index, decision) in ["deny", "defer_to_codex"].enumerated() {
         let waiter = Task {
             try await fixture.app.handle(
                 type: "permission_request",
@@ -4225,14 +4299,13 @@ func operationalPermissionRequestDecisions() async throws {
         #expect(Set(request.keys) == [
             "request_id", "arrival_sequence", "project_id", "session_id",
             "turn_id", "cwd", "tool_name", "description", "command_preview",
-            "allow_once_available", "delivery_pending",
+            "delivery_pending",
         ])
         #expect(request["project_id"] as? String == ids["project_id"])
         #expect(request["session_id"] as? String == ids["session_id"])
         #expect(request["turn_id"] as? String == ids["source_turn_id"])
         #expect(request["description"] as? String == "Review this command")
         #expect(request["command_preview"] as? String == "printf first second")
-        #expect(request["allow_once_available"] as? Bool == true)
         #expect(request["delivery_pending"] as? Bool == false)
 
         let responseID = "permission_response_decisions_\(index)"
@@ -4252,6 +4325,42 @@ func operationalPermissionRequestDecisions() async throws {
         _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
     }
     #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational Hook PermissionRequest rejects legacy allow without releasing its FIFO head")
+func operationalPermissionRequestRejectsLegacyAllow() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_reject_legacy_allow")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(ids, command: "printf guarded")
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+
+    await expectOperationalError("permission_resolution_invalid") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                request,
+                decision: "allow",
+                responseID: "permission_response_rejected_legacy_allow"
+            )
+        )
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 1)
+
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: request,
+        decision: "deny",
+        responseID: "permission_response_after_rejected_legacy_allow",
+        hookWaiter: waiter
+    )
+    #expect(roundTrip.hookOutcome["decision"] as? String == "deny")
 }
 
 @Test("Operational Hook PermissionRequest rejects hidden fields without consuming its FIFO head")
@@ -4651,11 +4760,11 @@ func operationalHookThenManagedApprovalGlobalFIFO() async throws {
     let hookRoundTrip = try await operationalResolvePermissionRequest(
         app: fixture.app,
         request: hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_global_hook_first",
         hookWaiter: hookWaiter
     )
-    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "deny")
     let managedRoundTrip = try await operationalResolveManagedCommandApproval(
         app: fixture.app,
         request: managed,
@@ -4704,7 +4813,7 @@ func operationalManagedThenHookApprovalGlobalFIFO() async throws {
             type: "resolve_permission_request",
             payload: operationalPermissionResolution(
                 hook,
-                decision: "allow",
+                decision: "deny",
                 responseID: "permission_response_global_too_early"
             )
         )
@@ -4720,11 +4829,11 @@ func operationalManagedThenHookApprovalGlobalFIFO() async throws {
     let hookRoundTrip = try await operationalResolvePermissionRequest(
         app: fixture.app,
         request: hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_global_hook_second",
         hookWaiter: hookWaiter
     )
-    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "deny")
 }
 
 @Test("Approval arrival sequence stays within the signed snapshot contract")
@@ -4762,11 +4871,11 @@ func operationalApprovalArrivalSequenceSignedBoundary() async throws {
     let hookRoundTrip = try await operationalResolvePermissionRequest(
         app: fixture.app,
         request: hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_max_sequence",
         hookWaiter: hookWaiter
     )
-    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "deny")
 
     await expectOperationalError("approval_admission_sequence_exhausted") {
         _ = try await fixture.app.handle(
@@ -4825,7 +4934,7 @@ func operationalManagedDeliveryAckHoldsGlobalHead() async throws {
             type: "resolve_permission_request",
             payload: operationalPermissionResolution(
                 hook,
-                decision: "allow",
+                decision: "deny",
                 responseID: "permission_response_before_delivery_ack"
             )
         )
@@ -4876,11 +4985,11 @@ func operationalManagedDeliveryAckHoldsGlobalHead() async throws {
     let hookRoundTrip = try await operationalResolvePermissionRequest(
         app: fixture.app,
         request: hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_after_delivery_ack",
         hookWaiter: hookWaiter
     )
-    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "deny")
 }
 
 @Test("Cancelling a selected managed resolve keeps its delivery barrier")
@@ -4933,7 +5042,7 @@ func operationalManagedSelectedResolutionCancellationKeepsBarrier() async throws
             type: "resolve_permission_request",
             payload: operationalPermissionResolution(
                 hook,
-                decision: "allow",
+                decision: "deny",
                 responseID: "permission_response_selected_managed_pending"
             )
         )
@@ -4953,11 +5062,11 @@ func operationalManagedSelectedResolutionCancellationKeepsBarrier() async throws
     let hookRoundTrip = try await operationalResolvePermissionRequest(
         app: fixture.app,
         request: hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_after_selected_managed_ack",
         hookWaiter: hookWaiter
     )
-    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "allow")
+    #expect(hookRoundTrip.hookOutcome["decision"] as? String == "deny")
 }
 
 @Test("Hook delivery ack holds the global FIFO head and validates exact binding")
@@ -4989,7 +5098,7 @@ func operationalPermissionDeliveryAckHoldsGlobalHead() async throws {
 
     let resolution = try operationalPermissionResolution(
         hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_delivery_head"
     )
     let resolutionWaiter = Task {
@@ -5048,7 +5157,7 @@ func operationalPermissionDeliveryAckHoldsGlobalHead() async throws {
     ) == ackReceipt)
     let resolutionReceipt = try operationalObject(await resolutionWaiter.value)
     #expect(resolutionReceipt["resolved"] as? Bool == true)
-    #expect(resolutionReceipt["decision"] as? String == "allow")
+    #expect(resolutionReceipt["decision"] as? String == "deny")
     #expect(deliveryToken.utf8.count >= 16)
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 
@@ -5136,7 +5245,7 @@ func operationalPermissionSelectedResolutionCancellationKeepsBarrier() async thr
     )
     let resolution = try operationalPermissionResolution(
         hook,
-        decision: "allow",
+        decision: "deny",
         responseID: "permission_response_selected_cancel"
     )
     let resolutionWaiter = Task {

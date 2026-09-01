@@ -6,7 +6,7 @@
 
 - Node ESM과 Swift 헬퍼만 선택 후보다.
 - 두 후보는 같은 NDJSON 요청/응답, 같은 최소 이벤트 Fixture, `fsync` 뒤 성공 응답을 주는 append-only journal, 시작 시 replay를 구현한다.
-- C는 M0의 `health` 전용 프로그램을 다시 컴파일해 성능 기준선으로만 측정한다. 정식 JSON journal/replay가 없으므로 어떤 수치가 나오더라도 `selection_eligible = false`다.
+- C는 이 자격 하네스가 소유한 `health` 전용 프로그램을 컴파일해 성능 기준선으로만 측정한다. 정식 JSON journal/replay가 없으므로 어떤 수치가 나오더라도 `selection_eligible = false`다.
 - 새 production dependency는 사용하지 않는다. Node 표준 라이브러리, Swift Foundation/Dispatch, macOS 기본 도구만 사용한다.
 
 ## 측정 항목

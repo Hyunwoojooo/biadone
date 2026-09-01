@@ -35,7 +35,33 @@ Blabee.app/
 - sibling staging을 완성한 뒤 최종 `Blabee.app`을 `mkdir`로 원자 선점하고
   `Contents`를 게시한다. 두 builder가 동시에 실행돼도 하나만 성공한다.
 - assembly manifest는 서명 전 각 파일의 상대 경로, 크기, 모드와 SHA-256을
-  기록한다. ad-hoc 서명 뒤 바뀌는 Mach-O 서명 영역의 사후 hash는 아니다.
+  기록한다. v2는 추가로 검증된 이전 앱 최대 두 개의 runtime identity와 허용할
+  `session_start`·`user_prompt_submit`·`emit_decision`·`stop`을 봉인한다. ad-hoc
+  서명 뒤 바뀌는 Mach-O 서명 영역의 사후 hash는 아니다.
+
+## 2026-09-01 runtime 회전 후속
+
+- `--compatible-previous-app`은 raw hash를 받지 않는다. source coordinator의
+  `runtime-identity --app <absolute Blabee.app>`가 이전 앱의 strict code signature,
+  resource envelope, bundle identifier, executable 위치와 v1/v2 manifest를 검증한
+  뒤 CDHash+manifest wire identity를 계산한다. inspector v2는 같은 검증 snapshot에서
+  계산한 `assembly_manifest_sha256`도 함께 반환한다.
+- assembler는 source coordinator를 private staging에 먼저 복사한 뒤 그 exact
+  snapshot으로 검사하고 같은 바이트를 앱에 넣는다. 이전 앱 입력 배열도 첫 비동기
+  작업 전에 복사해 최대 두 개 제한이 실행 중 바뀌지 않게 한다.
+- 새 manifest는 `blabee.macos-app-assembly.v2`이며 호환 정책은 정렬·중복 없음,
+  최대 두 개, exact key와 고정 operation subset을 적용한다. 이전 앱에 들어 있던 더
+  오래된 호환 목록은 새 앱으로 전이하지 않는다.
+- 새 server는 현재 identity에만 전체 operation을 허용한다. 승인된 이전 identity는
+  네 Hook/MCP operation만 dispatch하며 그 요청의 성공과 application error에 이전
+  identity를 echo한다. Pet·Doctor·설정·권한 승인 operation은 계속 현재 identity
+  전용이다.
+- dogfood summary는 `blabee.local-dogfood-preparation.v2`이고 manifest digest인
+  `assembly_manifest_sha256`과 실제 `wire_runtime_identity`를 별도 필드로 기록한다.
+- 비활성 산출물 `build/local-dogfood-runtime-compat-v2-20260901`은 현재 v1 앱을
+  이전 artifact로 넣어 조립했고 `codesign --verify --deep --strict`와 packaged
+  inspector v2 재계산을 통과했다. 전체 Swift Testing 441/441+XCTest 5/5와 Node
+  276/276도 통과했다. 이 검증은 실행 중 앱·service·Plugin을 교체하지 않았다.
 
 ## 로컬 서명 정책
 

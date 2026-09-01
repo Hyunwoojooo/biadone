@@ -22,6 +22,23 @@ private enum ManagedCodexTestError: Error, Equatable, Sendable {
     case failed(String)
 }
 
+private final class ManagedCodexDiagnosticCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [Data] = []
+
+    func append(_ data: Data) {
+        lock.lock()
+        chunks.append(data)
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return chunks.reduce(into: Data()) { $0.append($1) }
+    }
+}
+
 private final class ManagedCodexExecutableSequence<Failure: Error & Sendable>:
     @unchecked Sendable
 {
@@ -404,6 +421,203 @@ private final class ManagedCodexFakeCoordinatorServer: @unchecked Sendable {
     }
 }
 
+private final class ManagedCodexWrongIdentityCoordinatorServer:
+    @unchecked Sendable
+{
+    let finished = DispatchGroup()
+    let result = ManagedCodexBridgeTestResult()
+    let socketPath: String
+
+    private let descriptor: Int32
+    private let responseRuntimeIdentity: String
+    private let lock = NSLock()
+    private var storedRequest: Data?
+
+    init(responseRuntimeIdentity: String) throws {
+        self.responseRuntimeIdentity = responseRuntimeIdentity
+        socketPath = "/tmp/blabee-managed-wrong-identity-\(UUID().uuidString.prefix(8)).sock"
+        _ = unlink(socketPath)
+        descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw ManagedCodexTestError.failed("wrong identity socket")
+        }
+        var address = sockaddr_un()
+        let bytes = Array(socketPath.utf8) + [0]
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+            Darwin.close(descriptor)
+            throw ManagedCodexTestError.failed("wrong identity socket path")
+        }
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { destination in
+            destination.copyBytes(from: bytes)
+        }
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
+            }
+        }
+        guard bound == 0,
+              chmod(socketPath, 0o600) == 0,
+              listen(descriptor, 1) == 0
+        else {
+            Darwin.close(descriptor)
+            _ = unlink(socketPath)
+            throw ManagedCodexTestError.failed("wrong identity socket bind")
+        }
+
+        finished.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { finished.leave() }
+            do {
+                let peer = Darwin.accept(descriptor, nil, nil)
+                guard peer >= 0 else {
+                    throw ManagedCodexTestError.failed("wrong identity accept")
+                }
+                defer { Darwin.close(peer) }
+                let requestData = try managedCodexTestReadLine(descriptor: peer)
+                let request = try StrictJSONTransport.object(from: requestData)
+                guard let requestID = request["request_id"] as? String else {
+                    throw ManagedCodexTestError.failed("wrong identity request id")
+                }
+                lock.lock()
+                storedRequest = requestData
+                lock.unlock()
+
+                var response = try StrictJSONTransport.data(forJSONObject: [
+                    "request_id": requestID,
+                    "runtime_identity": responseRuntimeIdentity,
+                    "ok": true,
+                    "result": [
+                        "decision": "accept_once",
+                        "delivery_token": "forged_positive_delivery_01",
+                    ],
+                ])
+                response.append(0x0A)
+                try managedCodexTestWrite(response, descriptor: peer)
+            } catch {
+                result.record(error)
+            }
+        }
+    }
+
+    var requestData: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequest
+    }
+
+    func close() {
+        _ = shutdown(descriptor, SHUT_RDWR)
+        Darwin.close(descriptor)
+        _ = unlink(socketPath)
+        _ = finished.wait(timeout: .now() + .seconds(2))
+    }
+}
+
+private enum ManagedCodexApprovalSocketSelection: Sendable {
+    case acceptOnce(token: String)
+    case failure(code: String)
+}
+
+private actor ManagedCodexApprovalSocketApplication:
+    CoordinatorOperationalHandling
+{
+    private let selection: ManagedCodexApprovalSocketSelection
+    private var receivedTypes: [String] = []
+
+    init(selection: ManagedCodexApprovalSocketSelection) {
+        self.selection = selection
+    }
+
+    func handle(type: String, payload: Data) async throws -> Data {
+        let object = try StrictJSONTransport.object(from: payload)
+        receivedTypes.append(type)
+        switch type {
+        case "managed_command_approval":
+            guard object["kind"] as? String
+                    == "blabee_managed_command_approval_request"
+            else {
+                throw CoordinatorError("managed_approval_test_payload_invalid")
+            }
+            switch selection {
+            case .acceptOnce(let token):
+                return try StrictJSONTransport.data(forJSONObject: [
+                    "decision": "accept_once",
+                    "delivery_token": token,
+                ])
+            case .failure(let code):
+                throw CoordinatorError(code)
+            }
+        case "ack_managed_command_approval_delivery":
+            guard case .acceptOnce(let expectedToken) = selection,
+                  object["kind"] as? String
+                    == "blabee_managed_command_approval_delivery_ack",
+                  object["delivery_token"] as? String == expectedToken
+            else {
+                throw CoordinatorError("managed_approval_test_ack_invalid")
+            }
+            return try StrictJSONTransport.data(forJSONObject: [:])
+        default:
+            throw CoordinatorError("managed_approval_test_type_invalid")
+        }
+    }
+
+    func doctorStatus(payload: Data) async throws -> Data {
+        throw CoordinatorError("managed_approval_test_doctor_forbidden")
+    }
+
+    func processTime() async throws -> [Data] { [] }
+    func millisecondsUntilNextDeadline() async -> Int32? { nil }
+
+    func handledTypes() -> [String] { receivedTypes }
+}
+
+private func withManagedCodexApprovalSocketServer<T: Sendable>(
+    runtimeIdentity: String,
+    application: ManagedCodexApprovalSocketApplication,
+    operation: (String) async throws -> T
+) async throws -> T {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent(
+            "bma-\(UUID().uuidString.prefix(8))",
+            isDirectory: true
+        )
+    try FileManager.default.createDirectory(
+        at: root,
+        withIntermediateDirectories: false
+    )
+    guard chmod(root.path, mode_t(0o700)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let socketPath = root.appendingPathComponent("daemon.sock").path
+    let server = try UnixDomainSocketServer(
+        socketPath: socketPath,
+        runtimeIdentity: runtimeIdentity
+    )
+    let corpus = RuntimeSecretCorpus()
+    try server.activate()
+    let serverTask = Task.detached {
+        try server.run(application: application, secretCorpus: corpus)
+    }
+    do {
+        let result = try await operation(socketPath)
+        server.stop()
+        try await serverTask.value
+        return result
+    } catch {
+        server.stop()
+        _ = try? await serverTask.value
+        throw error
+    }
+}
+
 @Test("Managed approval production deadlines leave deterministic fallback margins")
 func managedCodexApprovalProductionDeadlinesAreOrdered() {
     let policy = ManagedCodexApprovalTimingPolicy.self
@@ -526,6 +740,199 @@ func managedCodexRouterFailsBackToOfficialCodex() throws {
         decider: ManagedCodexFakeDecider(result: .success(.allowOnce))
     ).route(appServerMessage: unrelated, context: context)
     #expect(unrelatedRoute == .codex(unrelated))
+}
+
+@Test("Managed approval client completes strict UDS selection and delivery ack")
+func managedCodexApprovalClientStrictUDSRoundTrip() async throws {
+    let deliveryToken = "managed_approval_delivery_strict_01"
+    let application = ManagedCodexApprovalSocketApplication(
+        selection: .acceptOnce(token: deliveryToken)
+    )
+    let runtimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+    try await withManagedCodexApprovalSocketServer(
+        runtimeIdentity: runtimeIdentity,
+        application: application
+    ) { socketPath in
+        let client = try ManagedCodexApprovalCoordinatorClient(
+            socketPath: socketPath,
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        let context = ManagedCodexConnectionContext(
+            brokerEpoch: "epoch-strict-uds",
+            connectionID: "connection-strict-uds"
+        )
+        let request = try CodexAppServerApprovalAdapter.parse(
+            try managedCodexApprovalData(id: "strict-uds-selection")
+        )
+
+        let selection = try client.selection(
+            for: request,
+            context: context,
+            cancellation: ManagedCodexApprovalCancellation()
+        )
+        #expect(selection == ManagedCodexApprovalSelection(
+            decision: .allowOnce,
+            deliveryToken: deliveryToken
+        ))
+
+        try client.acknowledgeDelivery(ManagedCodexApprovalDelivery(
+            token: deliveryToken,
+            request: request,
+            context: context
+        ))
+    }
+    #expect(await application.handledTypes() == [
+        "managed_command_approval",
+        "ack_managed_command_approval_delivery",
+    ])
+}
+
+@Test("Managed approval application errors propagate and preserve native bytes")
+func managedCodexApprovalApplicationFailureFallsBackExactly() async throws {
+    let failureCode = "managed_approval_test_failure"
+    let application = ManagedCodexApprovalSocketApplication(
+        selection: .failure(code: failureCode)
+    )
+    let runtimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+    try await withManagedCodexApprovalSocketServer(
+        runtimeIdentity: runtimeIdentity,
+        application: application
+    ) { socketPath in
+        let client = try ManagedCodexApprovalCoordinatorClient(
+            socketPath: socketPath,
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        let context = ManagedCodexConnectionContext(
+            brokerEpoch: "epoch-application-failure",
+            connectionID: "connection-application-failure"
+        )
+        let directRequest = try CodexAppServerApprovalAdapter.parse(
+            try managedCodexApprovalData(id: "application-failure-direct")
+        )
+        do {
+            _ = try client.selection(
+                for: directRequest,
+                context: context,
+                cancellation: ManagedCodexApprovalCancellation()
+            )
+            Issue.record("application failure unexpectedly selected an approval")
+        } catch let error as CoordinatorError {
+            #expect(error.code == failureCode)
+        } catch {
+            Issue.record("unexpected application failure: \(error)")
+        }
+
+        let original = try managedCodexApprovalData(
+            id: "application-failure-fallback"
+        )
+        let routed = ManagedCodexApprovalRouter(decider: client).routeWithDelivery(
+            appServerMessage: original,
+            context: context
+        )
+        #expect(routed.route == .codex(original))
+        #expect(routed.delivery == nil)
+    }
+    #expect(await application.handledTypes() == [
+        "managed_command_approval",
+        "managed_command_approval",
+    ])
+}
+
+@Test("Managed approval runtime mismatch cannot synthesize an approval")
+func managedCodexApprovalRuntimeMismatchFallsBackExactly() async throws {
+    let currentIdentity = try OperationalRuntimeIdentity.requireCurrent()
+    let firstIdentity = "sha256:" + String(repeating: "1", count: 64)
+    let secondIdentity = "sha256:" + String(repeating: "2", count: 64)
+    let serverIdentity = currentIdentity == firstIdentity
+        ? secondIdentity
+        : firstIdentity
+    let application = ManagedCodexApprovalSocketApplication(
+        selection: .acceptOnce(token: "must_never_reach_approval_01")
+    )
+    try await withManagedCodexApprovalSocketServer(
+        runtimeIdentity: serverIdentity,
+        application: application
+    ) { socketPath in
+        let client = try ManagedCodexApprovalCoordinatorClient(
+            socketPath: socketPath,
+            connectTimeoutMilliseconds: 1_000,
+            responseTimeoutMilliseconds: 2_000
+        )
+        let context = ManagedCodexConnectionContext(
+            brokerEpoch: "epoch-runtime-mismatch",
+            connectionID: "connection-runtime-mismatch"
+        )
+        let directRequest = try CodexAppServerApprovalAdapter.parse(
+            try managedCodexApprovalData(id: "runtime-mismatch-direct")
+        )
+        do {
+            _ = try client.selection(
+                for: directRequest,
+                context: context,
+                cancellation: ManagedCodexApprovalCancellation()
+            )
+            Issue.record("runtime mismatch unexpectedly selected an approval")
+        } catch let error as CoordinatorError {
+            #expect(error.code == "operational_runtime_identity_mismatch")
+        } catch {
+            Issue.record("unexpected runtime mismatch failure: \(error)")
+        }
+
+        let original = try managedCodexApprovalData(id: "runtime-mismatch-fallback")
+        let routed = ManagedCodexApprovalRouter(decider: client).routeWithDelivery(
+            appServerMessage: original,
+            context: context
+        )
+        #expect(routed.route == .codex(original))
+        #expect(routed.delivery == nil)
+    }
+    #expect(await application.handledTypes().isEmpty)
+}
+
+@Test("Managed approval rejects a positive response from another runtime")
+func managedCodexApprovalWrongResponseIdentityFallsBackOnce() throws {
+    let runtimeIdentity = try OperationalRuntimeIdentity.requireCurrent()
+    let firstIdentity = "sha256:" + String(repeating: "3", count: 64)
+    let secondIdentity = "sha256:" + String(repeating: "4", count: 64)
+    let wrongIdentity = runtimeIdentity == firstIdentity
+        ? secondIdentity
+        : firstIdentity
+    let server = try ManagedCodexWrongIdentityCoordinatorServer(
+        responseRuntimeIdentity: wrongIdentity
+    )
+    defer { server.close() }
+    let client = try ManagedCodexApprovalCoordinatorClient(
+        socketPath: server.socketPath,
+        connectTimeoutMilliseconds: 1_000,
+        responseTimeoutMilliseconds: 2_000
+    )
+    let original = try managedCodexApprovalData(
+        id: "wrong-response-identity-fallback"
+    )
+    let routed = ManagedCodexApprovalRouter(decider: client).routeWithDelivery(
+        appServerMessage: original,
+        context: ManagedCodexConnectionContext(
+            brokerEpoch: "epoch-wrong-response-identity",
+            connectionID: "connection-wrong-response-identity"
+        )
+    )
+
+    #expect(routed.route == .codex(original))
+    #expect(routed.delivery == nil)
+    #expect(server.finished.wait(timeout: .now() + .seconds(1)) == .success)
+    #expect(server.result.error == nil)
+    let requestData = try #require(server.requestData)
+    let request = try StrictJSONTransport.object(from: requestData)
+    #expect(Set(request.keys) == [
+        "request_id", "runtime_identity", "type", "payload",
+    ])
+    #expect(request["runtime_identity"] as? String == runtimeIdentity)
+    #expect(
+        request["type"] as? String
+            == "blabee.runtime-identity.v1/managed_command_approval"
+    )
 }
 
 @Test("Managed approval coordinator payload carries exact typed binding")
@@ -808,6 +1215,25 @@ func managedCodexWebSocketErrorsAreNotCollapsedToInternalError() {
     )
 }
 
+@Test("Managed Codex trust errors retain safe public coordinator codes")
+func managedCodexTrustErrorsAreNotCollapsedToInternalError() {
+    #expect(
+        managedCodexCoordinatorError(
+            CodexRuntimeTrustError.unsafePath("/private/example/codex")
+        ).code == "managed_codex_executable_unsafe"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            CodexRuntimeTrustError.unsupportedVersion("999.0.0")
+        ).code == "managed_codex_version_unsupported"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            CodexRuntimeTrustError.approvalDrift
+        ).code == "managed_codex_executable_changed"
+    )
+}
+
 @Test("Managed launcher owns remote flags and preserves TUI arguments after separator")
 func managedCodexLauncherArgumentsAreBounded() throws {
     let parsed = try ManagedCodexLauncherArguments([
@@ -829,6 +1255,22 @@ func managedCodexLauncherArgumentsAreBounded() throws {
             _ = try ManagedCodexLauncherArguments(reserved)
         }
     }
+}
+
+@Test("Managed App Server diagnostics drain stderr with a strict byte cap")
+func managedCodexAppServerDiagnosticsAreBounded() throws {
+    let capture = ManagedCodexDiagnosticCapture()
+    let diagnostics = ManagedCodexAppServerDiagnostics(
+        maximumBytes: 24,
+        recorder: capture.append
+    )
+    let payload = Data("model refresh failed\nextra diagnostic bytes".utf8)
+
+    try diagnostics.childPipe.fileHandleForWriting.write(contentsOf: payload)
+    diagnostics.closeParentWriter()
+
+    #expect(diagnostics.waitUntilDrained(timeout: .now() + .seconds(2)))
+    #expect(capture.data == payload.prefix(24))
 }
 
 @Test("Managed launcher rejects an explicit Codex path when approval owns resolution")
@@ -857,6 +1299,7 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
     )
     let provider = ManagedCodexExecutableSequence<ManagedCodexTestError>([
         .success(resolvedExecutable),
+        .success(resolvedExecutable),
     ])
 
     do {
@@ -865,6 +1308,7 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
                 "--coordinator-socket", "/tmp/blabee-managed-first.sock",
                 "--",
             ],
+            environment: [:],
             approvedExecutableProvider: provider.next
         )
         Issue.record("expected a pre-child managed launch failure")
@@ -879,7 +1323,7 @@ func managedCodexLauncherChecksApprovalBeforeAppServer() {
     } catch {
         Issue.record("unexpected error: \(error)")
     }
-    #expect(provider.callCount == 1)
+    #expect(provider.callCount == 2)
 }
 
 @Test("Managed launcher does not invent a native fallback before resolution")
@@ -900,18 +1344,57 @@ func managedCodexLauncherResolutionFailureIsNotFallbackEligible() {
     #expect(provider.callCount == 1)
 }
 
+@Test("Managed launcher revalidates immediately before the first child")
+func managedCodexLauncherRevalidatesImmediatelyBeforeAppServer() throws {
+    let fixture = try managedCodexLauncherExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>([
+        .success(fixture.executable),
+        .failure(.approvalDrift),
+    ])
+
+    do {
+        _ = try ManagedCodexLauncher().run(
+            arguments: [
+                "--coordinator-socket", "/tmp/blabee-managed-pre-spawn.sock",
+                "--",
+            ],
+            environment: [
+                "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
+                "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+            ],
+            approvedExecutableProvider: provider.next
+        )
+        Issue.record("expected a pre-child revalidation failure")
+    } catch let failure as ManagedCodexLaunchFailure {
+        #expect(failure.childStartState == .notStarted)
+        #expect(failure.nativeExecutableURL == fixture.executable)
+        #expect(failure.tuiArguments.isEmpty)
+        #expect(failure.underlyingError as? CodexRuntimeTrustError == .approvalDrift)
+    } catch {
+        Issue.record("unexpected error: \(error)")
+    }
+
+    #expect(provider.callCount == 2)
+    #expect(!FileManager.default.fileExists(atPath: fixture.markerFile.path))
+    #expect(!FileManager.default.fileExists(atPath: fixture.pidFile.path))
+}
+
 @Test("Managed launcher revalidates before TUI and cleans up App Server on failure")
 func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
     let fixture = try managedCodexLauncherExecutableFixture()
     defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let diagnosticCapture = ManagedCodexDiagnosticCapture()
+    let diagnosticText = "primary model refresh failed"
     let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>(
         [
+            .success(fixture.executable),
             .success(fixture.executable),
             .failure(.approvalDrift),
         ],
         beforeOutcome: { call in
-            guard call == 2 else { return }
-            let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+            guard call == 3 else { return }
+            let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
             while !FileManager.default.fileExists(atPath: fixture.pidFile.path),
                   DispatchTime.now().uptimeNanoseconds < deadline
             {
@@ -929,8 +1412,14 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
             environment: [
                 "BLABEE_TEST_MARKER_FILE": fixture.markerFile.path,
                 "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+                "BLABEE_TEST_STDERR_TEXT": diagnosticText,
             ],
-            approvedExecutableProvider: provider.next
+            approvedExecutableProvider: provider.next,
+            appServerDiagnosticsFactory: {
+                ManagedCodexAppServerDiagnostics(
+                    recorder: diagnosticCapture.append
+                )
+            }
         )
         Issue.record("expected a post-child managed launch failure")
     } catch let failure as ManagedCodexLaunchFailure {
@@ -942,7 +1431,7 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
         Issue.record("unexpected error: \(error)")
     }
 
-    #expect(provider.callCount == 2)
+    #expect(provider.callCount == 3)
     let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
     #expect(marker == "app-server\n")
     let pidText = try String(contentsOf: fixture.pidFile, encoding: .utf8)
@@ -952,6 +1441,14 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
     let killError = errno
     #expect(killResult == -1)
     #expect(killError == ESRCH)
+    let diagnosticDeadline = DispatchTime.now().uptimeNanoseconds
+        + 2_000_000_000
+    while !diagnosticCapture.data.contains(Data(diagnosticText.utf8)),
+          DispatchTime.now().uptimeNanoseconds < diagnosticDeadline
+    {
+        usleep(10_000)
+    }
+    #expect(diagnosticCapture.data.contains(Data(diagnosticText.utf8)))
 }
 
 @Test("Managed launcher revalidates after TUI spawn and cleans up both children")
@@ -962,11 +1459,12 @@ func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
         [
             .success(fixture.executable),
             .success(fixture.executable),
+            .success(fixture.executable),
             .failure(.approvalDrift),
         ],
         beforeOutcome: { call in
-            guard call == 3 else { return }
-            let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+            guard call == 4 else { return }
+            let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
             while (
                 !FileManager.default.fileExists(atPath: fixture.pidFile.path)
                     || !FileManager.default.fileExists(atPath: fixture.tuiPIDFile.path)
@@ -999,7 +1497,7 @@ func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
         Issue.record("unexpected error: \(error)")
     }
 
-    #expect(provider.callCount == 3)
+    #expect(provider.callCount == 4)
     let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
     let startedChildren = marker.split(separator: "\n").map(String.init).sorted()
     #expect(startedChildren == ["app-server", "tui"])
@@ -1039,16 +1537,24 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
         .success(fixture.executable),
         .success(fixture.executable),
     ])
+    let diagnosticCapture = ManagedCodexDiagnosticCapture()
+    let diagnosticText = "auxiliary model refresh failed"
 
     let broker = ManagedCodexAuxiliaryConnectionBroker(
         admission: admission,
         executable: fixture.executable,
         environment: [
             "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+            "BLABEE_TEST_STDERR_TEXT": diagnosticText,
         ],
         coordinatorSocketPath: "/tmp/blabee-managed-auxiliary.sock",
         brokerEpoch: "epoch-auxiliary-test",
-        approvedExecutableProvider: provider.next
+        approvedExecutableProvider: provider.next,
+        appServerDiagnosticsFactory: {
+            ManagedCodexAppServerDiagnostics(
+                recorder: diagnosticCapture.append
+            )
+        }
     )
     broker.start()
     defer { broker.stopAndWait() }
@@ -1064,7 +1570,10 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
             + "Sec-WebSocket-Version: 13\r\n"
             + "Authorization: Bearer \(token)\r\n\r\n"
     ).utf8), descriptor: auxiliaryClient)
-    let handshake = try managedCodexTestReadHeaders(descriptor: auxiliaryClient)
+    let handshake = try managedCodexTestReadHeaders(
+        descriptor: auxiliaryClient,
+        timeoutMilliseconds: 5_000
+    )
     #expect(String(data: handshake, encoding: .utf8)?.hasPrefix(
         "HTTP/1.1 101 Switching Protocols"
     ) == true)
@@ -1077,7 +1586,10 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
         descriptor: auxiliaryClient
     )
     #expect(
-        try managedCodexTestReadServerText(descriptor: auxiliaryClient)
+        try managedCodexTestReadServerText(
+            descriptor: auxiliaryClient,
+            timeoutMilliseconds: 5_000
+        )
             == request
     )
     #expect(provider.callCount == 2)
@@ -1097,6 +1609,14 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
     let killError = errno
     #expect(killResult == -1)
     #expect(killError == ESRCH)
+    let diagnosticDeadline = DispatchTime.now().uptimeNanoseconds
+        + 2_000_000_000
+    while !diagnosticCapture.data.contains(Data(diagnosticText.utf8)),
+          DispatchTime.now().uptimeNanoseconds < diagnosticDeadline
+    {
+        usleep(10_000)
+    }
+    #expect(diagnosticCapture.data.contains(Data(diagnosticText.utf8)))
 }
 
 @Test("Managed auxiliary admission survives a disconnected handshake peer")
@@ -1146,7 +1666,10 @@ func managedCodexAuxiliaryAdmissionSurvivesHandshakeResponseFailure() throws {
         ),
         descriptor: healthyClient
     )
-    _ = try managedCodexTestReadHeaders(descriptor: healthyClient)
+    _ = try managedCodexTestReadHeaders(
+        descriptor: healthyClient,
+        timeoutMilliseconds: 5_000
+    )
     let request = Data(
         #"{"id":8,"method":"thread/list","params":{}}"#.utf8
     )
@@ -1155,7 +1678,10 @@ func managedCodexAuxiliaryAdmissionSurvivesHandshakeResponseFailure() throws {
         descriptor: healthyClient
     )
     #expect(
-        try managedCodexTestReadServerText(descriptor: healthyClient)
+        try managedCodexTestReadServerText(
+            descriptor: healthyClient,
+            timeoutMilliseconds: 5_000
+        )
             == request
     )
 }
@@ -1257,17 +1783,17 @@ func managedCodexAdmissionShutdownWithFullBacklogIsBounded() throws {
 }
 
 @Test("Managed launcher propagates the resolved coordinator socket to both children")
-func managedCodexLauncherPropagatesCoordinatorSocket() {
+func managedCodexLauncherPropagatesCoordinatorSocket() throws {
     let inherited = [
         "BLABEE_SOCKET": "/tmp/stale.sock",
         "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
     ]
-    let appServer = ManagedCodexLauncher.childEnvironment(
+    let appServer = try ManagedCodexLauncher.childEnvironment(
         inherited,
         authenticationToken: nil,
         coordinatorSocketPath: "/tmp/explicit.sock"
     )
-    let tui = ManagedCodexLauncher.childEnvironment(
+    let tui = try ManagedCodexLauncher.childEnvironment(
         inherited,
         authenticationToken: "fresh-token",
         coordinatorSocketPath: "/tmp/explicit.sock"
@@ -1278,6 +1804,23 @@ func managedCodexLauncherPropagatesCoordinatorSocket() {
     #expect(tui["BLABEE_MANAGED_APPROVALS"] == "1")
     #expect(appServer["BLABEE_MANAGED_CODEX_AUTH_TOKEN"] == nil)
     #expect(tui["BLABEE_MANAGED_CODEX_AUTH_TOKEN"] == "fresh-token")
+}
+
+@Test("Managed launcher rejects dynamic-loader overrides for every child")
+func managedCodexLauncherRejectsLoaderOverrides() {
+    for name in [
+        "DYLD_INSERT_LIBRARIES",
+        "__XPC_DYLD_LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+    ] {
+        #expect(throws: CoordinatorError.self) {
+            _ = try ManagedCodexLauncher.childEnvironment(
+                [name: "/tmp/untrusted.dylib"],
+                authenticationToken: nil,
+                coordinatorSocketPath: "/tmp/explicit.sock"
+            )
+        }
+    }
 }
 
 @Test("Managed WebSocket write applies one whole-message monotonic deadline")
@@ -1943,6 +2486,9 @@ private func managedCodexAuxiliaryExecutableFixture(
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
       printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
+      if [ -n "$BLABEE_TEST_STDERR_TEXT" ]; then
+        printf '%s\n' "$BLABEE_TEST_STDERR_TEXT" >&2
+      fi
       trap 'exit 0' TERM INT
       while IFS= read -r line; do
         printf '%s\n' "$line"
@@ -1995,6 +2541,9 @@ private func managedCodexLauncherExecutableFixture(
     if [ "$1" = "app-server" ]; then
       printf 'app-server\n' >> "$BLABEE_TEST_MARKER_FILE"
       printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
+      if [ -n "$BLABEE_TEST_STDERR_TEXT" ]; then
+        printf '%s\n' "$BLABEE_TEST_STDERR_TEXT" >&2
+      fi
       trap 'exit 0' TERM INT
       while :; do /bin/sleep 1; done
     fi
@@ -2179,10 +2728,17 @@ private func managedCodexTestReadExact(
     return result
 }
 
-private func managedCodexTestReadHeaders(descriptor: Int32) throws -> Data {
+private func managedCodexTestReadHeaders(
+    descriptor: Int32,
+    timeoutMilliseconds: Int32 = 2_000
+) throws -> Data {
     var result = Data()
     while result.count < 16_384 {
-        result.append(try managedCodexTestReadExact(count: 1, descriptor: descriptor))
+        result.append(try managedCodexTestReadExact(
+            count: 1,
+            descriptor: descriptor,
+            timeoutMilliseconds: timeoutMilliseconds
+        ))
         if result.suffix(4) == Data([13, 10, 13, 10]) { return result }
     }
     throw ManagedCodexTestError.failed("headers too large")
@@ -2198,17 +2754,32 @@ private func managedCodexTestReadLine(descriptor: Int32) throws -> Data {
     throw ManagedCodexTestError.failed("line too large")
 }
 
-private func managedCodexTestReadServerText(descriptor: Int32) throws -> Data {
-    let header = [UInt8](try managedCodexTestReadExact(count: 2, descriptor: descriptor))
+private func managedCodexTestReadServerText(
+    descriptor: Int32,
+    timeoutMilliseconds: Int32 = 2_000
+) throws -> Data {
+    let header = [UInt8](try managedCodexTestReadExact(
+        count: 2,
+        descriptor: descriptor,
+        timeoutMilliseconds: timeoutMilliseconds
+    ))
     guard header[0] & 0x0F == 0x1, header[1] & 0x80 == 0 else {
         throw ManagedCodexTestError.failed("invalid server text frame")
     }
     var length = Int(header[1] & 0x7F)
     if length == 126 {
-        let extended = [UInt8](try managedCodexTestReadExact(count: 2, descriptor: descriptor))
+        let extended = [UInt8](try managedCodexTestReadExact(
+            count: 2,
+            descriptor: descriptor,
+            timeoutMilliseconds: timeoutMilliseconds
+        ))
         length = Int(extended[0]) << 8 | Int(extended[1])
     } else if length == 127 {
-        let extended = [UInt8](try managedCodexTestReadExact(count: 8, descriptor: descriptor))
+        let extended = [UInt8](try managedCodexTestReadExact(
+            count: 8,
+            descriptor: descriptor,
+            timeoutMilliseconds: timeoutMilliseconds
+        ))
         var value: UInt64 = 0
         for byte in extended { value = value << 8 | UInt64(byte) }
         guard value <= UInt64(Int.max) else {
@@ -2216,5 +2787,9 @@ private func managedCodexTestReadServerText(descriptor: Int32) throws -> Data {
         }
         length = Int(value)
     }
-    return try managedCodexTestReadExact(count: length, descriptor: descriptor)
+    return try managedCodexTestReadExact(
+        count: length,
+        descriptor: descriptor,
+        timeoutMilliseconds: timeoutMilliseconds
+    )
 }

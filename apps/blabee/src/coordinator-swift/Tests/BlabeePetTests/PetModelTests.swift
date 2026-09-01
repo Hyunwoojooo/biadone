@@ -22,7 +22,6 @@ func blabeePetStrictModelParsing() throws {
     #expect(snapshot.permissionRequests[0].toolName == "Bash")
     #expect(snapshot.permissionRequests[0].commandPreview == "npm test")
     #expect(snapshot.permissionRequests[0].arrivalSequence == 1)
-    #expect(snapshot.permissionRequests[0].allowOnceAvailable)
     #expect(!snapshot.permissionRequests[0].deliveryPending)
     #expect(PetPermissionRequest.maximumCommandScalars == 120)
 
@@ -70,7 +69,10 @@ func blabeePetPermissionRequestParsing() throws {
     #expect(snapshot.permissionRequests[1].displaySummary == "safe command")
     #expect(snapshot.permissionRequests[1].deliveryPending)
     #expect(PetPermissionDecision.allCases.map(\.displayTitle) == [
-        "이번만 허용", "거절", "Codex에서 직접 결정",
+        "거절", "Codex에서 직접 결정",
+    ])
+    #expect(PetPermissionDecision.allCases.map(\.rawValue) == [
+        "deny", "defer_to_codex",
     ])
 
     var mismatched = petTestSnapshotObject(
@@ -99,9 +101,7 @@ func blabeePetPermissionRequestParsing() throws {
         _ = try PetSnapshot.parse(petTestData(missingCommand))
     }
 
-    for missingField in [
-        "arrival_sequence", "allow_once_available", "delivery_pending",
-    ] {
+    for missingField in ["arrival_sequence", "delivery_pending"] {
         var missing = petTestSnapshotObject(
             cards: [],
             permissionRequests: [first]
@@ -114,6 +114,19 @@ func blabeePetPermissionRequestParsing() throws {
         #expect(throws: (any Error).self) {
             _ = try PetSnapshot.parse(petTestData(missing))
         }
+    }
+
+    var legacyAllow = petTestSnapshotObject(
+        cards: [],
+        permissionRequests: [first]
+    )
+    var legacyAllowRequests = try #require(
+        legacyAllow["permission_requests"] as? [[String: Any]]
+    )
+    legacyAllowRequests[0]["allow_once_available"] = true
+    legacyAllow["permission_requests"] = legacyAllowRequests
+    #expect(throws: (any Error).self) {
+        _ = try PetSnapshot.parse(petTestData(legacyAllow))
     }
 
     var invalidDeliveryPending = petTestSnapshotObject(

@@ -319,31 +319,98 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             "route_queued_action_context_claim_command_invalid"
         )
         let continuationID = try requiredIdentifier(command, "continuation_id")
+        let authority = try semantic.authorityProjection()
+        let expectedActionJSON = try authority.state.selectedActionJSON(
+            for: continuationID
+        )
+        return try routeQueuedActionContextClaimLocked(
+            commandData,
+            command: command,
+            continuationID: continuationID,
+            using: authority,
+            expectedActionJSON: expectedActionJSON
+        )
+    }
+
+    /// Returns one verified projection for the operational adapter to match a
+    /// short queued-action reference and resolve its selected action. The same
+    /// projection must be passed back to the claim overload below.
+    func queuedActionAuthorityProjection() throws -> CoordinatorSemanticAuthorityProjection {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+        return try semantic.authorityProjection()
+    }
+
+    /// Claims against the exact projection used to resolve `expectedActionJSON`.
+    /// Semantic validation rechecks the command binding and action digest before
+    /// the CAS append; only a sequence conflict causes a fresh journal load.
+    func routeQueuedActionContextClaim(
+        _ commandData: Data,
+        using authority: CoordinatorSemanticAuthorityProjection,
+        expectedActionJSON: Data
+    ) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+
+        let command = try StrictJSONTransport.object(from: commandData)
+        let commandType = try requiredCommandType(command)
+        try require(
+            commandType == "claim_queued_action_context",
+            "route_queued_action_context_claim_command_invalid"
+        )
+        let continuationID = try requiredIdentifier(command, "continuation_id")
+        let selectedActionJSON = try authority.state.selectedActionJSON(
+            for: continuationID
+        )
+        try require(
+            selectedActionJSON == expectedActionJSON,
+            "continuation_action_mismatch"
+        )
+        return try routeQueuedActionContextClaimLocked(
+            commandData,
+            command: command,
+            continuationID: continuationID,
+            using: authority,
+            expectedActionJSON: expectedActionJSON
+        )
+    }
+
+    private func routeQueuedActionContextClaimLocked(
+        _ commandData: Data,
+        command: [String: Any],
+        continuationID: String,
+        using authority: CoordinatorSemanticAuthorityProjection,
+        expectedActionJSON: Data
+    ) throws -> Data {
 
         // CoordinatorSemanticApplication exposes no effects until its journal
-        // append is durably accepted. If that response is lost, this method
-        // returns no action; a retry with the same delivery turn is recovered
-        // from the durable claim by the semantic decision layer.
+        // append is durably accepted. Only an ambiguous append response triggers
+        // the authoritative replay below; ordinary validation failures never do.
         do {
-            _ = try semantic.execute(command: commandData)
-        } catch {
-            let originalError = error
+            _ = try semantic.execute(command: commandData, using: authority)
+        } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
             do {
-                return try claimedQueuedActionJSONLocked(
+                let recovered = try claimedQueuedActionJSONLocked(
                     command: command,
                     continuationID: continuationID
                 )
+                try require(
+                    recovered == expectedActionJSON,
+                    "queued_action_context_claim_mismatch"
+                )
+                return recovered
             } catch {
                 // A response loss is recoverable only when authoritative replay
                 // proves the exact claim tuple. Never replace an uncommitted or
                 // mismatched failure with action bytes.
-                throw originalError
+                throw ambiguity.underlying
             }
         }
-        return try claimedQueuedActionJSONLocked(
-            command: command,
-            continuationID: continuationID
-        )
+        // The seeded semantic decision verified the binding and exact action
+        // digest before the successful CAS. Avoid a redundant post-commit load.
+        return expectedActionJSON
     }
 
     private func claimedQueuedActionJSONLocked(

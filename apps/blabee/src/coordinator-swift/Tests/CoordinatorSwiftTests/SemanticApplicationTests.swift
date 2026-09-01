@@ -171,6 +171,7 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
     private var competingChange: CoordinatorSemanticChange?
     private var loseResponseAfterCommit = false
     private var appendAttemptCount = 0
+    private var loadCountValue = 0
 
     init(snapshot: JournalSnapshot = JournalSnapshot(
         events: [],
@@ -184,6 +185,7 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
     func load() throws -> JournalSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        loadCountValue += 1
         return stored
     }
 
@@ -258,6 +260,12 @@ private final class SemanticMemoryJournal: CoordinatorSemanticJournalPort, @unch
         lock.lock()
         defer { lock.unlock() }
         return appendAttemptCount
+    }
+
+    var loads: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return loadCountValue
     }
 }
 
@@ -584,6 +592,38 @@ func semanticQueuedActionClaimCASRetryHasOneWinner() throws {
     semanticExpectCode("queued_action_context_already_claimed") {
         _ = try app.execute(command: differentTurn)
     }
+}
+
+@Test("seeded queued action claim reloads authority only after a CAS conflict")
+func semanticSeededQueuedActionClaimReloadsAfterCASConflict() throws {
+    let suffix = "queued_claim_seeded_cas"
+    let journal = SemanticMemoryJournal()
+    let app = CoordinatorSemanticApplication(journal: journal)
+    let prepared = try semanticCompletedQueuedAction(
+        suffix: suffix,
+        journal: journal,
+        app: app
+    )
+    let command = try semanticQueuedActionClaim(
+        suffix: suffix,
+        binding: prepared.binding,
+        actionJSON: prepared.actionJSON
+    )
+    let authority = try app.authorityProjection()
+    let loadsBeforeExecute = journal.loads
+    let attemptsBeforeExecute = journal.appendAttempts
+
+    journal.conflictOnNextAppend()
+    let result = try app.execute(command: command, using: authority)
+
+    #expect(result.commit.eventCount == 1)
+    #expect(journal.loads == loadsBeforeExecute + 1)
+    #expect(journal.appendAttempts == attemptsBeforeExecute + 2)
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(
+        state.continuation(id: "continuation_semantic_\(suffix)")?
+            .queuedActionContextClaim != nil
+    )
 }
 
 @Test("queued action claim requires closed completed v1 authority and exact action digest")

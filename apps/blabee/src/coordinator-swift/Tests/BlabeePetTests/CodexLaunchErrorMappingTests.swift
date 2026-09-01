@@ -3,39 +3,12 @@ import Foundation
 import Testing
 @testable import BlabeeCoordinator
 
-@Suite("Codex launch error mapping")
+@Suite("Managed Codex native fallback")
 struct CodexLaunchErrorMappingTests {
-    @Test("auto-connect failures expose stable redacted categories")
-    func autoConnectCategories() {
-        #expect(codexAutoConnectLaunchCoordinatorError(
-            CodexAutoConnectError.conflict("private conflict detail")
-        ).code == "codex_auto_connect_conflict")
-        #expect(codexAutoConnectLaunchCoordinatorError(
-            CodexAutoConnectError.unavailable("private unavailable detail")
-        ).code == "codex_auto_connect_unavailable")
-        #expect(codexAutoConnectLaunchCoordinatorError(
-            CodexAutoConnectError.unsafeFilesystem("private filesystem detail")
-        ).code == "codex_auto_connect_repair_required")
-        #expect(codexAutoConnectLaunchCoordinatorError(
-            CodexAutoConnectError.writeFailed("private write detail")
-        ).code == "codex_auto_connect_repair_required")
-    }
-
-    @Test("unrelated coordinator errors keep their behavior")
-    func coordinatorErrorsArePreserved() {
-        let original = CoordinatorError("routing_unavailable", "private detail")
-        #expect(codexAutoConnectLaunchCoordinatorError(original) == original)
-    }
-
-    @Test("unknown failures retain the existing internal error fallback")
-    func unknownFailuresRemainInternal() {
-        let mapped = codexAutoConnectLaunchCoordinatorError(TestFailure.sample)
-        #expect(mapped.code == "internal_error")
-    }
-
     @Test("managed pre-child failure falls back exactly once with original arguments")
     func managedPreChildFailureFallsBackExactlyOnce() throws {
         var managedCalls = 0
+        var revalidationCalls = 0
         var nativeCalls = 0
         var nativeExecutable: URL?
         var nativeArguments: [String] = []
@@ -53,6 +26,10 @@ struct CodexLaunchErrorMappingTests {
                     underlyingError: TestFailure.sample
                 )
             },
+            revalidateNativeExecutable: { executable in
+                revalidationCalls += 1
+                return executable
+            },
             nativeRun: { executable, arguments in
                 nativeCalls += 1
                 nativeExecutable = executable
@@ -63,9 +40,38 @@ struct CodexLaunchErrorMappingTests {
 
         #expect(status == 37)
         #expect(managedCalls == 1)
+        #expect(revalidationCalls == 1)
         #expect(nativeCalls == 1)
         #expect(nativeExecutable == expectedExecutable)
         #expect(nativeArguments == expectedArguments)
+    }
+
+    @Test("managed native fallback revalidates the pinned executable before exec")
+    func managedFallbackRejectsExecutableDrift() {
+        var nativeCalls = 0
+        let expectedExecutable = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
+
+        #expect(throws: (any Error).self) {
+            _ = try runExplicitManagedCodexLaunch(
+                arguments: ["--"],
+                managedRun: { _ in
+                    throw ManagedCodexLaunchFailure(
+                        childStartState: .notStarted,
+                        nativeExecutableURL: expectedExecutable,
+                        tuiArguments: [],
+                        underlyingError: TestFailure.sample
+                    )
+                },
+                revalidateNativeExecutable: { _ in
+                    URL(fileURLWithPath: "/usr/local/bin/codex")
+                },
+                nativeRun: { _, _ in
+                    nativeCalls += 1
+                    return 0
+                }
+            )
+        }
+        #expect(nativeCalls == 0)
     }
 
     @Test("managed post-child failure never runs native Codex")
@@ -83,6 +89,7 @@ struct CodexLaunchErrorMappingTests {
                         underlyingError: TestFailure.sample
                     )
                 },
+                revalidateNativeExecutable: { $0 },
                 nativeRun: { _, _ in
                     nativeCalls += 1
                     return 0
@@ -103,6 +110,7 @@ struct CodexLaunchErrorMappingTests {
                     _ = try ManagedCodexLauncherArguments(arguments)
                     return 0
                 },
+                revalidateNativeExecutable: { $0 },
                 nativeRun: { _, _ in
                     nativeCalls += 1
                     return 0

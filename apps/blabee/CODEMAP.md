@@ -1,10 +1,10 @@
 # Blabee 코드맵
 
-상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin + T-012a 읽기 전용 Doctor + T-012b-1 로컬 앱 번들 + T-012b-2 제품 service 부트스트랩과 정적 LaunchAgent 계약 + T-012b-3a 안전한 프로젝트 설정 writer + T-012b-3b Pet 온보딩 UI·서비스 수명주기 어댑터 계약. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator·Pet·Doctor, `Plugin/blabee/`는 Codex 진입점이며 `Packaging/macos`와 `scripts/build-macos-app.mjs`는 설치 전 앱 조립 경계다. `spikes/`는 자격·타당성 증거다.
+상태: v0.1 설계 코드맵 + T-006 v1 계약 + T-005 런타임 선택 + T-007a 참조 코어 + T-007b-A/A2/B1/B2 Swift 영속·의미·routing/time 코디네이터 + T-010 네이티브 Pet + T-011 Codex 운영 어댑터와 Plugin + T-012a 읽기 전용 Doctor + T-012b-1 로컬 앱 번들 + T-012b-2 제품 service 부트스트랩과 정적 LaunchAgent 계약 + T-012b-3a 안전한 프로젝트 설정 writer + T-012b-3b Pet 온보딩 UI·서비스 수명주기 어댑터 계약. `Contracts/v1`은 규범 계약, `src/coordinator-core/`는 런타임 중립 참조 구현, `src/coordinator-swift/`는 제품 coordinator·Pet·Doctor, `Plugin/blabee/`는 Codex 진입점이며 `Packaging/macos`와 `scripts/build-macos-app.mjs`는 설치 전 앱 조립 경계다. `spikes/m1/`은 제품 런타임 자격 증거다.
 
 ## 현재 상태와 표기
 
-기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. fake coordinator, Git 체크포인트와 실제 Codex harness는 `spikes/m0/`의 타당성 증거고, 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter, T-010 SwiftUI/AppKit Pet, T-012a `DoctorApplication.swift`와 T-012b-3b 온보딩 경계를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet·read-only Doctor·온보딩 fake adapter 안전 게이트는 통과했지만 실제 자동 시작 등록, Developer ID 서명·공증·DMG와 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
+기획 시작 당시 `/Users/joo/BiaDone/apps/blabee`에는 제품 소스가 없었다. 현재는 런타임 독립 v1 계약이 `Contracts/v1`, 실행 가능한 계약 자료가 `Fixtures/v1`, 오프라인 검증기가 `Tests/Contracts`에 구현되어 있다. 운영 런타임 자격 시험은 `spikes/m1/runtime-qualification/`에 있다. 과거 M0 fake coordinator·Git 체크포인트·실제 Codex harness는 2026-08-31에 제품과 중복되는 활성 실험 코드에서 제거했으며 결과는 설계 문서와 Git 기록에만 보존한다. `src/coordinator-core/`는 v1 계약을 소비하는 T-007a 참조 코어고, `src/coordinator-swift/`는 T-007b-A/A2 영속·freshness 커널, B1 semantic application, B2 routing/time, T-011 Hook/MCP/Pet UDS adapter, T-010 SwiftUI/AppKit Pet, T-012a `DoctorApplication.swift`와 T-012b-3b 온보딩 경계를 구현한다. `Plugin/blabee/`에는 버전이 지정된 Skill·Hook·MCP 패키지가 있다. 네이티브 Pet·read-only Doctor·온보딩 fake adapter 안전 게이트는 통과했지만 실제 자동 시작 등록, Developer ID 서명·공증·DMG와 환경 매트릭스는 진행 중이며 installer는 아직 구현되지 않았다.
 
 - **제품 계약**: v0.1에서 지켜야 하는 의미와 안전 불변식이다.
 - **재사용 증거**: 인접한 `apps/blabase/suggestion` 구현에서 직접 확인한 패턴이다.
@@ -19,10 +19,10 @@ T-005 자격 시험 결과 공개 코디네이터의 제품 런타임은 Swift �
 | Codex Plugin | `SessionStart`, `UserPromptSubmit`, 도구 수명 주기, `PermissionRequest`, `Stop` Hook과 로컬 MCP 제안 채널 | 카드 검증, 로컬 근거 판정, Git 복원, 네이티브 권한 승인 |
 | Local MCP proposal bridge | Codex가 만든 구조화된 결정 제안을 현재 세션·턴·프롬프트에 연결 | 결정 패킷 봉인, 슬롯 활성화, 자동 실행 |
 | Episode registry | 최신 `source_prompt_id`/`source_turn_id`와 `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`의 수명 주기 및 연속 진행 연결 | 프롬프트 의미 분류, 파일 복원 |
-| Decision coordinator | 제안 검증, 반고정 슬롯 조립, 위험 게이트, 세션별 활성 패킷, 전역 전면 카드, 대기열, 원자적 선점, timeout·stale 판정 | 모델 추론, Codex 네이티브 요청을 1~4 카드로 변환 |
+| Decision coordinator | 제안 검증, ranked choice 조립, 위험 게이트, 세션별 활성 패킷, 전역 전면 카드, 대기열, 원자적 선점, timeout·stale 판정 | 모델 추론, Codex 네이티브 요청을 결정 카드로 변환 |
 | Checkpoint/Rollback | 프롬프트 제출 직전 기준선, 복원 적격성, 복구 스냅샷, episode 전체 복원과 검증 | Codex `thread/rollback`, 외부 시스템 보상 |
 | Native request bridge | Codex 네이티브 요청을 별도 타입으로 보관하고 Pet 알림에서 polling 시점의 frontmost 외부 앱으로 best-effort 복귀 | 원래 PID/창 identity, 공개 v0.1에서 허용·거부 또는 답변 중계 |
-| macOS Pet | 활성 결정 카드, 고정 슬롯 위치, disabled 이유, 고위험 확인, timeout, 네이티브 요청 알림 표시 | 숫자만 Codex에 전송, 네이티브 승인 대행, 정책 우회, 파일 복원 |
+| macOS Pet | 활성 ranked 결정 카드, 고위험 확인, timeout, Hook·관리형 권한 요청 카드 표시 | 숫자만 Codex에 전송, 정책 우회, 파일 복원 |
 | Local ledger | 이벤트, episode, 제안, 패킷, 선택 claim, 결과, 체크포인트와 재개 캡슐의 로컬 기록 | 원격 추론 또는 클라우드 동기화 |
 | Installer/Doctor | Plugin 설치·신뢰·제거, Codex 버전 allowlist, 프로젝트 활성화 진단 | 사용자 `codex` 교체, 셸 설정의 무단 수정 |
 
@@ -41,22 +41,20 @@ PromptEpisode
 └─ rollback_eligibility
 
 DecisionProposal
-└─ correlation_token + recommended action + optional alternative
+└─ correlation_token + ranked next_actions[2...4]
 
 DecisionPacket
 ├─ packet_id + revision + valid_after_event_sequence
 ├─ source_prompt_id + source_turn_id + episode_id
 ├─ episode_root_prompt_id + episode_baseline_checkpoint_id
 ├─ decision_boundary_id + boundary_sequence
-└─ slots
-   ├─ 1: recommended, dynamic, enabled
-   ├─ 2: alternative, dynamic, optional/disabled + disabled_reason
-   ├─ 3: pause, fixed meaning
-   └─ 4: rollback, fixed meaning, eligibility-gated + disabled_reason
+└─ choices[2...4]
+   ├─ 1: strongest recommended next action
+   └─ 2...4: progressively lower-priority next actions
 
 ContinuationEnvelope
-├─ common: one-time token + session/episode/baseline + source turn/prompt + decision boundary
-├─ pet_action: same_turn_stop + packet/revision/option/action + in-flight deadline
+├─ common: one-time token + original session/episode/baseline + source turn/prompt + decision boundary
+├─ pet_action: queued_next_turn + packet/revision/option/action + in-flight deadline
 └─ internal_format_repair: submitted_envelope + repair request/kind/attempt, exactly once
 
 RuntimeEvent
@@ -74,28 +72,12 @@ NativeCodexRequest
 └─ native_request_id + session/turn correlation + original UI locator
 ```
 
-반고정 슬롯의 위치 의미는 바뀌지 않는다.
+현재 생성 경로의 위치 의미는 순위다.
 
 1. 현재 패킷이 권장하는 구체적인 다음 작업이다.
-2. 현재 패킷의 구체적인 대안 작업이다. 안전하고 의미 있는 대안이 없으면 disabled이며 다른 기능으로 재사용하지 않는다.
-3. 현재 상태를 보류하고 재개 캡슐을 저장한다.
-4. 이 카드를 만든 활성 prompt-bounded episode 하나를 `episode_baseline_checkpoint_id` 상태로 복원한다. 적격하지 않으면 disabled 이유를 표시한다.
+2. 2~4번은 존재하는 경우 순서대로 차선인 구체적인 다음 작업이다.
 
-Pet은 `"1"` 또는 `"2"`만 보내지 않는다. `interaction_id`, `packet_id`, `revision`, `option_id`를 제출하면 코디네이터가 봉인된 작업 목표·제약·완료 기준을 다시 조회한다. Codex 0.148 Hook 경로에서는 `same_turn_stop` 전용 지시로 대기 중인 `Stop`을 해제하므로 새 `source_turn_id`나 `UserPromptSubmit`을 만들지 않는다. 해당 지시와 후속 Stop 완료는 기존 `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`에 귀속된다. 사람이 새 작업 프롬프트를 직접 입력할 때만 다음 episode가 시작된다.
-
-### 실제 M0 스파이크 트리
-
-```text
-spikes/m0/
-├── plugins/blabee-m0/       # Plugin manifest, Hook, local MCP
-├── coordinator/             # disposable Node JSONL/UDS coordinator
-├── checkpoint/              # temp Git fixture-only safety/rollback
-├── integration/             # actual codex-cli contract harness
-├── runtimes/                # Node/Swift/C health candidates
-├── sentinel/                # isolated smoke parser, operational path 아님
-├── scripts/                 # runtime benchmark
-└── tests/                   # 53 passing tests
-```
+Pet은 숫자만 보내지 않는다. `interaction_id`, `packet_id`, `revision`, `option_id`를 제출하면 코디네이터가 봉인된 작업 목표·제약·완료 기준을 다시 조회한다. 선택한 action은 원본 결정의 binding을 보존한 채 같은 Codex 세션의 새 `UserPromptSubmit` 턴으로 큐잉된다. 그 새 프롬프트는 별도 episode와 baseline을 만들며, 큐 접수는 작업의 시작이나 성공 증거가 아니다. 과거 `same_turn_stop` 이벤트는 기존 저널 replay 호환에만 남는다.
 
 ### 실제 T-006 계약 트리
 
@@ -124,7 +106,7 @@ Tests/Contracts/
 ├── decision-packet-semantic.mjs   # 교차 슬롯 ID·체크포인트 의미 불변식
 ├── continuation-claim.mjs         # 테스트용 일회성·만료·exact-binding 의미 검증기
 ├── semantic-trace.mjs             # 경계·전송·결과 이벤트 의미 검증기
-└── v1-contracts.test.mjs          # 114개 계약 검사
+└── v1-contracts.test.mjs          # 129개 계약 검사
 ```
 
 이 트리는 런타임 언어와 무관한 규범 계약이다. `continuation-claim.mjs`와 `semantic-trace.mjs`는 계약을 실행하는 테스트용 참조 검증기이며 운영 코디네이터가 아니다.
@@ -136,6 +118,7 @@ spikes/m1/runtime-qualification/
 ├── fixtures/minimal-journal.ndjson
 ├── lib/ndjson-client.mjs
 ├── runtimes/
+│   ├── c/coordinator.c            # health-only 성능 기준선
 │   ├── node/coordinator.mjs       # 계약 참조 후보
 │   └── swift/Coordinator.swift    # 선택한 제품 런타임 후보
 ├── scripts/qualify-runtimes.mjs   # 공통 복구·부하·패키징 자격 실행기
@@ -190,7 +173,7 @@ src/coordinator-swift/
 │   │   ├── PetViewModel.swift             # foreground·selection·permission·shortcut draft 상태
 │   │   ├── PetHotKeys.swift               # 안전 catalog·영속 설정·transactional Carbon registry
 │   │   ├── PetPanel.swift                 # 비활성 floating NSPanel과 화면 보정
-│   │   └── PetView.swift                  # 반고정 결정 카드와 shortcut picker UI
+│   │   └── PetView.swift                  # ranked 결정 카드와 shortcut picker UI
 │   ├── BlabeeProductSupport/
 │   │   ├── ProductInvocation.swift        # exact 앱 전용 제품 명령 identity gate
 │   │   ├── ProductServiceConfiguration.swift # 고정 경로와 secure restart reader
@@ -491,19 +474,23 @@ UserPromptSubmit
   │    → Git clean-worktree 및 제외 경계 검사
   │    → episode_baseline_checkpoint_id 생성·봉인
   │    └─ Codex에 프롬프트 전달
+  ├─ Pet이 선택한 queued_next_turn
+  │    → 원본 decision/action binding 검증
+  │    → 새 source_prompt_id / source_turn_id / episode / baseline 생성
+  │    └─ 같은 Codex 세션의 새 사용자 턴으로 전달
   └─ 내부 형식 보정 submitted_envelope
        → 전체 봉투 + 일회성 token + dispatch_mode 검증
        → 기존 episode에 귀속
        └─ 동일 결정 경계에서 최대 한 번
 
-Pet 1/2 선택
+Pet 1~4 선택
   → packet/revision/option 원자적 claim
-  → held Stop에 same_turn_stop 전용 전체 작업 지시 반환
-  → 같은 session/turn의 stop_hook_active 재진입으로 소비·완료 확인
-  └─ UserPromptSubmit 경로 재사용 거부
+  → 봉인된 전체 action을 process-local 큐에 등록
+  → 같은 session의 새 사용자 턴으로 정확히 한 번 전달
+  └─ 큐 접수와 실제 작업 성공을 별도 증거로 기록
 ```
 
-Pet 1·2 연속 진행, 도구 호출, 하위 에이전트, 네트워크·Hook 전달의 기계적 retry는 모두 현재 episode에 귀속한다. 내부 형식 보정은 선택 봉투와 구분하고 같은 결정 경계에서 한 번만 허용한다. 사용자가 새 텍스트 프롬프트를 직접 제출할 때만 새 episode와 기준선을 만든다.
+Pet 선택으로 전달된 새 프롬프트와 사람이 직접 입력한 새 프롬프트는 모두 새 episode와 기준선을 만든다. 선택 봉투의 binding은 선택이 발생한 원본 episode를 보존한다. 내부 형식 보정은 선택 봉투와 구분하고 같은 결정 경계에서 한 번만 허용한다.
 
 ### 결정 카드와 선택
 
@@ -511,17 +498,15 @@ Pet 1·2 연속 진행, 도구 호출, 하위 에이전트, 네트워크·Hook �
 Codex turn
   → 운영 로컬 MCP emit_decision
   → proposal/session/turn/prompt correlation 검증
-  → Stop Hook
-  → local evidence + rollback eligibility로 packet 봉인
-  → Pet에 반고정 1/2/3/4 카드 표시
+  → Stop Hook이 제안 유무를 확정하고 원래 답변을 막지 않은 채 종료
+  → 2~4개의 ranked next action으로 packet 봉인
+  → Pet에 존재하는 ranked 카드만 표시
   → packet_id + revision + option_id 원자적 claim
-     ├─ 1 recommended ─┐
-     ├─ 2 alternative ─┴─> 전체 작업 의미를 같은 episode의 continuation으로 materialize
-     ├─ 3 pause ──────────> resume capsule 저장 후 Stop 종료
-     └─ 4 rollback ───────> 현재 episode 전체 복원·검증 후 결과 기록
+     ├─ 1 strongest recommendation ─┐
+     └─ 2...4 lower priorities ─────┴─> 전체 action을 새 사용자 턴으로 queue
 ```
 
-운영 제안 채널은 Hook-first + 번들 로컬 MCP다. 일반 최종 답변의 자연어 파싱이나 sentinel은 공개 경로가 아니며, app-server도 v0.1 Hook 루프의 숨은 의존성이 아니다.
+운영 제안 채널은 Hook-first + 번들 로컬 MCP다. 일반 최종 답변의 자연어 파싱은 공개 경로가 아니며, app-server도 v0.1 Hook 루프의 숨은 의존성이 아니다.
 
 ### Codex 네이티브 요청
 
@@ -532,33 +517,33 @@ PermissionRequest / Codex native request
   → polling 시점 frontmost 앱으로 best-effort 복귀
   → deny 또는 빈 Hook 응답으로 원래 Codex UI에 반환
 
-관리형 App Server command approval (후속)
+명시적 blabee-codex의 관리형 App Server command approval
   → 전용 request ID를 소유한 broker
   → Pet 3선택(이번만 허용 / 거절 / Codex에서 직접 결정)
   → accept / decline / 원본 TUI 전달
 ```
 
-네이티브 요청은 슬롯 1~4로 변환하지 않는다. 일반 Hook에서는 `allow`를 만들지 않고 거절 또는 Codex 직접 결정만 제공한다. App Server의 `accept`·`decline`·원본 TUI 전달 codec은 구현했지만 live broker와 Pet 관리형 FIFO는 아직 없으므로 진짜 `이번만 허용`은 사용 가능한 기능이 아니다.
+권한 요청은 ranked 결정 카드로 변환하지 않는다. 일반 Hook에서는 `allow`를 만들지 않고 거절 또는 Codex 직접 결정만 제공한다. 사용자가 명시적으로 `blabee-codex`를 실행한 경우에만 App Server broker가 원본 request ID를 소유하고 `accept`·`decline`·원본 TUI 전달을 중계한다.
 
 ## Stop, timeout, stale 보호
 
 - 코디네이터에 2초 안에 연결하지 못하면 Hook은 Codex 종료를 막지 않고 fail-open한다. 다만 Blabee 자동 동작은 실행하지 않는다.
-- 유효한 제안이 없으면 `Stop`은 즉시 정상 종료한다.
-- 유효한 카드가 있으면 60초에 한 번 다시 알리고, 120초에 패킷을 만료한다.
+- `Stop`은 제안 유무와 관계없이 원래 Codex 답변을 붙잡지 않고 정상 종료한다.
+- 유효한 카드는 Pet scheduler가 관리하며 60초에 한 번 다시 알리고, 120초에 패킷을 만료한다.
 - 만료 시 어떤 슬롯도 자동 선택하지 않으며 재개 캡슐을 저장한다.
 - 만료 후 입력, 이전 `packet_id`/`revision`, 더 오래된 event sequence, 예상 episode·상태가 다른 입력은 거부한다.
-- 120초 만료는 선택 전 대기 패킷에 적용한다. B2는 sleep을 포함하는 `mach_continuous_time`으로 60초 reminder·120초 expiry·Pet/형식 보정 token 120초·300초 in-flight timeout을 실행한다. wall jump와 forged timestamp는 logical audit time으로 덮어쓰고 재시작 모호성은 fail-closed 처리한다. T-011은 실제 Stop 입력을 HMAC observation과 request generation으로 구분해 최초 delivery와 후속 active Stop completion을 연결하며, timeout으로 승격된 staged 경계에만 active Stop을 새 waiter로 한 번 허용한다.
+- 120초 만료는 선택 전 대기 패킷에 적용한다. B2는 sleep을 포함하는 `mach_continuous_time`으로 60초 reminder·120초 expiry·Pet/형식 보정 token 120초·300초 in-flight timeout을 실행한다. wall jump와 forged timestamp는 logical audit time으로 덮어쓰고 재시작 모호성은 fail-closed 처리한다.
 - T-011 운영 계층은 open/seal·selection·completion/close·scheduler terminal append의 pre-commit 실패와 commit 뒤 응답 유실을 journal authority로 재조정한다. open→seal 인접성과 최초 seal의 continuous-clock anchor를 보존하고, 모호한 selection authority read는 250 ms backoff하되 원문 token을 재발급하지 않는다. terminal notice와 staged promotion은 exact boundary key로 한 번만 적용한다.
 - 세션마다 활성 Pet 상호작용은 하나이며, 선택 claim은 원자적으로 한 번만 성공한다.
 - 시스템 전체의 전면 카드는 하나뿐이다. 추가 세션 카드는 대기열에 남고 새 카드가 전면 대상을 자동으로 빼앗지 않는다.
 - 전역 단축키는 화면에서 명시적으로 선택된 전면 카드의 프로젝트·세션·에피소드·패킷 ID가 모두 맞을 때만 적용한다.
 - 선택 처리 중 더 새로운 턴·프롬프트·패킷이 생기거나 기준 branch/HEAD가 바뀌면 실행 전에 stale로 중단한다.
 
-## v0.1 체크포인트와 롤백 경계
+## 체크포인트와 롤백 경계
 
-결정 카드를 봉인할 때 카드의 최신 `source_prompt_id`, `source_turn_id`와 `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`를 함께 고정한다. 슬롯 4는 사람이 입력한 시작 프롬프트부터 현재 카드까지 이 episode가 만든 변경 전체만 복원하며 이전 episode나 Blabee 도입 전 상태까지 넓히지 않는다.
+결정 카드를 봉인할 때 카드의 최신 `source_prompt_id`, `source_turn_id`와 `episode_id`, `episode_root_prompt_id`, `episode_baseline_checkpoint_id`를 함께 고정한다. 이 binding은 향후 별도 롤백 기능의 범위를 증명하기 위한 것이며 현재 ranked 1~4 선택지에 롤백 의미를 부여하지 않는다.
 
-v0.1에서 rollback은 사람이 episode를 시작하는 프롬프트를 입력하기 직전 Git 작업 트리가 깨끗하고 checkpoint가 완전하게 검증된 경우에만 활성화한다. 이미 변경이 있으면 1, 2, 3은 사용할 수 있지만 4는 disabled다. Pet 1·2 연속 진행은 같은 기준선을 사용하므로 clean-worktree gate를 다시 적용하지 않는다.
+실제 사용자 저장소 롤백은 아직 공개 기능이 아니다. 추후 제공하려면 사람이 episode를 시작하는 프롬프트 직전 Git 작업 트리가 깨끗하고 checkpoint가 완전하게 검증된 경우에만 별도 보조 제어로 활성화해야 한다. 기존 변경, 외부 부수 효과, 불완전한 scope 또는 동시 작성 가능성이 있으면 fail-closed한다.
 
 복원 순서:
 

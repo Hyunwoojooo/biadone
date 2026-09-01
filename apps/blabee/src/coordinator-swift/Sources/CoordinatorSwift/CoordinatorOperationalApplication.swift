@@ -54,15 +54,12 @@ public actor CoordinatorOperationalApplication {
         "freshness_commit_ambiguous",
         "freshness_transition_pending",
     ]
-    private static let queuedPromptPrefix =
-        "Blabee 선택 작업을 불러옵니다. Hook 세부 조건이 없으면 실행하지 마세요. ref="
     // Before the durable claim protocol, queued submissions exposed the full
     // action JSON in the visible prompt. Such a prompt may still be waiting in
     // Codex when Blabee is upgraded. It has no durable delivery authority, so
     // classify it explicitly instead of allowing it to fall through as human.
     private static let legacyQueuedPromptPrefix =
         "Blabee verified the selected action. Execute exactly this JSON action as a new user turn. A queued transport receipt is not proof that the work succeeded.\n"
-    private static let queuedPromptReferenceBytes = 16
     private static let maximumQueuedActionJSONBytes = 60_000
     private static let maximumUserPromptAdditionalContextBytes = 65_536
     private static let maximumPermissionRequestWaitNanoseconds: UInt64 = 50_000_000_000
@@ -208,7 +205,6 @@ public actor CoordinatorOperationalApplication {
         let toolName: String
         let description: String?
         let commandPreview: String?
-        let allowOnceAvailable: Bool
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
@@ -224,7 +220,6 @@ public actor CoordinatorOperationalApplication {
                 "tool_name": toolName,
                 "description": description as Any? ?? NSNull(),
                 "command_preview": commandPreview as Any? ?? NSNull(),
-                "allow_once_available": allowOnceAvailable,
                 "delivery_pending": deliveryToken != nil,
             ]
         }
@@ -1544,7 +1539,6 @@ private extension CoordinatorOperationalApplication {
                     toolName: toolName,
                     description: description,
                     commandPreview: commandPreview,
-                    allowOnceAvailable: true,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
                     deliveryToken: nil
@@ -1581,7 +1575,7 @@ private extension CoordinatorOperationalApplication {
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
         let decision = try string(payload, "decision")
         try require(
-            ["allow", "deny", "defer_to_codex"].contains(decision),
+            ["deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         if let resolved = resolvedPermissionRequests.first(where: {
@@ -1625,12 +1619,6 @@ private extension CoordinatorOperationalApplication {
             isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
             "permission_request_not_global_head"
         )
-        if decision == "allow" {
-            try require(
-                head.allowOnceAvailable,
-                "permission_request_decision_unavailable"
-            )
-        }
         try byteExactRequire(head.projectID, projectID, "permission_request_binding_mismatch")
         try byteExactRequire(head.sessionID, sessionID, "permission_request_binding_mismatch")
         try byteExactRequire(head.turnID, turnID, "permission_request_binding_mismatch")
@@ -1867,7 +1855,7 @@ private extension CoordinatorOperationalApplication {
 
     func permissionHookResponse(decision: String) throws -> Data {
         try require(
-            ["allow", "deny", "defer_to_codex"].contains(decision),
+            ["deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         return try publicData(["decision": decision])
@@ -1881,7 +1869,7 @@ private extension CoordinatorOperationalApplication {
         deliveryToken: String
     ) throws -> Data {
         try require(
-            ["allow", "deny", "defer_to_codex"].contains(decision),
+            ["deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         return try publicData([
@@ -2993,7 +2981,9 @@ private extension CoordinatorOperationalApplication {
             continuationID: continuationID,
             cwd: cwd
         )
-        let message = Self.queuedPromptMessage(reference: reference)
+        guard let message = QueuedPromptEnvelope.message(reference: reference) else {
+            throw CoordinatorError("queued_prompt_reference_invalid")
+        }
         try secretCorpus.assertNoKnownSecret(in: Data(message.utf8))
         boundary.phase = .dispatched
         boundary.continuationID = continuationID
@@ -3243,69 +3233,19 @@ private extension CoordinatorOperationalApplication {
     ) throws -> Data {
         let proposal = boundary.proposalObject
         let outcome = try object(proposal, "outcome")
-        let rankedActions = proposal["next_actions"] as? [[String: Any]]
-        var choices: [[String: Any]]
-        if let rankedActions {
-            choices = rankedActions.enumerated().map { offset, action in
-                let slot = offset + 1
-                return [
-                    "slot": slot,
-                    "kind": slot == 1 ? "recommended_action" : "alternative_action",
-                    "enabled": true,
-                    "disabled_reason": NSNull(),
-                    "option_id": idGenerator("option_rank_\(slot)"),
-                    "action_id": idGenerator("action_rank_\(slot)"),
-                    "action": action,
-                ]
-            }
-        } else {
-            let recommended = try object(proposal, "recommended_next")
-            let alternative = proposal["alternative_next"] as? [String: Any]
-            choices = [[
-                "slot": 1,
-                "kind": "recommended_action",
+        guard let rankedActions = proposal["next_actions"] as? [[String: Any]]
+        else { throw CoordinatorError("invalid_proposal") }
+        let choices: [[String: Any]] = rankedActions.enumerated().map { offset, action in
+            let slot = offset + 1
+            return [
+                "slot": slot,
+                "kind": slot == 1 ? "recommended_action" : "alternative_action",
                 "enabled": true,
                 "disabled_reason": NSNull(),
-                "option_id": idGenerator("option_recommended"),
-                "action_id": idGenerator("action_recommended"),
-                "action": recommended,
-            ]]
-            if let alternative {
-                choices.append([
-                    "slot": 2,
-                    "kind": "alternative_action",
-                    "enabled": true,
-                    "disabled_reason": NSNull(),
-                    "option_id": idGenerator("option_alternative"),
-                    "action_id": idGenerator("action_alternative"),
-                    "action": alternative,
-                ])
-            } else {
-                choices.append([
-                    "slot": 2,
-                    "kind": "alternative_action",
-                    "enabled": false,
-                    "disabled_reason": "no_safe_meaningful_alternative",
-                    "option_id": idGenerator("option_alternative_disabled"),
-                    "action_id": NSNull(),
-                ])
-            }
-            choices.append([
-                "slot": 3,
-                "kind": "pause",
-                "enabled": true,
-                "disabled_reason": NSNull(),
-                "option_id": idGenerator("option_pause"),
-                "action_id": idGenerator("action_pause"),
-            ])
-            choices.append([
-                "slot": 4,
-                "kind": "rollback",
-                "enabled": false,
-                "disabled_reason": "rollback_not_enabled_in_build",
-                "option_id": idGenerator("option_rollback"),
-                "action_id": NSNull(),
-            ])
+                "option_id": idGenerator("option_rank_\(slot)"),
+                "action_id": idGenerator("action_rank_\(slot)"),
+                "action": action,
+            ]
         }
         var packet: [String: Any] = [
             "schema_version": "1.0",
@@ -3327,9 +3267,7 @@ private extension CoordinatorOperationalApplication {
             ],
             "choices": choices,
         ]
-        if rankedActions != nil {
-            packet["decision_layout"] = "ranked_next_actions"
-        }
+        packet["decision_layout"] = "ranked_next_actions"
         packet.merge(boundary.binding.jsonObject) { current, _ in current }
         return try StrictJSONTransport.data(forJSONObject: packet)
     }
@@ -3469,17 +3407,7 @@ private extension CoordinatorOperationalApplication {
             "schema_version", "proposal_id", "correlation_token", "interaction_kind",
             "task_goal", "outcome", "reported_side_effects",
         ]
-        let isRanked = proposal["next_actions"] != nil
-        if isRanked {
-            try exactKeys(proposal, required: commonKeys.union(["next_actions"]))
-        } else {
-            try exactKeys(
-                proposal,
-                required: commonKeys.union([
-                    "recommended_next", "alternative_next", "pause_capsule",
-                ])
-            )
-        }
+        try exactKeys(proposal, required: commonKeys.union(["next_actions"]))
         try require(proposal["schema_version"] as? String == "1.0", "invalid_proposal")
         try require(proposal["interaction_kind"] as? String == "blabee_decision", "invalid_proposal")
         _ = try identifier(string(proposal, "proposal_id"), "proposal_id")
@@ -3495,26 +3423,14 @@ private extension CoordinatorOperationalApplication {
         let outcomeStatus = try string(outcome, "status")
         try require(["completed", "partial", "blocked", "failed"].contains(outcomeStatus), "invalid_proposal")
         _ = try nonEmptyString(outcome, "summary", maximum: 8_192)
-        if isRanked {
-            guard let actions = proposal["next_actions"] as? [[String: Any]],
-                  (2...4).contains(actions.count)
-            else { throw CoordinatorError("invalid_proposal") }
-            var canonicalActions = Set<Data>()
-            for action in actions {
-                try validateAction(action)
-                let canonical = try StrictJSONTransport.data(forJSONObject: action)
-                try require(canonicalActions.insert(canonical).inserted, "invalid_proposal")
-            }
-        } else {
-            try validateAction(try object(proposal, "recommended_next"))
-            if proposal["alternative_next"] is NSNull {
-                // Explicit null is the only disabled alternative representation.
-            } else {
-                try validateAction(try object(proposal, "alternative_next"))
-            }
-            let pause = try object(proposal, "pause_capsule")
-            try exactKeys(pause, required: ["resume_first"])
-            _ = try nonEmptyString(pause, "resume_first", maximum: 8_192)
+        guard let actions = proposal["next_actions"] as? [[String: Any]],
+              (2...4).contains(actions.count)
+        else { throw CoordinatorError("invalid_proposal") }
+        var canonicalActions = Set<Data>()
+        for action in actions {
+            try validateAction(action)
+            let canonical = try StrictJSONTransport.data(forJSONObject: action)
+            try require(canonicalActions.insert(canonical).inserted, "invalid_proposal")
         }
         guard let sideEffects = proposal["reported_side_effects"] as? [[String: Any]],
               sideEffects.count <= 128
@@ -3570,16 +3486,18 @@ private extension CoordinatorOperationalApplication {
         guard !normalizedPrompt.hasPrefix(Self.legacyQueuedPromptPrefix) else {
             return .rejected
         }
-        guard normalizedPrompt.hasPrefix(Self.queuedPromptPrefix) else { return .human }
-        let reference = String(normalizedPrompt.dropFirst(Self.queuedPromptPrefix.count))
-        guard Self.isQueuedPromptReference(reference),
-              Self.byteExact(
-                  normalizedPrompt,
-                  Self.queuedPromptMessage(reference: reference)
-              )
-        else { return .rejected }
+        let reference: String
+        switch QueuedPromptEnvelope.classify(prompt) {
+        case .human:
+            return .human
+        case .malformed:
+            return .rejected
+        case .exact(let value):
+            reference = value
+        }
 
-        let state = try routing.authoritativeState()
+        let authority = try routing.queuedActionAuthorityProjection()
+        let state = authority.state
         var matches: [(continuation: CoordinatorContinuationState, actionJSON: Data)] = []
         for continuation in state.continuations.values {
             guard continuation.dispatchMode == "queued_next_turn",
@@ -3617,18 +3535,21 @@ private extension CoordinatorOperationalApplication {
         let actionSHA256 = Self.sha256Fingerprint(match.actionJSON)
         let claimedActionJSON: Data
         do {
+            let command = try StrictJSONTransport.data(forJSONObject: [
+                "type": "claim_queued_action_context",
+                "event_id": idGenerator("event_queued_action_context_claimed"),
+                "occurred_at": try wallInstantGenerator().rawValue,
+                "binding": match.continuation.binding.jsonObject,
+                "continuation_id": match.continuation.continuationID,
+                "delivery_turn_id": turnID,
+                "queued_prompt_sha256": queuedPromptSHA256,
+                "cwd_sha256": cwdSHA256,
+                "action_sha256": actionSHA256,
+            ])
             claimedActionJSON = try routing.routeQueuedActionContextClaim(
-                StrictJSONTransport.data(forJSONObject: [
-                    "type": "claim_queued_action_context",
-                    "event_id": idGenerator("event_queued_action_context_claimed"),
-                    "occurred_at": try wallInstantGenerator().rawValue,
-                    "binding": match.continuation.binding.jsonObject,
-                    "continuation_id": match.continuation.continuationID,
-                    "delivery_turn_id": turnID,
-                    "queued_prompt_sha256": queuedPromptSHA256,
-                    "cwd_sha256": cwdSHA256,
-                    "action_sha256": actionSHA256,
-                ])
+                command,
+                using: authority,
+                expectedActionJSON: match.actionJSON
             )
         } catch let error as CoordinatorError where [
             "queued_action_context_already_claimed",
@@ -3678,7 +3599,7 @@ private extension CoordinatorOperationalApplication {
         input.append(0)
         input.append(Data(cwd.utf8))
         return SHA256.hash(data: input)
-            .prefix(queuedPromptReferenceBytes)
+            .prefix(QueuedPromptEnvelope.referenceByteCount)
             .map { String(format: "%02x", $0) }
             .joined()
     }
@@ -3687,18 +3608,6 @@ private extension CoordinatorOperationalApplication {
         "sha256:" + SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
-    }
-
-    private static func queuedPromptMessage(reference: String) -> String {
-        queuedPromptPrefix + reference
-    }
-
-    private static func isQueuedPromptReference(_ value: String) -> Bool {
-        value.utf8.count == queuedPromptReferenceBytes * 2
-            && value.utf8.allSatisfy { byte in
-                (byte >= 0x30 && byte <= 0x39)
-                    || (byte >= 0x61 && byte <= 0x66)
-            }
     }
 
     private func promptContext(session: Session) throws -> Data {

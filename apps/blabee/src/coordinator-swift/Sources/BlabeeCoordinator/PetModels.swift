@@ -204,13 +204,11 @@ struct PetSession: Sendable, Equatable {
 }
 
 enum PetPermissionDecision: String, Sendable, Equatable, CaseIterable {
-    case allow
     case deny
     case deferToCodex = "defer_to_codex"
 
     var displayTitle: String {
         switch self {
-        case .allow: "이번만 허용"
         case .deny: "거절"
         case .deferToCodex: "Codex에서 직접 결정"
         }
@@ -386,7 +384,6 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
     let cwd: String
     let toolName: String
     let requestDescription: String?
-    let allowOnceAvailable: Bool
     let commandPreview: String
     let deliveryPending: Bool
 
@@ -397,8 +394,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             jsonObject,
             [
                 "arrival_sequence", "request_id", "project_id", "session_id", "turn_id", "cwd",
-                "tool_name", "description", "command_preview", "allow_once_available",
-                "delivery_pending",
+                "tool_name", "description", "command_preview", "delivery_pending",
             ],
             "permission_request"
         )
@@ -420,7 +416,6 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             "description",
             maximum: 4_096
         )
-        allowOnceAvailable = try petBoolean(jsonObject, "allow_once_available")
         deliveryPending = try petBoolean(jsonObject, "delivery_pending")
         commandPreview = try petString(
             jsonObject,

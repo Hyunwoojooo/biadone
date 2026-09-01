@@ -161,9 +161,9 @@ daemon은 `CoordinatorOperationalApplication` 하나를 UDS owner에 연결하�
 `PermissionRequest` 중계는 동결된 `native-request` v1과 별개인 process-local
 운영 IPC다. 일반 Hook 경로는 최상위 필드와 `tool_input` 필드를 exact allowlist로
 검사하고, `permission_mode: default`의 `Bash` 요청 중 120 Unicode scalar 이하인
-NFC 안전 단일 행 command만 받는다. 이때 Pet은 `이번만 허용`, `거절`,
-`Codex에서 직접 결정`을 표시하고, `이번만 허용`은 현재 Hook 요청 하나의 공식
-`allow`로만 출력한다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool, 긴·여러
+NFC 안전 단일 행 command만 받는다. 이때 Pet은 `거절`, `Codex에서 직접 결정`만
+표시하고 Hook `allow`는 출력하지 않는다. `이번만 허용`은 명시적 관리형 App Server
+요청의 `accept`로만 제공한다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool, 긴·여러
 행·제어/방향성 문자를 포함한 command는 일부만 표시하지 않고 빈 stdout으로 끝내
 Codex 네이티브 승인 체계에 결정을 돌려준다.
 
@@ -196,7 +196,7 @@ daemon·transport 오류, 상한 초과, Hook peer disconnect, 같은 세션의 
 요청은 사용자 결정 120초, broker 130초, socket 135초의 별도 예산을 사용한다.
 
 Hook 카드를 선택하면 코디네이터는 선택된 요청을 전역 FIFO 선두로 유지한다. Hook
-CLI가 allow/deny의 공식 승인 JSON을 stdout에 성공적으로 쓰거나, `Codex에서 직접
+CLI가 deny 공식 승인 JSON을 stdout에 성공적으로 쓰거나, `Codex에서 직접
 결정`의 빈 stdout EOF를 명시적으로 전달한 뒤 exact delivery ack를 보낸 경우에만
 Pet receipt를 반환한다. 이 receipt도 Codex가 stdout을 소비했거나 명령을 실행·완료했다는
 증거는 아니다. write·EOF·ack가 실패하거나 결과가 불명확하면 자동으로 재출력·재시도하지
@@ -209,40 +209,31 @@ Pet receipt를 반환한다. 이 receipt도 Codex가 stdout을 소비했거나 �
 로컬 dogfood 실행:
 
 ```sh
-# 네이티브 Codex 의미를 보존하는 일반 경로
-/absolute/path/to/local-dogfood/bin/codex-with-blabee [Codex arguments]
+# Plugin/Hook을 사용하는 일반 경로
+codex [Codex arguments]
 
 # App Server 권한 중계를 명시적으로 선택하는 실험 경로
 /absolute/path/to/local-dogfood/bin/blabee-codex [Codex TUI arguments]
 # 예: blabee-codex resume <thread-id>
 ```
 
-`codex-with-blabee`는 `BLABEE_COORDINATOR_BINARY`, `BLABEE_SOCKET`,
-`BLABEE_MANAGED_APPROVALS`, `BLABEE_MANAGED_CODEX_AUTH_TOKEN`,
-`BLABEE_RUNTIME_IDENTITY`를 제거한 뒤 원래 Codex에 같은 argv를 전달한다. 자동
-연결이 생성하는 네이티브 셸 경로도 이 관리 상태를 물려주지 않는다.
+일반 경로는 Blabee가 만든 native passthrough를 거치지 않는다. 사용자 셸에서 원래
+`codex`를 그대로 실행하며, Blabee는 그 argv나 환경을 정리하거나 바꾸지 않는다.
 `blabee-codex`는 호환 별칭이 아니라 사용자가 직접 선택한 관리형 실험 진입점이다.
-관리형 실행은 먼저 인자 문법을 검증하고, 실행할 exact native Codex를 resolve한 뒤
-trust·지원 버전 자격을 확인한다. 이 단계가 실패하면 안전한 실행 대상을 확정하지
-못한 것이므로 fail-closed하며 네이티브 fallback하지 않는다. 그 exact executable이
-확정된 뒤 token·listener 같은 준비 단계가 첫 관리형 자식을 시작하기 전에 실패한
-경우에만 같은 argv의 네이티브 Codex를 정확히 한 번 실행한다. 자식이 하나라도
+관리형 실행은 먼저 인자 문법을 검증하고, 첫 번째로 발견된 native Codex source의
+trust를 확인한 뒤 사용자 전용 고정 복사본으로 지원 버전을 검사한다. 이 단계가
+실패하면 안전한 실행 대상을 확정하지 못한 것이므로 fail-closed하며 네이티브
+fallback하지 않는다. 고정 복사본이 확정된 뒤 token·listener 같은 준비 단계가 첫
+관리형 자식을 시작하기 전에 실패한 경우에만 같은 argv로 그 복사본을 정확히 한 번
+실행한다. 자식이 하나라도
 시작된 뒤에는 사용자 작업이 시작됐을 수 있으므로 자동 재실행하지 않는다. 시작한
 자식은 정리하고 실패를 보고한다. signal로 끝난 자식의 종료 상태는
 `128 + signal` 규칙으로 보존한다.
+세부 신뢰 기준은 [관리형 Codex 실행 신뢰 경계](docs/MANAGED_CODEX_TRUST.md)에 고정한다.
 
-Pet의 `Blabee 설정`에서 **Codex 자동 연결**을 명시적으로 켜면 실제 zsh 시작
-파일에는 Blabee가 소유한 versioned source 블록 하나만 추가된다. 기본 대상은
-`~/.zshrc`이고, 안전하게 해석할 수 있는 절대 `ZDOTDIR`가 있으면 그 아래의
-`.zshrc`를 사용한다. 동적으로 계산되는 경로처럼 대상을 증명할 수 없으면 파일을
-추측해 수정하지 않고 실패 폐쇄한다. 실제 함수는
-`~/Library/Application Support/Blabee/shell/v1/` 아래의 별도 관리 파일에 둔다.
-
-v4 관리 함수는 모든 기본 `codex` 호출을 활성화 때 확정한 공식 Codex 절대 경로로
-직접 `exec`한다. 인수가 없거나 `resume`인 호출도 App Server나 `--remote` 경로로
-바꾸지 않고 원래 Codex가 그대로 처리한다. App Server 기반 권한 중계는 위의
-`blabee-codex`처럼 사용자가 명시적으로 선택한 실험 진입점에만 남긴다. 따라서
-사용자는 다음 명령을 포함해 평소의 Codex 명령 형태와 동작을 그대로 사용한다.
+Blabee는 `.zshrc`, alias, shell function 또는 전역 `codex` 명령을 설치하거나
+변경하지 않는다. 일반 Codex와 Plugin/Hook 통합은 다음과 같이 원래 명령 형태와
+동작을 그대로 사용한다.
 
 ```sh
 codex
@@ -250,20 +241,23 @@ codex resume
 codex resume <thread-id>
 ```
 
-활성화 시 `0600` 승인 파일에 공식 Codex의 경로·identity·지원 버전과 정책 버전을
-기록한다. 이 기록과 allowlist는 Blabee의 관리형 실험 기능을 켤 수 있는지만 결정하며,
-기본 Codex 실행 허가로 사용하지 않는다. coordinator·daemon·승인 기록 또는 Blabee
-고정 실행기가 없거나 손상돼도 새 셸의 기본 명령은 기록된 공식 Codex를 직접 실행한다.
-고정 실행기는 업데이트 전에 이미 Blabee 함수를 읽은 열린 셸을 위해 네이티브
-pass-through로만 보존하며, 새 함수의 기본 실행 경로에는 포함하지 않는다.
-
-자동 연결은 기본 비활성이고 설정 화면 조회만으로 셸 파일을 변경하지 않는다. 켜기와
-끄기는 명시적인 버튼에서만 수행하며, 해제할 때도 Blabee marker와 Blabee가 생성한
-관리 상태만 제거한다. 해제 뒤 새 셸은 Blabee 함수를 읽지 않고, 이미 열린 셸도
-보존된 네이티브 pass-through를 통해 Codex를 계속 실행한다. 이미 실행 중인 Codex를
-관리형 App Server 승인 경로로 사후 전환할 수는 없으므로, 그 실험 기능이 필요할 때만
-한 번 `/exit`한 뒤 `blabee-codex resume <thread-id>`로 다시 시작한다. 일반
-Plugin/Hook 연결과 Hook 신뢰 여부는 이 관리형 실험 경로와 별개의 Codex 보안 경계다.
+`blabee-codex`는 호출할 때마다 PATH·NVM·표준 Homebrew 후보의 소유권, 모드, ACL과
+심볼릭 링크 target을 새로 검사한다. 첫 번째로 존재하는 직접 실행형 Mach-O 후보를
+canonical current-user 전용 임시 경로에 고정 복사하고 그 복사본에서 지원 버전을
+한 번 확인한다. 버전 probe는 private process group과 bounded output을 사용하며 정상
+종료·timeout·출력 초과에서 descendant를 정리한다.
+`blabee-codex` wrapper는 coordinator를 실행하기 전에 `DYLD_*`, `__XPC_DYLD_*`,
+`LD_*` loader override를 값 노출 없이 거부하고, coordinator도 같은 환경 경계를 다시
+검증한다. wrapper 검사 도구가 실패해도 실행을 계속하지 않는다. 관리형 경로만 실패
+폐쇄하며 일반 `codex` 환경은 변경하지 않는다.
+probe·App Server·TUI·보조 세션과 fallback은 모두 같은 검증된 환경 snapshot을 사용한다.
+승인 파일이나 원래 Codex 경로는 영속 저장하지 않는다. App Server·TUI·보조 세션과
+fallback은 모두 같은 복사본만 실행하며 첫 App Server 시작 직전을 포함한 각 spawn
+경계에서 identity가 바뀌면 실패 폐쇄한다. 이 검사는
+명시적 관리형 기능에만 적용되며 기본 `codex` 실행 허가에는 관여하지 않는다. 이미 실행 중인
+Codex를 관리형 App Server 승인 경로로 사후 전환할 수는 없으므로, 그 기능이 필요할
+때만 한 번 `/exit`한 뒤 `blabee-codex resume <thread-id>`로 다시 시작한다. 일반
+Plugin/Hook 연결과 Hook 신뢰 여부는 이 관리형 경로와 별개의 Codex 보안 경계다.
 
 위 `blabee-codex` wrapper로 새로 시작하거나 재개한 세션만 관리하며 이미 독립 실행 중인 TUI에는
 연결하지 않는다. App Server WebSocket 계약은 Codex 버전 의존 실험 경로이므로
@@ -295,9 +289,10 @@ Pet은 먼저 14개 identity 필드의 `blabee_pet_focus_request`로 대기 중�
 봉인 패킷·revision·option·9-field binding과 byte-exact로 일치하고, 그 카드가
 이미 전면으로 선택돼 있을 때만 실행한다. `select` 자체는 전면 카드를 바꾸지
 않으므로 전환 뒤 도착한 오래된 단축키가 다른 카드를 다시 선택해 실행할 수 없다.
-슬롯 1은 동적 권장 작업, 슬롯 2는 동적 대안 또는 비활성, 슬롯 3은 보류다.
-슬롯 4는 계약상의 rollback 자리이지만 현재 제품 빌드에서는
-`rollback_not_enabled_in_build`로 비활성이다.
+현재 새 결정 패킷은 우선순위가 매겨진 실행 가능한 다음 항목 2~4개만 가진다.
+슬롯 1은 가장 권장하는 작업이고 슬롯 2~4는 순서대로 차선이다. 보류와 롤백은
+새 숫자 슬롯으로 발행하지 않는다. 과거 고정 네 슬롯 패킷의 보류·rollback 의미는
+이미 저장된 journal 및 frozen v1 packet replay 호환 목적으로만 읽는다.
 
 사람이 제출한 새 프롬프트에는 경계용 correlation token을 한 번 만들고 지정된
 `UserPromptSubmit` `additionalContext`에만 전달한다. MCP 제안은 그 exact token을
@@ -338,17 +333,28 @@ environment/filesystem identity fallback을 사용할 수 있다.
 
 dogfood summary의 `runtime.identity.assembly_manifest_sha256`은 위 결합에 들어가는
 manifest digest를 정적으로 확인하기 위한 값일 뿐 UDS wire의 `runtime_identity`가
-아니다. 실제 wire identity에는 실행 중 CDHash가 추가로 필요하므로
+아니다. 실제 wire identity와 manifest digest는 서명 후 패키지 coordinator의
+`blabee.runtime-identity-inspection.v2` 응답이 같은 검증 snapshot으로 계산해
+`runtime.identity.wire_runtime_identity`에 별도로 기록한다.
 `strategy: process_cached_signed_code_and_manifest_v1`과
 `resolved_at_process_start: true`가 나타내듯 process 시작 때 결정된다.
 
 모든 새 UDS 요청은 `blabee.runtime-identity.v1/` request-type namespace와 같은
-runtime identity를 함께 보내고, 서버는 identity와 namespace를 모두 확인한 뒤에만
-실제 operation을 dispatch한다. 새 client가 구 server에 붙으면 구 server가 모르는
-namespaced type에서, 구 client가 새 server에 붙으면 identity/namespace 검사에서
-mutation 전에 거부된다. response identity도 일치해야 성공으로 소비하므로 앱·Plugin
-교체 도중 old/new runtime 혼합이 요청을 실행한 뒤 뒤늦게 실패하는 경로를 만들지
-않는다.
+runtime identity를 함께 보낸다. 현재 identity는 기존 전체 operation을 사용한다.
+assembly manifest v2가 검증된 이전 `Blabee.app`에서 계산해 명시적으로 승인한
+identity는 `session_start`, `user_prompt_submit`, `emit_decision`, `stop`만 사용할 수
+있다. 승인된 이전 요청의 성공·application error response는 요청 identity를 echo해
+기존 client의 exact response 검사를 만족한다. 그 밖의 이전 identity와 Pet, Doctor,
+프로젝트 설정, 권한 승인 operation은 dispatch 전에 거부한다. 호환 목록은 최대 두
+개이며 다음 build로 자동 상속하지 않는다. 새 client가 구 server에 붙는 경로도 기존
+namespaced type 검사에서 계속 mutation 전에 거부된다.
+
+관리형 App Server 승인의 취소 가능 socket client도 이 계약을 예외 없이 사용한다.
+선택 요청과 delivery ack의 response는 request ID와 exact runtime identity를 먼저
+검사한다. downstream write 전 선택 요청의 mismatch·transport·application failure는
+decision이나 token을 신뢰·재시도하지 않고 원래 Codex 승인 경로로 복귀한다. write 뒤
+delivery ack는 한 번만 보내며 실패해도 재시도·네이티브 fallback·정상 bridge 종료를
+하지 않고 coordinator의 미확정 전달 상태를 보존한다.
 
 한 줄에 하나의 JSON request를 stdin으로 받고 같은 `request_id`를 가진 JSON
 response를 stdout으로 반환한다. 원문 continuation token과 키 재료는 로그에

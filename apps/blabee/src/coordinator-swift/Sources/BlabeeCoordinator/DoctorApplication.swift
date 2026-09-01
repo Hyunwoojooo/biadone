@@ -153,6 +153,11 @@ struct DoctorDependencies {
     var currentRuntimeIdentity: String
     var installedRuntimeIdentity: (_ executable: URL) -> String?
     var processRunner: (_ executable: URL, _ arguments: [String], _ timeoutMilliseconds: Int) throws -> DoctorProcessResult
+    var hookTrustRequester: (
+        _ executable: URL,
+        _ projectURL: URL,
+        _ timeoutMilliseconds: Int
+    ) throws -> Data
     var daemonRequester: (_ socketPath: String) throws -> Data
 
     static func live() -> DoctorDependencies {
@@ -166,6 +171,7 @@ struct DoctorDependencies {
                 )
             },
             processRunner: DoctorProcessRunner.run,
+            hookTrustRequester: DoctorHookTrustInspector.inspect,
             daemonRequester: { socketPath in
                 let client = try UnixDomainSocketClient(socketPath: socketPath)
                 let result = try client.request(
@@ -234,11 +240,10 @@ struct DoctorApplication {
                 && pluginInspection.check.status == .pass
         ))
         checks.append(checkMCPRuntime(appURL: arguments.appURL, pluginURL: pluginURL))
-        checks.append(DoctorCheck(
-            id: "hook_trust",
-            status: .actionRequired,
-            code: "hook_review_required",
-            summary: "Codex에서 /hooks를 실행해 현재 Blabee Hook 해시를 직접 검토하세요."
+        checks.append(checkHookTrust(
+            codexURL: codexURL,
+            pluginInspection: pluginInspection,
+            projectURL: arguments.projectURL
         ))
 
         let daemonInspection = inspectDaemon(socketPath: arguments.socketPath)
@@ -254,6 +259,13 @@ private extension DoctorApplication {
     struct PluginInspection {
         let check: DoctorCheck
         let sourceURL: URL?
+        let pluginID: String?
+
+        init(check: DoctorCheck, sourceURL: URL?, pluginID: String? = nil) {
+            self.check = check
+            self.sourceURL = sourceURL
+            self.pluginID = pluginID
+        }
     }
 
     struct DoctorProject {
@@ -462,7 +474,145 @@ private extension DoctorApplication {
             id: "plugin_installation", status: .pass,
             code: "plugin_enabled",
             summary: "Codex의 Blabee 플러그인이 설치 및 활성화되어 있습니다."
-        ), sourceURL: sourceURL)
+        ), sourceURL: sourceURL, pluginID: entry["pluginId"] as? String)
+    }
+
+    func checkHookTrust(
+        codexURL: URL?,
+        pluginInspection: PluginInspection,
+        projectURL: URL
+    ) -> DoctorCheck {
+        guard pluginInspection.check.status == .pass,
+              let codexURL,
+              let pluginID = pluginInspection.pluginID,
+              let pluginSourceURL = pluginInspection.sourceURL
+        else { return hookTrustUnavailableCheck() }
+
+        let response: Data
+        do {
+            response = try dependencies.hookTrustRequester(
+                codexURL, projectURL, 5_000
+            )
+        } catch {
+            return hookTrustUnavailableCheck()
+        }
+
+        switch inspectHookTrustResponse(
+            response,
+            expectedPluginID: pluginID,
+            pluginSourceURL: pluginSourceURL,
+            projectURL: projectURL
+        ) {
+        case .trusted:
+            return DoctorCheck(
+                id: "hook_trust", status: .pass,
+                code: "hook_trust_ok",
+                summary: "Codex에서 Blabee Hook 4개의 활성화 및 신뢰 상태를 확인했습니다."
+            )
+        case .reviewRequired:
+            return DoctorCheck(
+                id: "hook_trust", status: .actionRequired,
+                code: "hook_review_required",
+                summary: "Codex에서 /hooks를 실행해 현재 Blabee Hook 상태를 검토하세요."
+            )
+        case .malformed:
+            return DoctorCheck(
+                id: "hook_trust", status: .actionRequired,
+                code: "hook_trust_unavailable",
+                summary: "Codex의 Blabee Hook 신뢰 상태를 안전하게 확인하지 못했습니다."
+            )
+        }
+    }
+
+    enum HookTrustInspectionResult {
+        case trusted
+        case reviewRequired
+        case malformed
+    }
+
+    func inspectHookTrustResponse(
+        _ data: Data,
+        expectedPluginID: String,
+        pluginSourceURL: URL,
+        projectURL: URL
+    ) -> HookTrustInspectionResult {
+        let maximumBytes = 1_048_576
+        guard data.count <= maximumBytes,
+              let envelope = try? StrictJSONTransport.object(
+                from: data,
+                limits: StrictJSONLimits(maximumBytes: maximumBytes, maximumDepth: 32)
+              ),
+              envelope["jsonrpc"] == nil || envelope["jsonrpc"] as? String == "2.0",
+              ExactJSONInteger.int64(envelope["id"]) == 2,
+              envelope["error"] == nil,
+              let result = envelope["result"] as? [String: Any],
+              Set(result.keys) == Set(["data"]),
+              let entries = result["data"] as? [[String: Any]],
+              entries.count == 1
+        else { return .malformed }
+
+        let entry = entries[0]
+        guard Set(entry.keys) == Set(["cwd", "errors", "hooks", "warnings"]),
+              entry["cwd"] as? String == projectURL.standardizedFileURL.path,
+              let errors = entry["errors"] as? [Any],
+              entry["warnings"] is [String],
+              let hooks = entry["hooks"] as? [[String: Any]]
+        else { return .malformed }
+        guard errors.isEmpty else { return .reviewRequired }
+
+        let matchingHooks = hooks.filter { $0["pluginId"] as? String == expectedPluginID }
+        let expectedEvents = Set([
+            "permissionRequest", "sessionStart", "userPromptSubmit", "stop",
+        ])
+        guard matchingHooks.count == expectedEvents.count else {
+            return .reviewRequired
+        }
+
+        var observedEvents = Set<String>()
+        var observedSourcePath: String?
+        for hook in matchingHooks {
+            guard let eventName = hook["eventName"] as? String,
+                  expectedEvents.contains(eventName),
+                  observedEvents.insert(eventName).inserted,
+                  strictBool(hook["enabled"]) == true,
+                  let trustStatus = hook["trustStatus"] as? String,
+                  let isManaged = strictBool(hook["isManaged"]),
+                  (trustStatus == "trusted" && !isManaged)
+                    || (trustStatus == "managed" && isManaged),
+                  hook["source"] as? String == "plugin",
+                  let sourcePath = hook["sourcePath"] as? String,
+                  sourcePath.hasPrefix("/"),
+                  !sourcePath.contains("\0"),
+                  URL(fileURLWithPath: sourcePath).standardizedFileURL.path == sourcePath,
+                  sourcePath.hasSuffix("/hooks/hooks.json"),
+                  let currentHash = hook["currentHash"] as? String,
+                  !currentHash.isEmpty,
+                  currentHash.utf8.count <= 256
+            else { return .reviewRequired }
+
+            if let observedSourcePath {
+                guard observedSourcePath == sourcePath else { return .reviewRequired }
+            } else {
+                observedSourcePath = sourcePath
+            }
+        }
+        guard observedEvents == expectedEvents,
+              let observedSourcePath,
+              let activeHooks = boundedFileData(URL(fileURLWithPath: observedSourcePath)),
+              let installedHooks = boundedFileData(
+                pluginSourceURL.appendingPathComponent("hooks/hooks.json")
+              ),
+              activeHooks == installedHooks
+        else { return .reviewRequired }
+        return .trusted
+    }
+
+    func hookTrustUnavailableCheck() -> DoctorCheck {
+        DoctorCheck(
+            id: "hook_trust", status: .actionRequired,
+            code: "hook_trust_unavailable",
+            summary: "Codex의 Blabee Hook 신뢰 상태를 안전하게 확인하지 못했습니다."
+        )
     }
 
     func checkPluginLayout(

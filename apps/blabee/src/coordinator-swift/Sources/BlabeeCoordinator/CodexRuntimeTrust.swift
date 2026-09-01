@@ -46,7 +46,7 @@ enum CodexRuntimeTrustError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case let .invalidRecord(reason):
-            "Codex runtime approval record is invalid: \(reason)"
+            "Codex runtime qualification is invalid: \(reason)"
         case let .invalidSource(reason):
             "Codex runtime source is invalid: \(reason)"
         case let .unsafePath(reason):
@@ -87,12 +87,10 @@ struct CodexRuntimeMonitoredEntry: Equatable, Sendable {
     }
 }
 
-/// Codable identity used by the durable 0600 approval record.
-///
-/// It deliberately includes metadata that is not needed merely to open a
-/// file. That lets a later process detect an in-place update as well as a path
-/// replacement before deciding whether full version qualification is needed.
-struct CodexRuntimeFileIdentity: Codable, Equatable, Sendable {
+/// Security identity retained for one managed process tree. It deliberately
+/// includes mutation metadata so later child spawns can detect both in-place
+/// updates and path replacement without running another version process.
+struct CodexRuntimeFileIdentity: Equatable, Sendable {
     let device: UInt64
     let inode: UInt64
     let mode: UInt32
@@ -128,50 +126,9 @@ struct CodexRuntimeFileIdentity: Codable, Equatable, Sendable {
         self.changeNanoseconds = changeNanoseconds
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.requireExactKeys([
-            "device", "inode", "mode", "owner", "group", "size",
-            "modification_seconds", "modification_nanoseconds",
-            "change_seconds", "change_nanoseconds",
-        ])
-        device = try container.decode(UInt64.self, forKey: .key("device"))
-        inode = try container.decode(UInt64.self, forKey: .key("inode"))
-        mode = try container.decode(UInt32.self, forKey: .key("mode"))
-        owner = try container.decode(UInt32.self, forKey: .key("owner"))
-        group = try container.decode(UInt32.self, forKey: .key("group"))
-        size = try container.decode(Int64.self, forKey: .key("size"))
-        modificationSeconds = try container.decode(
-            Int64.self,
-            forKey: .key("modification_seconds")
-        )
-        modificationNanoseconds = try container.decode(
-            Int64.self,
-            forKey: .key("modification_nanoseconds")
-        )
-        changeSeconds = try container.decode(Int64.self, forKey: .key("change_seconds"))
-        changeNanoseconds = try container.decode(
-            Int64.self,
-            forKey: .key("change_nanoseconds")
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.encode(device, forKey: .key("device"))
-        try container.encode(inode, forKey: .key("inode"))
-        try container.encode(mode, forKey: .key("mode"))
-        try container.encode(owner, forKey: .key("owner"))
-        try container.encode(group, forKey: .key("group"))
-        try container.encode(size, forKey: .key("size"))
-        try container.encode(modificationSeconds, forKey: .key("modification_seconds"))
-        try container.encode(modificationNanoseconds, forKey: .key("modification_nanoseconds"))
-        try container.encode(changeSeconds, forKey: .key("change_seconds"))
-        try container.encode(changeNanoseconds, forKey: .key("change_nanoseconds"))
-    }
 }
 
-struct CodexRuntimePathIdentity: Codable, Equatable, Sendable {
+struct CodexRuntimePathIdentity: Equatable, Sendable {
     let path: String
     let identity: CodexRuntimeFileIdentity
 
@@ -180,21 +137,6 @@ struct CodexRuntimePathIdentity: Codable, Equatable, Sendable {
         self.identity = identity
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.requireExactKeys(["path", "identity"])
-        path = try container.decode(String.self, forKey: .key("path"))
-        identity = try container.decode(
-            CodexRuntimeFileIdentity.self,
-            forKey: .key("identity")
-        )
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.encode(path, forKey: .key("path"))
-        try container.encode(identity, forKey: .key("identity"))
-    }
 }
 
 /// Complete result of one structural inspection.
@@ -207,15 +149,8 @@ struct CodexRuntimeTrustSnapshot: Equatable, Sendable {
     let canonicalAncestors: [CodexRuntimePathIdentity]
 }
 
-/// Durable launch approval. The store is owned by the caller; this type owns
-/// strict JSON shape validation and the required file metadata contract.
-struct CodexRuntimeApprovalRecord: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
-    static let currentPolicyVersion = 1
-    static let requiredRecordMode: mode_t = 0o600
-
-    let schemaVersion: Int
-    let policyVersion: Int
+/// Process-local qualification captured before any managed Codex child starts.
+struct CodexRuntimeApproval: Equatable, Sendable {
     let stableSourcePath: String
     let canonicalPath: String
     let sourceIdentity: CodexRuntimeFileIdentity
@@ -225,8 +160,6 @@ struct CodexRuntimeApprovalRecord: Codable, Equatable, Sendable {
     let qualifiedVersion: String
 
     init(snapshot: CodexRuntimeTrustSnapshot, qualifiedVersion: String) {
-        schemaVersion = Self.currentSchemaVersion
-        policyVersion = Self.currentPolicyVersion
         stableSourcePath = snapshot.stableSourcePath
         canonicalPath = snapshot.canonicalPath
         sourceIdentity = snapshot.sourceIdentity
@@ -234,49 +167,6 @@ struct CodexRuntimeApprovalRecord: Codable, Equatable, Sendable {
         sourceAncestors = snapshot.sourceAncestors
         canonicalAncestors = snapshot.canonicalAncestors
         self.qualifiedVersion = qualifiedVersion
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.requireExactKeys([
-            "schema_version", "policy_version", "stable_source_path", "canonical_path",
-            "source_identity", "target_identity", "source_ancestors",
-            "canonical_ancestors", "qualified_version",
-        ])
-        schemaVersion = try container.decode(Int.self, forKey: .key("schema_version"))
-        policyVersion = try container.decode(Int.self, forKey: .key("policy_version"))
-        stableSourcePath = try container.decode(String.self, forKey: .key("stable_source_path"))
-        canonicalPath = try container.decode(String.self, forKey: .key("canonical_path"))
-        sourceIdentity = try container.decode(
-            CodexRuntimeFileIdentity.self,
-            forKey: .key("source_identity")
-        )
-        targetIdentity = try container.decode(
-            CodexRuntimeFileIdentity.self,
-            forKey: .key("target_identity")
-        )
-        sourceAncestors = try container.decode(
-            [CodexRuntimePathIdentity].self,
-            forKey: .key("source_ancestors")
-        )
-        canonicalAncestors = try container.decode(
-            [CodexRuntimePathIdentity].self,
-            forKey: .key("canonical_ancestors")
-        )
-        qualifiedVersion = try container.decode(String.self, forKey: .key("qualified_version"))
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodexRuntimeCodingKey.self)
-        try container.encode(schemaVersion, forKey: .key("schema_version"))
-        try container.encode(policyVersion, forKey: .key("policy_version"))
-        try container.encode(stableSourcePath, forKey: .key("stable_source_path"))
-        try container.encode(canonicalPath, forKey: .key("canonical_path"))
-        try container.encode(sourceIdentity, forKey: .key("source_identity"))
-        try container.encode(targetIdentity, forKey: .key("target_identity"))
-        try container.encode(sourceAncestors, forKey: .key("source_ancestors"))
-        try container.encode(canonicalAncestors, forKey: .key("canonical_ancestors"))
-        try container.encode(qualifiedVersion, forKey: .key("qualified_version"))
     }
 
     var snapshot: CodexRuntimeTrustSnapshot {
@@ -290,67 +180,7 @@ struct CodexRuntimeApprovalRecord: Codable, Equatable, Sendable {
         )
     }
 
-    func encodedData() throws -> Data {
-        try validateShape()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(self)
-    }
-
-    static func decodeStrict(
-        from data: Data,
-        fileMode: mode_t,
-        fileOwner: uid_t
-    ) throws -> CodexRuntimeApprovalRecord {
-        guard fileMode & 0o7777 == requiredRecordMode else {
-            throw CodexRuntimeTrustError.invalidRecord("record mode must be 0600")
-        }
-        guard fileOwner == geteuid() else {
-            throw CodexRuntimeTrustError.invalidRecord("record owner must be the current user")
-        }
-        do {
-            let record = try JSONDecoder().decode(Self.self, from: data)
-            try record.validateShape()
-            return record
-        } catch let error as CodexRuntimeTrustError {
-            throw error
-        } catch {
-            throw CodexRuntimeTrustError.invalidRecord(error.localizedDescription)
-        }
-    }
-
-    func validateShape() throws {
-        guard schemaVersion == Self.currentSchemaVersion else {
-            throw CodexRuntimeTrustError.invalidRecord("unsupported schema version")
-        }
-        guard policyVersion == Self.currentPolicyVersion else {
-            throw CodexRuntimeTrustError.invalidRecord("unsupported policy version")
-        }
-        try CodexRuntimePathSupport.requireCanonicalAbsolutePath(stableSourcePath)
-        try CodexRuntimePathSupport.requireCanonicalAbsolutePath(canonicalPath)
-        guard sourceAncestors.map(\.path)
-                == CodexRuntimePathSupport.ancestorPaths(of: stableSourcePath),
-              canonicalAncestors.map(\.path)
-                == CodexRuntimePathSupport.ancestorPaths(of: canonicalPath)
-        else {
-            throw CodexRuntimeTrustError.invalidRecord("ancestor path set is incomplete or reordered")
-        }
-        guard CodexRuntimePathSupport.isRegularOrSymbolicLink(sourceIdentity.mode),
-              CodexRuntimePathSupport.isRegular(targetIdentity.mode),
-              sourceAncestors.allSatisfy({ CodexRuntimePathSupport.isDirectory($0.identity.mode) }),
-              canonicalAncestors.allSatisfy({ CodexRuntimePathSupport.isDirectory($0.identity.mode) })
-        else {
-            throw CodexRuntimeTrustError.invalidRecord("recorded file types are invalid")
-        }
-        guard CodexCompatibility.qualify(version: qualifiedVersion).isApprovedForManagedUse else {
-            throw CodexRuntimeTrustError.invalidRecord("qualified version is no longer approved")
-        }
-    }
 }
-
-/// Short integration-facing name; the durable representation remains explicit
-/// in the underlying type name.
-typealias CodexRuntimeApproval = CodexRuntimeApprovalRecord
 
 /// A short-lived token returned only after a complete approval revalidation.
 /// The integration layer should use `canonicalURL` immediately for `exec` or
@@ -364,9 +194,9 @@ struct CodexRuntimeApprovedExecutable: Equatable, Sendable {
 
 /// Hybrid launch-time trust gate.
 ///
-/// `revalidate` performs no process launch and no version read. If any recorded
-/// identity changed, callers can invoke `qualify` to run the expensive version
-/// check exactly once against a structurally safe target.
+/// `revalidate` performs no process launch and no version read. If any pinned
+/// identity changed, the current process tree fails closed; a new explicit
+/// invocation may call `qualify` again.
 struct CodexRuntimeTrustGate: Sendable {
     static let standardHomebrewEntries = [
         CodexRuntimeMonitoredEntry(
@@ -471,7 +301,7 @@ struct CodexRuntimeTrustGate: Sendable {
     func qualify(
         sourceURL: URL,
         versionReader: (URL) throws -> String?
-    ) throws -> CodexRuntimeApprovalRecord {
+    ) throws -> CodexRuntimeApproval {
         let before = try inspect(sourceURL: sourceURL)
         let version = try versionReader(URL(fileURLWithPath: before.canonicalPath))
         let after = try inspect(sourceURL: sourceURL)
@@ -482,16 +312,22 @@ struct CodexRuntimeTrustGate: Sendable {
         else {
             throw CodexRuntimeTrustError.unsupportedVersion(version)
         }
-        return CodexRuntimeApprovalRecord(
+        return CodexRuntimeApproval(
             snapshot: after,
             qualifiedVersion: qualifiedVersion
         )
     }
 
     func revalidate(
-        approval: CodexRuntimeApprovalRecord
+        approval: CodexRuntimeApproval
     ) throws -> CodexRuntimeApprovedExecutable {
-        try approval.validateShape()
+        guard CodexCompatibility.qualify(
+            version: approval.qualifiedVersion
+        ).isApprovedForManagedUse else {
+            throw CodexRuntimeTrustError.unsupportedVersion(
+                approval.qualifiedVersion
+            )
+        }
         let current = try inspect(
             sourceURL: URL(fileURLWithPath: approval.stableSourcePath)
         )
@@ -772,42 +608,5 @@ private enum CodexRuntimePathSupport {
     static func isRegularOrSymbolicLink(_ mode: UInt32) -> Bool {
         let fileType = mode_t(mode) & mode_t(S_IFMT)
         return fileType == mode_t(S_IFREG) || fileType == mode_t(S_IFLNK)
-    }
-}
-
-private struct CodexRuntimeCodingKey: CodingKey, Hashable {
-    let stringValue: String
-    let intValue: Int?
-
-    init(_ stringValue: String) {
-        self.stringValue = stringValue
-        intValue = nil
-    }
-
-    init?(stringValue: String) {
-        self.init(stringValue)
-    }
-
-    init?(intValue: Int) {
-        stringValue = String(intValue)
-        self.intValue = intValue
-    }
-
-    static func key(_ value: String) -> CodexRuntimeCodingKey {
-        CodexRuntimeCodingKey(value)
-    }
-}
-
-private extension KeyedDecodingContainer where Key == CodexRuntimeCodingKey {
-    func requireExactKeys(_ expected: Set<String>) throws {
-        let actual = Set(allKeys.map(\.stringValue))
-        guard actual == expected else {
-            let extra = actual.subtracting(expected).sorted()
-            let missing = expected.subtracting(actual).sorted()
-            throw DecodingError.dataCorrupted(.init(
-                codingPath: codingPath,
-                debugDescription: "unexpected fields \(extra); missing fields \(missing)"
-            ))
-        }
     }
 }

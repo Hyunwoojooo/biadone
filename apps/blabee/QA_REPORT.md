@@ -2,7 +2,7 @@
 
 상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인, T-015 소스·계약·자동·실제 두 세션 dogfood 완료
 검토일: 2026-08-23
-대상: `spikes/m0/`, `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서
+대상: 당시 `spikes/m0/`, 현재 `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서. M0 실행 소스는 역사적 결과를 이 문서와 Git 기록에 보존한 뒤 2026-08-31 활성 트리에서 제거했다.
 
 ## 판정
 
@@ -36,7 +36,7 @@ T-011 live prompt-only correction도 조건부 승인한다. 실제 Codex의 첫
 
 T-011 auto-attach 변경은 코드·자동 통합·로컬 설치 범위에서 조건부 승인한다. 활성 프로젝트의 `UserPromptSubmit`이 `SessionStart`보다 먼저 오면 세션을 지연 등록하고, 뒤늦은 start/resume는 기존 prompt/episode identity를 보존한다. 비활성 프로젝트는 등록하지 않으며 교차 프로젝트 session ID는 fail-closed한다. Plugin-local MCP launcher는 4,096 byte 이하의 비-symlink locator에 단일 절대 실행 경로를 요구하고, 존재하지만 잘못된 locator에서 `/Applications`로 fallback하지 않는다. 독립 QA가 처음 찾은 잘못된 locator fallback과 Pet 자동 focus 재시도 누락 Medium 두 건은 각각 fail-closed locator 계약과 poll 단위 재시도로 닫았다. 다른 authoritative foreground는 빼앗지 않는다.
 
-T-015는 T-011의 운영 continuation을 대체하는 변경이다. Stop Hook의 blocking response와 waiter/finalization fallback을 제거해 현재 Codex 답변이 정상 종료되게 하고, Pet 1·2 선택 뒤에만 봉인된 action을 exact session의 `codex queue`에 새 사용자 턴으로 제출한다. transient Pet 봉투는 `queued_next_turn`만 발급하며 과거 `same_turn_stop`은 durable journal replay 호환으로만 읽는다. queue receipt가 오면 transport lifecycle만 terminal로 닫고 `work_outcome_status = not_recorded`를 유지한다. 큐 메시지가 `UserPromptSubmit`으로 돌아오면 새 turn·prompt·episode·baseline을 만들며, dispatcher 호출 도중 먼저 돌아오는 reentrant prompt도 중복 close 없이 처리한다. 슬롯 3은 큐 호출 없이 pause하고 슬롯 4 rollback은 기존처럼 비활성이다. 실제 로컬 Codex `0.149.0` 격리 시험에서 열린 유휴 TUI는 큐 메시지를 즉시 새 턴으로 실행했고 닫힌 thread는 resume 때 실행했다. 이어 제품 앱·service·Plugin 설치본의 실제 두 TUI에서 A·B 원래 답변이 선택 전에 종료됐고, FIFO A→B 선택 뒤 같은 session의 새 turn·episode에서 `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK`가 완료됐다. 이 dogfood 통과는 현재 로컬 빌드 자격이며 Codex 버전 allowlist나 공개 배포 승인은 아니다.
+T-015는 T-011의 운영 continuation을 대체하는 변경이다. Stop Hook의 blocking response와 waiter/finalization fallback을 제거해 현재 Codex 답변이 정상 종료되게 하고, Pet에서 선택한 봉인 action을 exact session의 `codex queue`에 새 사용자 턴으로 제출한다. transient Pet 봉투는 `queued_next_turn`만 발급하며 과거 `same_turn_stop`은 durable journal replay 호환으로만 읽는다. queue receipt가 오면 transport lifecycle만 terminal로 닫고 `work_outcome_status = not_recorded`를 유지한다. 큐 메시지가 `UserPromptSubmit`으로 돌아오면 새 turn·prompt·episode·baseline을 만들며, dispatcher 호출 도중 먼저 돌아오는 reentrant prompt도 중복 close 없이 처리한다. 현재 새 패킷은 우선순위가 매겨진 실행 가능한 action 2~4개만 발행한다. 과거 고정 슬롯의 pause·rollback 의미는 frozen packet 및 journal replay 호환에서만 읽는다. 실제 로컬 Codex `0.149.0` 격리 시험에서 열린 유휴 TUI는 큐 메시지를 즉시 새 턴으로 실행했고 닫힌 thread는 resume 때 실행했다. 이어 제품 앱·service·Plugin 설치본의 실제 두 TUI에서 A·B 원래 답변이 선택 전에 종료됐고, FIFO A→B 선택 뒤 같은 session의 새 turn·episode에서 `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK`가 완료됐다. 이 dogfood 통과는 현재 로컬 빌드 자격이며 Codex 버전 allowlist나 공개 배포 승인은 아니다.
 
 T-015 독립 QA에서 발견한 한 건의 correctness race도 닫았다. 처음 구현은 dispatcher가 응답하기 전에 같은 세션의 **아무** 새 프롬프트가 오면 이전 transport를 완료할 수 있었다. 수정 후에는 dispatch 전에 exact 큐 메시지 SHA-256을 경계에 저장하고 그 digest와 일치하는 `UserPromptSubmit`만 조기 완료 근거로 인정한다. 무관한 사람 프롬프트는 새 episode로 허용하지만 이전 dispatch는 건드리지 않으며, 이후 dispatcher가 실패해도 `continuation_transport_completed`를 기록하지 않는 negative 회귀를 추가했다. 최종 Operational 24/24, queue process 6/6, Pet 108/108, Swift Testing 189/189+XCTest 5/5가 통과했고 독립 재검토에서 open critical/high/medium finding은 0개다. 전체 npm 회귀는 286개 중 285개가 통과했고 기존 Keychain 비유출 검사 한 건의 `/usr/bin/security` 30초 timeout만 남았으나, 동일 검사의 격리 재실행은 1/1 통과했다. race 수정 직전 동일 전체 suite는 286/286 통과했다.
 
@@ -138,7 +138,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
   원문이 다른 문자열 필드에 반복돼도 함께 치환하고 비민감 식별자는 유지한다.
 - 실제 negative contract: 설명 요청에서 `decision_proposal_received = 0`, `decision_wait_started = 0`, 파일 변경 없음, 마지막 JSONL `agent_message = M0_EXPLAINED` 확인
 - Codex plugin validator 통과
-- 모든 M0 JavaScript 파일 `node --check` 통과
+- 정리 전 모든 M0 JavaScript 파일 `node --check` 통과
 
 두 실제 계약 모두 터미널 키 입력 주입과 별도 LLM API 키를 사용하지 않았다. 프로젝트 trust override와 `--dangerously-bypass-hook-trust`는 격리된 테스트 harness에만 사용했다.
 
@@ -158,7 +158,7 @@ T-006 최종 독립 QA에서 공개 차단급·높음·중간 finding은 없었�
 - 새 `pet_action = queued_next_turn`, `internal_format_repair = submitted_envelope`로 전달 모드를 상호배타화해 이중 실행을 차단하고, 과거 `same_turn_stop`은 저장된 runtime event replay에만 허용
 - 형식 보정을 결정 경계당 한 번으로 제한하고 repair kind allowlist 적용
 - 같은 세션 ID가 다른 프로젝트로 재바인딩될 때 이전 wait/proposal/dispatch/token 라우팅 폐기
-- 슬롯 3·4 선택 후 상태를 `paused`·`rollback_intent`로 기록
+- 과거 고정 네 슬롯 패킷의 슬롯 3·4 선택은 replay 호환에서만 `paused`·`rollback_intent`로 해석하며, 새 ranked 패킷은 실행 가능한 다음 action만 발행
 - Unix domain socket 권한을 `0600`으로 제한
 - 디버그 로그에서 continuation 토큰과 작업 본문 비노출
 - `assume-unchanged`, `skip-worktree`/sparse 상태, `core.filemode=false`, Git이 추적하지 않는 POSIX mode 변경에서 롤백 차단

@@ -56,6 +56,23 @@ public struct CoordinatorSemanticExecutionResult: Sendable, Equatable {
     public let effects: [Data]
 }
 
+/// One journal read and its verified semantic replay. The private origin binds
+/// the projection to the semantic application that loaded it, so an internal
+/// caller cannot accidentally seed a CAS decision with another journal's
+/// state.
+struct CoordinatorSemanticAuthorityProjection: Sendable {
+    fileprivate let authorityID: UUID
+    let snapshot: JournalSnapshot
+    let state: CoordinatorSemanticState
+}
+
+/// A non-conflict append failure can mean either "not committed" or "committed
+/// but the response was lost". Routing may perform an authoritative recovery
+/// read only for this explicitly ambiguous case.
+struct CoordinatorSemanticAppendOutcomeUnknown: Error {
+    let underlying: any Error
+}
+
 /// Synchronous application service intentionally matching SQLiteJournal's
 /// process-local API. A token is prepared once before the CAS retry loop, so a
 /// sequence conflict cannot silently mint a different authority.
@@ -65,6 +82,7 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
     private let journal: any CoordinatorSemanticJournalPort
     private let tokenGenerator: TokenGenerator
     private let tokenHMACKey: Data?
+    private let authorityID = UUID()
 
     public init(
         journal: any CoordinatorSemanticJournalPort,
@@ -82,6 +100,48 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         command commandData: Data,
         maxSequenceConflicts: Int = 2
     ) throws -> CoordinatorSemanticExecutionResult {
+        try execute(
+            command: commandData,
+            initialAuthority: nil,
+            reportAmbiguousAppend: false,
+            maxSequenceConflicts: maxSequenceConflicts
+        )
+    }
+
+    /// Loads and verifies one authority projection for a routing operation that
+    /// must inspect state before submitting its CAS command.
+    func authorityProjection() throws -> CoordinatorSemanticAuthorityProjection {
+        let snapshot = try journal.load()
+        return CoordinatorSemanticAuthorityProjection(
+            authorityID: authorityID,
+            snapshot: snapshot,
+            state: try CoordinatorSemanticReplay.replay(snapshot)
+        )
+    }
+
+    /// Executes first against a caller-supplied verified projection. A CAS
+    /// sequence conflict discards that projection and reloads fresh authority;
+    /// the uncontended path never performs a second journal read.
+    func execute(
+        command commandData: Data,
+        using authority: CoordinatorSemanticAuthorityProjection,
+        maxSequenceConflicts: Int = 2
+    ) throws -> CoordinatorSemanticExecutionResult {
+        try require(authority.authorityID == authorityID, "authority_projection_mismatch")
+        return try execute(
+            command: commandData,
+            initialAuthority: authority,
+            reportAmbiguousAppend: true,
+            maxSequenceConflicts: maxSequenceConflicts
+        )
+    }
+
+    private func execute(
+        command commandData: Data,
+        initialAuthority: CoordinatorSemanticAuthorityProjection?,
+        reportAmbiguousAppend: Bool,
+        maxSequenceConflicts: Int
+    ) throws -> CoordinatorSemanticExecutionResult {
         try require(maxSequenceConflicts >= 0, "retry_limit_invalid")
         let parsed = try SemanticJSON.command(commandData)
         let commandType = try SemanticJSON.commandType(parsed)
@@ -94,9 +154,21 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         }
 
         var conflicts = 0
+        var suppliedAuthority = initialAuthority
         while true {
-            let snapshot = try journal.load()
-            let state = try CoordinatorSemanticReplay.replay(snapshot)
+            let authority: CoordinatorSemanticAuthorityProjection
+            if let initial = suppliedAuthority {
+                authority = initial
+                try require(
+                    authority.authorityID == authorityID,
+                    "authority_projection_mismatch"
+                )
+                suppliedAuthority = nil
+            } else {
+                authority = try authorityProjection()
+            }
+            let snapshot = authority.snapshot
+            let state = authority.state
             let change = try CoordinatorSemanticDecision.decide(
                 state: state,
                 commandObject: parsed,
@@ -137,10 +209,15 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
                 // durably accepted. A lost response is therefore not evidence
                 // that a new token may be issued.
                 return CoordinatorSemanticExecutionResult(commit: commit, effects: change.effects)
-            } catch let error as CoordinatorError
-                where error.code == "journal_sequence_conflict" && conflicts < maxSequenceConflicts
-            {
+            } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
+                guard conflicts < maxSequenceConflicts else { throw error }
                 conflicts += 1
+                suppliedAuthority = nil
+            } catch {
+                if reportAmbiguousAppend {
+                    throw CoordinatorSemanticAppendOutcomeUnknown(underlying: error)
+                }
+                throw error
             }
         }
     }
