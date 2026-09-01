@@ -697,3 +697,68 @@ A/B/C execution, live/API/persistence, product use, release, or freeze. Baseline
 privacy, retention, neutral-evidence, and same-engine boundaries remain unchanged.
 
 <!-- current-tech-spec:E2-FULL-UNIT-PASSED-2026-08-21:end -->
+
+
+---
+
+<!-- current-tech-spec:E2-IO-EXACT-ID-V2-PRODUCER-BOUNDARY-2026-08-27:begin -->
+
+## E2-IO successor addendum: exact-ID V2 producer boundary
+
+This non-destructive successor section preserves all historical plan and status text above. It
+supersedes only an assumption that a time window by itself is sufficient authority to publish a
+metadata evidence bundle. It does not relabel the broader E2-IO.3 post-commit outbox plan as
+implemented or active.
+
+### Exact producer selection
+
+For the inactive metadata pilot path, the Dayflow adapter must provide a nonempty, immutable,
+canonical sequence of `(screenshotId, capturedAtEpochSecond)` pairs. The producer selection is
+ordered by capture timestamp and screenshot ID and is mandatory. A time window remains a bound,
+not a row-selection mechanism.
+
+The V2 exporter must derive all exported screenshots, analysis batches, batch-to-screenshot links,
+and observation metadata from the selected screenshot IDs only. A database row that happens to be
+inside the same time window but is absent from the selection is excluded. Every selected row must
+exist, remain inside the requested window, and have the exact selected capture timestamp. A
+missing, deleted, out-of-window, or timestamp-mismatched selection fails before any completed
+bundle is published; partial publication is prohibited.
+
+Export selection and cleanup inventory are different authorities. The export selection contains
+only evidence-eligible screenshots. The cleanup inventory remains the complete safe set of
+persisted screenshots from the capture drain, including cleanup-only rows, and must not be reduced
+when an export is filtered or rejected.
+
+### Wire and consumer contract
+
+- Exporter identity is exactly `dayflow.blabase-evidence-exporter.v2`.
+- Payload schema remains `dayflow.blabase-evidence-bundle.v1`.
+- Manifest schema remains `dayflow.blabase-evidence-manifest.v1`.
+- V2 screenshots are structurally nonempty.
+- Screenshot IDs and batch-link screenshot IDs are positive safe integers.
+- The Blabase qualifier accepts V2 only and rejects legacy exporter V1. There is no V1/V2 union,
+  fallback, alias, coercion, or implicit migration.
+- The corrected Task 1 positive fixture is synthetic. No frozen evaluation input, dataset, seal,
+  bundle, manifest, or historical artifact is mutated by this successor contract.
+
+### Evidence, privacy, and lifecycle status
+
+Focused evidence is Dayflow Swift 34/34, Blabase Vitest 20/20, Blabase TypeScript typecheck PASS,
+and closure QA `GO` with no remaining High or Medium finding. This is not live integration,
+production conformance, activation, freeze, release, or A/B/C evaluation evidence.
+
+The selection adds only screenshot ID and capture timestamp. It carries no raw path, application
+or instance identity, interruption metadata, observation text, credential, secret, screenshot
+bytes, or actual user data. Raw cleanup scope remains full and separate.
+
+The correction is implemented and focused-validated but remains inactive and unfrozen. Colin is
+the sole reviewer and decision authority. No production activation or A/B/C run has occurred.
+Remaining work includes live SQLite, recorder, and raw-store integration; exporter-failure
+recovery; partial-deletion retry; recorder queue isolation; successor freeze and input hash; and
+the same-engine A/B/C runner and comparison report.
+
+This is an internal producer-consumer contract correction. It creates no new system boundary,
+container, external integration, or core dynamic flow, so the LikeC4 boundary is unchanged and no
+architecture model update is required.
+
+<!-- current-tech-spec:E2-IO-EXACT-ID-V2-PRODUCER-BOUNDARY-2026-08-27:end -->

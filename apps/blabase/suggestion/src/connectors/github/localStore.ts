@@ -337,6 +337,157 @@ export function githubLocalDirectory(cwd = process.cwd()): string {
   return join(cwd, ".local", "connectors", "github");
 }
 
+export type PreservedGitHubStoreReadFailureReasonV1 =
+  | "PARSE_FAILED"
+  | "SCHEMA_INVALID"
+  | "READ_FAILED";
+
+export type PreservedGitHubStoreReadResultV1<T> =
+  | Readonly<{ status: "available"; value: T }>
+  | Readonly<{ status: "missing" }>
+  | Readonly<{
+      status: "invalid";
+      reason: PreservedGitHubStoreReadFailureReasonV1;
+    }>;
+
+const PRESERVED_GITHUB_STORE_MISSING_V1 = Object.freeze({
+  status: "missing" as const
+});
+
+function preservedGitHubStoreInvalidV1(
+  reason: PreservedGitHubStoreReadFailureReasonV1
+): PreservedGitHubStoreReadResultV1<never> {
+  return Object.freeze({
+    status: "invalid" as const,
+    reason
+  });
+}
+
+function isPreservedGitHubStoreMissingV1(error: unknown): boolean {
+  const visited = new Set<object>();
+  let candidate: unknown = error;
+
+  while (candidate !== null && typeof candidate === "object") {
+    if (visited.has(candidate)) {
+      return false;
+    }
+    visited.add(candidate);
+
+    let owner: object | null = candidate;
+    let cause: unknown;
+    while (owner !== null) {
+      let codeDescriptor: PropertyDescriptor | undefined;
+      let causeDescriptor: PropertyDescriptor | undefined;
+      try {
+        codeDescriptor = Object.getOwnPropertyDescriptor(owner, "code");
+        causeDescriptor = Object.getOwnPropertyDescriptor(owner, "cause");
+      } catch {
+        return false;
+      }
+
+      if (
+        codeDescriptor !== undefined &&
+        "value" in codeDescriptor &&
+        codeDescriptor.value === "ENOENT"
+      ) {
+        return true;
+      }
+      if (
+        cause === undefined &&
+        causeDescriptor !== undefined &&
+        "value" in causeDescriptor
+      ) {
+        cause = causeDescriptor.value;
+      }
+
+      try {
+        owner = Object.getPrototypeOf(owner);
+      } catch {
+        return false;
+      }
+    }
+
+    candidate = cause;
+  }
+
+  return false;
+}
+
+export async function readStoredGitHubTokensPreservingStatusV1(
+  cwd = process.cwd()
+): Promise<PreservedGitHubStoreReadResultV1<StoredGitHubTokens>> {
+  let text: string;
+  try {
+    text = await readLocalPrivateText(
+      join(githubLocalDirectory(cwd), "tokens.json"),
+      "preserve",
+      cwd
+    );
+  } catch (error) {
+    return isPreservedGitHubStoreMissingV1(error)
+      ? PRESERVED_GITHUB_STORE_MISSING_V1
+      : preservedGitHubStoreInvalidV1("READ_FAILED");
+  }
+
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(text);
+  } catch {
+    return preservedGitHubStoreInvalidV1("PARSE_FAILED");
+  }
+
+  const parsed = tokensSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return preservedGitHubStoreInvalidV1("SCHEMA_INVALID");
+  }
+
+  return Object.freeze({
+    status: "available" as const,
+    value: parsed.data
+  });
+}
+
+export async function readStoredGitHubSnapshotPreservingStatusV1(
+  cwd = process.cwd()
+): Promise<PreservedGitHubStoreReadResultV1<GitHubSnapshot>> {
+  let text: string;
+  try {
+    text = await readLocalPrivateText(
+      join(githubLocalDirectory(cwd), "snapshot.json"),
+      "preserve",
+      cwd
+    );
+  } catch (error) {
+    return isPreservedGitHubStoreMissingV1(error)
+      ? PRESERVED_GITHUB_STORE_MISSING_V1
+      : preservedGitHubStoreInvalidV1("READ_FAILED");
+  }
+
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(text);
+  } catch {
+    return preservedGitHubStoreInvalidV1("PARSE_FAILED");
+  }
+
+  const parsed = storedSnapshotSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return preservedGitHubStoreInvalidV1("SCHEMA_INVALID");
+  }
+
+  try {
+    return Object.freeze({
+      status: "available" as const,
+      value:
+        parsed.data.schemaVersion === "github-snapshot-v1"
+          ? migrateV1Snapshot(parsed.data)
+          : parsed.data
+    });
+  } catch {
+    return preservedGitHubStoreInvalidV1("SCHEMA_INVALID");
+  }
+}
+
 export async function readStoredGitHubTokens(
   cwd = process.cwd(),
   mode: LocalReadMode = "maintain"

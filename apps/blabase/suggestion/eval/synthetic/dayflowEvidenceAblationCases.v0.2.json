@@ -1,0 +1,532 @@
+{
+  "casesSchemaVersion": "dayflow-evidence-ablation-cases-v0.2",
+  "fixtureSetId": "synthetic.dayflow.dfa002.cases.v0.2",
+  "dataOrigin": "synthetic",
+  "studyPhase": "contract_conformance",
+  "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "syntheticSentinel": "SYNTHETIC_DAYFLOW_FIXTURE_DO_NOT_USE_AS_HUMAN_DATA",
+  "fixtureGenerator": {
+    "version": "dayflow-dfa002-fixture-generator-v0.2",
+    "seed": "dfa002-seed-20260817",
+    "configSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e",
+    "syntheticOnly": true
+  },
+  "rawHumanContentIncluded": false,
+  "humanConversationIncluded": false,
+  "screenshotBlobIncluded": false,
+  "filesystemPathIncluded": false,
+  "secretIncluded": false,
+  "evidenceBoundaryVectors": [
+    {
+      "vectorId": "synthetic.evidence.observed",
+      "vectorKind": "observed",
+      "syntheticSentinel": "SYNTHETIC_DAYFLOW_FIXTURE_DO_NOT_USE_AS_HUMAN_DATA",
+      "fixtureSha256": "0c3ecf4758edbc82be52e1f5522d3ccc4731add8c93f8f352550b1f628a13dff",
+      "expectedDisposition": "accepted",
+      "expectedIssueCodes": [],
+      "payload": {
+        "exportManifest": {
+          "contract": "dayflow-screen-evidence-export-v0.1",
+          "schemaVersion": "dayflow-screen-evidence-export-v0.1",
+          "exportId": "synthetic.export.observed",
+          "lineageClass": "evidence",
+          "dataOrigin": "synthetic",
+          "studyPhase": "contract_conformance",
+          "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exportedAt": "2026-08-17T10:00:01.000Z",
+          "windowStart": "2026-08-17T10:00:00.000Z",
+          "windowEnd": "2026-08-17T10:00:01.000Z",
+          "dayflowCommitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceFileHashes": [
+            {
+              "relativePath": "synthetic-source.swift",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "packageResolvedSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "capturePolicyVersion": "synthetic-capture-v0.1",
+          "captureConfig": {
+            "captureIntervalMs": "1000",
+            "maxWindowDurationMs": "1000",
+            "maxArtifactsPerExport": "1",
+            "maxBlobBytes": "70",
+            "allowedMimeTypes": [
+              "image/png"
+            ]
+          },
+          "databaseSnapshotIdentity": {
+            "snapshotKind": "synthetic-fixture",
+            "fixtureSetId": "synthetic.dayflow.dfa002.cases.v0.2",
+            "fixtureGeneratorVersion": "dayflow-dfa002-fixture-generator-v0.2",
+            "fixtureGeneratorSeed": "dfa002-seed-20260817",
+            "fixtureGeneratorConfigSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e"
+          },
+          "consentRevision": "synthetic-consent-v0.1",
+          "retentionPolicyId": "synthetic-retention-v0.1",
+          "coverage": {
+            "intervals": [
+              {
+                "start": "2026-08-17T10:00:00.000Z",
+                "end": "2026-08-17T10:00:01.000Z",
+                "reason": "running",
+                "expectedFrameCount": 1,
+                "observedFrameCount": 1,
+                "rejectedFrameCount": 0
+              }
+            ],
+            "expectedFrameCount": 1,
+            "observedFrameCount": 1,
+            "rejectedFrameCount": 0
+          },
+          "artifacts": [
+            {
+              "sourceArtifactId": "synthetic.artifact.observed",
+              "sourceRowId": "1",
+              "capturedAt": "2026-08-17T10:00:00.000Z",
+              "sequenceWithinSecond": "0",
+              "idleSeconds": 0,
+              "relativeBlobRef": "synthetic-blob.bin",
+              "mimeType": "image/png",
+              "byteSize": "70",
+              "sha256": "cdfbe415f1327dd4fcd0e4ac667ce229ad70de514dfbb4a197ba07d708d2dd37",
+              "privacyState": "synthetic_fixture",
+              "captureConsentRevision": "synthetic-consent-v0.1",
+              "capturePolicyVersion": "synthetic-capture-v0.1",
+              "capturePolicyDecision": "allow",
+              "pseudonymousDisplayAttestation": {
+                "attestationSchemaVersion": "dayflow-pseudonymous-capture-attestation-v0.1",
+                "pseudonymousSubjectId": "synthetic-display-observed",
+                "policyVersion": "synthetic-capture-v0.1",
+                "policySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "attestedAt": "2026-08-17T10:00:00.000Z"
+              },
+              "pseudonymousWindowAttestation": {
+                "attestationSchemaVersion": "dayflow-pseudonymous-capture-attestation-v0.1",
+                "pseudonymousSubjectId": "synthetic-window-observed",
+                "policyVersion": "synthetic-capture-v0.1",
+                "policySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "attestedAt": "2026-08-17T10:00:00.000Z"
+              },
+              "placeholderState": "synthetic_fixture",
+              "availability": "available"
+            }
+          ],
+          "detachedManifestSha256": "9119fe0f10f987ea12fd814a8e074687107d8edb339fdc1325f9ecb82cdd37a9"
+        },
+        "artifactBlobs": [
+          {
+            "sourceArtifactId": "synthetic.artifact.observed",
+            "encoding": "base64",
+            "syntheticSentinel": "SYNTHETIC_DAYFLOW_PLACEHOLDER_PNG_DO_NOT_USE_AS_HUMAN_DATA",
+            "bytes": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL0WQAAAABJRU5ErkJggg=="
+          }
+        ]
+      }
+    },
+    {
+      "vectorId": "synthetic.evidence.valid-empty",
+      "vectorKind": "valid_empty",
+      "syntheticSentinel": "SYNTHETIC_DAYFLOW_FIXTURE_DO_NOT_USE_AS_HUMAN_DATA",
+      "fixtureSha256": "b574e1689f7b190fa34ef0112a346eb5f88dd312045ff123d11548bcbb3f9639",
+      "expectedDisposition": "empty",
+      "expectedIssueCodes": [],
+      "payload": {
+        "exportManifest": {
+          "contract": "dayflow-screen-evidence-export-v0.1",
+          "schemaVersion": "dayflow-screen-evidence-export-v0.1",
+          "exportId": "synthetic.export.valid-empty",
+          "lineageClass": "evidence",
+          "dataOrigin": "synthetic",
+          "studyPhase": "contract_conformance",
+          "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exportedAt": "2026-08-17T10:01:01.000Z",
+          "windowStart": "2026-08-17T10:01:00.000Z",
+          "windowEnd": "2026-08-17T10:01:01.000Z",
+          "dayflowCommitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceFileHashes": [
+            {
+              "relativePath": "synthetic-source.swift",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "packageResolvedSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "capturePolicyVersion": "synthetic-capture-v0.1",
+          "captureConfig": {
+            "captureIntervalMs": "1000",
+            "maxWindowDurationMs": "1000",
+            "maxArtifactsPerExport": "1",
+            "maxBlobBytes": "15",
+            "allowedMimeTypes": [
+              "image/png"
+            ]
+          },
+          "databaseSnapshotIdentity": {
+            "snapshotKind": "synthetic-fixture",
+            "fixtureSetId": "synthetic.dayflow.dfa002.cases.v0.2",
+            "fixtureGeneratorVersion": "dayflow-dfa002-fixture-generator-v0.2",
+            "fixtureGeneratorSeed": "dfa002-seed-20260817",
+            "fixtureGeneratorConfigSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e"
+          },
+          "consentRevision": "synthetic-consent-v0.1",
+          "retentionPolicyId": "synthetic-retention-v0.1",
+          "coverage": {
+            "intervals": [
+              {
+                "start": "2026-08-17T10:01:00.000Z",
+                "end": "2026-08-17T10:01:01.000Z",
+                "reason": "paused",
+                "expectedFrameCount": 0,
+                "observedFrameCount": 0,
+                "rejectedFrameCount": 0
+              }
+            ],
+            "expectedFrameCount": 0,
+            "observedFrameCount": 0,
+            "rejectedFrameCount": 0
+          },
+          "artifacts": [],
+          "detachedManifestSha256": "7ee15e1147aa427723d88bcb9f7739457094aac4ff9adbf2f4bd55416e45b3a4"
+        },
+        "artifactBlobs": []
+      }
+    },
+    {
+      "vectorId": "synthetic.evidence.failure",
+      "vectorKind": "failure",
+      "syntheticSentinel": "SYNTHETIC_DAYFLOW_FIXTURE_DO_NOT_USE_AS_HUMAN_DATA",
+      "fixtureSha256": "9801991b632aa08a4b596fb8418ad6bba93c62ffdf17bd849e9f274c9d400bf1",
+      "expectedDisposition": "rejected",
+      "expectedIssueCodes": [
+        "SYNTHETIC_READ_FAILURE"
+      ],
+      "payload": {
+        "exportManifest": {
+          "contract": "dayflow-screen-evidence-export-v0.1",
+          "schemaVersion": "dayflow-screen-evidence-export-v0.1",
+          "exportId": "synthetic.export.failure",
+          "lineageClass": "evidence",
+          "dataOrigin": "synthetic",
+          "studyPhase": "contract_conformance",
+          "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exportedAt": "2026-08-17T10:02:01.000Z",
+          "windowStart": "2026-08-17T10:02:00.000Z",
+          "windowEnd": "2026-08-17T10:02:01.000Z",
+          "dayflowCommitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceFileHashes": [
+            {
+              "relativePath": "synthetic-source.swift",
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          ],
+          "packageResolvedSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "capturePolicyVersion": "synthetic-capture-v0.1",
+          "captureConfig": {
+            "captureIntervalMs": "1000",
+            "maxWindowDurationMs": "1000",
+            "maxArtifactsPerExport": "1",
+            "maxBlobBytes": "15",
+            "allowedMimeTypes": [
+              "image/png"
+            ]
+          },
+          "databaseSnapshotIdentity": {
+            "snapshotKind": "synthetic-fixture",
+            "fixtureSetId": "synthetic.dayflow.dfa002.cases.v0.2",
+            "fixtureGeneratorVersion": "dayflow-dfa002-fixture-generator-v0.2",
+            "fixtureGeneratorSeed": "dfa002-seed-20260817",
+            "fixtureGeneratorConfigSha256": "17477ed54c32296f27bf9f3324b0c6ce673c09b6c964589a1fd2cb608f6f3f3e"
+          },
+          "consentRevision": "synthetic-consent-v0.1",
+          "retentionPolicyId": "synthetic-retention-v0.1",
+          "coverage": {
+            "intervals": [
+              {
+                "start": "2026-08-17T10:02:00.000Z",
+                "end": "2026-08-17T10:02:01.000Z",
+                "reason": "unavailable",
+                "expectedFrameCount": 0,
+                "observedFrameCount": 0,
+                "rejectedFrameCount": 0
+              }
+            ],
+            "expectedFrameCount": 0,
+            "observedFrameCount": 0,
+            "rejectedFrameCount": 0
+          },
+          "artifacts": [],
+          "detachedManifestSha256": "a21db1b131f929137261bb549ef2d7ef7ef7fe88b1c1e9b703c15e3490a8a232"
+        },
+        "artifactBlobs": []
+      }
+    }
+  ],
+  "matchedInputVectors": [
+    {
+      "vectorId": "synthetic.matched.a1-b.0",
+      "a1Input": {
+        "armInputSchemaVersion": "dayflow-ablation-arm-input-v0.4",
+        "armInputId": "synthetic.arm-input.a1.0",
+        "lineageClass": "evidence",
+        "armId": "A1",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "captureWindowId": "synthetic.capture-window.0",
+        "executionFreezeRef": {
+          "schemaVersion": "dayflow-ablation-evaluation-execution-freeze-v0.3",
+          "evaluationExecutionFreezeId": "synthetic.execution-freeze.0",
+          "evaluationExecutionFreezeSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "replicateIndex": 0,
+        "presentationPolicyRef": {
+          "version": "display-policy-v0.1",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "armInputHash": "8646b50b582b4a4385714009792345bcb3f00c0c366e4eb8a3f8c5d1b9164f9d",
+        "inputKind": "structured_generation",
+        "checkpointRef": {
+          "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+          "checkpointId": "synthetic.checkpoint.0",
+          "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "structuredCheckpointRef": {
+          "currentAttentionInputHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "currentAttentionResultHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "currentBoardHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "structuredEvidenceHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "workContextRegistryHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "structuredCandidateHash": "5555555555555555555555555555555555555555555555555555555555555555",
+        "screenEvidenceMode": "masked",
+        "generationTupleSelector": "a1bCausalTuple",
+        "matchedPairId": "synthetic.matched-pair.0",
+        "requestOrderManifestRef": {
+          "schemaVersion": "dayflow-ablation-request-order-manifest-v0.1",
+          "requestOrderManifestId": "synthetic.request-order.0",
+          "requestOrderManifestSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "requestId": "synthetic.request.a1.0",
+        "requestPosition": "0"
+      },
+      "bInput": {
+        "armInputSchemaVersion": "dayflow-ablation-arm-input-v0.4",
+        "armInputId": "synthetic.arm-input.b.0",
+        "lineageClass": "evidence",
+        "armId": "B",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "captureWindowId": "synthetic.capture-window.0",
+        "executionFreezeRef": {
+          "schemaVersion": "dayflow-ablation-evaluation-execution-freeze-v0.3",
+          "evaluationExecutionFreezeId": "synthetic.execution-freeze.0",
+          "evaluationExecutionFreezeSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "replicateIndex": 0,
+        "presentationPolicyRef": {
+          "version": "display-policy-v0.1",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "armInputHash": "7199dcd68b7c4308295794b4ed1b5b9c716f59ef10a489037a09ef157f87d02e",
+        "inputKind": "structured_plus_screen_generation",
+        "checkpointRef": {
+          "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+          "checkpointId": "synthetic.checkpoint.0",
+          "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "structuredCheckpointRef": {
+          "currentAttentionInputHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "currentAttentionResultHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "currentBoardHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "structuredEvidenceHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "workContextRegistryHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "structuredCandidateHash": "5555555555555555555555555555555555555555555555555555555555555555",
+        "screenEvidenceMode": "normalized",
+        "normalizedEvidenceRef": {
+          "schemaVersion": "dayflow-normalized-evidence-v0.1",
+          "evidenceId": "synthetic.normalized-evidence.0",
+          "dayflowNormalizedEvidenceHash": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "generationTupleSelector": "a1bCausalTuple",
+        "matchedPairId": "synthetic.matched-pair.0",
+        "requestOrderManifestRef": {
+          "schemaVersion": "dayflow-ablation-request-order-manifest-v0.1",
+          "requestOrderManifestId": "synthetic.request-order.0",
+          "requestOrderManifestSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "requestId": "synthetic.request.b.0",
+        "requestPosition": "1"
+      }
+    }
+  ],
+  "dagVectors": [
+    {
+      "generation": {
+        "candidateDatasetGenerationSchemaVersion": "dayflow-ablation-candidate-dataset-generation-v0.1",
+        "candidateDatasetGenerationId": "synthetic.generation.0",
+        "lineageClass": "evidence",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "completedCheckpointRuns": [
+          {
+            "checkpointRef": {
+              "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+              "checkpointId": "synthetic.checkpoint.0",
+              "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            "checkpointCompletionRef": {
+              "schemaVersion": "dayflow-ablation-checkpoint-completion-v0.1",
+              "checkpointCompletionId": "synthetic.completion.0",
+              "checkpointCompletionSha256": "7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            "runRefs": [
+              {
+                "schemaVersion": "dayflow-ablation-run-v0.4",
+                "runId": "synthetic.run.a1.0",
+                "runSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                "armId": "A1",
+                "replicateIndex": 0
+              },
+              {
+                "schemaVersion": "dayflow-ablation-run-v0.4",
+                "runId": "synthetic.run.b.0",
+                "runSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                "armId": "B",
+                "replicateIndex": 0
+              }
+            ]
+          }
+        ],
+        "createdAt": "2026-08-17T10:00:00.000Z",
+        "candidateDatasetGenerationSha256": "7e237f1403ac4e6a7f543bd889924559ba00eef7f36cddc2f9f34367915ebbb3"
+      },
+      "decisions": [
+        {
+          "exclusionDecisionSchemaVersion": "dayflow-ablation-exclusion-decision-v0.1",
+          "exclusionDecisionId": "synthetic.decision.0",
+          "lineageClass": "evidence",
+          "dataOrigin": "synthetic",
+          "studyPhase": "contract_conformance",
+          "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceGenerationRef": {
+            "schemaVersion": "dayflow-ablation-candidate-dataset-generation-v0.1",
+            "candidateDatasetGenerationId": "synthetic.generation.0",
+            "candidateDatasetGenerationSha256": "7e237f1403ac4e6a7f543bd889924559ba00eef7f36cddc2f9f34367915ebbb3"
+          },
+          "checkpointRef": {
+            "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+            "checkpointId": "synthetic.checkpoint.0",
+            "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          "disposition": "include",
+          "reasonCode": "SYNTHETIC_INCLUDE",
+          "reviewerPseudonym": "synthetic.reviewer.0",
+          "decidedAt": "2026-08-17T10:01:00.000Z",
+          "exclusionDecisionSha256": "c6b7e48bed5ff8ea75ae61644826f488e6eca8460f5190090548bff9506c7252"
+        }
+      ],
+      "closure": {
+        "exclusionClosureSchemaVersion": "dayflow-ablation-exclusion-closure-v0.1",
+        "exclusionClosureId": "synthetic.closure.0",
+        "lineageClass": "evidence",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourceGenerationRef": {
+          "schemaVersion": "dayflow-ablation-candidate-dataset-generation-v0.1",
+          "candidateDatasetGenerationId": "synthetic.generation.0",
+          "candidateDatasetGenerationSha256": "7e237f1403ac4e6a7f543bd889924559ba00eef7f36cddc2f9f34367915ebbb3"
+        },
+        "decisionRefs": [
+          {
+            "checkpointId": "synthetic.checkpoint.0",
+            "schemaVersion": "dayflow-ablation-exclusion-decision-v0.1",
+            "exclusionDecisionId": "synthetic.decision.0",
+            "exclusionDecisionSha256": "c6b7e48bed5ff8ea75ae61644826f488e6eca8460f5190090548bff9506c7252"
+          }
+        ],
+        "closedAt": "2026-08-17T10:02:00.000Z",
+        "exclusionClosureSha256": "310f52465059dd52b1f20ab2333bc6e1846468d902343efe3735b7fdc9ef75c5"
+      },
+      "manifest": {
+        "finalDatasetManifestSchemaVersion": "dayflow-ablation-final-dataset-manifest-v0.1",
+        "lineageClass": "evidence",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "exclusionClosureRef": {
+          "schemaVersion": "dayflow-ablation-exclusion-closure-v0.1",
+          "exclusionClosureId": "synthetic.closure.0",
+          "exclusionClosureSha256": "310f52465059dd52b1f20ab2333bc6e1846468d902343efe3735b7fdc9ef75c5"
+        },
+        "datasetVersion": "synthetic-dataset-v0.1",
+        "includedCheckpointRuns": [
+          {
+            "checkpointRef": {
+              "schemaVersion": "dayflow-ablation-checkpoint-v0.2",
+              "checkpointId": "synthetic.checkpoint.0",
+              "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            },
+            "runRefs": [
+              {
+                "schemaVersion": "dayflow-ablation-run-v0.4",
+                "runId": "synthetic.run.a1.0",
+                "runSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                "armId": "A1",
+                "replicateIndex": 0,
+                "matchedPairId": "synthetic.matched-pair.0"
+              },
+              {
+                "schemaVersion": "dayflow-ablation-run-v0.4",
+                "runId": "synthetic.run.b.0",
+                "runSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+                "armId": "B",
+                "replicateIndex": 0,
+                "matchedPairId": "synthetic.matched-pair.0"
+              }
+            ]
+          }
+        ],
+        "datasetSha256": "59e4b2215fccd61121fb7c1d3140468c01c6f043611bb6b14253236e03d34ad5"
+      },
+      "binding": {
+        "finalDatasetBindingSchemaVersion": "dayflow-ablation-final-dataset-binding-v0.1",
+        "finalDatasetBindingId": "synthetic.binding.0",
+        "lineageClass": "evidence",
+        "dataOrigin": "synthetic",
+        "studyPhase": "contract_conformance",
+        "studyProtocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifestRef": {
+          "schemaVersion": "dayflow-ablation-final-dataset-manifest-v0.1",
+          "datasetVersion": "synthetic-dataset-v0.1",
+          "datasetSha256": "59e4b2215fccd61121fb7c1d3140468c01c6f043611bb6b14253236e03d34ad5"
+        },
+        "runBindings": [
+          {
+            "checkpointId": "synthetic.checkpoint.0",
+            "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "runId": "synthetic.run.a1.0",
+            "runSha256": "8888888888888888888888888888888888888888888888888888888888888888",
+            "armId": "A1",
+            "replicateIndex": 0,
+            "matchedPairId": "synthetic.matched-pair.0"
+          },
+          {
+            "checkpointId": "synthetic.checkpoint.0",
+            "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "runId": "synthetic.run.b.0",
+            "runSha256": "9999999999999999999999999999999999999999999999999999999999999999",
+            "armId": "B",
+            "replicateIndex": 0,
+            "matchedPairId": "synthetic.matched-pair.0"
+          }
+        ],
+        "createdAt": "2026-08-17T10:03:00.000Z",
+        "finalDatasetBindingSha256": "37e8f190b6f3d6d77ab636cc51909089ea7f8939fdfe0c6c1f836b99c945a0d5"
+      }
+    }
+  ],
+  "casesSha256": "76dac78901f410caa001dc04621b3bbaf1d2ff69e98308557649588aa1a4f27f"
+}

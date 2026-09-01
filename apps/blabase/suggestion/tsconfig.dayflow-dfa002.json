@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "eval/synthetic/dayflowEvidenceAblationCases.v0.2.json",
+    "eval/synthetic/dayflowEvidenceAblationConfig.v0.2.json",
+    "src/dayflowEvidence/contracts.ts",
+    "src/evaluation/dayflowAblation/buildDataset.ts",
+    "src/evaluation/dayflowAblation/contracts.ts",
+    "src/evaluation/dayflowAblation/runGeneration.ts",
+    "tests/dayflowAblationEvaluation.test.ts",
+    "tests/dayflowEvidenceContracts.test.ts",
+    "tests/dayflowEvidenceExtraction.test.ts",
+    "vitest.dayflow-dfa002.config.ts"
+  ],
+  "exclude": [
+    "node_modules/**",
+    ".next/**",
+    ".next-dev/**",
+    ".next-build/**",
+    ".local/**"
+  ]
+}

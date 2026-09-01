@@ -8403,6 +8403,147 @@ as a new execution.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22:end -->
 
+<!-- engine-change-record-addendum:ECR-STAGE10-2B2-COLIN-GITHUB-SOURCE-BUNDLE-CONTRACT-FREEZE-2026-08-23:begin -->
+
+## Colin GitHub Source-Bundle Contract Freeze Decision Receipt: ECR-STAGE10-2B2-COLIN-GITHUB-SOURCE-BUNDLE-CONTRACT-FREEZE-2026-08-23
+
+- Date: 2026-08-23
+- Timezone: Asia/Seoul
+- Owner: Colin
+- Sole human reviewer and decision authority: Colin
+- Required David role, gate, package, receipt, artifact, review, or approval: none
+- Goal: Record Colin's Gate 1 decision and freeze the exact GitHub source-bundle V0.2 contract
+  bytes without changing the reviewed contract document.
+- Affected pipeline stages: Governance and contract lifecycle record only. No runtime or semantic
+  pipeline stage is changed.
+- Decision evidence: Colin reviewed the Gate 1 contract summary, explicitly selected option 1 to
+  approve the current contract and prepare its exact-byte identity, then explicitly selected option
+  1 to record that approval and identity in a separate freeze receipt/ECR.
+- GitHub source-bundle contract freeze decision: `APPROVED` and `ACCEPTED` by Colin for the exact
+  bound bytes below.
+
+### Bound immutable identities and lifecycle transition
+
+- Contract ID and source-bundle contract version: `github.source-bundle.v0.2`
+- Exact bound contract path:
+  `suggestion/docs/COMMON_SUGGESTION_EVIDENCE_GITHUB_SOURCE_BUNDLE_V0_2_CONTRACT.md`
+- Exact bound document byte length: `49094`
+- Exact bound document UTF-8 bytes SHA-256 (`contractSha256`):
+  `9e7351ba3ef89aa3dfb8c57a050cdb973257d2bad37684b37c16e148d2b1d757`
+- Exact bound Git blob object ID in this repository's default SHA-1 object format:
+  `410fedb66a47d472de0281a4467f79f446f811df`
+- Git blob object preimage: `blob 49094\0<exact bound document bytes>`; this object ID is not
+  called or treated as SHA-256.
+- Parent Common contract Git blob object ID: `0bdb0bc5d57d207ff1ff8b393d83a1d750eb7715`
+- Parent Common freeze receipt:
+  `ECR-STAGE10-2B1-COLIN-COMMON-CONTRACT-FREEZE-2026-08-22`
+- Parent Common freeze Git commit object ID: `73e458174ac8d0cd1fef9a5bbf89c2a7e58be81b`
+- Status embedded in the exact bound contract bytes:
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW`
+- External lifecycle transition recorded by this receipt:
+  `FREEZE_PROPOSAL_READY_FOR_COLIN_REVIEW` ->
+  `GITHUB_SOURCE_BUNDLE_CONTRACT_FROZEN_BY_COLIN`
+- Resulting external lifecycle state: `GITHUB_SOURCE_BUNDLE_CONTRACT_FROZEN_BY_COLIN`
+
+The contract source document remains byte-for-byte unchanged by this receipt. The lifecycle
+transition and exact identities are external so the contract never self-hashes or claims a receipt
+or commit containing itself. Any later frozen contract/caps value for this source must equal the
+`contractSha256` above exactly.
+
+### Gate 1 decisions: all Yes
+
+1. **Yes.** Freeze the exact document bytes, external `contractSha256`, exact Git blob object ID,
+   and `github.source-bundle.v0.2` identity recorded above.
+2. **Yes.** Keep the exact Common envelope separate from the GitHub source bundle and freeze the
+   Section 3 identity literals plus envelope, manifest, and frozen contract/caps equality rules.
+3. **Yes.** Freeze the closed two-mode union, exact operations, time window, kinds, and per-mode
+   record invariants without a compatibility union, alias, coercion, default, or migration.
+4. **Yes.** Keep raw `host` and `repositoryDatabaseId` transient and NON-WIRE; serialize only opaque
+   repository HMAC references and reject raw or canonical repository identity tokens on the wire.
+5. **Yes.** Freeze the requested and observed repository cardinality, exact count/null semantics,
+   operation-coverage tuple cardinality, and required bijections.
+6. **Yes.** Freeze tuple-local pagination, cursor, count, and page bijections, including the exact
+   page-3 terminal completeness rule.
+7. **Yes.** Freeze the object/event preimage grammar, event HMAC identity, privacy-derived head
+   artifact, and no-actor wire rule.
+8. **Yes.** Freeze the sealed truncation assertions, coverage and attestation boundaries, and
+   deterministic cap behavior.
+9. **Yes.** Use only the frozen Common builder, exact 11-key work-item facts, Common projection,
+   issue, failure, and diagnostic contracts; do not pass live-only fields.
+10. **Yes.** Prohibit comment/review text, suggestion semantics, expected output, ranking, caveats,
+    and other final suggestion fields from the GitHub source bundle.
+11. **Yes.** Preserve Common precedence and safe-candidate behavior for conflict, omission, and
+    source-local failure.
+12. **Yes.** Keep the source private, fictional-fixture-only for implementation validation, and
+    always `authoritative: false` throughout Stage10-2B.
+13. **Yes.** Treat the completed bounded QA as technical evidence only; it did not itself freeze
+    the contract or approve implementation, activation, release, or authority.
+14. **Yes.** Keep bundle freeze, offline implementation approval, offline slice acceptance, and
+    operational activation as four separate Colin gates.
+
+### Freeze scope and binding effect
+
+- Frozen scope: Only the GitHub source-bundle V0.2 contract embodied by exact Git blob object ID
+  `410fedb66a47d472de0281a4467f79f446f811df` and exact `contractSha256`
+  `9e7351ba3ef89aa3dfb8c57a050cdb973257d2bad37684b37c16e148d2b1d757` is frozen.
+- Any schema, hash, HMAC, sorting, text, cap, privacy, projection, callback, or identity change
+  requires a new contract version, new exact-byte identities, new QA, and a new explicit Colin
+  freeze decision. The bound bytes must never be silently overwritten.
+- The frozen Common V0.2 source-verification contract remains the parent authority. Common drift
+  blocks implementation and must not be resolved by weakening this source contract.
+- Stage10-2B remains private and always `authoritative: false`; Stage10-2C alone may first approve
+  any authority-bearing activation.
+- The A/B/C identical-engine invariant and Dayflow evidence-only boundary remain binding. This
+  receipt freezes a neutral source-evidence contract, not a provider-specific suggestion path.
+
+### Explicit non-authorizations and unresolved prerequisites
+
+- This receipt does not approve or implement the GitHub collector, parser, adapter, verifier,
+  projection callback, fixture, test, provider integration, or capability registration.
+- It does not provision credentials, HMAC keys, provider permissions, API access, rate limits,
+  deletion operations, observability, incident response, or rollback infrastructure.
+- It does not activate GitHub, expose a public API, change product behavior, approve live data,
+  authorize production collection, grant `authoritative: true`, release, or roll out anything.
+- Offline implementation approval, offline slice acceptance, and operational activation remain
+  separate unresolved Colin decisions.
+- Release decision: Not released.
+- Implementation decision: Not approved.
+
+### Bound technical evidence and execution record
+
+- Final bounded privacy re-QA result: `PASS`, with no material finding and the prior serialized
+  top-level `host` finding closed.
+- Re-QA scope confirmed the closed wire schema, NON-WIRE repository identity boundary, negative
+  fixture, Gate 1 checklist, proposal-only status, private boundary, `authoritative: false`, and
+  four separate gates. It did not perform tests or inspect Git state.
+- Exact-byte identity preparation computed the byte length, SHA-256, and Git blob object ID from
+  the same current contract bytes without newline or Unicode normalization.
+- Git repository object format check: no explicit `extensions.objectFormat` is configured in the
+  parent repository config, so the repository default SHA-1 blob format applies.
+- Files changed by this receipt: `suggestion/docs/ENGINE_CHANGE_RECORD.md` only.
+- Contract source files changed by this receipt: none.
+- Tests, typecheck, lint, build, baseline, evaluation, architecture check, provider call, or runtime
+  command executed: none.
+- Git commands executed: none.
+- Evaluation dataset version and SHA-256: not applicable; no evaluation input or semantic behavior
+  changed.
+- Candidate run ID and comparison run ID: none.
+- Metrics changed: none.
+- Privacy, retention, and data impact: unchanged. No secret, credential, raw conversation, private
+  evidence, provider data, provider artifact, model call, dataset, or user data was added or used.
+
+### Next permitted task, release boundary, and rollback
+
+- Next permitted decision: Colin may separately approve Gate 2, the offline implementation of the
+  frozen parser, adapter, blind callback boundary, projection, and fictional tests.
+- No runtime implementation may start from this receipt alone.
+- Reopen, replace, or roll back this freeze only through an explicit Colin decision recorded in a
+  new proposal/decision receipt. Never silently mutate the bound contract bytes.
+- Reverting or voiding this receipt does not alter the parent Common freeze or any implementation;
+  it only removes this GitHub contract freeze decision and requires Colin's explicit approval.
+
+<!-- engine-change-record-addendum:ECR-STAGE10-2B2-COLIN-GITHUB-SOURCE-BUNDLE-CONTRACT-FREEZE-2026-08-23:end -->
+
 <!-- engine-change-record-addendum:ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24:begin -->
 
 ## Colin Common V0.3 Contract Freeze Decision Receipt: ECR-STAGE10-2B3-COLIN-COMMON-V0-3-CONTRACT-FREEZE-2026-08-24
@@ -8698,3 +8839,347 @@ ID is invented or assigned by this record.
   provider data, model input, dataset, or user data was added or used.
 
 <!-- engine-change-record-addendum:ECR-STAGE10-2B5-COLIN-COMMON-V0-4-CONTRACT-FREEZE-2026-08-25:end -->
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1B-METADATA-HANDOFF-IMPLEMENTATION-2026-08-26:begin -->
+
+## Task 1B Metadata Evidence Handoff Implementation: ECR-DAYFLOW-TASK1B-METADATA-HANDOFF-IMPLEMENTATION-2026-08-26
+
+- Date: 2026-08-26
+- Timezone: Asia/Seoul
+- Owner, sole human reviewer, and decision authority: Colin
+- Required David role, gate, artifact, review, or approval: none
+- Goal: Add one inactive, provider-neutral, synthetic-only Blabase importer for the exact
+  metadata-only four-file bundle published by the Task 1A Dayflow exporter.
+- Affected pipeline stages: evaluation-input transport verification only.
+- Behavior before: Blabase had a frozen synthetic JPEG bundle importer whose manifest and object
+  contract cannot accept the Task 1A metadata-only payload.
+- Behavior after: A separate direct-module importer can verify Task 1A payload, manifest, detached
+  hash, completion marker, provenance, canonical wire order, relational references, derived
+  coverage, missing-field projections, issue projections, and forbidden private or suggestion
+  fields without changing the existing JPEG importer.
+
+### Versions and compatibility
+
+- New import schema version: dayflow.blabase-evidence-bundle-import.v1.
+- New replay hash domain: blabase.dayflow-metadata-evidence-bundle-replay.v1.
+- Producer payload schema: dayflow.blabase-evidence-bundle.v1.
+- Producer manifest schema: dayflow.blabase-evidence-manifest.v1.
+- Existing dayflow-screen-evidence-bundle-import-v0.1 contract and its callers are unchanged.
+- The Foundation sorted-key producer profile is verified by exact raw-byte hashes. The importer
+  does not relabel that profile as RFC 8785 JCS and does not reserialize producer bytes as an
+  acceptance condition.
+
+### Implementation boundary
+
+- Added source:
+  suggestion/src/evaluation/dayflowAblation/importDayflowMetadataEvidenceBundleV1.ts.
+- Added synthetic focused test:
+  suggestion/tests/dayflowMetadataEvidenceBundleImportV1.test.ts.
+- Existing importer, verifier, runtime barrel, model, prompt, ranking, guardrail, A/B/C runner,
+  Golden Dataset, and product behavior are unchanged.
+- No filesystem adapter, live database reader, WAL reader, screenshot reader, OCR reader,
+  provider, network, persistence, or product activation was added.
+- LikeC4 remains unchanged because the new module is direct-module-only and creates no implemented
+  runtime connection or system flow.
+
+### Evaluation, privacy, and release state
+
+- Evaluation dataset version and SHA-256: none. The new tests use synthetic ASCII fixtures only
+  and do not freeze an evaluation input.
+- Candidate run ID and comparison run ID: none.
+- Commands executed in this implementation checkpoint: none.
+- Tests, typecheck, lint, build, architecture checks, baseline, evaluation, and QA: deferred to
+  the next Colin-approved validation checkpoints.
+- Metrics changed: none.
+- Privacy and retention impact: no actual Dayflow database, screenshot, file path, observation
+  text, OCR, conversation, credential, private artifact, or user data was read or stored. Output
+  exposes parsed metadata evidence and hashes but no raw input bytes.
+- Release decision: inactive, unvalidated, not released, and not authorized for actual data.
+
+### Rollback and next gate
+
+- Rollback removes the two Task 1B source/test additions and records the rollback through a
+  successor Engine Change Record; the existing frozen JPEG importer remains intact.
+- Recommended next gate: focused TypeScript and Vitest validation for only the new importer and
+  synthetic tests. Failure must be reported without automatic source correction.
+- Actual Dayflow data, filesystem bridging, Task 1C input selection and sealing, Task 2 A/B/C
+  runner work, Git, freeze, activation, and release remain separate Colin decisions.
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1B-METADATA-HANDOFF-IMPLEMENTATION-2026-08-26:end -->
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1D-2A-RESTART-SAFE-SEAL-VERIFY-2026-08-26:begin -->
+## ECR-DAYFLOW-TASK1D-2A-RESTART-SAFE-SEAL-VERIFY-2026-08-26
+
+- Date: 2026-08-26
+- Owner and reviewer: Colin
+- Status: implemented, inactive, focused validation deferred
+- Scope: private Task 1 evaluation-input V0.2 seal retention correction and restart-safe verification
+
+### Behavior correction
+
+- Before this change, the V0.2 builder copied any canonical authorization retention object and the published-input verifier required an in-memory branded seal. A process restart therefore lost the only verification handle, and obsolete three-key retention fixtures remained structurally acceptable.
+- The V0.2 builder now accepts only the frozen four-key delete policy: `action=delete`, `incompleteStagingSeconds=3600`, `dayflowRawMaximumSeconds=86400`, and `sealedPrivateInputMaximumSeconds=2592000`.
+- A separate durable verifier reopens only the canonical private-pilot `runs/<identity>` directory through the pinned exact-set artifact reader. It verifies the exact ten files, canonical manifest and markers, V0.2 domain identity, authorization, structured evidence, Dayflow byte/hash mappings, fixed policy, real source mode, exact 600-second window, and retention policy.
+- The durable verifier accepts only `dataRoot`, canonical relative directory, and expected identity. It does not accept or reconstruct the same-process seal brand, and it returns frozen metadata without filesystem paths or artifact bytes.
+
+### Compatibility and activation
+
+- Existing V0.2 build, publish, and branded same-process verification APIs remain available and keep their publication layout and identity schema.
+- Synthetic Task1C V0.1 artifacts are immutable and are not relabeled or accepted by the V0.2 verifier.
+- No public verifier, product activation, provider registry, daemon, HMAC, CAS, IPC, real capture, or deletion action is introduced.
+
+### Privacy and reproducibility
+
+- Privacy impact: none. No real Dayflow capture or user data was read, produced, copied, or published in this checkpoint.
+- Tests use synthetic canonical bytes only and cover restart-like lost seal references, wrong identity/path, exact-set failures, unsafe entries, byte mutation, and exact retention.
+- The fixed V0.2 schema/domain/policy/source-mode/window rules and raw/content hashes preserve reproducible private-input verification.
+
+### Validation and follow-up
+
+- Validation is intentionally deferred to the separately authorized Task 1D-2A focused validation checkpoint. No test, typecheck, lint, architecture check, Git command, or capture command was run here.
+- If validation finds an implementation defect, correct only the V0.2 seal, durable verifier, and their focused tests before any real pilot authorization or capture begins.
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1D-2A-RESTART-SAFE-SEAL-VERIFY-2026-08-26:end -->
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1-V0-2-PRIVATE-ARTIFACT-BUDGET-2026-08-26:begin -->
+## ECR-DAYFLOW-TASK1-V0-2-PRIVATE-ARTIFACT-BUDGET-2026-08-26
+
+- Date: 2026-08-26
+- Owner and reviewer: Colin
+- Status: implemented, inactive, validation deferred
+- Scope: Task1 real-private-pilot V0.2 evaluation-input artifact byte budget
+
+### Frozen contract and enforcement
+
+- A single frozen filename-keyed budget now defines all ten V0.2 artifact limits: authorization JSON 131,072 bytes; structured evidence 786,432 bytes; Dayflow payload 4,194,304 bytes; Dayflow manifest 16,384 bytes; evaluation-input manifest 98,304 bytes; and each hash or COMPLETE marker 64 bytes.
+- The declared and map-derived aggregate maximum is exactly 5,226,816 bytes. Module initialization fails if the map no longer has ten entries or its derived total differs from the declared total.
+- The V0.2 sealer checks every generated artifact against its filename limit and checks the actual aggregate before returning a successful build. This includes the generated evaluation-input manifest and both final identity markers.
+- Budget violations fail closed with the existing `INPUT_INVALID` issue code. No new serialized error value or compatibility union was introduced.
+
+### Compatibility and privacy
+
+- V0.2 filenames, canonical bytes, hash domains, exact retention policy, publication layout, and same-process APIs are unchanged for inputs within the frozen limits.
+- Synthetic Task1C V0.1 remains immutable and is not relabeled or accepted through this contract.
+- Privacy impact: protective only. The budget reduces the maximum private data retained in one sealed input. No real user data, screenshot, OCR content, capture, publication, or deletion was performed.
+
+### Validation status
+
+- Focused tests specify the exact map and aggregate invariant, confirm a normal seal remains below every limit, and exercise the structured-evidence exact boundary and one-byte rejection.
+- Test execution, typecheck, lint, architecture checks, Git operations, and real capture are deferred to the separately authorized validation checkpoint.
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1-V0-2-PRIVATE-ARTIFACT-BUDGET-2026-08-26:end -->
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1-EXACT-ID-EXPORTER-V2-2026-08-27:begin -->
+
+## Exact-ID Metadata Exporter V2: ECR-DAYFLOW-TASK1-EXACT-ID-EXPORTER-V2-2026-08-27
+
+- Date: 2026-08-27
+- Timezone: Asia/Seoul
+- Owner, sole human reviewer, and decision authority: Colin
+- Required David role, gate, artifact, review, or approval: none
+- Goal: Bind every metadata bundle to the exact screenshots admitted by the inactive Dayflow pilot
+  adapter instead of treating an evaluation time window as sufficient publication authority.
+- Affected pipeline stages: Dayflow pilot capture drain and cleanup handoff, metadata-only bundle
+  export selection, and Blabase metadata-bundle qualification and synthetic Task 1 input sealing.
+- Behavior before: The adapter computed an eligible window, but the exporter could derive a bundle
+  from every matching database row in that window. Same-window extra rows could therefore enter
+  the bundle, and exact screenshot identity and capture-time correspondence were not a mandatory
+  producer input.
+- Behavior after: The adapter creates a mandatory immutable canonical selection of
+  `(screenshotId, capturedAtEpochSecond)` pairs. The V2 exporter derives screenshots, batches,
+  batch links, and observation metadata only from those selected screenshot IDs. Same-window
+  extras are excluded. Missing or deleted selected rows, out-of-window selected rows, and capture
+  timestamp mismatches fail before publication. The full cleanup inventory remains separately
+  retained and is not reduced to the export selection.
+
+### Serialized identity and cross-contract correction
+
+- Exporter identity after: exactly `dayflow.blabase-evidence-exporter.v2`.
+- Historical exporter identity before: `dayflow.blabase-evidence-exporter.v1`.
+- Payload schema remains `dayflow.blabase-evidence-bundle.v1`.
+- Manifest schema remains `dayflow.blabase-evidence-manifest.v1`.
+- The Blabase qualifier accepts exporter V2 only. Legacy exporter V1 is rejected, with no
+  compatibility union, alias, fallback, coercion, or relabeling path.
+- A V2 payload must contain at least one screenshot. Screenshot IDs and screenshot-link screenshot
+  IDs must be positive safe integers. Other identifier domains were not broadened or changed.
+- The positive Task 1 seal fixture was synthetic and was corrected to contain one canonical
+  positive-ID screenshot with consistent coverage, gap, and issue projections. No frozen dataset,
+  seal, input, bundle, manifest, or other artifact was overwritten or mutated.
+
+### Validation evidence
+
+- Dayflow focused Swift validation passed 34 of 34 tests.
+- Blabase focused Vitest validation passed 20 of 20 tests.
+- Blabase TypeScript typecheck passed.
+- Read-only closure QA found no remaining High or Medium finding and returned `GO`.
+- These results are focused source and contract evidence only. They do not establish live SQLite,
+  recorder, raw-store, end-to-end producer-consumer, production conformance, activation, release,
+  or A/B/C quality evidence.
+- Tests, typecheck, lint, formatting, architecture checks, Git commands, artifact generation,
+  freeze, activation, and A/B/C execution were not rerun during this documentation checkpoint.
+
+### Reproducibility, privacy, retention, and release state
+
+- Evaluation dataset version and SHA-256: unchanged and not applicable to this synthetic-focused
+  contract correction. No dataset or evaluation-input version was frozen.
+- Candidate run ID and comparison run ID: none.
+- Code commit: not assigned. No Git command was performed by this documentation checkpoint.
+- Metrics changed: none. No A/B/C runner or comparison report has run yet.
+- The exact selection adds only screenshot ID and capture timestamp. It adds no raw path,
+  application or instance identity, interruption metadata, observation text, credential, secret,
+  screenshot bytes, or actual user data to the contract.
+- Raw cleanup scope is not reduced. Cleanup retains the full safe persisted inventory even when
+  export eligibility selects only a subset or rejects publication.
+- Status: implemented and focused-validated, but inactive and unfrozen. There is no production
+  conformance, activation, release, live-data, or product-authority evidence.
+- Release decision: not released.
+
+### Residual risks, next gates, and rollback
+
+- Remaining gates are live SQLite, recorder, and raw-store integration; exporter-failure recovery;
+  partial-deletion retry; recorder queue isolation; successor freeze and evaluation-input hash;
+  and the common-engine A/B/C runner, measurement, and comparison report.
+- The broader durable post-commit outbox, retention enforcement, and production lifecycle remain
+  separately authorized work. This record does not claim those capabilities exist.
+- Rollback must revert the V2 producer, adapter, qualification, and synthetic fixture changes as
+  one cross-repository contract unit and add a successor record. It must not silently re-enable
+  exporter V1 or mutate any frozen artifact.
+
+<!-- engine-change-record-addendum:ECR-DAYFLOW-TASK1-EXACT-ID-EXPORTER-V2-2026-08-27:end -->
+
+<!-- engine-change-record-addendum:ECR-SCREEN-EVIDENCE-PRIVATE-STORE-EXPORTER-V1-2026-08-28:begin -->
+
+## Private Screen Evidence Store and Exporter V1: ECR-SCREEN-EVIDENCE-PRIVATE-STORE-EXPORTER-V1-2026-08-28
+
+- Date: 2026-08-28
+- Timezone: Asia/Seoul
+- Developer, owner, sole human reviewer, and decision authority: Colin
+- Required David role, gate, artifact, review, or approval: none
+- Objective: Implement and focused-validate the inactive Blabase-owned private immutable Screen
+  Evidence store, exact export selection, canonical completed four-file publisher, and current
+  ingestion readback boundary needed before assembling one fixed A/B/C evaluation input.
+- Scope: Private local store/export transport and synthetic regression evidence only. Suggestion
+  generation, A/B/C engine wiring, production activation, contract freeze, destructive cleanup,
+  live capture, and release are outside this record.
+
+### Fixed identities and compatibility
+
+- Bundle schema: exactly `blabase.screen-evidence-bundle.v1`.
+- Manifest schema: exactly `blabase.screen-evidence-manifest.v1`.
+- Producer identity: exactly `blabase.screen-evidence-producer.v1`.
+- Preprocessing identity: exactly `blabase.screen-evidence-preprocessing.v1`.
+- The public limits and public publisher input/signature remain fixed. The selector enforces the
+  frozen cumulative `PRIVATE_SCREEN_EVIDENCE_LIMITS_V1.snapshotBytes` limit of 32 MiB.
+- No Dayflow identity, repository, runtime, Xcode project, database, exporter, alias, fallback, or
+  compatibility union is introduced. Historical Dayflow artifacts and hashes remain unchanged.
+- This is an additive private V1 boundary. It remains inactive, unwired, unfrozen, and unreleased.
+
+### Source, test, and documentation boundary
+
+- Source files:
+  - `suggestion/src/screenEvidence/contractsV1.ts`
+  - `suggestion/src/screenEvidence/privateStoreContractsV1.ts`
+  - `suggestion/src/screenEvidence/privateScreenEvidenceBudgetsV1.internal.ts`
+  - `suggestion/src/screenEvidence/privateScreenEvidenceFilesystemV1.internal.ts`
+  - `suggestion/src/screenEvidence/privateScreenEvidenceStoreV1.ts`
+  - `suggestion/src/screenEvidence/exportScreenEvidenceBundleV1.ts`
+  - `suggestion/src/screenEvidence/publishScreenEvidenceBundleV1.internal.ts`
+- Existing ingestion boundary relied upon without a new runtime caller:
+  - `suggestion/src/screenEvidence/qualifyScreenEvidenceBundleV1.internal.ts`
+  - `suggestion/src/screenEvidence/importScreenEvidenceBundleV1.ts`
+  - `suggestion/src/screenEvidence/readScreenEvidenceBundleV1.ts`
+- Test and fixture files:
+  - `suggestion/tests/screenEvidenceBundleV1.test.ts`
+  - `suggestion/tests/screenEvidenceStoreExporterV1.test.ts`
+  - `suggestion/tests/fixtures/screenEvidenceStoreExporterChildV1.ts`
+- Documentation and architecture files:
+  - `suggestion/docs/SCREEN_EVIDENCE_INGESTION_V1.md`
+  - `suggestion/docs/ENGINE_CHANGE_RECORD.md`
+  - `architecture/model.c4`
+  - `architecture/planned.c4`
+  - `architecture/views.c4`
+
+### Behavior changes
+
+- The private store writes, reads, and snapshots exact immutable capture revisions with canonical
+  bytes, raw SHA-256 binding, collision rejection, bounded aggregate resources, and strict private
+  filesystem handling.
+- Cleanup inventory is metadata-only, read-only, independent from export eligibility, and not a
+  deletion or retention authority. It must remain private and must not be logged pending a
+  separate redaction boundary.
+- Export selection records an explicit `asOfEpochMs`, applies retention equality with
+  `retain_under_hold` precedence, requires one Colin-approved privacy-review receipt bound to the
+  exact stored revision raw SHA-256, and enforces
+  `capturedAtEpochMs <= reviewedAtEpochMs <= asOfEpochMs` with equality allowed.
+- Selection cumulatively rechecks the selected canonical bytes against the frozen 32 MiB limit;
+  exact-limit selection passes and one-over fails with `RESOURCE_LIMIT_EXCEEDED`.
+- The exporter performs pure exact selection and publishes canonical `payload.json`,
+  `manifest.json`, `manifest.sha256`, and `COMPLETE`. It stages, fsyncs, reads back, and atomically
+  publishes `COMPLETE` last before current-reader preflight/readback.
+- Publication ordering is locale-independent. The private ordered event/fault seam supplies
+  bounded in-process failure evidence without changing the public publisher input.
+
+### Validation evidence
+
+- Focused command:
+  `npm test -- tests/screenEvidenceBundleV1.test.ts tests/screenEvidenceStoreExporterV1.test.ts`
+- Focused result: two test files passed, 72/72 tests passed; ingestion 47/47 and Store+Exporter
+  25/25.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed.
+- `npm run arch:deps:check`: passed with zero errors and only pre-existing warnings. The newly
+  introduced exporter/internal dependency cycle is absent.
+- Validated final-closure behavior includes cumulative selector exact/one-over limits,
+  capture/review/as-of ordering, genuine operating-system child-process Store and Export
+  contention with different contents, typed loser and loser-temp absence, one unmixed winner,
+  fresh-process readback, and the ordered boundary-event `COMPLETE` failure matrix.
+- The ordered event matrix is trusted in-process boundary evidence. It is not an actual
+  post-link process-kill or disk-crash durability test.
+- No Golden Dataset, Golden baseline, semantic baseline, or A/B/C evaluation rerun was performed.
+  This boundary is not wired into suggestion generation, so no semantic output changed; focused
+  transport, lifecycle, concurrency, ingestion, TypeScript, lint, and dependency regression
+  evidence was used instead.
+
+### Privacy, retention, and data impact
+
+- Tests used synthetic, privacy-safe fixtures. No real screenshot, OCR text, conversation,
+  credential, secret, provider payload, production log, or actual user data was read or stored.
+- Exact privacy-review receipts and raw-hash binding narrow export authority; receipts remain
+  private selection evidence and are not exported into the completed bundle.
+- `delete_after_retention` expires at equality while `retain_under_hold` overrides expiry. No
+  destructive deletion, retention action, deletion receipt, or cleanup authority was added.
+- Cleanup inventory can still contain sensitive metadata. Private non-logging and a separate
+  redaction review remain mandatory before any broader use.
+
+### Lifecycle, reproducibility, and release state
+
+- Technical gate: `GO` only for Task 1 trusted-local, Colin-reviewed real evaluation Bundle
+  assembly using this inactive boundary.
+- Production, freeze, live capture, A/B/C wiring, activation, and release: `NO-GO` and not
+  authorized by this record.
+- Evaluation dataset version, fixed-input hash, candidate run ID, comparison run ID, freeze
+  receipt, and release identity: none.
+- Commit hash and freeze identity: none. This is a working-tree checkpoint and is not a frozen,
+  commit-backed reproducibility anchor. No identity, run ID, hash, or approval receipt is invented.
+- Rollback requires a separately recorded successor change. Historical records and frozen
+  artifacts must not be silently rewritten.
+
+### Remaining hardening and next gate
+
+- Remaining hardening: actual post-link/process-kill disk-crash evidence, hard-link recovery,
+  cleanup-inventory redaction and private non-logging enforcement, hostile-prototype and hostile-
+  intrinsic hardening, and privacy-review receipt authentication.
+- Destructive cleanup, native capture/OCR/preprocessing, authentication/encryption, freeze,
+  production activation, A/B/C wiring, execution, metrics, and comparison reporting remain
+  separate Colin decisions.
+- Next gate: **Task 1 fixed evaluation input assembly**. Use one trusted-local, Colin-reviewed real
+  evaluation Bundle, preserve its exact input identities and hashes, and stop before A/B/C runner
+  execution or any production/freeze decision.
+
+### Documentation closure execution record
+
+- Files changed while appending this closure: `suggestion/docs/SCREEN_EVIDENCE_INGESTION_V1.md`
+  and `suggestion/docs/ENGINE_CHANGE_RECORD.md` only.
+- No test, typecheck, lint, build, architecture, baseline, evaluation, provider, runtime, Git,
+  freeze, activation, or release command was run during this documentation-only closure.
+
+<!-- engine-change-record-addendum:ECR-SCREEN-EVIDENCE-PRIVATE-STORE-EXPORTER-V1-2026-08-28:end -->

@@ -77,13 +77,18 @@ export async function readLocalPrivateText(
   }
 
   const expectedUid = process.geteuid?.() ?? process.getuid?.();
-  if (
-    (await inspectLocalPrivateDirectoryChain(
-      trustedRoot,
-      dirname(path)
-    )) !== "available"
-  ) {
-    throw new Error("Local preserve read requires a private directory.");
+  const directoryChainStatus = await inspectLocalPrivateDirectoryChain(
+    trustedRoot,
+    dirname(path)
+  );
+  if (directoryChainStatus !== "available") {
+    const error = new Error("Local preserve read requires a private directory.");
+    if (directoryChainStatus === "missing") {
+      Object.defineProperty(error, "code", {
+        value: "ENOENT"
+      });
+    }
+    throw error;
   }
 
   const handle = await open(

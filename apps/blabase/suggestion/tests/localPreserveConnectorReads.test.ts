@@ -27,6 +27,8 @@ import {
 } from "../src/connectors/codex/localStore";
 import {
   githubLocalDirectory,
+  readStoredGitHubSnapshotPreservingStatusV1,
+  readStoredGitHubTokensPreservingStatusV1,
   readStoredGitHubTokens
 } from "../src/connectors/github/localStore";
 import {
@@ -50,6 +52,54 @@ afterEach(async () => {
 });
 
 describe("local connector preserve reads", () => {
+  it("distinguishes missing, malformed, schema-invalid, and unsafe GitHub files", async () => {
+    const cwd = await temporaryCwd();
+    const directory = githubLocalDirectory(cwd);
+
+    try {
+      await expect(readStoredGitHubTokensPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "missing"
+      });
+      await expect(readStoredGitHubSnapshotPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "missing"
+      });
+
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await chmod(join(cwd, ".local"), 0o700);
+      await chmod(join(cwd, ".local", "connectors"), 0o700);
+      await chmod(directory, 0o700);
+
+      const tokensPath = join(directory, "tokens.json");
+      const snapshotPath = join(directory, "snapshot.json");
+
+      await writeFile(tokensPath, "{", { mode: 0o600 });
+      await expect(readStoredGitHubTokensPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "invalid",
+        reason: "PARSE_FAILED"
+      });
+
+      await writeFile(tokensPath, "{}", { mode: 0o600 });
+      await expect(readStoredGitHubTokensPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "invalid",
+        reason: "SCHEMA_INVALID"
+      });
+
+      await writeFile(snapshotPath, "{}", { mode: 0o600 });
+      await expect(readStoredGitHubSnapshotPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "invalid",
+        reason: "SCHEMA_INVALID"
+      });
+
+      await chmod(tokensPath, 0o644);
+      await expect(readStoredGitHubTokensPreservingStatusV1(cwd)).resolves.toEqual({
+        status: "invalid",
+        reason: "READ_FAILED"
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     {
       name: "GitHub",
