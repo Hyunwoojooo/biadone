@@ -125,6 +125,12 @@ async function expectCodexJSON(args, env) {
   return JSON.parse(result.stdout);
 }
 
+async function expectCommandJSON(argv, env) {
+  const result = await execFile(argv[0], argv.slice(1), { env });
+  assert.equal(result.stderr, "", argv.join(" "));
+  return JSON.parse(result.stdout);
+}
+
 function containsJSONValue(value, expected) {
   if (value === expected) return true;
   if (Array.isArray(value)) {
@@ -194,6 +200,12 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   );
   const coordinatorShim = join(canonicalOutput, "bin", "blabee-coordinator");
   const managedCodexLauncher = join(canonicalOutput, "bin", "blabee-codex");
+  const rotationPreflightLauncher = join(
+    canonicalOutput,
+    "bin",
+    "blabee-rotation-preflight",
+  );
+  const rotationLauncher = join(canonicalOutput, "bin", "blabee-rotation");
   const projectSettingsLauncher = join(
     canonicalOutput,
     "bin",
@@ -206,6 +218,8 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     marketplaceManifestPath,
     coordinatorShim,
     managedCodexLauncher,
+    rotationPreflightLauncher,
+    rotationLauncher,
     projectSettingsLauncher,
     serviceLauncher,
     petLauncher,
@@ -219,6 +233,8 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   }
   assert.equal((await lstat(coordinatorShim)).mode & 0o777, 0o755);
   assert.equal((await lstat(managedCodexLauncher)).mode & 0o777, 0o755);
+  assert.equal((await lstat(rotationPreflightLauncher)).mode & 0o777, 0o755);
+  assert.equal((await lstat(rotationLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(projectSettingsLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(serviceLauncher)).mode & 0o777, 0o755);
   assert.equal((await lstat(petLauncher)).mode & 0o777, 0o755);
@@ -240,7 +256,13 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   const doctorRun = await execFile(
     coordinatorShim,
     ["doctor", "--project", canonicalOutput],
-    { env: { PATH: "/usr/bin:/bin", BLABEE_SOCKET: "/tmp/stale-blabee.sock" } },
+    {
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: fakeHome,
+        BLABEE_SOCKET: "/tmp/stale-blabee.sock",
+      },
+    },
   );
   assert.equal(
     doctorRun.stdout,
@@ -336,6 +358,8 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   assert.equal("codex_launcher" in summary.paths, false);
   assert.equal("launch" in summary.codex, false);
   assert.equal(summary.paths.managed_codex_launcher, managedCodexLauncher);
+  assert.equal(summary.paths.rotation_preflight_launcher, rotationPreflightLauncher);
+  assert.equal(summary.paths.rotation_launcher, rotationLauncher);
   assert.equal(summary.paths.runtime_identity_manifest, runtimeIdentityManifest);
   assert.equal(
     summary.runtime.identity.source_manifest_schema_version,
@@ -415,11 +439,74 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
       [6, "remove_marketplace"],
     ],
   );
-  assert.deepEqual(summary.cleanup.steps[3].argv_prefix, [
-    projectSettingsLauncher,
-    "disable",
-    "--project",
-  ]);
+  assert.equal("argv" in summary.cleanup.steps[2], false);
+  assert.equal(summary.cleanup.steps[2].interactive, true);
+  assert.equal(summary.cleanup.steps[2].stop_instruction, "press_ctrl_c_in_the_service_terminal");
+  assert.deepEqual(
+    summary.cleanup.steps.find((step) => step.id === "disable_target_project").argv_prefix,
+    [
+      projectSettingsLauncher,
+      "disable",
+      "--project",
+    ],
+  );
+  assert.deepEqual(summary.cleanup.guard, {
+    strategy: "locked_fail_closed_mutation_wrapper_v1",
+    argv: [rotationPreflightLauncher],
+    mutation_entrypoint: rotationLauncher,
+    preflight_destructive: false,
+    fail_closed: true,
+    blocked_exit_code: 75,
+    success_stdout: "blabee_rotation_preflight_ok",
+    checks: [
+      "active_codex_processes",
+      "blabee_mcp_processes",
+      "blabee_plugin_cache_process_references",
+    ],
+    required_before: [
+      "replace_foreground_service_after_manual_stop",
+      "remove_plugin",
+      "remove_marketplace",
+      "remove_or_replace_output_root",
+    ],
+    repeat_immediately_before_each_required_action: true,
+    supported_launcher_lock: {
+      path: "$HOME/Library/Application Support/Blabee/runtime/dogfood-rotation.lock",
+      scope: "per_user_shared_across_dogfood_roots",
+      mutation_holds_lock_through_completion: true,
+      launchers_refuse_while_held: true,
+      stale_owner_recovery: "pid_and_process_start_time_must_prove_owner_gone",
+      limitations: [
+        "native_or_external_launchers_can_race_after_the_process_snapshot",
+        "ownerless_or_malformed_lock_requires_manual_inspection",
+      ],
+    },
+    foreground_service_is_blocker: true,
+    service_stop_mode: "manual_ctrl_c_before_guarded_mutations",
+    on_blocked: "defer_rotation_without_mutation",
+    preflight_terminates_processes: false,
+  });
+  assert.deepEqual(summary.codex.cleanup_if_installed_later, {
+    mutation_entrypoint: rotationLauncher,
+    raw_mutation_argv_exposed: false,
+    plugin_remove_argv: [rotationLauncher, "remove-plugin"],
+    marketplace_remove_argv: [rotationLauncher, "remove-marketplace"],
+    output_root_cleanup_argv: [rotationLauncher, "cleanup-output-root"],
+    preflight_runs_inside_each_mutation: true,
+    on_preflight_failure: "defer_cleanup_without_mutation",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(summary),
+    /\["codex","plugin",("remove"|"marketplace","remove")/,
+  );
+  assert.deepEqual(
+    summary.cleanup.steps.find((step) => step.id === "remove_plugin").argv,
+    [rotationLauncher, "remove-plugin"],
+  );
+  assert.deepEqual(
+    summary.cleanup.steps.find((step) => step.id === "remove_marketplace").argv,
+    [rotationLauncher, "remove-marketplace"],
+  );
   assert.equal(summary.cleanup.completeness, "partial_state_reversal_only");
   assert.equal(summary.cleanup.retained_state.automatically_deleted, false);
   for (const key of [
@@ -432,6 +519,15 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   }
   assert.equal(summary.cleanup.output_root.exact_path, canonicalOutput);
   assert.equal(summary.cleanup.output_root.automatically_deleted, false);
+  assert.deepEqual(
+    summary.cleanup.output_root.cleanup_argv,
+    [rotationLauncher, "cleanup-output-root"],
+  );
+  assert.equal(summary.cleanup.output_root.raw_remove_argv_exposed, false);
+  assert.equal(
+    summary.cleanup.output_root.instruction,
+    "run_only_the_pinned_rotation_cleanup_entrypoint",
+  );
   assert.equal(summary.safety.cleanup_exact_root, canonicalOutput);
   assert.equal(summary.safety.automatic_failure_cleanup, false);
   assert.equal(summary.safety.failed_partial_output_preserved_for_inspection, true);
@@ -482,7 +578,13 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
   const managedLaunch = await execFile(
     managedCodexLauncher,
     ["resume", "managed-session-id"],
-    { env: { PATH: fakeBin, BLABEE_SOCKET: "/tmp/stale-blabee.sock" } },
+    {
+      env: {
+        PATH: fakeBin,
+        HOME: fakeHome,
+        BLABEE_SOCKET: "/tmp/stale-blabee.sock",
+      },
+    },
   );
   assert.equal(
     managedLaunch.stdout,
@@ -500,6 +602,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
       {
         env: {
           PATH: fakeBin,
+          HOME: fakeHome,
           BLABEE_SOCKET: "/tmp/stale-blabee.sock",
           GREP_OPTIONS: "--blabee-invalid-option",
           LD_LIBRARY_PATH: "/private/untrusted-loader-path",
@@ -532,7 +635,7 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     );
     await assert.rejects(
       execFile(scannerFailureLauncher, ["resume", "must-not-reach-coordinator"], {
-        env: { PATH: fakeBin },
+        env: { PATH: fakeBin, HOME: fakeHome },
       }),
       (error) => {
         assert.equal(error.code, 1);
@@ -543,9 +646,34 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     );
   }
 
+  const lockHome = join(fixture.root, "lock-home");
+  const rotationLock = join(
+    lockHome,
+    "Library",
+    "Application Support",
+    "Blabee",
+    "runtime",
+    "dogfood-rotation.lock",
+  );
+  await mkdir(rotationLock, { recursive: true, mode: 0o700 });
+  for (const launcher of [coordinatorShim, managedCodexLauncher, serviceLauncher, petLauncher]) {
+    await assert.rejects(
+      execFile(launcher, [], { env: { ...process.env, HOME: lockHome } }),
+      (error) => {
+        assert.equal(error.code, 75);
+        assert.equal(error.stdout, "");
+        assert.equal(error.stderr, "blabee_launch_deferred_rotation_in_progress\n");
+        return true;
+      },
+    );
+  }
+  await rm(rotationLock, { recursive: true });
+
   const generatedText = await Promise.all([
     readFile(coordinatorShim, "utf8"),
     readFile(managedCodexLauncher, "utf8"),
+    readFile(rotationPreflightLauncher, "utf8"),
+    readFile(rotationLauncher, "utf8"),
     readFile(projectSettingsLauncher, "utf8"),
     readFile(serviceLauncher, "utf8"),
     readFile(petLauncher, "utf8"),
@@ -565,6 +693,320 @@ test("preparation creates a self-contained app, marketplace, shims, and safe run
     output: join(await realpath(fixture.root), "prepared from cli"),
     summary: join(await realpath(fixture.root), "prepared from cli", "dogfood-summary.json"),
   });
+});
+
+test("rotation preflight defers cleanup for live Codex or Blabee references and fails closed", async (t) => {
+  const fixture = await makeWorkspace(t, "blabee-local-dogfood-rotation-");
+  const result = await prepareLocalDogfood({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+  });
+  const generatedPreflight = result.summary.paths.rotation_preflight_launcher;
+  const generatedText = await readFile(generatedPreflight, "utf8");
+  assert.match(generatedText, /BLABEE_ROTATION_PS=\/bin\/ps/);
+  assert.doesNotMatch(generatedText, /kill|terminate/);
+
+  async function makeProbe(name, scannerBody) {
+    const scanner = join(fixture.root, `${name}-ps`);
+    const probe = join(fixture.root, `${name}-preflight`);
+    await writeFile(scanner, scannerBody, { mode: 0o700 });
+    await writeFile(
+      probe,
+      generatedText.replace(
+        "BLABEE_ROTATION_PS=/bin/ps",
+        `BLABEE_ROTATION_PS='${scanner}'`,
+      ),
+      { mode: 0o700 },
+    );
+    return probe;
+  }
+
+  const safeProbe = await makeProbe("safe", [
+    "#!/bin/sh",
+    "printf '%s\\n' '101 1 /sbin/launchd /sbin/launchd'",
+    "",
+  ].join("\n"));
+  const safe = await execFile(safeProbe, []);
+  assert.equal(safe.stdout, "blabee_rotation_preflight_ok\n");
+  assert.equal(safe.stderr, "");
+
+  const blockedProbe = await makeProbe("blocked", [
+    "#!/bin/sh",
+    "printf '%s\\n' \\",
+    "  '4242 1 /opt/homebrew/bin/codex /opt/homebrew/bin/codex resume private-session-value' \\",
+    "  '4343 1 /bin/sh /Users/test/.codex/plugins/cache/blabee-local-dogfood-old/blabee/scripts/blabee-launcher mcp private-plugin-value' \\",
+    "  '4444 1 blabee-coordinator /tmp/Blabee.app/Contents/MacOS/blabee-coordinator mcp private-mcp-value' \\",
+    "  '4545 1 node node /opt/tools/codex.js resume private-node-value' \\",
+    "  '4646 1 sh sh /usr/local/bin/codex resume private-shell-value' \\",
+    "  '4747 1 sh sh /tmp/blabee-codex resume private-managed-value' \\",
+    "  '4848 1 sh sh /tmp/blabee-local-dogfood-old/marketplace/plugins/blabee/scripts/blabee-launcher mcp private-marketplace-value' \\",
+    "  '4949 1 blabee-coordinator /tmp/Blabee.app/Contents/MacOS/blabee-coordinator service private-service-value' \\",
+    "  '5049 1 blabee-pet /tmp/Blabee.app/Contents/MacOS/blabee-pet private-pet-value' \\",
+    "  '5149 1 blabee-coordinator /tmp/Blabee.app/Contents/MacOS/blabee-coordinator pet private-coordinator-pet-value'",
+    "",
+  ].join("\n"));
+  await assert.rejects(
+    execFile(blockedProbe, []),
+    (error) => {
+      assert.equal(error.code, 75);
+      assert.equal(error.stdout, "");
+      assert.equal(
+        error.stderr,
+        [
+          "blabee_rotation_deferred_active_references",
+          "codex:4242",
+          "blabee_reference:4343",
+          "blabee_reference:4444",
+          "codex:4545",
+          "codex:4646",
+          "blabee_reference:4747",
+          "blabee_reference:4848",
+          "blabee_reference:4949",
+          "blabee_reference:5049",
+          "blabee_reference:5149",
+          "",
+        ].join("\n"),
+      );
+      assert.doesNotMatch(
+        error.stderr,
+        /private-(session|plugin|mcp|node|shell|managed|marketplace|service|pet|coordinator-pet)-value/,
+      );
+      return true;
+    },
+  );
+
+  const unavailableProbe = await makeProbe("unavailable", "#!/bin/sh\nexit 2\n");
+  await assert.rejects(
+    execFile(unavailableProbe, []),
+    (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, "");
+      assert.equal(error.stderr, "blabee_rotation_preflight_unavailable\n");
+      return true;
+    },
+  );
+
+  const mutationMarker = join(fixture.root, "mutation-marker");
+  const fakeCodex = join(fixture.root, "fake-codex-mutation");
+  await writeFile(fakeCodex, [
+    "#!/bin/sh",
+    `printf '%s\\n' \"$*\" > '${mutationMarker}'`,
+    "printf '%s\\n' '{\"ok\":true}'",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  const generatedMutationText = await readFile(
+    result.summary.paths.rotation_launcher,
+    "utf8",
+  );
+  const mutationProcessScanner = join(fixture.root, "mutation-process-ps");
+  await writeFile(mutationProcessScanner, [
+    "#!/bin/sh",
+    'if [ "${1-}" = "-axo" ]; then',
+    "  printf '%s\\n' '7777 Mon Sep  2 12:00:00 2026'",
+    "else",
+    "  printf '%s\\n' 'Mon Sep  2 12:00:00 2026'",
+    "fi",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  const mutationProbe = join(result.output, "bin", "blabee-rotation-test");
+  await writeFile(
+    mutationProbe,
+    generatedMutationText.replace(
+      "BLABEE_ROTATION_CODEX=/usr/bin/env",
+      `BLABEE_ROTATION_CODEX='${fakeCodex}'`,
+    ).replace(
+      "BLABEE_ROTATION_PS=/bin/ps",
+      `BLABEE_ROTATION_PS='${mutationProcessScanner}'`,
+    ),
+    { mode: 0o700 },
+  );
+
+  const mutationBlockedScanner = join(fixture.root, "mutation-blocked-ps");
+  await writeFile(mutationBlockedScanner, [
+    "#!/bin/sh",
+    "printf '%s\\n' '5151 1 blabee-pet /tmp/Blabee.app/Contents/MacOS/blabee-pet must-not-mutate'",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await writeFile(
+    generatedPreflight,
+    generatedText.replace(
+      "BLABEE_ROTATION_PS=/bin/ps",
+      `BLABEE_ROTATION_PS='${mutationBlockedScanner}'`,
+    ),
+  );
+  const rotationHome = join(fixture.root, "rotation-home");
+  const rotationEnvironment = { ...process.env, HOME: rotationHome };
+  const sharedRotationLock = join(
+    rotationHome,
+    "Library",
+    "Application Support",
+    "Blabee",
+    "runtime",
+    "dogfood-rotation.lock",
+  );
+  for (const action of [
+    "remove-plugin",
+    "remove-marketplace",
+    "cleanup-output-root",
+  ]) {
+    await assert.rejects(
+      execFile(mutationProbe, [action], { env: rotationEnvironment }),
+      (error) => {
+        assert.equal(error.code, 75);
+        assert.match(error.stderr, /blabee_rotation_deferred_active_references/);
+        return true;
+      },
+    );
+    await assert.rejects(lstat(mutationMarker), { code: "ENOENT" });
+    assert.equal((await lstat(result.output)).isDirectory(), true);
+    await assert.rejects(
+      lstat(sharedRotationLock),
+      { code: "ENOENT" },
+    );
+  }
+
+  const mutationSafeScanner = join(fixture.root, "mutation-safe-ps");
+  await writeFile(mutationSafeScanner, [
+    "#!/bin/sh",
+    "printf '%s\\n' '6161 1 launchd /sbin/launchd'",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  await writeFile(
+    generatedPreflight,
+    generatedText.replace(
+      "BLABEE_ROTATION_PS=/bin/ps",
+      `BLABEE_ROTATION_PS='${mutationSafeScanner}'`,
+    ),
+  );
+  const pluginMutation = await execFile(
+    mutationProbe,
+    ["remove-plugin"],
+    { env: rotationEnvironment },
+  );
+  assert.equal(pluginMutation.stdout, '{"ok":true}\n');
+  assert.equal(
+    await readFile(mutationMarker, "utf8"),
+    `codex plugin remove ${result.summary.codex.plugin_selector} --json\n`,
+  );
+  await rm(mutationMarker);
+  const marketplaceMutation = await execFile(
+    mutationProbe,
+    ["remove-marketplace"],
+    { env: rotationEnvironment },
+  );
+  assert.equal(marketplaceMutation.stdout, '{"ok":true}\n');
+  assert.equal(
+    await readFile(mutationMarker, "utf8"),
+    `codex plugin marketplace remove ${result.summary.codex.marketplace_name} --json\n`,
+  );
+  await rm(mutationMarker);
+
+  await mkdir(sharedRotationLock, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(sharedRotationLock, "owner"),
+    "999999\nSun Sep  1 12:00:00 2026\n",
+    { mode: 0o600 },
+  );
+  const recoveredMutation = await execFile(
+    mutationProbe,
+    ["remove-plugin"],
+    { env: rotationEnvironment },
+  );
+  assert.equal(recoveredMutation.stdout, '{"ok":true}\n');
+  await assert.rejects(lstat(sharedRotationLock), { code: "ENOENT" });
+  await rm(mutationMarker);
+
+  await mkdir(sharedRotationLock, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(sharedRotationLock, "owner"),
+    "7777\nMon Sep  2 12:00:00 2026\n",
+    { mode: 0o600 },
+  );
+  await assert.rejects(
+    execFile(mutationProbe, ["remove-plugin"], { env: rotationEnvironment }),
+    (error) => {
+      assert.equal(error.code, 75);
+      assert.equal(error.stderr, "blabee_rotation_deferred_lock_held\n");
+      return true;
+    },
+  );
+  assert.equal((await lstat(sharedRotationLock)).isDirectory(), true);
+  await assert.rejects(lstat(mutationMarker), { code: "ENOENT" });
+  await rm(sharedRotationLock, { recursive: true });
+
+  for (const malformedOwner of [
+    "999999\n\n",
+    "999999\nnot-a-process-start\n",
+    "999999\nSun Sep  1 12:00:00 2026\nextra\n",
+  ]) {
+    await mkdir(sharedRotationLock, { recursive: true, mode: 0o700 });
+    await writeFile(join(sharedRotationLock, "owner"), malformedOwner, {
+      mode: 0o600,
+    });
+    await assert.rejects(
+      execFile(mutationProbe, ["remove-plugin"], {
+        env: rotationEnvironment,
+      }),
+      (error) => {
+        assert.equal(error.code, 75);
+        assert.equal(error.stderr, "blabee_rotation_deferred_lock_held\n");
+        return true;
+      },
+    );
+    assert.equal((await lstat(sharedRotationLock)).isDirectory(), true);
+    await assert.rejects(lstat(mutationMarker), { code: "ENOENT" });
+    await rm(sharedRotationLock, { recursive: true });
+  }
+
+  const uncertainProcessScanner = join(fixture.root, "mutation-uncertain-ps");
+  await writeFile(uncertainProcessScanner, [
+    "#!/bin/sh",
+    'if [ "${1-}" = "-p" ]; then',
+    "  printf '%s\\n' 'Mon Sep  2 12:00:00 2026'",
+    "  exit 0",
+    "fi",
+    "exit 42",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  const uncertainMutationProbe = join(
+    result.output,
+    "bin",
+    "blabee-rotation-uncertain-test",
+  );
+  await writeFile(
+    uncertainMutationProbe,
+    generatedMutationText.replace(
+      "BLABEE_ROTATION_CODEX=/usr/bin/env",
+      `BLABEE_ROTATION_CODEX='${fakeCodex}'`,
+    ).replace(
+      "BLABEE_ROTATION_PS=/bin/ps",
+      `BLABEE_ROTATION_PS='${uncertainProcessScanner}'`,
+    ),
+    { mode: 0o700 },
+  );
+  await mkdir(sharedRotationLock, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(sharedRotationLock, "owner"),
+    "999999\nSun Sep  1 12:00:00 2026\n",
+    { mode: 0o600 },
+  );
+  await assert.rejects(
+    execFile(uncertainMutationProbe, ["remove-plugin"], {
+      env: rotationEnvironment,
+    }),
+    (error) => {
+      assert.equal(error.code, 75);
+      assert.equal(error.stderr, "blabee_rotation_deferred_lock_held\n");
+      return true;
+    },
+  );
+  assert.equal((await lstat(sharedRotationLock)).isDirectory(), true);
+  await assert.rejects(lstat(mutationMarker), { code: "ENOENT" });
+  await rm(sharedRotationLock, { recursive: true });
+  await assert.rejects(
+    lstat(sharedRotationLock),
+    { code: "ENOENT" },
+  );
 });
 
 test("preparation passes verified previous apps into the signed app and records both identity layers", async (t) => {
@@ -690,9 +1132,35 @@ test("two prepared marketplaces coexist and complete the real Codex lifecycle in
   await mkdir(codexHome, { mode: 0o700 });
   const env = {
     ...process.env,
+    HOME: join(fixture.root, "lifecycle-home"),
     CODEX_HOME: codexHome,
     NO_COLOR: "1",
   };
+  const sharedRotationLock = join(
+    env.HOME,
+    "Library",
+    "Application Support",
+    "Blabee",
+    "runtime",
+    "dogfood-rotation.lock",
+  );
+  await mkdir(sharedRotationLock, { recursive: true, mode: 0o700 });
+  for (const prepared of [first, second]) {
+    for (const launcher of [
+      prepared.summary.paths.managed_codex_launcher,
+      prepared.summary.paths.service_launcher,
+    ]) {
+      await assert.rejects(
+        execFile(launcher, [], { env }),
+        (error) => {
+          assert.equal(error.code, 75);
+          assert.equal(error.stderr, "blabee_launch_deferred_rotation_in_progress\n");
+          return true;
+        },
+      );
+    }
+  }
+  await rm(sharedRotationLock, { recursive: true });
 
   const firstMarketplaceAdd = await expectCodexJSON(
     first.summary.codex.marketplace_add.argv.slice(1),
@@ -726,21 +1194,52 @@ test("two prepared marketplaces coexist and complete the real Codex lifecycle in
   assert.equal(containsJSONValue(installed, "blabee"), true);
   assert.equal(containsJSONValue(installed, "0.1.0"), true);
 
-  const pluginRemove = await expectCodexJSON(
-    first.summary.cleanup.steps.find((step) => step.id === "remove_plugin").argv.slice(1),
+  const safeRotationScanner = join(fixture.root, "lifecycle-safe-ps");
+  await writeFile(safeRotationScanner, [
+    "#!/bin/sh",
+    'if [ "${1-}" = "-p" ]; then',
+    "  printf '%s\\n' 'Mon Sep  2 12:00:00 2026'",
+    "else",
+    "  printf '%s\\n' '7171 1 launchd /sbin/launchd'",
+    "fi",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  for (const prepared of [first, second]) {
+    const preflight = prepared.summary.paths.rotation_preflight_launcher;
+    const source = await readFile(preflight, "utf8");
+    await writeFile(
+      preflight,
+      source.replace(
+        "BLABEE_ROTATION_PS=/bin/ps",
+        `BLABEE_ROTATION_PS='${safeRotationScanner}'`,
+      ),
+    );
+    const rotation = prepared.summary.paths.rotation_launcher;
+    const rotationSource = await readFile(rotation, "utf8");
+    await writeFile(
+      rotation,
+      rotationSource.replace(
+        "BLABEE_ROTATION_PS=/bin/ps",
+        `BLABEE_ROTATION_PS='${safeRotationScanner}'`,
+      ),
+    );
+  }
+
+  const pluginRemove = await expectCommandJSON(
+    first.summary.cleanup.steps.find((step) => step.id === "remove_plugin").argv,
     env,
   );
   assert.equal(containsJSONValue(pluginRemove, "blabee"), true);
-  const firstMarketplaceRemove = await expectCodexJSON(
-    first.summary.cleanup.steps.find((step) => step.id === "remove_marketplace").argv.slice(1),
+  const firstMarketplaceRemove = await expectCommandJSON(
+    first.summary.cleanup.steps.find((step) => step.id === "remove_marketplace").argv,
     env,
   );
   assert.equal(
     containsJSONValue(firstMarketplaceRemove, first.summary.codex.marketplace_name),
     true,
   );
-  const secondMarketplaceRemove = await expectCodexJSON(
-    second.summary.cleanup.steps.find((step) => step.id === "remove_marketplace").argv.slice(1),
+  const secondMarketplaceRemove = await expectCommandJSON(
+    second.summary.cleanup.steps.find((step) => step.id === "remove_marketplace").argv,
     env,
   );
   assert.equal(

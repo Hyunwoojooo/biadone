@@ -369,6 +369,20 @@ private func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
             "error_code": code,
             "retryable": true,
         ]
+    case "proposal_session_context_missing",
+         "proposal_binding_mismatch":
+        return [
+            "accepted": false,
+            "error_code": "decision_context_invalid_or_expired",
+            "retryable": false,
+        ]
+    case "operational_runtime_identity_mismatch",
+         "operational_runtime_request_not_compatible":
+        return [
+            "accepted": false,
+            "error_code": "runtime_compatibility_rejected",
+            "retryable": false,
+        ]
     default:
         return [
             "accepted": false,

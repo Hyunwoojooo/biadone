@@ -1271,14 +1271,19 @@ test("MCP requires the ranked proposal schema and never echoes correlation token
   }
 });
 
-test("MCP exposes only allowlisted decision failure metadata", async () => {
+test("MCP exposes allowlisted decision failures without a session-existence oracle", async () => {
   let forwardedCalls = 0;
   const fake = await startFakeCoordinator(() => {
     forwardedCalls += 1;
     const error = new Error("fixture coordinator rejection");
-    error.coordinatorCode = forwardedCalls === 1
-      ? "proposal_source_prompt_mismatch"
-      : "database_integrity_failed";
+    error.coordinatorCode = [
+      "proposal_source_prompt_mismatch",
+      "proposal_session_context_missing",
+      "proposal_binding_mismatch",
+      "operational_runtime_identity_mismatch",
+      "operational_runtime_request_not_compatible",
+      "database_integrity_failed",
+    ][forwardedCalls - 1];
     throw error;
   });
   const arguments_ = {
@@ -1290,7 +1295,14 @@ test("MCP exposes only allowlisted decision failure metadata", async () => {
     correlation_token: proposal.correlation_token,
     proposal: operationalProposal,
   };
-  const messages = ["binding", "internal"].map((id) => ({
+  const messages = [
+    "source_prompt",
+    "expired_restart_context",
+    "unclassified_binding",
+    "runtime_identity",
+    "runtime_request",
+    "internal",
+  ].map((id) => ({
     jsonrpc: "2.0",
     id,
     method: "tools/call",
@@ -1311,6 +1323,26 @@ test("MCP exposes only allowlisted decision failure metadata", async () => {
     });
     assert.deepEqual(responses[1].result.structuredContent, {
       accepted: false,
+      error_code: "decision_context_invalid_or_expired",
+      retryable: false,
+    });
+    assert.deepEqual(responses[2].result.structuredContent, {
+      accepted: false,
+      error_code: "decision_context_invalid_or_expired",
+      retryable: false,
+    });
+    assert.deepEqual(responses[3].result.structuredContent, {
+      accepted: false,
+      error_code: "runtime_compatibility_rejected",
+      retryable: false,
+    });
+    assert.deepEqual(responses[4].result.structuredContent, {
+      accepted: false,
+      error_code: "runtime_compatibility_rejected",
+      retryable: false,
+    });
+    assert.deepEqual(responses[5].result.structuredContent, {
+      accepted: false,
       error_code: "coordinator_unavailable_or_rejected",
       retryable: false,
     });
@@ -1321,9 +1353,13 @@ test("MCP exposes only allowlisted decision failure metadata", async () => {
         "Blabee coordinator unavailable or rejected the proposal.",
       );
     }
-    assert.equal(forwardedCalls, 2);
+    assert.equal(forwardedCalls, 6);
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
     assert.equal(result.stdout.includes(proposal.task_goal), false);
+    assert.equal(result.stdout.includes("proposal_session_context_missing"), false);
+    assert.equal(result.stdout.includes("proposal_binding_mismatch"), false);
+    assert.equal(result.stdout.includes("operational_runtime_identity_mismatch"), false);
+    assert.equal(result.stdout.includes("operational_runtime_request_not_compatible"), false);
     assert.equal(result.stdout.includes("database_integrity_failed"), false);
   } finally {
     await fake.close();

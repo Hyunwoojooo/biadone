@@ -561,6 +561,15 @@ public actor CoordinatorOperationalApplication {
         if routing.recoveryStatus().isQuarantined {
             throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
         }
+        // A proposal carries process-local prompt authority in Contracts/v1.
+        // Validate that authority before common reconciliation can append
+        // journal state. Read-only recovery status may already have been
+        // consulted. The full proposal is parsed again by
+        // `emitDecision`; this early check is deliberately limited to the
+        // exact outer binding and cannot authorize a write by itself.
+        if type == "emit_decision" {
+            try validateEmitDecisionAuthority(payload)
+        }
         generation = try nextGeneration(generation)
         let requestGeneration = generation
         if !quarantinedInitialActivations.isEmpty {
@@ -1047,6 +1056,54 @@ public actor CoordinatorOperationalApplication {
 // MARK: - Hook and MCP operations
 
 private extension CoordinatorOperationalApplication {
+    func validateEmitDecisionAuthority(_ data: Data) throws {
+        let wrapper = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            wrapper,
+            required: [
+                "project_id", "session_id", "source_turn_id", "source_prompt_id",
+                "episode_id", "correlation_token", "proposal",
+            ]
+        )
+        let projectID = try identifier(string(wrapper, "project_id"), "project_id")
+        let sessionID = try identifier(string(wrapper, "session_id"), "session_id")
+        let turnID = try identifier(string(wrapper, "source_turn_id"), "source_turn_id")
+        let promptID = try identifier(string(wrapper, "source_prompt_id"), "source_prompt_id")
+        let episodeID = try identifier(string(wrapper, "episode_id"), "episode_id")
+        let correlationToken = try opaqueToken(string(wrapper, "correlation_token"))
+        guard let proposal = wrapper["proposal"] as? [String: Any] else {
+            throw CoordinatorError("invalid_proposal")
+        }
+        _ = try validateOperationalProposal(
+            proposal,
+            correlationToken: correlationToken
+        )
+
+        guard let session = sessions[sessionID], let episode = session.episode else {
+            throw CoordinatorError("proposal_session_context_missing")
+        }
+        try byteExactRequire(session.projectID, projectID, "proposal_binding_mismatch")
+        try byteExactRequire(session.latestTurnID, turnID, "proposal_binding_mismatch")
+        try byteExactRequire(episode.episodeID, episodeID, "proposal_binding_mismatch")
+        try constantTimeTokenRequire(
+            session.correlationToken,
+            correlationToken,
+            "proposal_binding_mismatch"
+        )
+
+        // Preserve the existing error priority: token copies in proposal text
+        // are rejected before an isolated prompt ID transcription mismatch.
+        secretCorpus.register(correlationToken)
+        var proposalWithoutDesignatedToken = proposal
+        proposalWithoutDesignatedToken["correlation_token"] = NSNull()
+        try secretCorpus.assertNoKnownSecret(inJSONObject: proposalWithoutDesignatedToken)
+        try byteExactRequire(
+            session.latestPromptID,
+            promptID,
+            "proposal_source_prompt_mismatch"
+        )
+    }
+
     func enableProject(_ data: Data) throws -> Data {
         let payload = try StrictJSONTransport.object(from: data)
         let path = try Self.normalizedPath(try string(payload, "cwd"))
@@ -1295,12 +1352,22 @@ private extension CoordinatorOperationalApplication {
         let proposalID = try identifier(string(proposal, "proposal_id"), "proposal_id")
 
         guard let session = sessions[sessionID], let episode = session.episode else {
-            throw CoordinatorError("proposal_binding_mismatch")
+            // The exact per-prompt authority is deliberately process-local in
+            // Contracts/v1. A restart, a stale wrapper, or a forged session ID
+            // are intentionally indistinguishable here. Fail closed before any
+            // journal write, and let the MCP edge collapse this code with every
+            // other invalid-or-expired binding so it cannot become an existence
+            // oracle.
+            throw CoordinatorError("proposal_session_context_missing")
         }
         try byteExactRequire(session.projectID, projectID, "proposal_binding_mismatch")
         try byteExactRequire(session.latestTurnID, turnID, "proposal_binding_mismatch")
         try byteExactRequire(episode.episodeID, episodeID, "proposal_binding_mismatch")
-        try byteExactRequire(session.correlationToken, correlationToken, "proposal_binding_mismatch")
+        try constantTimeTokenRequire(
+            session.correlationToken,
+            correlationToken,
+            "proposal_binding_mismatch"
+        )
 
         // The designated proposal field is the only legal occurrence of this
         // per-prompt token. Register it only after the session token and all
@@ -3720,6 +3787,20 @@ private extension CoordinatorOperationalApplication {
 
     func byteExactRequire(_ actual: String?, _ expected: String?, _ code: String) throws {
         try require(Self.byteExact(actual, expected), code)
+    }
+
+    func constantTimeTokenRequire(
+        _ actual: String?,
+        _ expected: String?,
+        _ code: String
+    ) throws {
+        guard let actual, let expected else {
+            throw CoordinatorError(code)
+        }
+        try require(
+            ContinuationTokenMaterial.constantTimeEqual(actual, expected),
+            code
+        )
     }
 
     func nextGeneration(_ value: UInt64) throws -> UInt64 {

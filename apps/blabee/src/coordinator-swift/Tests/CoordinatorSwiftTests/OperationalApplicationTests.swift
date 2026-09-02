@@ -144,6 +144,12 @@ private final class OperationalMemoryJournal: CoordinatorSemanticJournalPort, @u
         defer { lock.unlock() }
         return appendAttemptsByEventType[eventType, default: 0]
     }
+
+    func totalAppendAttemptCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return appendAttemptsByEventType.values.reduce(0, +)
+    }
 }
 
 private final class OperationalClock: CoordinatorContinuousClock, @unchecked Sendable {
@@ -3814,45 +3820,59 @@ func operationalPromptOnlyProposalCorrection() async throws {
     secretBearingProposal["next_actions"] = secretBearingActions
     var secretBearingWrongPrompt = operationalWrapper(ids, proposal: secretBearingProposal)
     secretBearingWrongPrompt["source_prompt_id"] = "prompt_transcribed_incorrectly"
+    let appendsBeforeSecretBearingMismatch = fixture.journal.totalAppendAttemptCount()
     await expectOperationalError("raw_continuation_token_forbidden") {
         _ = try await fixture.app.handle(
             type: "emit_decision",
             payload: operationalData(secretBearingWrongPrompt)
         )
     }
+    #expect(fixture.journal.totalAppendAttemptCount() == appendsBeforeSecretBearingMismatch)
 
     var wrongPrompt = operationalWrapper(ids, proposal: proposal)
     wrongPrompt["source_prompt_id"] = "prompt_transcribed_incorrectly"
+    let appendsBeforePromptMismatch = fixture.journal.totalAppendAttemptCount()
     await expectOperationalError("proposal_source_prompt_mismatch") {
         _ = try await fixture.app.handle(
             type: "emit_decision",
             payload: operationalData(wrongPrompt)
         )
     }
+    #expect(fixture.journal.totalAppendAttemptCount() == appendsBeforePromptMismatch)
     var snapshot = try fixture.journal.load()
     #expect(snapshot.journalSequence == 0)
     #expect(snapshot.documents.isEmpty)
 
-    var nonPromptMismatches: [[String: Any]] = []
+    var nonPromptMismatches: [(wrapper: [String: Any], code: String)] = []
     for key in ["project_id", "session_id", "source_turn_id", "episode_id"] {
         var wrapper = operationalWrapper(ids, proposal: proposal)
         wrapper[key] = "mismatched_\(key)"
-        nonPromptMismatches.append(wrapper)
+        nonPromptMismatches.append((
+            wrapper,
+            key == "session_id"
+                ? "proposal_session_context_missing"
+                : "proposal_binding_mismatch"
+        ))
     }
     var wrongTokenIDs = ids
     wrongTokenIDs["correlation_token"] = "mismatched_correlation_token"
-    nonPromptMismatches.append(operationalWrapper(
-        wrongTokenIDs,
-        proposal: operationalProposal(wrongTokenIDs, suffix: "prompt_correction")
+    nonPromptMismatches.append((
+        operationalWrapper(
+            wrongTokenIDs,
+            proposal: operationalProposal(wrongTokenIDs, suffix: "prompt_correction")
+        ),
+        "proposal_binding_mismatch"
     ))
 
-    for wrapper in nonPromptMismatches {
-        await expectOperationalError("proposal_binding_mismatch") {
+    for mismatch in nonPromptMismatches {
+        let appendsBeforeMismatch = fixture.journal.totalAppendAttemptCount()
+        await expectOperationalError(mismatch.code) {
             _ = try await fixture.app.handle(
                 type: "emit_decision",
-                payload: operationalData(wrapper)
+                payload: operationalData(mismatch.wrapper)
             )
         }
+        #expect(fixture.journal.totalAppendAttemptCount() == appendsBeforeMismatch)
         snapshot = try fixture.journal.load()
         #expect(snapshot.journalSequence == 0)
         #expect(snapshot.documents.isEmpty)
@@ -3875,6 +3895,43 @@ func operationalPromptOnlyProposalCorrection() async throws {
     let repeatedSnapshot = try fixture.journal.load()
     #expect(repeatedSnapshot.journalSequence == snapshot.journalSequence)
     #expect(repeatedSnapshot.documents == snapshot.documents)
+}
+
+@Test("Operational fails closed when a service restart loses prompt authority")
+func operationalPromptAuthorityLossAfterRestartIsExplicitAndPreWrite() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "prompt_restart_loss")
+    let wrapper = operationalWrapper(
+        ids,
+        proposal: operationalProposal(ids, suffix: "prompt_restart_loss")
+    )
+    let before = try fixture.journal.load()
+    let appendsBeforeRequest = fixture.journal.totalAppendAttemptCount()
+
+    let restartIDs = OperationalIDs()
+    let restartedRouting = try CoordinatorRoutingApplication(
+        journal: fixture.journal,
+        clock: OperationalClock(),
+        tokenGenerator: OperationalTokens().next,
+        eventIDGenerator: restartIDs.next
+    )
+    let restartedApp = CoordinatorOperationalApplication(
+        routing: restartedRouting,
+        secretCorpus: RuntimeSecretCorpus(),
+        idGenerator: restartIDs.next,
+        wallInstantGenerator: { try RFC3339Instant("2026-08-21T12:00:01Z") },
+        monotonicInstantGenerator: OperationalClock().nowNanoseconds,
+        stopObservationHMACKey: Data(repeating: 0xA5, count: 32)
+    )
+
+    await expectOperationalError("proposal_session_context_missing") {
+        _ = try await restartedApp.handle(
+            type: "emit_decision",
+            payload: operationalData(wrapper)
+        )
+    }
+    #expect(fixture.journal.totalAppendAttemptCount() == appendsBeforeRequest)
+    #expect(try fixture.journal.load() == before)
 }
 
 @Test("Operational scheduler closes waiting expiry and failed queued dispatch timeout")
