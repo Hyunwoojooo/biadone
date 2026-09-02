@@ -72,6 +72,19 @@ export type VerifiedTaskEvidence = RawTaskEvidence & {
   endChar: number;
 };
 
+export type SuggestionEvidenceSourceContext = {
+  sourceId: string;
+  modality: "structured" | "screen";
+  authority: "structured_source" | "screen_observation";
+  observedFrom: string;
+  observedTo: string;
+  confidenceFloor: number | null;
+  confidenceCeiling: number | null;
+  coverageRatio: number | null;
+  conflictCount: number;
+  issueCount: number;
+};
+
 export type VerifiedTaskCandidate = {
   id: string;
   canonicalKey: string;
@@ -93,6 +106,7 @@ export type VerifiedTaskCandidate = {
   conversationId: string;
   conversationEndedAt: string | null;
   evidence: VerifiedTaskEvidence[];
+  sourceContexts: SuggestionEvidenceSourceContext[];
   verificationIssues: string[];
 };
 
@@ -201,6 +215,7 @@ export type PrioritySuggestionResult = {
 export type RestoredConversation = {
   inputIndex: number;
   conversation: CanonicalConversation;
+  sourceContext?: SuggestionEvidenceSourceContext;
 };
 
 export type ProviderResponse = {

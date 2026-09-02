@@ -4,6 +4,7 @@ import type { CanonicalConversation } from "../../src/core/types/conversation";
 
 import type {
   RawTaskCandidate,
+  SuggestionEvidenceSourceContext,
   VerifiedTaskCandidate,
   VerifiedTaskEvidence
 } from "./types";
@@ -18,16 +19,18 @@ const USER_BACKED_ORIGINS = new Set<RawTaskCandidate["origin"]>([
 
 export function verifyTaskCandidates(
   conversation: CanonicalConversation,
-  candidates: RawTaskCandidate[]
+  candidates: RawTaskCandidate[],
+  sourceContext?: SuggestionEvidenceSourceContext
 ): VerifiedTaskCandidate[] {
   return candidates.map((candidate) =>
-    verifyCandidate(conversation, candidate)
+    verifyCandidate(conversation, candidate, sourceContext)
   );
 }
 
 function verifyCandidate(
   conversation: CanonicalConversation,
-  candidate: RawTaskCandidate
+  candidate: RawTaskCandidate,
+  sourceContext?: SuggestionEvidenceSourceContext
 ): VerifiedTaskCandidate {
   const issues = new Set<string>();
   const verifiedEvidence: VerifiedTaskEvidence[] = [];
@@ -140,6 +143,8 @@ function verifyCandidate(
     conversationId: conversation.id,
     conversationEndedAt: conversation.stats.endedAt,
     evidence: verifiedEvidence,
+    sourceContexts:
+      sourceContext === undefined ? [] : [{ ...sourceContext }],
     verificationIssues: [...issues].sort()
   };
 }

@@ -21,10 +21,15 @@ import {
   type PrivateEvaluationArtifactSetFile,
 } from "../privateArtifactStore";
 import {
+  addUsage,
   readSuggestionProviderConfig,
   type SuggestionProviderConfig,
 } from "../../provider";
-import { runSuggestionEngine } from "../../runSuggestionEngine";
+import {
+  extractSuggestionCandidates,
+  resolveSuggestionCandidates,
+  type SuggestionCandidateExtraction,
+} from "../../runSuggestionEngine";
 import {
   SCREEN_EVIDENCE_BUNDLE_FILES_V1,
   type ScreenEvidenceBundleEntryV1,
@@ -36,7 +41,9 @@ import {
 } from "../../screenEvidence/importScreenEvidenceBundleV1";
 import type {
   PrioritySuggestionResult,
+  ProviderUsage,
   RestoredConversation,
+  SuggestionEvidenceSourceContext,
   SourceStatus,
 } from "../../types";
 import {
@@ -48,16 +55,31 @@ import {
 
 export const SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V1 =
   "blabase.screen-evidence-ablation.same-engine-pilot-runner.v1" as const;
+export const SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V2 =
+  "blabase.screen-evidence-ablation.same-engine-pilot-runner.v2" as const;
 export const SCREEN_EVIDENCE_TASK2_PILOT_ADAPTER_VERSION_V1 =
   "blabase.screen-evidence-ablation.common-engine-evidence-adapter.v1" as const;
 export const SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V1 =
   "blabase.screen-evidence-ablation.abc-composition.v1" as const;
+export const SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V2 =
+  "blabase.screen-evidence-ablation.abc-composition.v2" as const;
 export const SCREEN_EVIDENCE_TASK2_PILOT_PACKET_SCHEMA_V1 =
   "blabase.screen-evidence-ablation.common-engine-evidence-packet.v1" as const;
 export const SCREEN_EVIDENCE_TASK2_PILOT_ARM_RESULT_SCHEMA_V1 =
   "blabase.screen-evidence-ablation.same-engine-arm-result.v1" as const;
+export const SCREEN_EVIDENCE_TASK2_PILOT_ARM_RESULT_SCHEMA_V2 =
+  "blabase.screen-evidence-ablation.same-engine-arm-result.v2" as const;
 export const SCREEN_EVIDENCE_TASK2_PILOT_RUN_MANIFEST_SCHEMA_V1 =
   "blabase.screen-evidence-ablation.same-engine-run-manifest.v1" as const;
+export const SCREEN_EVIDENCE_TASK2_PILOT_RUN_MANIFEST_SCHEMA_V2 =
+  "blabase.screen-evidence-ablation.same-engine-run-manifest.v2" as const;
+
+const SHARED_EXTRACTION_POLICY_V1 =
+  "packet-identity-once-across-arms.v1" as const;
+const SOURCE_CONTEXT_VERSION_V2 =
+  "blabase.screen-evidence-ablation.source-context.v2" as const;
+const EXTRACTION_ACCOUNTING_POLICY_V1 =
+  "shared-physical-plus-arm-attributed.v1" as const;
 
 const PACKET_IDENTITY_DOMAIN =
   "blabase.screen-evidence-ablation.common-engine-evidence-packet.v1";
@@ -180,7 +202,7 @@ export class ScreenEvidenceTask2PilotErrorV1 extends Error {
   }
 }
 
-export type RunScreenEvidenceTask2SameEnginePilotV1Input = Readonly<{
+export type RunScreenEvidenceTask2SameEnginePilotV2Input = Readonly<{
   projectDirectory: string;
   inputRunId: string;
   expectedInputIdentitySha256: string;
@@ -189,7 +211,7 @@ export type RunScreenEvidenceTask2SameEnginePilotV1Input = Readonly<{
   fetchImpl?: typeof fetch;
 }>;
 
-export type RunScreenEvidenceTask2SameEnginePilotV1Result = Readonly<{
+export type RunScreenEvidenceTask2SameEnginePilotV2Result = Readonly<{
   relativeDirectory: string;
   executionId: string;
   inputIdentitySha256: string;
@@ -203,6 +225,11 @@ export type RunScreenEvidenceTask2SameEnginePilotV1Result = Readonly<{
     engineRunId: string;
   }>[];
 }>;
+
+export type RunScreenEvidenceTask2SameEnginePilotV1Input =
+  RunScreenEvidenceTask2SameEnginePilotV2Input;
+export type RunScreenEvidenceTask2SameEnginePilotV1Result =
+  RunScreenEvidenceTask2SameEnginePilotV2Result;
 
 type Task1File = Readonly<{
   relativePath: string;
@@ -254,7 +281,12 @@ type EvidencePacket = Readonly<{
   packetIdentitySha256: string;
   canonicalJson: string;
   canonicalUtf8ByteLength: number;
+  sourceContext: SuggestionEvidenceSourceContext;
 }>;
+
+type PacketSourceSummary = Readonly<
+  Omit<SuggestionEvidenceSourceContext, "sourceId" | "modality">
+>;
 
 type EngineRequest = Readonly<{
   restored: RestoredConversation[];
@@ -1176,6 +1208,7 @@ function buildScreenPartition(screen: ImportedScreenEvidenceBundleV1): EvidenceP
 function buildPackets(
   partition: EvidencePartition,
   inputIdentitySha256: string,
+  sourceSummary: PacketSourceSummary,
 ): readonly [EvidencePacket, EvidencePacket, EvidencePacket] {
   const packets = partition.lanes.map((lane) => {
     const packet = deepFreeze({
@@ -1201,6 +1234,11 @@ function buildPackets(
     });
     const encoded = canonicalJson(packet);
     const packetIdentitySha256 = identitySha256(PACKET_IDENTITY_DOMAIN, packet);
+    const sourceContext = deepFreeze({
+      sourceId: `packet_${packetIdentitySha256}`,
+      modality: partition.modality,
+      ...sourceSummary,
+    } satisfies SuggestionEvidenceSourceContext);
     return Object.freeze({
       modality: partition.modality,
       laneIndex: lane.laneIndex,
@@ -1208,6 +1246,7 @@ function buildPackets(
       packetIdentitySha256,
       canonicalJson: encoded,
       canonicalUtf8ByteLength: textEncoder.encode(encoded).byteLength,
+      sourceContext,
     });
   });
   if (packets.length !== 3) return fail("EVIDENCE_INVALID");
@@ -1292,6 +1331,7 @@ function requestFromPackets(
     conversations.map((conversation, index) => ({
       inputIndex: inputIndexOffset + index,
       conversation,
+      sourceContext: packets[index]!.sourceContext,
     })),
   );
   const sources = deepFreeze(
@@ -1306,6 +1346,28 @@ function requestFromPackets(
     })),
   );
   return Object.freeze({ restored, sources });
+}
+
+function extractionResultsForRequest(
+  allResults: readonly SuggestionCandidateExtraction[],
+  request: EngineRequest,
+): SuggestionCandidateExtraction[] {
+  const bySource = new Map(
+    allResults.map((result) => [
+      `${result.inputIndex}|${result.conversationId}`,
+      result,
+    ] as const),
+  );
+  if (bySource.size !== allResults.length) {
+    return fail("COMMON_ENGINE_INVARIANT_VIOLATION");
+  }
+  return request.restored.map((restored) => {
+    const result = bySource.get(
+      `${restored.inputIndex}|${restored.conversation.id}`,
+    );
+    if (!result) return fail("COMMON_ENGINE_INVARIANT_VIOLATION");
+    return result;
+  });
 }
 
 function armPlan(arm: "A" | "B" | "C", request: EngineRequest): ArmPlan {
@@ -1460,18 +1522,60 @@ function validateInput(
   }
 }
 
-export async function runScreenEvidenceTask2SameEnginePilotV1(
-  input: RunScreenEvidenceTask2SameEnginePilotV1Input,
-): Promise<RunScreenEvidenceTask2SameEnginePilotV1Result> {
+export async function runScreenEvidenceTask2SameEnginePilotV2(
+  input: RunScreenEvidenceTask2SameEnginePilotV2Input,
+): Promise<RunScreenEvidenceTask2SameEnginePilotV2Result> {
   validateInput(input);
   const task1 = await readPreparedTask1Input(input);
   const structuredPartition = buildStructuredPartition(task1.structured);
   const screenPartition = buildScreenPartition(task1.screen);
+  const screenEvidence = task1.screen.evidence as unknown as {
+    observations: readonly { confidence: number }[];
+    coverage: { coveredCaptureRatio: number };
+    conflicts: readonly unknown[];
+    issues: readonly unknown[];
+  };
+  const screenConfidences = screenEvidence.observations.map(
+    (observation) => observation.confidence,
+  );
+  const observedFrom = new Date(
+    task1.windowStartEpochSecond * 1_000,
+  ).toISOString();
+  const observedTo = new Date(
+    task1.windowEndEpochSecond * 1_000,
+  ).toISOString();
+  const structuredSourceSummary = deepFreeze({
+    authority: "structured_source" as const,
+    observedFrom,
+    observedTo,
+    confidenceFloor: null,
+    confidenceCeiling: null,
+    coverageRatio: null,
+    conflictCount: 0,
+    issueCount: 0,
+  });
+  const screenSourceSummary = deepFreeze({
+    authority: "screen_observation" as const,
+    observedFrom,
+    observedTo,
+    confidenceFloor:
+      screenConfidences.length === 0 ? null : Math.min(...screenConfidences),
+    confidenceCeiling:
+      screenConfidences.length === 0 ? null : Math.max(...screenConfidences),
+    coverageRatio: screenEvidence.coverage.coveredCaptureRatio,
+    conflictCount: screenEvidence.conflicts.length,
+    issueCount: screenEvidence.issues.length,
+  });
   const structuredPackets = buildPackets(
     structuredPartition,
     task1.inputIdentitySha256,
+    structuredSourceSummary,
   );
-  const screenPackets = buildPackets(screenPartition, task1.inputIdentitySha256);
+  const screenPackets = buildPackets(
+    screenPartition,
+    task1.inputIdentitySha256,
+    screenSourceSummary,
+  );
   const plans = buildArmPlans(
     structuredPackets,
     screenPackets,
@@ -1493,19 +1597,55 @@ export async function runScreenEvidenceTask2SameEnginePilotV1(
   const providerEndpoint = normalizedProviderEndpoint(providerConfig);
   const commonFetch = input.fetchImpl ?? globalThis.fetch;
   if (typeof commonFetch !== "function") return fail("ENGINE_RUN_FAILED");
-  const commonClock = Object.freeze(() => task1.analysisTimestamp);
+
+  const uniqueRestored = deepFreeze([
+    ...plans[0].request.restored,
+    ...plans[2].request.restored,
+  ]);
+  if (
+    uniqueRestored.length !== 6 ||
+    new Set(
+      uniqueRestored.map((restored) => restored.sourceContext?.sourceId),
+    ).size !== 6
+  ) {
+    return fail("COMMON_ENGINE_INVARIANT_VIOLATION");
+  }
+  const extractionStarted = performance.now();
+  let sharedExtractions: SuggestionCandidateExtraction[];
+  try {
+    sharedExtractions = await extractSuggestionCandidates({
+      restored: uniqueRestored,
+      analysisTimestamp: task1.analysisTimestamp,
+      providerConfig,
+      fetchImpl: commonFetch,
+    });
+  } catch {
+    return fail("ENGINE_RUN_FAILED");
+  }
+  const sharedExtractionElapsedMilliseconds =
+    Math.round((performance.now() - extractionStarted) * 1_000) / 1_000;
+  const physicalUsage = sharedExtractions.reduce<ProviderUsage>(
+    (total, extraction) => addUsage(total, extraction.usage),
+    { inputTokens: null, outputTokens: null, totalTokens: null },
+  );
 
   const executions: ArmExecution[] = [];
   for (const plan of plans) {
     const started = performance.now();
     let result: PrioritySuggestionResult;
     try {
-      result = await runSuggestionEngine({
+      result = resolveSuggestionCandidates({
         restored: plan.request.restored,
         sources: plan.request.sources,
-        providerConfig,
-        fetchImpl: commonFetch,
-        now: commonClock,
+        extractionResults: extractionResultsForRequest(
+          sharedExtractions,
+          plan.request,
+        ),
+        provider: providerConfig.id,
+        model: providerConfig.model,
+        analysisTimestamp: task1.analysisTimestamp,
+        startedAt: task1.analysisTimestamp,
+        completedAt: task1.analysisTimestamp,
       });
     } catch {
       return fail("ENGINE_RUN_FAILED");
@@ -1525,9 +1665,12 @@ export async function runScreenEvidenceTask2SameEnginePilotV1(
     commonEngineDescriptor,
   );
   const runPlanIdentitySha256 = identitySha256(RUN_PLAN_IDENTITY_DOMAIN, {
-    runnerVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V1,
+    runnerVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V2,
     adapterVersion: SCREEN_EVIDENCE_TASK2_PILOT_ADAPTER_VERSION_V1,
-    compositionVersion: SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V1,
+    compositionVersion: SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V2,
+    sourceContextVersion: SOURCE_CONTEXT_VERSION_V2,
+    extractionPolicy: SHARED_EXTRACTION_POLICY_V1,
+    extractionAccountingPolicy: EXTRACTION_ACCOUNTING_POLICY_V1,
     inputIdentitySha256: task1.inputIdentitySha256,
     analysisTimestamp: task1.analysisTimestamp,
     executionOrder: plans.map((plan) => plan.arm),
@@ -1541,12 +1684,21 @@ export async function runScreenEvidenceTask2SameEnginePilotV1(
 
   const armFiles = executions.map((execution) => {
     const wrapper = deepFreeze({
-      schemaVersion: SCREEN_EVIDENCE_TASK2_PILOT_ARM_RESULT_SCHEMA_V1,
+      schemaVersion: SCREEN_EVIDENCE_TASK2_PILOT_ARM_RESULT_SCHEMA_V2,
       executionId: input.executionId,
       inputIdentitySha256: task1.inputIdentitySha256,
       arm: execution.plan.arm,
       requestIdentitySha256: execution.plan.requestIdentitySha256,
       elapsedMilliseconds: execution.elapsedMilliseconds,
+      elapsedSemantics: "resolver_only_shared_extraction_reported_in_manifest",
+      extractionAccounting: {
+        policy: EXTRACTION_ACCOUNTING_POLICY_V1,
+        attributedExtractionCount: execution.result.run.requestCount,
+        physicalProviderRequestCount: 0,
+        reusedExtractionCount: execution.result.run.requestCount,
+        physicalRequestOwnership: "shared_manifest_only",
+        attributedUsage: execution.result.run.usage,
+      },
       engineResult: execution.result,
     });
     return jsonArtifactFile(
@@ -1564,13 +1716,14 @@ export async function runScreenEvidenceTask2SameEnginePilotV1(
     engineRunId: execution.result.run.runId,
   }));
   const manifestPreimage = deepFreeze({
-    schemaVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUN_MANIFEST_SCHEMA_V1,
+    schemaVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUN_MANIFEST_SCHEMA_V2,
     executionId: input.executionId,
     inputRunId: task1.inputRunId,
     inputIdentitySha256: task1.inputIdentitySha256,
-    runnerVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V1,
+    runnerVersion: SCREEN_EVIDENCE_TASK2_PILOT_RUNNER_VERSION_V2,
     adapterVersion: SCREEN_EVIDENCE_TASK2_PILOT_ADAPTER_VERSION_V1,
-    compositionVersion: SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V1,
+    compositionVersion: SCREEN_EVIDENCE_TASK2_PILOT_COMPOSITION_VERSION_V2,
+    sourceContextVersion: SOURCE_CONTEXT_VERSION_V2,
     analysisTimestamp: task1.analysisTimestamp,
     window: {
       startEpochSecond: task1.windowStartEpochSecond,
@@ -1604,6 +1757,19 @@ export async function runScreenEvidenceTask2SameEnginePilotV1(
       B: "exact-A-plus-exact-C",
       C: "screen-only",
       executionOrder: ["A", "B", "C"],
+      extractionPolicy: SHARED_EXTRACTION_POLICY_V1,
+      extractionAccountingPolicy: EXTRACTION_ACCOUNTING_POLICY_V1,
+    },
+    sharedExtraction: {
+      policy: SHARED_EXTRACTION_POLICY_V1,
+      uniquePacketCount: uniqueRestored.length,
+      physicalRequestCount: sharedExtractions.length,
+      failedRequestCount: sharedExtractions.filter(
+        (extraction) => extraction.status === "failed",
+      ).length,
+      elapsedMilliseconds: sharedExtractionElapsedMilliseconds,
+      usageSemantics: "physical_provider_usage",
+      physicalUsage,
     },
     commonEngine: {
       identitySha256: commonEngineIdentitySha256,

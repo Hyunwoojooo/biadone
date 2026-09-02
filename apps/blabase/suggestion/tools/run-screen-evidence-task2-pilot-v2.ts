@@ -1,9 +1,9 @@
 import path from "node:path";
 
 import {
-  runScreenEvidenceTask2SameEnginePilotV1,
+  runScreenEvidenceTask2SameEnginePilotV2,
   ScreenEvidenceTask2PilotErrorV1,
-} from "../src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV1";
+} from "../src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV2";
 
 const FLAG_NAMES = Object.freeze([
   "--input-run-id",
@@ -46,7 +46,7 @@ function parseFlags(argv: readonly string[]): Readonly<{
 async function main(): Promise<void> {
   try {
     const flags = parseFlags(process.argv.slice(2));
-    const result = await runScreenEvidenceTask2SameEnginePilotV1({
+    const result = await runScreenEvidenceTask2SameEnginePilotV2({
       projectDirectory: path.resolve(process.cwd()),
       inputRunId: flags.inputRunId,
       expectedInputIdentitySha256: flags.expectedInputIdentitySha256,

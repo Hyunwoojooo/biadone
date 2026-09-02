@@ -9183,3 +9183,94 @@ ID is invented or assigned by this record.
   freeze, activation, or release command was run during this documentation-only closure.
 
 <!-- engine-change-record-addendum:ECR-SCREEN-EVIDENCE-PRIVATE-STORE-EXPORTER-V1-2026-08-28:end -->
+
+<!-- engine-change-record-addendum:ECR-SAME-ENGINE-SHARED-EXTRACTION-V2-2026-09-01:begin -->
+
+## Same-engine Shared Extraction V2: ECR-SAME-ENGINE-SHARED-EXTRACTION-V2-2026-09-01
+
+- Date: 2026-09-01
+- Closure validation date: 2026-09-02
+- Timezone: Asia/Seoul
+- Owner and sole human decision authority: Colin
+- Goal: Remove provider sampling as an A/B/C comparison variable by extracting each fixed
+  structured or screen packet once and reusing those exact verified candidates across arms.
+- Affected pipeline stages: private evaluation packet adapter, provider extraction, candidate
+  verification lineage, common resolver invocation, private run manifest, and architecture model.
+- Scope exclusions: completion/conflict precedence, ranking, abstention, first-step wording,
+  production activation, public verifier, dataset mutation, cleanup, freeze, and release.
+
+### Behavior and versions
+
+- Behavior before: A extracted three structured packets, B independently re-extracted the same
+  three structured plus three screen packets, and C independently re-extracted the same three
+  screen packets. One case therefore made 12 physical provider requests and could compare model
+  sampling differences instead of evidence-composition differences.
+- Behavior after: the private runner physically extracts the six unique packet identities once.
+  A resolves the three structured extraction results, B resolves those exact three structured
+  results plus the exact three screen results, and C resolves those exact three screen results.
+  All arms still use the same verifier, merge, scoring, selection, provider, model, and prompt.
+- Source lineage after: verified and merged candidates retain packet source ID, modality,
+  authority, inclusive observation window, confidence range, coverage ratio, and conflict/issue
+  counts.
+  These fields are evidence metadata only and do not yet alter eligibility, scoring, or ranking.
+- Versions before: runner V1, composition V1, arm-result schema V1, run-manifest schema V1.
+- Versions after: runner V2, composition V2, arm-result schema V2, run-manifest schema V2,
+  shared-extraction policy V1, source-context V2, and shared-physical-plus-arm-attributed
+  accounting policy V1. The packet and adapter V1 contracts remain unchanged. The production
+  suggestion engine, prompt, verifier, and scoring version strings are unchanged because their
+  existing direct execution behavior is intentionally preserved.
+- V2 entrypoint naming: the current Runner source, exported function, focused test, and CLI use V2
+  names. Historical V1 artifacts remain immutable and reproducible from their recorded code
+  revision; current source does not present the V2 behavior through a V1-named entrypoint.
+- Usage accounting: each arm records counterfactual attributed extraction count and usage while
+  the run manifest records the six physical provider requests and physical provider usage once.
+  Summing arm usage is not an actual execution-cost calculation.
+
+### Reproducibility and validation gate
+
+- Dataset version and SHA-256: unchanged; no frozen input or existing Task3E artifact was
+  overwritten.
+- Candidate run ID and comparison run ID: none; provider evaluation is deferred.
+- Code commit: the Git commit containing this change record. Its exact SHA must be copied into
+  the new V2 evaluation configuration before provider execution.
+- Final integrity-closure validation: passed on 2026-09-02. Six Suggestion Vitest files passed
+  17/17 tests, including the V2 Runner, source context, direct pipeline, verifier, multi-
+  conversation merge, and scoring/selection regressions. The candidate-bearing Runner fixture
+  verified A/B/C merged candidate counts of 3/6/3 from six physical packet extractions.
+- TypeScript and lint: passed. Dependency checks completed with zero errors; warning-only results
+  were repository 13, Suggestion 8, and scripts 2. LikeC4 model validation and full architecture
+  checks passed, including 60 valid local source links and formatted architecture sources.
+- Commands executed:
+  - `cd suggestion && npm test -- tests/screenEvidenceTask2SameEnginePilotV2.test.ts tests/suggestionSourceContext.test.ts tests/pipeline.test.ts tests/verifier.test.ts tests/multiConversationMerge.test.ts tests/scoringAndSelection.test.ts`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run arch:deps:check`
+  - `npm run arch:model:check`
+  - `npm run arch:check`
+- Closure QA: passed. The previous observation-time, usage-accounting, candidate-reuse, and V2-
+  naming findings are CLOSED. Current graph evidence resolves the V2 Runner and CLI caller; an
+  exact search found no old V1 execution-function or CLI literal. Compatibility-only V1 input and
+  result type aliases remain and are not executable entrypoints.
+- Required next gate: create a new evaluation configuration and run identity bound to the same
+  frozen input hash before any provider rerun. Never reuse an old run ID for the V2 composition.
+- Metrics changed: not measured. Expected physical provider requests per case change from 12 to
+  6; logical arm request counts remain A=3, B=6, C=3. The V2 manifest separately records shared
+  physical request count, failed requests, latency, and token usage to prevent double counting.
+
+### Privacy, risk, release, and rollback
+
+- Privacy or retention impact: no actual user data, private evaluation input, credential,
+  provider response, or `.local` artifact is added to Git. Source context contains bounded
+  provenance metadata already present in the sealed evaluation input and does not add suggestion
+  semantics to Dayflow evidence.
+- Residual risk: source metadata is preserved but deliberately has no decision effect until a
+  separately approved precedence and confidence-policy task. Actual provider quality, latency,
+  token usage, and cost for V2 have not yet been measured.
+- Release decision: NO-GO. This remains an inactive private evaluation path and is not evidence of
+  product activation or quality improvement.
+- Rollback method: revert this addendum and the listed source, test, and architecture changes
+  before adopting a V2 run. Existing frozen inputs and historical V1 results remain immutable.
+- Follow-up work: focused validation, bounded QA, then a newly identified provider evaluation run
+  on the same frozen input hash; completion/conflict precedence remains a separate Colin decision.
+
+<!-- engine-change-record-addendum:ECR-SAME-ENGINE-SHARED-EXTRACTION-V2-2026-09-01:end -->

@@ -39,6 +39,9 @@ function mergeGroup(
   const evidence = dedupeEvidence(
     ordered.flatMap((candidate) => candidate.evidence)
   );
+  const sourceContexts = dedupeSourceContexts(
+    ordered.flatMap((candidate) => candidate.sourceContexts)
+  );
   const issues = [
     ...new Set(ordered.flatMap((candidate) => candidate.verificationIssues))
   ].sort();
@@ -69,11 +72,27 @@ function mergeGroup(
       ...new Set(ordered.flatMap((candidate) => candidate.blockedBy))
     ],
     evidence,
+    sourceContexts,
     confidence: Math.max(...ordered.map((candidate) => candidate.confidence)),
     sourceConversationIds,
     recurrenceCount: sourceConversationIds.length,
     verificationIssues: issues
   };
+}
+
+function dedupeSourceContexts(
+  contexts: MergedTaskCandidate["sourceContexts"]
+): MergedTaskCandidate["sourceContexts"] {
+  const unique = new Map<
+    string,
+    MergedTaskCandidate["sourceContexts"][number]
+  >();
+  for (const context of contexts) {
+    if (!unique.has(context.sourceId)) unique.set(context.sourceId, context);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.sourceId.localeCompare(right.sourceId)
+  );
 }
 
 function compareCandidateTime(

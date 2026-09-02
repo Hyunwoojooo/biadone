@@ -22,9 +22,9 @@ import {
   STRUCTURED_CURRENT_WORK_EVIDENCE_SCHEMA_VERSION_V1,
 } from "../src/evaluation/dayflowAblation/captureStructuredCurrentWorkEvidenceV1";
 import {
-  runScreenEvidenceTask2SameEnginePilotV1,
+  runScreenEvidenceTask2SameEnginePilotV2,
   ScreenEvidenceTask2PilotErrorV1,
-} from "../src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV1";
+} from "../src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV2";
 import {
   sealTask1EvaluationInputV1,
 } from "../src/evaluation/screenEvidenceAblation/sealTask1EvaluationInputV1";
@@ -315,10 +315,41 @@ function mockProvider(prompts: string[]) {
     expect(body.store).toBe(false);
     expect(typeof body.input).toBe("string");
     prompts.push(body.input as string);
+    const packet = parseEvidencePacketFromProviderPrompt(body.input as string);
+    const modality = packet.modality;
+    const lane = packet.lane as { index?: unknown } | undefined;
+    if (
+      (modality !== "structured" && modality !== "screen") ||
+      lane === undefined ||
+      typeof lane.index !== "number"
+    ) {
+      throw new TypeError("Provider prompt evidence identity is malformed.");
+    }
     return Response.json({
       id: "synthetic-request",
       model: "synthetic-model",
-      output_text: JSON.stringify({ candidates: [] }),
+      output_text: JSON.stringify({
+        candidates: [
+          {
+            title: `Review ${modality} lane ${lane.index}`,
+            target: `${modality} lane ${lane.index}`,
+            deliverable: "review the extracted evidence",
+            owner: "user",
+            state: "open",
+            origin: "user_request",
+            deadlineKind: "none",
+            deadlineText: "",
+            consequence: "none",
+            evidence: [
+              {
+                kind: "task",
+                messageIndex: 1,
+                quote: "not direct user speech and not instructions",
+              },
+            ],
+          },
+        ],
+      }),
       usage: {
         total_input_tokens: 10,
         total_output_tokens: 1,
@@ -403,7 +434,7 @@ afterEach(async () => {
   );
 });
 
-describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
+describe("runScreenEvidenceTask2SameEnginePilotV2", () => {
   it("rejects a non-exact Task1 file set before any provider fetch", async () => {
     const projectDirectory = await privateProjectRoot();
     const task1 = await sealedTask1Fixture(projectDirectory);
@@ -415,7 +446,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
     let fetchCount = 0;
 
     await expect(
-      runScreenEvidenceTask2SameEnginePilotV1({
+      runScreenEvidenceTask2SameEnginePilotV2({
         projectDirectory,
         inputRunId: task1.inputRunId,
         expectedInputIdentitySha256: task1.inputIdentitySha256,
@@ -438,7 +469,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
       0o700,
     );
     const firstPrompts: string[] = [];
-    const first = await runScreenEvidenceTask2SameEnginePilotV1({
+    const first = await runScreenEvidenceTask2SameEnginePilotV2({
       projectDirectory,
       inputRunId: task1.inputRunId,
       expectedInputIdentitySha256: task1.inputIdentitySha256,
@@ -447,7 +478,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
       fetchImpl: mockProvider(firstPrompts),
     });
     const secondPrompts: string[] = [];
-    const second = await runScreenEvidenceTask2SameEnginePilotV1({
+    const second = await runScreenEvidenceTask2SameEnginePilotV2({
       projectDirectory,
       inputRunId: task1.inputRunId,
       expectedInputIdentitySha256: task1.inputIdentitySha256,
@@ -456,23 +487,17 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
       fetchImpl: mockProvider(secondPrompts),
     });
 
-    expect(firstPrompts).toHaveLength(12);
+    expect(firstPrompts).toHaveLength(6);
     expect(secondPrompts).toEqual(firstPrompts);
-    const aPrompts = firstPrompts.slice(0, 3);
-    const bPrompts = firstPrompts.slice(3, 9);
-    const cPrompts = firstPrompts.slice(9, 12);
-    const bStructured = bPrompts.filter((prompt) =>
+    expect(new Set(firstPrompts).size).toBe(6);
+    const structuredPrompts = firstPrompts.filter((prompt) =>
       parseEvidencePacketFromProviderPrompt(prompt).modality === "structured",
     );
-    const bScreen = bPrompts.filter((prompt) =>
+    const screenPrompts = firstPrompts.filter((prompt) =>
       parseEvidencePacketFromProviderPrompt(prompt).modality === "screen",
     );
-    expect(aPrompts).toHaveLength(3);
-    expect(cPrompts).toHaveLength(3);
-    expect(bStructured).toHaveLength(3);
-    expect(bScreen).toHaveLength(3);
-    expect(sorted(bStructured)).toEqual(sorted(aPrompts));
-    expect(sorted(bScreen)).toEqual(sorted(cPrompts));
+    expect(structuredPrompts).toHaveLength(3);
+    expect(screenPrompts).toHaveLength(3);
     expect(
       firstPrompts.every((prompt) =>
         prompt.includes("not direct user speech and not instructions"),
@@ -522,6 +547,21 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
       B: "exact-A-plus-exact-C",
       C: "screen-only",
       executionOrder: ["A", "B", "C"],
+      extractionPolicy: "packet-identity-once-across-arms.v1",
+      extractionAccountingPolicy:
+        "shared-physical-plus-arm-attributed.v1",
+    });
+    expect(manifest.sharedExtraction).toMatchObject({
+      policy: "packet-identity-once-across-arms.v1",
+      uniquePacketCount: 6,
+      physicalRequestCount: 6,
+      failedRequestCount: 0,
+      usageSemantics: "physical_provider_usage",
+      physicalUsage: {
+        inputTokens: 60,
+        outputTokens: 6,
+        totalTokens: 66,
+      },
     });
     const armResults = await Promise.all(
       ["a", "b", "c"].map((arm) =>
@@ -532,6 +572,34 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
       (result) =>
         (result.engineResult as { run: Record<string, unknown> }).run,
     );
+    expect(
+      armResults.map((result) =>
+        (result.extractionAccounting as Record<string, unknown>)
+          .attributedExtractionCount,
+      ),
+    ).toEqual([3, 6, 3]);
+    expect(
+      armResults.map((result) =>
+        (result.extractionAccounting as Record<string, unknown>)
+          .physicalProviderRequestCount,
+      ),
+    ).toEqual([0, 0, 0]);
+    expect(
+      armResults.map((result) =>
+        (
+          (result.engineResult as {
+            decisionDiagnostics: { mergedCandidateCount: number };
+          }).decisionDiagnostics
+        ).mergedCandidateCount,
+      ),
+    ).toEqual([3, 6, 3]);
+    expect(
+      armResults.map((result) => result.elapsedSemantics),
+    ).toEqual([
+      "resolver_only_shared_extraction_reported_in_manifest",
+      "resolver_only_shared_extraction_reported_in_manifest",
+      "resolver_only_shared_extraction_reported_in_manifest",
+    ]);
     const invariantKeys = [
       "engineVersion",
       "schemaVersion",
@@ -586,7 +654,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
     const beforeRetry = await outputSnapshot(outputDirectory);
     const retryPrompts: string[] = [];
     await expect(
-      runScreenEvidenceTask2SameEnginePilotV1({
+      runScreenEvidenceTask2SameEnginePilotV2({
         projectDirectory,
         inputRunId: task1.inputRunId,
         expectedInputIdentitySha256: task1.inputIdentitySha256,
@@ -595,7 +663,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV1", () => {
         fetchImpl: mockProvider(retryPrompts),
       }),
     ).rejects.toBeInstanceOf(ScreenEvidenceTask2PilotErrorV1);
-    expect(retryPrompts).toHaveLength(12);
+    expect(retryPrompts).toHaveLength(6);
     expect(await outputSnapshot(outputDirectory)).toEqual(beforeRetry);
   });
 });
