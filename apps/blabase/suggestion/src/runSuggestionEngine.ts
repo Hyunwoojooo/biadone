@@ -10,7 +10,10 @@ import {
   type SuggestionProviderConfig
 } from "./provider";
 import { mergeTaskLineage } from "./mergeTaskLineage";
-import { scorePriority } from "./scorePriority";
+import {
+  scorePriority,
+  screenSourceFailureCodes
+} from "./scorePriority";
 import {
   MINIMUM_SUGGESTION_SCORE,
   selectSuggestion
@@ -21,9 +24,13 @@ import type {
   RestoredConversation,
   SuggestionProviderId,
   SourceStatus,
-  VerifiedTaskCandidate
+  VerifiedTaskCandidate,
+  VerifiedTaskStateSignal
 } from "./types";
-import { verifyTaskCandidates } from "./verifyCandidates";
+import {
+  verifyTaskCandidates,
+  verifyTaskStateSignals
+} from "./verifyCandidates";
 import {
   PRIORITY_SCORING_VERSION,
   SUGGESTION_ENGINE_VERSION,
@@ -58,6 +65,7 @@ export type SuggestionCandidateExtraction = Readonly<{
   conversationId: string;
   failureCode: string | null;
   candidates: VerifiedTaskCandidate[];
+  stateSignals: VerifiedTaskStateSignal[];
   usage: ProviderUsage;
 }>;
 
@@ -128,6 +136,7 @@ export async function extractSuggestionCandidates(input: {
             conversationId: restored.conversation.id,
             failureCode: "LLM_SCHEMA_INVALID",
             candidates: [] as VerifiedTaskCandidate[],
+            stateSignals: [] as VerifiedTaskStateSignal[],
             usage: response.usage
           };
         }
@@ -139,6 +148,11 @@ export async function extractSuggestionCandidates(input: {
           candidates: verifyTaskCandidates(
             restored.conversation,
             parsed.data.candidates,
+            restored.sourceContext
+          ),
+          stateSignals: verifyTaskStateSignals(
+            restored.conversation,
+            parsed.data.stateSignals,
             restored.sourceContext
           ),
           usage: response.usage
@@ -153,6 +167,7 @@ export async function extractSuggestionCandidates(input: {
               ? error.code
               : "LLM_EXTRACTION_FAILED",
           candidates: [] as VerifiedTaskCandidate[],
+          stateSignals: [] as VerifiedTaskStateSignal[],
           usage: emptyUsage()
         };
       }
@@ -198,10 +213,60 @@ export function resolveSuggestionCandidates(input: {
     );
   }
 
-  const verified = successfulExtractions.flatMap(
+  const candidates = successfulExtractions.flatMap(
     (result) => result.candidates
   );
-  const merged = mergeTaskLineage(verified);
+  const stateSignals = successfulExtractions.flatMap(
+    (result) => result.stateSignals
+  );
+  const candidateRejections = candidates.flatMap((candidate) => {
+    const reasonCodes = new Set(
+      screenSourceFailureCodes(candidate, input.analysisTimestamp)
+    );
+    if (
+      candidate.sourceContexts.length > 0 &&
+      candidate.sourceContexts.every(
+        (context) => context.modality === "screen"
+      ) &&
+      candidate.verificationIssues.length > 0
+    ) {
+      reasonCodes.add("SCREEN_CANDIDATE_VERIFICATION_FAILED");
+    }
+    return reasonCodes.size === 0
+      ? []
+      : [{ candidate, reasonCodes: [...reasonCodes].sort() }];
+  });
+  const stateSignalRejections = stateSignals.flatMap((candidate) => {
+    const reasonCodes = new Set(
+      screenSourceFailureCodes(candidate, input.analysisTimestamp)
+    );
+    if (candidate.verificationIssues.length > 0) {
+      reasonCodes.add("TERMINAL_STATE_SIGNAL_NOT_VERIFIED");
+    }
+    return reasonCodes.size === 0
+      ? []
+      : [{ candidate, reasonCodes: [...reasonCodes].sort() }];
+  });
+  const preMergeRejections = [
+    ...candidateRejections,
+    ...stateSignalRejections
+  ];
+  const rejectedCandidates = new Set(
+    candidateRejections.map((rejection) => rejection.candidate)
+  );
+  const rejectedStateSignals = new Set(
+    stateSignalRejections.map((rejection) => rejection.candidate)
+  );
+  const admittedCandidates = candidates.filter(
+    (candidate) => !rejectedCandidates.has(candidate)
+  );
+  const admittedStateSignals = stateSignals.filter(
+    (signal) => !rejectedStateSignals.has(signal)
+  );
+  const merged = mergeTaskLineage(
+    admittedCandidates,
+    admittedStateSignals
+  );
   const assessments = merged.map((candidate) =>
     scorePriority(candidate, input.analysisTimestamp)
   );
@@ -223,10 +288,18 @@ export function resolveSuggestionCandidates(input: {
         .sort((left, right) => right.score - left.score)[0]?.score ?? null,
     minimumSuggestionScore: MINIMUM_SUGGESTION_SCORE,
     reasonCounts: countValues(
-      assessments.flatMap((assessment) => assessment.reasonCodes)
+      [
+        ...assessments.flatMap((assessment) => assessment.reasonCodes),
+        ...preMergeRejections.flatMap((rejection) => rejection.reasonCodes)
+      ]
     ),
     verificationIssueCounts: countValues(
-      merged.flatMap((candidate) => candidate.verificationIssues)
+      [
+        ...merged.flatMap((candidate) => candidate.verificationIssues),
+        ...preMergeRejections.flatMap(
+          (rejection) => rejection.candidate.verificationIssues
+        )
+      ]
     )
   };
   const usage = extractionResults.reduce(

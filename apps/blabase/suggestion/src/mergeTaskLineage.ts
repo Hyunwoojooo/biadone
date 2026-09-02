@@ -2,37 +2,95 @@ import { createHash } from "node:crypto";
 
 import type {
   MergedTaskCandidate,
-  VerifiedTaskCandidate
+  VerifiedTaskCandidate,
+  VerifiedTaskStateSignal
 } from "./types";
 import { normalizeCanonicalKey } from "./verifyCandidates";
 
-export function mergeTaskLineage(
-  candidates: VerifiedTaskCandidate[]
-): MergedTaskCandidate[] {
-  const groups = new Map<string, VerifiedTaskCandidate[]>();
+const TERMINAL_STATES = new Set<VerifiedTaskCandidate["state"]>([
+  "completed",
+  "cancelled",
+  "replaced"
+]);
+const REOPENING_STATES = new Set<VerifiedTaskCandidate["state"]>([
+  "not_started",
+  "in_progress",
+  "blocked",
+  "waiting"
+]);
+const IDENTITY_STATE_TOKENS = new Set([
+  "complete",
+  "completed",
+  "done",
+  "open",
+  "pending",
+  "대기",
+  "미완료",
+  "완료"
+]);
 
-  for (const candidate of candidates) {
-    const key = normalizeCanonicalKey(candidate.canonicalKey);
-    const group = groups.get(key) ?? [];
-    group.push(candidate);
-    groups.set(key, group);
+export function mergeTaskLineage(
+  candidates: VerifiedTaskCandidate[],
+  stateSignals: VerifiedTaskStateSignal[] = []
+): MergedTaskCandidate[] {
+  const groups: VerifiedTaskCandidate[][] = [];
+
+  for (const candidate of [...candidates].sort(compareCandidateIdentity)) {
+    const group = groups.find((current) =>
+      sameTaskFamily(current[0] as VerifiedTaskCandidate, candidate)
+    );
+    if (group) group.push(candidate);
+    else groups.push([candidate]);
   }
 
-  return [...groups.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, group]) => mergeGroup(key, group));
+  return groups
+    .map((group) => ({ key: stableGroupKey(group), group }))
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map(({ key, group }) =>
+      mergeGroup(
+        key,
+        group,
+        stateSignals.filter((signal) =>
+          group.some((candidate) => sameTaskFamily(candidate, signal))
+        )
+      )
+    );
 }
 
 function mergeGroup(
   canonicalKey: string,
-  candidates: VerifiedTaskCandidate[]
+  candidates: VerifiedTaskCandidate[],
+  stateSignals: VerifiedTaskStateSignal[]
 ): MergedTaskCandidate {
   const ordered = [...candidates].sort(compareCandidateTime);
   const latest = ordered.at(-1) as VerifiedTaskCandidate;
   const strongest = [...ordered].sort(
     (left, right) => right.confidence - left.confidence
   )[0];
-  const stateSource = ordered.at(-1) as VerifiedTaskCandidate;
+  const terminalObservations: TaskStateObservation[] = [
+    ...ordered.filter((candidate) => TERMINAL_STATES.has(candidate.state)),
+    ...stateSignals
+  ];
+  const latestTerminal = terminalObservations
+    .sort(compareObservationTime)
+    .at(-1);
+  const latestStructuredNonterminal = [...ordered]
+    .filter(
+      (candidate) =>
+        REOPENING_STATES.has(candidate.state) &&
+        candidate.sourceContexts.some(
+          (context) => context.authority === "structured_source"
+        )
+    )
+    .sort(compareObservationTime)
+    .at(-1);
+  const stateSource =
+    latestTerminal === undefined
+      ? latest
+      : latestStructuredNonterminal !== undefined &&
+          isStrictlyNewer(latestStructuredNonterminal, latestTerminal)
+        ? latestStructuredNonterminal
+        : latestTerminal;
   const sourceConversationIds = [
     ...new Set(ordered.map((candidate) => candidate.conversationId))
   ].sort();
@@ -46,8 +104,12 @@ function mergeGroup(
     ...new Set(ordered.flatMap((candidate) => candidate.verificationIssues))
   ].sort();
   if (
-    new Set(ordered.map((candidate) => candidate.state)).size > 1 &&
-    ordered.some((candidate) => !candidate.conversationEndedAt)
+    new Set(
+      [...ordered, ...stateSignals].map((observation) => observation.state)
+    ).size > 1 &&
+    [...ordered, ...stateSignals].some(
+      (observation) => observationTime(observation) === null
+    )
   ) {
     issues.push("STATE_CHRONOLOGY_UNCLEAR");
   }
@@ -78,6 +140,116 @@ function mergeGroup(
     recurrenceCount: sourceConversationIds.length,
     verificationIssues: issues
   };
+}
+
+function compareCandidateIdentity(
+  left: VerifiedTaskCandidate,
+  right: VerifiedTaskCandidate
+): number {
+  return (
+    normalizeCanonicalKey(left.canonicalKey).localeCompare(
+      normalizeCanonicalKey(right.canonicalKey)
+    ) || left.id.localeCompare(right.id)
+  );
+}
+
+function stableGroupKey(candidates: VerifiedTaskCandidate[]): string {
+  return candidates
+    .map((candidate) => normalizeCanonicalKey(candidate.canonicalKey))
+    .sort((left, right) => left.localeCompare(right))[0] as string;
+}
+
+type TaskFamilyDescriptor = Pick<
+  VerifiedTaskCandidate,
+  "canonicalKey" | "title"
+>;
+
+type TaskStateObservation = Pick<
+  VerifiedTaskCandidate,
+  "state" | "conversationEndedAt" | "sourceContexts"
+>;
+
+function sameTaskFamily(
+  left: TaskFamilyDescriptor,
+  right: TaskFamilyDescriptor
+): boolean {
+  if (
+    normalizeCanonicalKey(left.canonicalKey) ===
+    normalizeCanonicalKey(right.canonicalKey)
+  ) {
+    return true;
+  }
+  const leftTitle = semanticTokens(left.title);
+  const rightTitle = semanticTokens(right.title);
+  const leftCanonical = semanticTokens(left.canonicalKey);
+  const rightCanonical = semanticTokens(right.canonicalKey);
+  return (
+    leftTitle.length >= 3 &&
+    rightTitle.length >= 3 &&
+    leftCanonical.length >= 3 &&
+    rightCanonical.length >= 3 &&
+    overlapRatio(leftTitle, rightTitle) >= 0.8 &&
+    overlapRatio(leftCanonical, rightCanonical) >= 0.75
+  );
+}
+
+function semanticTokens(value: string): string[] {
+  let normalized = normalizeCanonicalKey(value)
+    .replace(/자격\s+증명(?:을|를|이|가)?/gu, " credential ")
+    .replace(/비밀\s*값(?:을|를|이|가)?|시크릿/gu, " credential ")
+    .replace(/공급자(?:의|용)?/gu, " provider ")
+    .replace(/샌드박스(?:의|용)?/gu, " sandbox ")
+    .replace(/교체\p{L}*|로테이션/gu, " rotate ")
+    .replace(/제출\p{L}*/gu, " submit ")
+    .replace(/\b(?:credentials?|secrets?)\b/gu, " credential ")
+    .replace(/\b(?:replace|replaced|replacement|rotate|rotated|rotation)\b/gu, " rotate ")
+    .replace(/\b(?:submit|submitted|submission)\b/gu, " submit ");
+  normalized = normalizeCanonicalKey(normalized);
+  const containsSandbox = normalized.split(" ").includes("sandbox");
+  return [
+    ...new Set(
+      normalized
+        .split(" ")
+        .filter(Boolean)
+        .filter((token) => !IDENTITY_STATE_TOKENS.has(token))
+        .filter(
+          (token) =>
+            !containsSandbox ||
+            (token !== "test" && token !== "testing" && token !== "테스트")
+        )
+    )
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function overlapRatio(left: string[], right: string[]): number {
+  const rightTokens = new Set(right);
+  const shared = left.filter((token) => rightTokens.has(token)).length;
+  return shared / Math.max(left.length, right.length);
+}
+
+function isStrictlyNewer(
+  candidate: TaskStateObservation,
+  reference: TaskStateObservation
+): boolean {
+  const candidateTime = observationTime(candidate);
+  const referenceTime = observationTime(reference);
+  return candidateTime !== null && referenceTime !== null && candidateTime > referenceTime;
+}
+
+function compareObservationTime(
+  left: TaskStateObservation,
+  right: TaskStateObservation
+): number {
+  return (observationTime(left) ?? 0) - (observationTime(right) ?? 0);
+}
+
+function observationTime(observation: TaskStateObservation): number | null {
+  const observedTimes = observation.sourceContexts
+    .map((context) => Date.parse(context.observedTo))
+    .filter(Number.isFinite);
+  if (observedTimes.length > 0) return Math.max(...observedTimes);
+  const conversationTime = Date.parse(observation.conversationEndedAt ?? "");
+  return Number.isFinite(conversationTime) ? conversationTime : null;
 }
 
 function dedupeSourceContexts(

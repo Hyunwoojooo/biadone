@@ -64,6 +64,14 @@ export type RawTaskCandidate = {
   evidence: RawTaskEvidence[];
 };
 
+export type RawTaskStateSignal = {
+  title: string;
+  target: string;
+  deliverable: string;
+  state: "completed" | "cancelled" | "replaced";
+  evidence: RawTaskEvidence[];
+};
+
 export type VerifiedTaskEvidence = RawTaskEvidence & {
   conversationId: string;
   messageId: string;
@@ -103,6 +111,18 @@ export type VerifiedTaskCandidate = {
   blocks: string[];
   blockedBy: string[];
   confidence: number;
+  conversationId: string;
+  conversationEndedAt: string | null;
+  evidence: VerifiedTaskEvidence[];
+  sourceContexts: SuggestionEvidenceSourceContext[];
+  verificationIssues: string[];
+};
+
+export type VerifiedTaskStateSignal = {
+  id: string;
+  canonicalKey: string;
+  title: string;
+  state: "completed" | "cancelled" | "replaced";
   conversationId: string;
   conversationEndedAt: string | null;
   evidence: VerifiedTaskEvidence[];

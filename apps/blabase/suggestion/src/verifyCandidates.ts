@@ -4,9 +4,11 @@ import type { CanonicalConversation } from "../../src/core/types/conversation";
 
 import type {
   RawTaskCandidate,
+  RawTaskStateSignal,
   SuggestionEvidenceSourceContext,
   VerifiedTaskCandidate,
-  VerifiedTaskEvidence
+  VerifiedTaskEvidence,
+  VerifiedTaskStateSignal
 } from "./types";
 
 const USER_BACKED_ORIGINS = new Set<RawTaskCandidate["origin"]>([
@@ -25,6 +27,71 @@ export function verifyTaskCandidates(
   return candidates.map((candidate) =>
     verifyCandidate(conversation, candidate, sourceContext)
   );
+}
+
+export function verifyTaskStateSignals(
+  conversation: CanonicalConversation,
+  signals: RawTaskStateSignal[],
+  sourceContext?: SuggestionEvidenceSourceContext
+): VerifiedTaskStateSignal[] {
+  return signals.map((signal) => {
+    const issues = new Set<string>();
+    const verifiedEvidence: VerifiedTaskEvidence[] = [];
+
+    for (const evidence of signal.evidence) {
+      const message = conversation.messages.find(
+        (item) => item.index === evidence.messageIndex
+      );
+      if (!message) {
+        issues.add("OUT_OF_RANGE_MESSAGE_INDEX");
+        continue;
+      }
+      if (
+        message.metadata.messageCategory !== "clean_conversation" ||
+        (message.role !== "user" && message.role !== "assistant")
+      ) {
+        issues.add("NON_CLEAN_EVIDENCE");
+        continue;
+      }
+      const startChar = message.text.indexOf(evidence.quote);
+      if (startChar < 0) {
+        issues.add("QUOTE_NOT_FOUND");
+        continue;
+      }
+      verifiedEvidence.push({
+        ...evidence,
+        conversationId: conversation.id,
+        messageId: message.id,
+        role: message.role,
+        startChar,
+        endChar: startChar + evidence.quote.length
+      });
+    }
+
+    if (
+      !verifiedEvidence.some((evidence) => evidence.kind === "state")
+    ) {
+      issues.add("MISSING_VERIFIED_STATE_EVIDENCE");
+    }
+
+    const canonicalKey = normalizeCanonicalKey(
+      `${signal.target} ${signal.deliverable}`
+    );
+    const candidateId = createTaskId(conversation.id, canonicalKey);
+
+    return {
+      id: `state_${candidateId.slice("task_".length)}`,
+      canonicalKey,
+      title: signal.title,
+      state: signal.state,
+      conversationId: conversation.id,
+      conversationEndedAt: conversation.stats.endedAt,
+      evidence: verifiedEvidence,
+      sourceContexts:
+        sourceContext === undefined ? [] : [{ ...sourceContext }],
+      verificationIssues: [...issues].sort()
+    };
+  });
 }
 
 function verifyCandidate(
@@ -82,9 +149,14 @@ function verifyCandidate(
   const deadlineEvidence = verifiedEvidence.filter(
     (evidence) => evidence.kind === "deadline"
   );
+  const parsedDeadline = parseVerifiedDeadline(
+    candidate.deadlineKind,
+    candidate.deadlineText
+  );
   if (
     candidate.deadlineKind !== "none" &&
     (!candidate.deadlineText ||
+      parsedDeadline === null ||
       !deadlineEvidence.some((evidence) =>
         evidence.quote.includes(candidate.deadlineText)
       ))
@@ -124,10 +196,7 @@ function verifyCandidate(
     state,
     origin,
     executionMode: executionModeForOwner(candidate.owner),
-    deadlineIso: parseVerifiedDeadline(
-      candidate.deadlineKind,
-      candidate.deadlineText
-    ),
+    deadlineIso: parsedDeadline,
     deadlineSource:
       candidate.deadlineKind === "none" ? null : candidate.deadlineText,
     impact:
@@ -182,6 +251,15 @@ function parseVerifiedDeadline(
   text: string
 ): string | null {
   if (kind !== "absolute") return null;
+  const isoTimestamp = text.match(
+    /\b20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})\b/
+  );
+  if (isoTimestamp) {
+    const parsedTimestamp = new Date(isoTimestamp[0]);
+    if (!Number.isNaN(parsedTimestamp.getTime())) {
+      return parsedTimestamp.toISOString();
+    }
+  }
   const isoDate = text.match(/\b(20\d{2})[-./](\d{1,2})[-./](\d{1,2})\b/);
   if (!isoDate) return null;
   const [, year, month, day] = isoDate;

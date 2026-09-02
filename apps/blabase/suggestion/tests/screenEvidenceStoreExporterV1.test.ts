@@ -1653,7 +1653,18 @@ describe("Screen Evidence bundle publication V1", () => {
       bundleDirectory: publication.bundleDirectory,
     });
     expect(readback.imported).toEqual(preflight);
-    expect(publication.readback).toEqual(readback);
+    const {
+      copySourceEntries: copyPublishedSourceEntries,
+      ...publishedReadbackData
+    } = publication.readback;
+    const {
+      copySourceEntries: copyRereadSourceEntries,
+      ...rereadData
+    } = readback;
+    expect(publishedReadbackData).toEqual(rereadData);
+    expect(await copyPublishedSourceEntries()).toEqual(
+      await copyRereadSourceEntries(),
+    );
     expectDeeplyFrozen(publication);
   });
 

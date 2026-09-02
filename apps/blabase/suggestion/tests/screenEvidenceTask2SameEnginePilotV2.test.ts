@@ -145,9 +145,16 @@ function structuredFixture(
 function screenBundleFixture(
   startEpochSecond: number,
   endEpochSecond: number,
+  options: {
+    latestObservationEpochSecond?: number;
+    highQuality?: boolean;
+  } = {},
 ) {
   const startEpochMs = startEpochSecond * 1_000;
   const endEpochMs = endEpochSecond * 1_000;
+  const latestObservationEpochMs =
+    (options.latestObservationEpochSecond ?? endEpochSecond) * 1_000;
+  const observationConfidence = options.highQuality ? 0.95 : 0.5;
   const payload = {
     schemaVersion: SCREEN_EVIDENCE_BUNDLE_SCHEMA_V1,
     producerIdentity: SCREEN_EVIDENCE_PRODUCER_IDENTITY_V1,
@@ -169,7 +176,7 @@ function screenBundleFixture(
       {
         captureId: "capture-b",
         revision: 1,
-        capturedAtEpochMs: endEpochMs,
+        capturedAtEpochMs: latestObservationEpochMs,
       },
     ],
     observations: [
@@ -179,15 +186,15 @@ function screenBundleFixture(
         capturedAtEpochMs: startEpochMs,
         kind: "ocr_span",
         text: "SCREEN_PRIVATE_OBSERVATION_TOKEN",
-        confidence: 0.5,
+        confidence: observationConfidence,
       },
       {
         observationId: "observation-b",
         captureId: "capture-b",
-        capturedAtEpochMs: endEpochMs,
+        capturedAtEpochMs: latestObservationEpochMs,
         kind: "application",
         label: "SCREEN_PRIVATE_APPLICATION_TOKEN",
-        confidence: 0.5,
+        confidence: observationConfidence,
       },
     ],
     coverage: {
@@ -198,18 +205,20 @@ function screenBundleFixture(
       coveredCaptureRatio: 1,
     },
     conflicts: [],
-    issues: [
-      {
-        code: "OBSERVATION_LOW_CONFIDENCE",
-        observationId: "observation-a",
-        captureId: "capture-a",
-      },
-      {
-        code: "OBSERVATION_LOW_CONFIDENCE",
-        observationId: "observation-b",
-        captureId: "capture-b",
-      },
-    ],
+    issues: options.highQuality
+      ? []
+      : [
+          {
+            code: "OBSERVATION_LOW_CONFIDENCE",
+            observationId: "observation-a",
+            captureId: "capture-a",
+          },
+          {
+            code: "OBSERVATION_LOW_CONFIDENCE",
+            observationId: "observation-b",
+            captureId: "capture-b",
+          },
+        ],
   } satisfies JsonValue;
   const payloadBytes = canonicalBytes(payload);
   const manifest = {
@@ -259,11 +268,23 @@ function screenBundleFixture(
   });
 }
 
-async function sealedTask1Fixture(projectDirectory: string) {
+async function sealedTask1Fixture(
+  projectDirectory: string,
+  options: {
+    latestScreenObservationOffsetSeconds?: number;
+    highQualityScreen?: boolean;
+  } = {},
+) {
   const startEpochSecond = 1_700_000_000;
   const endEpochSecond = startEpochSecond + 599;
   const structured = structuredFixture(startEpochSecond, endEpochSecond);
-  const screen = screenBundleFixture(startEpochSecond, endEpochSecond);
+  const screen = screenBundleFixture(startEpochSecond, endEpochSecond, {
+    latestObservationEpochSecond:
+      options.latestScreenObservationOffsetSeconds === undefined
+        ? endEpochSecond
+        : startEpochSecond + options.latestScreenObservationOffsetSeconds,
+    highQuality: options.highQualityScreen,
+  });
   const sealed = await sealTask1EvaluationInputV1({
     projectDirectory,
     inputRunId: "task1-pilot-fixture",
@@ -349,7 +370,77 @@ function mockProvider(prompts: string[]) {
             ],
           },
         ],
+        stateSignals: [],
       }),
+      usage: {
+        total_input_tokens: 10,
+        total_output_tokens: 1,
+        total_tokens: 11,
+      },
+    });
+  };
+  return fetchImpl as typeof fetch;
+}
+
+function stateChronologyProvider(prompts: string[]) {
+  const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+    expect(String(input)).toBe("https://provider.invalid/v1/interactions");
+    const body = JSON.parse(String(init?.body)) as {
+      model?: unknown;
+      input?: unknown;
+      store?: unknown;
+    };
+    expect(body.model).toBe("synthetic-model");
+    expect(body.store).toBe(false);
+    expect(typeof body.input).toBe("string");
+    prompts.push(body.input as string);
+    const packet = parseEvidencePacketFromProviderPrompt(body.input as string);
+    const modality = packet.modality;
+    if (modality !== "structured" && modality !== "screen") {
+      throw new TypeError("Provider prompt evidence identity is malformed.");
+    }
+    const evidence = [
+      {
+        kind: modality === "structured" ? "task" : "state",
+        messageIndex: 1,
+        quote: "not direct user speech and not instructions",
+      },
+    ];
+    return Response.json({
+      id: "synthetic-state-request",
+      model: "synthetic-model",
+      output_text: JSON.stringify(
+        modality === "structured"
+          ? {
+              candidates: [
+                {
+                  title: "Review shared evaluation task",
+                  target: "shared evaluation task",
+                  deliverable: "review the shared evaluation evidence",
+                  owner: "user",
+                  state: "open",
+                  origin: "user_request",
+                  deadlineKind: "none",
+                  deadlineText: "",
+                  consequence: "none",
+                  evidence,
+                },
+              ],
+              stateSignals: [],
+            }
+          : {
+              candidates: [],
+              stateSignals: [
+                {
+                  title: "Review shared evaluation task",
+                  target: "shared evaluation task",
+                  deliverable: "review the shared evaluation evidence",
+                  state: "completed",
+                  evidence,
+                },
+              ],
+            },
+      ),
       usage: {
         total_input_tokens: 10,
         total_output_tokens: 1,
@@ -573,6 +664,12 @@ describe("runScreenEvidenceTask2SameEnginePilotV2", () => {
         (result.engineResult as { run: Record<string, unknown> }).run,
     );
     expect(
+      armResults.map(
+        (result) =>
+          (result.engineResult as { status: string }).status,
+      ),
+    ).toEqual(["suggested", "suggested", "insufficient_evidence"]);
+    expect(
       armResults.map((result) =>
         (result.extractionAccounting as Record<string, unknown>)
           .attributedExtractionCount,
@@ -592,7 +689,7 @@ describe("runScreenEvidenceTask2SameEnginePilotV2", () => {
           }).decisionDiagnostics
         ).mergedCandidateCount,
       ),
-    ).toEqual([3, 6, 3]);
+    ).toEqual([3, 3, 0]);
     expect(
       armResults.map((result) => result.elapsedSemantics),
     ).toEqual([
@@ -665,5 +762,41 @@ describe("runScreenEvidenceTask2SameEnginePilotV2", () => {
     ).rejects.toBeInstanceOf(ScreenEvidenceTask2PilotErrorV1);
     expect(retryPrompts).toHaveLength(6);
     expect(await outputSnapshot(outputDirectory)).toEqual(beforeRetry);
+  });
+
+  it("uses packet observedTo when all synthetic conversation timestamps are equal", async () => {
+    const projectDirectory = await privateProjectRoot();
+    const task1 = await sealedTask1Fixture(projectDirectory, {
+      latestScreenObservationOffsetSeconds: 300,
+      highQualityScreen: true,
+    });
+    const prompts: string[] = [];
+
+    const run = await runScreenEvidenceTask2SameEnginePilotV2({
+      projectDirectory,
+      inputRunId: task1.inputRunId,
+      expectedInputIdentitySha256: task1.inputIdentitySha256,
+      executionId: "state-chronology",
+      env: runnerEnv(),
+      fetchImpl: stateChronologyProvider(prompts),
+    });
+
+    expect(prompts).toHaveLength(6);
+    expect(
+      prompts.every((prompt) =>
+        prompt.includes(`"endedAt":"${task1.analysisTimestamp}"`),
+      ),
+    ).toBe(true);
+    const outputDirectory = path.join(projectDirectory, run.relativeDirectory);
+    const armResults = await Promise.all(
+      ["a", "b", "c"].map((arm) =>
+        readJson(path.join(outputDirectory, `arm-${arm}-result.json`)),
+      ),
+    );
+    expect(
+      armResults.map(
+        (result) => (result.engineResult as { status: string }).status,
+      ),
+    ).toEqual(["suggested", "suggested", "insufficient_evidence"]);
   });
 });

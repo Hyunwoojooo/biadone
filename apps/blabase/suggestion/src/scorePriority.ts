@@ -17,6 +17,17 @@ const BLOCKING_ISSUES = new Set([
   "DEADLINE_SOURCE_NOT_VERIFIED",
   "CONSEQUENCE_SOURCE_NOT_VERIFIED"
 ]);
+const SCREEN_SOURCE_FAILURES = new Set([
+  "SCREEN_ACTIONABLE_EVIDENCE_REQUIRED",
+  "SCREEN_CONFLICT_REPORTED",
+  "SCREEN_COVERAGE_TOO_LOW",
+  "SCREEN_EVIDENCE_STALE",
+  "SCREEN_ISSUE_REPORTED",
+  "SCREEN_OBSERVATION_CONFIDENCE_TOO_LOW"
+]);
+const MINIMUM_SCREEN_CONFIDENCE = 0.8;
+const MINIMUM_SCREEN_COVERAGE_RATIO = 0.75;
+const MAXIMUM_SCREEN_EVIDENCE_AGE_MILLISECONDS = 300_000;
 
 export function scorePriority(
   candidate: MergedTaskCandidate,
@@ -24,6 +35,7 @@ export function scorePriority(
 ): PriorityAssessment {
   const factors = buildFactors(candidate, now);
   const reasonCodes: string[] = [];
+  const screenSourceFailures = screenSourceFailureCodes(candidate, now);
 
   if (INELIGIBLE_STATES.has(candidate.state)) {
     reasonCodes.push("TASK_ALREADY_FINAL");
@@ -36,6 +48,7 @@ export function scorePriority(
   ) {
     reasonCodes.push("EVIDENCE_GATE_FAILED");
   }
+  reasonCodes.push(...screenSourceFailures);
   if (candidate.confidence < 0.7) reasonCodes.push("LOW_CONFIDENCE");
   if (factors.urgency >= 80) reasonCodes.push("DEADLINE_SOON");
   if (factors.blockingPower >= 70) reasonCodes.push("UNBLOCKS_OTHER_WORK");
@@ -49,7 +62,7 @@ export function scorePriority(
       "TASK_ALREADY_FINAL",
       "NOT_A_USER_TASK",
       "EVIDENCE_GATE_FAILED"
-    ].includes(code)
+    ].includes(code) || SCREEN_SOURCE_FAILURES.has(code)
   );
   const reviewRequired = !ineligible && candidate.verificationIssues.length > 0;
   const score = ineligible ? 0 : calculateScore(factors);
@@ -67,6 +80,63 @@ export function scorePriority(
   };
 }
 
+export function screenSourceFailureCodes(
+  candidate: Pick<MergedTaskCandidate, "sourceContexts" | "state" | "evidence">,
+  now: string
+): string[] {
+  const contexts = candidate.sourceContexts;
+  if (
+    contexts.length === 0 ||
+    contexts.some((context) => context.modality !== "screen")
+  ) {
+    return [];
+  }
+  const failures = new Set<string>();
+  if (
+    contexts.some(
+      (context) =>
+        context.confidenceFloor === null ||
+        context.confidenceFloor < MINIMUM_SCREEN_CONFIDENCE
+    )
+  ) {
+    failures.add("SCREEN_OBSERVATION_CONFIDENCE_TOO_LOW");
+  }
+  if (
+    contexts.some(
+      (context) =>
+        context.coverageRatio === null ||
+        context.coverageRatio < MINIMUM_SCREEN_COVERAGE_RATIO
+    )
+  ) {
+    failures.add("SCREEN_COVERAGE_TOO_LOW");
+  }
+  if (contexts.some((context) => context.conflictCount > 0)) {
+    failures.add("SCREEN_CONFLICT_REPORTED");
+  }
+  if (contexts.some((context) => context.issueCount > 0)) {
+    failures.add("SCREEN_ISSUE_REPORTED");
+  }
+  const referenceTime = Date.parse(now);
+  const observedTimes = contexts.map((context) => Date.parse(context.observedTo));
+  const newestObservation = Math.max(...observedTimes);
+  if (
+    !Number.isFinite(referenceTime) ||
+    observedTimes.some((value) => !Number.isFinite(value)) ||
+    referenceTime - newestObservation > MAXIMUM_SCREEN_EVIDENCE_AGE_MILLISECONDS
+  ) {
+    failures.add("SCREEN_EVIDENCE_STALE");
+  }
+  if (
+    !INELIGIBLE_STATES.has(candidate.state) &&
+    !candidate.evidence.some((evidence) =>
+      ["acceptance", "blocking", "deadline", "task"].includes(evidence.kind)
+    )
+  ) {
+    failures.add("SCREEN_ACTIONABLE_EVIDENCE_REQUIRED");
+  }
+  return [...failures].sort();
+}
+
 function buildFactors(
   candidate: MergedTaskCandidate,
   now: string
@@ -75,11 +145,13 @@ function buildFactors(
   const hasVerifiedBlockingPhrase =
     candidate.blocks.length > 0 &&
     candidate.evidence.some((evidence) =>
-      /막|선행|먼저|전제|없이는|block|depend/i.test(evidence.quote)
+      /막|선행|먼저|전제|없이는|before|block|depend|prerequi/i.test(
+        evidence.quote
+      )
     );
   const blockingPower =
     hasVerifiedBlockingPhrase
-      ? Math.min(100, 70 + candidate.blocks.length * 10)
+      ? Math.min(100, 80 + candidate.blocks.length * 10)
       : candidate.state === "blocked"
         ? 40
         : 20;

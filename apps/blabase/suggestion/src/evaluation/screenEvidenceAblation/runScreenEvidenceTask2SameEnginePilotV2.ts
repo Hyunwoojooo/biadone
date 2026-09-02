@@ -1530,7 +1530,10 @@ export async function runScreenEvidenceTask2SameEnginePilotV2(
   const structuredPartition = buildStructuredPartition(task1.structured);
   const screenPartition = buildScreenPartition(task1.screen);
   const screenEvidence = task1.screen.evidence as unknown as {
-    observations: readonly { confidence: number }[];
+    observations: readonly {
+      capturedAtEpochMs: number;
+      confidence: number;
+    }[];
     coverage: { coveredCaptureRatio: number };
     conflicts: readonly unknown[];
     issues: readonly unknown[];
@@ -1538,6 +1541,9 @@ export async function runScreenEvidenceTask2SameEnginePilotV2(
   const screenConfidences = screenEvidence.observations.map(
     (observation) => observation.confidence,
   );
+  const screenObservationTimes = screenEvidence.observations
+    .map((observation) => observation.capturedAtEpochMs)
+    .filter(Number.isFinite);
   const observedFrom = new Date(
     task1.windowStartEpochSecond * 1_000,
   ).toISOString();
@@ -1556,8 +1562,14 @@ export async function runScreenEvidenceTask2SameEnginePilotV2(
   });
   const screenSourceSummary = deepFreeze({
     authority: "screen_observation" as const,
-    observedFrom,
-    observedTo,
+    observedFrom:
+      screenObservationTimes.length === 0
+        ? observedFrom
+        : new Date(Math.min(...screenObservationTimes)).toISOString(),
+    observedTo:
+      screenObservationTimes.length === 0
+        ? observedTo
+        : new Date(Math.max(...screenObservationTimes)).toISOString(),
     confidenceFloor:
       screenConfidences.length === 0 ? null : Math.min(...screenConfidences),
     confidenceCeiling:

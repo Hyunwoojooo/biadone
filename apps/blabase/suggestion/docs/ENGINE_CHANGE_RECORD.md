@@ -9274,3 +9274,162 @@ ID is invented or assigned by this record.
   on the same frozen input hash; completion/conflict precedence remains a separate Colin decision.
 
 <!-- engine-change-record-addendum:ECR-SAME-ENGINE-SHARED-EXTRACTION-V2-2026-09-01:end -->
+
+<!-- engine-change-record-addendum:ECR-SUGGESTION-STATE-RESOLUTION-SAFETY-V1-2026-09-02:begin -->
+
+## Suggestion State Resolution Safety V1: ECR-SUGGESTION-STATE-RESOLUTION-SAFETY-V1-2026-09-02
+
+- Date: 2026-09-02
+- Timezone: Asia/Seoul
+- Developer, owner, sole human reviewer, and decision authority: Colin
+- Required David role, gate, artifact, review, or approval: none
+- Objective: Prevent terminal state evidence and unverified screen candidates from suppressing,
+  reopening, contaminating, or invalidating otherwise valid structured suggestion candidates in
+  the inactive same-engine A/B/C evaluation path.
+- Scope exclusions: provider execution, model-quality measurement, evaluation-input mutation,
+  production activation, public API activation, freeze, release, destructive cleanup, and actual
+  user-data processing.
+
+### Runtime identities and provider contract
+
+- Suggestion engine: `suggestion-engine-v0.4`.
+- Public result schema: `suggestion-schema-v0.2`.
+- Task extraction prompt: `task-candidate-prompt-v0.3`.
+- Evidence verifier: `task-evidence-verifier-v0.3`.
+- Priority scoring: `priority-score-v0.4`.
+- Provider output remains one exact object containing required `candidates` and `stateSignals`
+  arrays. Actionable candidates retain the full candidate shape and allow only nonterminal states.
+- A state signal now has the closed state-only shape `title`, `target`, `deliverable`, `state`, and
+  `evidence`. Candidate-only owner, origin, deadline, consequence, confidence, impact, execution,
+  and ranking fields are forbidden. No compatibility union or fallback to the former full-
+  candidate state-signal shape remains.
+- The model, provider, ranker, guardrail, and result schema remain common across A, B, and C. This
+  change does not introduce a separate C generator or B post-generation string composition.
+
+### Behavior before and after
+
+- Before, state signals reused the actionable candidate type and verifier. Assistant-only
+  completion evidence could therefore receive user-evidence failures even when its exact state
+  quote was valid.
+- After, state signals use a dedicated verifier. Exact clean state evidence may come from either a
+  user or assistant message, but at least one verified `state` quote is mandatory. Candidate
+  origin, ownership, deadline, and consequence rules are not applied to state-only observations.
+- Before, the actual evaluation adapter assigned the common analysis timestamp to every synthetic
+  conversation, and lineage chronology compared only `conversationEndedAt`. Distinct packet
+  observation windows could therefore collapse into a timestamp tie.
+- After, state chronology first uses the maximum valid `sourceContext.observedTo` and falls back to
+  `conversationEndedAt` only when no valid observation time exists. A completed, cancelled, or
+  replaced state is reopened only by a strictly newer authoritative structured candidate in
+  `not_started`, `in_progress`, `blocked`, or `waiting`. Invalid, missing, or exactly tied times do
+  not prove a reopen and preserve terminal precedence.
+- Before, a high-source-quality screen candidate with a candidate-level verification error could
+  merge with a valid structured candidate. The merged verification issues could then reject the
+  otherwise valid task.
+- After, a screen-only candidate with any verification issue is rejected before lineage merge.
+  Source-quality rejection and candidate-verification rejection remain separately diagnosable.
+- Before, terminal signals participated as complete task candidates and could change owner,
+  origin, impact, confidence, evidence, source conversations, recurrence, and score.
+- After, terminal signals participate only in state selection. All actionable attributes,
+  evidence aggregation, source-context aggregation, recurrence, confidence, impact, and scoring
+  are derived only from actionable candidates.
+
+### Source, test, and compatibility boundary
+
+- Primary source files:
+  - `suggestion/src/types.ts`
+  - `suggestion/src/schema.ts`
+  - `suggestion/src/prompt.ts`
+  - `suggestion/src/verifyCandidates.ts`
+  - `suggestion/src/runSuggestionEngine.ts`
+  - `suggestion/src/mergeTaskLineage.ts`
+- Directly relied-on common source and Runner boundaries:
+  - `suggestion/src/scorePriority.ts`
+  - `suggestion/src/evaluation/screenEvidenceAblation/runScreenEvidenceTask2SameEnginePilotV2.ts`
+  - `suggestion/src/versions.ts`
+- Direct regression tests:
+  - `suggestion/tests/pipeline.test.ts`
+  - `suggestion/tests/mergeTaskLineageSafety.test.ts`
+  - `suggestion/tests/screenEvidenceTask2SameEnginePilotV2.test.ts`
+- Full-suite closure also corrected a test-only function-identity assertion in
+  `suggestion/tests/screenEvidenceStoreExporterV1.test.ts` and regenerated the four-file synthetic
+  Swift metadata fixture under
+  `suggestion/tests/fixtures/dayflow-metadata-evidence-bundle-v1/swift-task1c-synthetic-1/` for the
+  already-required `dayflow.blabase-evidence-exporter.v2` identity. Product readers, importers,
+  qualifiers, publishers, and exporter-version acceptance rules were not relaxed.
+
+### Validation and QA evidence
+
+- Focused state-resolution validation passed three files and 17 of 17 tests, including the actual
+  six-packet A/B/C Runner, full provider-output-to-resolver screen rejection, state-only overlay,
+  assistant terminal evidence, observation-time precedence, invalid or missing time, and exact-
+  tie regression cases.
+- Suggestion TypeScript typecheck and lint passed after the state-resolution source and direct
+  regression-test changes.
+- Read-only closure QA marked the four prior findings CLOSED and reported no new High or Medium
+  finding. That QA permitted only a bounded, non-activating provider evaluation run.
+- The first full Suggestion suite run passed 1,883 of 1,887 tests and exposed four failures outside
+  state resolution. Three shared one stale synthetic Dayflow exporter V1 fixture; one compared two
+  separately allocated `copySourceEntries` function objects by reference.
+- The fixture identity and chained payload/manifest hashes were updated for exporter V2, and the
+  publication test now compares stable readback data plus the two copied-entry snapshots instead
+  of function identity.
+- The final full Suggestion Vitest run passed all 190 files and 1,887 of 1,887 tests.
+- At the documentation checkpoint, TypeScript and lint had not yet been rerun after the final
+  test-only assertion and synthetic fixture correction. A subsequent final static-validation
+  checkpoint passed both `npm run typecheck` and `npm run lint` on 2026-09-02.
+- No architecture command was required because this correction does not change a system boundary,
+  container, component, external integration, or core dynamic flow.
+
+### Reproducibility, privacy, and release state
+
+- Evaluation dataset version and fixed input hash: unchanged. No frozen dataset, evaluation input,
+  prior run, or result artifact was overwritten.
+- Candidate run ID and comparison run ID: none. No provider request was made.
+- Code commit: not assigned. This remains an uncommitted working-tree checkpoint, so it is not yet
+  a commit-backed evaluation identity.
+- Metrics, latency, tokens, cost, and suggestion quality: not measured.
+- Tests and fixtures are synthetic. No actual conversation, screenshot, OCR text, credential,
+  secret, provider response, production log, or actual user data was read or added to Git.
+- The state-only contract reduces semantic and privacy surface by forbidding candidate-only output
+  fields from terminal observations. Existing source-context privacy, retention, and private-
+  artifact boundaries remain unchanged.
+- The regenerated fixture establishes repository-side exporter V2 compatibility only. It does not
+  prove that an external Swift producer currently emits the exact V2 bundle.
+- Status: implemented and test-validated, but inactive, unfrozen, uncommitted, and not provider-
+  executed.
+- Release decision: NO-GO. Production activation and release remain outside this record.
+
+### Residual risks, next gates, and rollback
+
+- Exact quote verification proves source presence, not that a provider interpreted terminal
+  semantics correctly.
+- Fuzzy task-family matching can still produce a false match or miss and was not redesigned by
+  this change.
+- Actual provider quality, latency, token use, cost, abstention, and A/B/C differences remain
+  unknown.
+- Final post-correction TypeScript and lint validation is complete. Before a provider run, assign
+  a commit-backed code identity and bind a new run ID to the existing fixed evaluation input hash.
+- The next technical gate is a bounded, private, non-activating A/B/C provider evaluation using the
+  same sealed input and the same engine, prompt, model, config, ranker, and guardrail across arms.
+- Rollback must revert the state-only provider schema, dedicated verifier, pre-merge screen
+  rejection, observation-time precedence, related tests, and this record as one behavior unit. It
+  must not mutate a frozen input or historical result, re-enable the former state-signal union
+  silently, or weaken the exporter V2 qualifier.
+
+### Documentation checkpoint
+
+- This checkpoint appends only this addendum to `suggestion/docs/ENGINE_CHANGE_RECORD.md`.
+- No test, typecheck, lint, build, architecture, baseline, provider, runtime, Git, freeze,
+  activation, release, or artifact-generation command was run during documentation.
+
+### Post-documentation static-validation closure
+
+- `cd suggestion && npm run typecheck`: passed on 2026-09-02.
+- `cd suggestion && npm run lint`: passed on 2026-09-02.
+- The first combined status-report wrapper contained a shell typo after the successful TypeScript
+  process, so that wrapper's TypeScript status field was not used as evidence. TypeScript was
+  immediately rerun as a standalone command and exited successfully.
+- No source, test, fixture, configuration, architecture, dataset, or evaluation artifact changed
+  during static validation. This follow-up changes only this record to preserve the final result.
+
+<!-- engine-change-record-addendum:ECR-SUGGESTION-STATE-RESOLUTION-SAFETY-V1-2026-09-02:end -->
