@@ -1232,6 +1232,40 @@ func managedCodexTrustErrorsAreNotCollapsedToInternalError() {
             CodexRuntimeTrustError.approvalDrift
         ).code == "managed_codex_executable_changed"
     )
+    #expect(
+        managedCodexCoordinatorError(
+            ManagedCodexRuntimeBundleError.layout("missing host")
+        ).code == "managed_codex_runtime_bundle_unsafe"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            ManagedCodexRuntimeBundleError.changed
+        ).code == "managed_codex_executable_changed"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            ManagedCodexRuntimeBundleError.versionMismatch(
+                manifest: "0.151.0",
+                qualified: "0.150.1"
+            )
+        ).code == "managed_codex_runtime_version_mismatch"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            ManagedCodexRuntimeBundleQualificationError.required(
+                version: "0.152.0",
+                target: "aarch64-apple-darwin"
+            )
+        ).code == "managed_codex_runtime_qualification_required"
+    )
+    #expect(
+        managedCodexCoordinatorError(
+            ManagedCodexRuntimeBundleQualificationError.fingerprintMismatch(
+                version: "0.151.0",
+                target: "aarch64-apple-darwin"
+            )
+        ).code == "managed_codex_runtime_fingerprint_mismatch"
+    )
 }
 
 @Test("Managed launcher owns remote flags and preserves TUI arguments after separator")
@@ -1433,7 +1467,13 @@ func managedCodexLauncherRevalidatesBeforeTUIAndCleansUp() throws {
 
     #expect(provider.callCount == 3)
     let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
-    #expect(marker == "app-server\n")
+    let expectedHost = fixture.executable.deletingLastPathComponent()
+        .appendingPathComponent("codex-code-mode-host")
+        .path
+    #expect(
+        marker
+            == "app-server\t\(fixture.executable.path)\t\(expectedHost)\n"
+    )
     let pidText = try String(contentsOf: fixture.pidFile, encoding: .utf8)
         .trimmingCharacters(in: .whitespacesAndNewlines)
     let pid = try #require(pid_t(pidText))
@@ -1500,7 +1540,13 @@ func managedCodexLauncherRevalidatesAfterTUISpawnAndCleansUp() throws {
     #expect(provider.callCount == 4)
     let marker = try String(contentsOf: fixture.markerFile, encoding: .utf8)
     let startedChildren = marker.split(separator: "\n").map(String.init).sorted()
-    #expect(startedChildren == ["app-server", "tui"])
+    let expectedHost = fixture.executable.deletingLastPathComponent()
+        .appendingPathComponent("codex-code-mode-host")
+        .path
+    #expect(startedChildren == [
+        "app-server\t\(fixture.executable.path)\t\(expectedHost)",
+        "tui\t\(fixture.executable.path)\t\(expectedHost)",
+    ])
     for pidFile in [fixture.pidFile, fixture.tuiPIDFile] {
         let pidText = try String(contentsOf: pidFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1545,7 +1591,10 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
         executable: fixture.executable,
         environment: [
             "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+            "BLABEE_TEST_ENVIRONMENT_FILE": fixture.environmentFile.path,
             "BLABEE_TEST_STDERR_TEXT": diagnosticText,
+            "CODEX_CODE_MODE_HOST_PATH": "/tmp/untrusted-code-mode-host",
+            "PATH": "/usr/local/bin:/usr/bin",
         ],
         coordinatorSocketPath: "/tmp/blabee-managed-auxiliary.sock",
         brokerEpoch: "epoch-auxiliary-test",
@@ -1594,6 +1643,22 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
     )
     #expect(provider.callCount == 2)
 
+    let childEnvironment = try String(
+        contentsOf: fixture.environmentFile,
+        encoding: .utf8
+    ).split(separator: "\n")
+    #expect(childEnvironment.count == 3)
+    #expect(childEnvironment[0] == Substring(fixture.executable.path))
+    #expect(
+        childEnvironment[1]
+            == Substring(
+                fixture.executable.deletingLastPathComponent()
+                    .appendingPathComponent("codex-code-mode-host")
+                    .path
+            )
+    )
+    #expect(childEnvironment[2] == "/usr/local/bin:/usr/bin")
+
     let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
     while !FileManager.default.fileExists(atPath: fixture.pidFile.path),
           DispatchTime.now().uptimeNanoseconds < deadline
@@ -1617,6 +1682,55 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
         usleep(10_000)
     }
     #expect(diagnosticCapture.data.contains(Data(diagnosticText.utf8)))
+}
+
+@Test("Managed auxiliary provider drift blocks spawn without retry")
+func managedCodexAuxiliaryProviderDriftBlocksSpawn() throws {
+    let fixture = try managedCodexAuxiliaryExecutableFixture()
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let token = "auxiliary-drift-token"
+    let listener = try ManagedCodexWebSocketListener(expectedToken: token)
+    let admission = ManagedCodexListenerAdmission(listener: listener)
+    let providerCalled = DispatchSemaphore(value: 0)
+    let provider = ManagedCodexExecutableSequence<CodexRuntimeTrustError>(
+        [.failure(.approvalDrift)],
+        beforeOutcome: { _ in providerCalled.signal() }
+    )
+    let broker = ManagedCodexAuxiliaryConnectionBroker(
+        admission: admission,
+        executable: fixture.executable,
+        environment: [
+            "BLABEE_TEST_PID_FILE": fixture.pidFile.path,
+            "BLABEE_TEST_ENVIRONMENT_FILE": fixture.environmentFile.path,
+        ],
+        coordinatorSocketPath: "/tmp/blabee-managed-auxiliary-drift.sock",
+        brokerEpoch: "epoch-auxiliary-drift",
+        approvedExecutableProvider: provider.next
+    )
+    broker.start()
+
+    let client = try managedCodexConnectClient(port: listener.port)
+    defer { Darwin.close(client) }
+    try managedCodexTestWrite(
+        managedCodexTestHandshakeRequest(
+            port: listener.port,
+            token: token,
+            key: "dGhlIHNhbXBsZSBub25jZQ=="
+        ),
+        descriptor: client
+    )
+    _ = try managedCodexTestReadHeaders(
+        descriptor: client,
+        timeoutMilliseconds: 5_000
+    )
+
+    #expect(providerCalled.wait(timeout: .now() + .seconds(2)) == .success)
+    broker.stopAndWait()
+    #expect(provider.callCount == 1)
+    #expect(!FileManager.default.fileExists(atPath: fixture.pidFile.path))
+    #expect(
+        !FileManager.default.fileExists(atPath: fixture.environmentFile.path)
+    )
 }
 
 @Test("Managed auxiliary admission survives a disconnected handshake peer")
@@ -1782,28 +1896,42 @@ func managedCodexAdmissionShutdownWithFullBacklogIsBounded() throws {
     #expect(elapsedMilliseconds < 1_000)
 }
 
-@Test("Managed launcher propagates the resolved coordinator socket to both children")
-func managedCodexLauncherPropagatesCoordinatorSocket() throws {
+@Test("Managed launcher pins the bundle environment for both primary children")
+func managedCodexLauncherPinsPrimaryChildEnvironment() throws {
+    let executable = URL(
+        fileURLWithPath: "/private/tmp/blabee-managed-pin/bin/codex"
+    )
     let inherited = [
         "BLABEE_SOCKET": "/tmp/stale.sock",
         "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+        "CODEX_CODE_MODE_HOST_PATH": "/tmp/untrusted-code-mode-host",
+        "PATH": "/usr/local/bin:/usr/bin",
     ]
     let appServer = try ManagedCodexLauncher.childEnvironment(
         inherited,
+        executable: executable,
         authenticationToken: nil,
         coordinatorSocketPath: "/tmp/explicit.sock"
     )
     let tui = try ManagedCodexLauncher.childEnvironment(
         inherited,
+        executable: executable,
         authenticationToken: "fresh-token",
         coordinatorSocketPath: "/tmp/explicit.sock"
     )
+    let expectedHost = executable.deletingLastPathComponent()
+        .appendingPathComponent("codex-code-mode-host")
+        .path
     #expect(appServer["BLABEE_SOCKET"] == "/tmp/explicit.sock")
     #expect(tui["BLABEE_SOCKET"] == "/tmp/explicit.sock")
     #expect(appServer["BLABEE_MANAGED_APPROVALS"] == "1")
     #expect(tui["BLABEE_MANAGED_APPROVALS"] == "1")
     #expect(appServer["BLABEE_MANAGED_CODEX_AUTH_TOKEN"] == nil)
     #expect(tui["BLABEE_MANAGED_CODEX_AUTH_TOKEN"] == "fresh-token")
+    #expect(appServer["CODEX_CODE_MODE_HOST_PATH"] == expectedHost)
+    #expect(tui["CODEX_CODE_MODE_HOST_PATH"] == expectedHost)
+    #expect(appServer["PATH"] == "/usr/local/bin:/usr/bin")
+    #expect(tui["PATH"] == "/usr/local/bin:/usr/bin")
 }
 
 @Test("Managed launcher rejects dynamic-loader overrides for every child")
@@ -1816,6 +1944,7 @@ func managedCodexLauncherRejectsLoaderOverrides() {
         #expect(throws: CoordinatorError.self) {
             _ = try ManagedCodexLauncher.childEnvironment(
                 [name: "/tmp/untrusted.dylib"],
+                executable: URL(fileURLWithPath: "/private/runtime/bin/codex"),
                 authenticationToken: nil,
                 coordinatorSocketPath: "/tmp/explicit.sock"
             )
@@ -2461,6 +2590,7 @@ private struct ManagedCodexAuxiliaryExecutableFixture {
     let directory: URL
     let executable: URL
     let pidFile: URL
+    let environmentFile: URL
 }
 
 private func managedCodexAuxiliaryExecutableFixture(
@@ -2474,18 +2604,34 @@ private func managedCodexAuxiliaryExecutableFixture(
         at: directory,
         withIntermediateDirectories: false
     )
-    let executable = directory.appendingPathComponent(
-        "fake-codex",
+    let binDirectory = directory.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: binDirectory,
+        withIntermediateDirectories: false
+    )
+    let executable = binDirectory.appendingPathComponent(
+        "codex",
         isDirectory: false
     )
     let pidFile = directory.appendingPathComponent(
         "app-server.pid",
         isDirectory: false
     )
+    let environmentFile = directory.appendingPathComponent(
+        "app-server.environment",
+        isDirectory: false
+    )
     let script = #"""
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
       printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
+      if [ -n "$BLABEE_TEST_ENVIRONMENT_FILE" ]; then
+        printf '%s\n%s\n%s\n' \
+          "$0" \
+          "$CODEX_CODE_MODE_HOST_PATH" \
+          "$PATH" \
+          > "$BLABEE_TEST_ENVIRONMENT_FILE"
+      fi
       if [ -n "$BLABEE_TEST_STDERR_TEXT" ]; then
         printf '%s\n' "$BLABEE_TEST_STDERR_TEXT" >&2
       fi
@@ -2505,7 +2651,8 @@ private func managedCodexAuxiliaryExecutableFixture(
     return ManagedCodexAuxiliaryExecutableFixture(
         directory: directory,
         executable: executable,
-        pidFile: pidFile
+        pidFile: pidFile,
+        environmentFile: environmentFile
     )
 }
 
@@ -2520,8 +2667,13 @@ private func managedCodexLauncherExecutableFixture(
         at: directory,
         withIntermediateDirectories: false
     )
-    let executable = directory.appendingPathComponent(
-        "fake-codex",
+    let binDirectory = directory.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: binDirectory,
+        withIntermediateDirectories: false
+    )
+    let executable = binDirectory.appendingPathComponent(
+        "codex",
         isDirectory: false
     )
     let markerFile = directory.appendingPathComponent(
@@ -2539,7 +2691,9 @@ private func managedCodexLauncherExecutableFixture(
     let script = #"""
     #!/bin/sh
     if [ "$1" = "app-server" ]; then
-      printf 'app-server\n' >> "$BLABEE_TEST_MARKER_FILE"
+      printf 'app-server\t%s\t%s\n' \
+        "$0" "$CODEX_CODE_MODE_HOST_PATH" \
+        >> "$BLABEE_TEST_MARKER_FILE"
       printf '%s\n' "$$" > "$BLABEE_TEST_PID_FILE"
       if [ -n "$BLABEE_TEST_STDERR_TEXT" ]; then
         printf '%s\n' "$BLABEE_TEST_STDERR_TEXT" >&2
@@ -2547,7 +2701,9 @@ private func managedCodexLauncherExecutableFixture(
       trap 'exit 0' TERM INT
       while :; do /bin/sleep 1; done
     fi
-    printf 'tui\n' >> "$BLABEE_TEST_MARKER_FILE"
+    printf 'tui\t%s\t%s\n' \
+      "$0" "$CODEX_CODE_MODE_HOST_PATH" \
+      >> "$BLABEE_TEST_MARKER_FILE"
     printf '%s\n' "$$" > "$BLABEE_TEST_TUI_PID_FILE"
     trap 'exit 0' TERM INT
     while :; do /bin/sleep 1; done

@@ -1,6 +1,6 @@
 # Blabee 작업 현황
 
-업데이트: 2026-09-01
+업데이트: 2026-09-02
 
 ## 현재 단계
 
@@ -35,15 +35,15 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | 플러그인 구조 | 실제 로컬 설치·신뢰·회전 조건부 완료 | 실제 Codex CLI `0.149.0`의 격리 lifecycle과 실제 사용자 marketplace/Plugin 설치를 통과했다. 현재 활성 selector는 `blabee@blabee-local-dogfood-dbc4be6d1786` 하나이며 네 guarded Hook은 `/hooks`에서 각각 검토·신뢰했다. 설치 cache 제거 뒤 fail-open과 재설치 후 새 세션 연결도 통과했다. 제공 Python validator는 PyYAML 부재로 실행하지 않았고 공개 배포 신뢰 UX는 별도 |
 | PermissionRequest 제품 동작 | Hook·관리형 소스 자동 계약 검증 완료, 설치본 App Server 실사용 왕복 미검증 | Hook Pet은 FIFO 선두의 지원 가능한 command형 요청에 `거절`, `Codex에서 직접 결정`만 제공하고 Hook allow를 출력하지 않는다. 관리형 Pet FIFO는 `이번만 허용`, `거절`, `Codex에서 직접 결정`을 별도 카드로 제공하고 원본 `environmentId`를 표시한다. 120 Unicode scalar 이하의 안전한 단일 행 명령만 생략 없이 표시하며 그 밖에는 원래 Codex TUI로 반환한다. 두 경로 모두 대기 상한 8개, exact binding·response ID 멱등성, journal 비영속과 native fallback을 구현했고 `acceptForSession`은 지원하지 않는다. 실제 설치본 App Server 왕복은 아직 미검증이다. |
 | App Server 일회 승인 관리형 실행 | 소스·자동 계약 검증 완료, 설치본 live dogfood 미검증 | 지원 Codex `0.149.1`·`0.150.1`·`0.151.0`의 `item/commandExecution/requestApproval` 계약을 엄격히 파싱하고 문자열·정수 request ID와 원본 바이트를 보존한다. `blabee-codex`는 인증된 localhost WebSocket TUI와 stdio App Server를 중계하며, 관리형 FIFO 선택을 `accept`·`decline` 또는 원본 TUI 전달로 변환한다. 사용자 결정 120초·브로커 130초·socket 135초의 순서화된 상한을 적용하며, 무응답·오류·8개 상한 초과는 원래 Codex로 반환한다. request ID 기억이 256개에 도달하면 그 연결은 이후 승인을 전부 네이티브 TUI에 맡긴다. `acceptForSession`, 추가 권한, 네트워크·실행 정책 변경, 표시할 수 없는 명령은 합성하지 않는다. 초기 관리형 자격은 집중 30/30·제품 310/310, 최신 runtime identity 회귀는 집중 12/12·전체 Swift Testing 445/445+XCTest 5/5를 통과했다. Pet 선택 receipt는 App Server 전달이나 명령 실행 성공의 증거가 아니다. |
-| 관리형 Codex Medium 신뢰 경계 | 소스·단위·프로세스 통합 검증 완료, 설치본 live dogfood 미검증 | 버전 probe를 private process group·64 KiB bounded output·TERM→KILL·direct-child reap으로 격리하고, canonical current-user/non-writable/no-grant-ACL pin parent와 첫 App Server 실행 직전 재검증을 추가했다. `blabee-codex` 진입 wrapper는 coordinator 실행 전에 `DYLD_*`·`__XPC_DYLD_*`·`LD_*` loader override를 값 노출 없이 거부하고, 환경 수집·검사 실패도 fail-closed한다. 내부 경계도 같은 정책을 재검증하며 probe·App Server·TUI·보조 세션·fallback은 같은 검증된 환경 snapshot을 사용한다. PATH와 `$HOME/.local/bin/codex`, 정상 종료·timeout·output flood의 direct/descendant 정리, unsafe temp parent를 단위 검증했다. 생성 wrapper의 선행 거부와 test-harness 실제 process에서 live provider→pin→재검증→`execve` fallback의 argv·cwd·환경 제거·exit 37, 실행 중 lease 보존·종료 뒤 회수도 통과했다. 최종 자동 검증은 XCTest 5/5 + Swift Testing 420/420, Node 268/268, T-011 46/46, dogfood 5/5이며 독립 보안 QA에서 신규 Critical/High/Medium/Low finding은 없었다. |
+| 관리형 Codex runtime bundle 신뢰 경계 | 소스·자동 검증 완료, 설치본 live·clean Mac 미검증 | 과거 단일 executable pin을 bounded official package manifest 기반 private runtime bundle로 교체했다. 공유 inspector가 manifest, `bin/codex`, sibling `codex-code-mode-host`, `codex-path/rg`, resources의 owner·mode·ACL·link·target·서명·bounds·identity를 검사한다. descriptor staging copy, source/destination 재검증, 원자 recovery plan, seal·fsync·원자 게시와 exact cleanup/lease를 적용하며, 반복 spawn 경계는 exact metadata tree와 작은 seal hash로 확인해 전체 payload 재해시를 피한다. 같은 Team ID·version만으로 승인하지 않고 full-bundle canonical fingerprint를 닫힌 catalog와 비교하며 현재 등록 대상은 official `0.151.0` Apple Silicon뿐이다. version probe·App Server·TUI·보조 세션·pre-child fallback은 같은 bundle의 본체와 host를 사용한다. 기본 Doctor는 Codex child를 실행하지 않고 layout·identity·manifest allowlist·catalog 자격·code-mode live 자격·실제 Plugin locator가 확인된 Blabee build identity를 분리 보고한다. runtime trust 60/60, Doctor 30/30, managed broker 56/56, 전체 Swift Testing 472/472+XCTest 5/5, 전체 Node 277/277, release build와 실제 official `0.151.0` artifact 강제 catalog 시험 1/1이 통과했다. 일반 `codex`, 공식 설치 파일, PATH·셸 설정은 변경하지 않는다. semantic allowlist의 `0.149.1`·`0.150.1` production bundle, Codex 0.152.0·0.152.1, Intel, 실제 code-mode/Plugin/Hook, 다른 Mac 설치·업데이트·제거는 여전히 활성화 차단 gate다. |
 
-위 T-012a 표 행은 2026-08-22 최초 검증 기록이다. 2026-09-01 후속으로
-“Hook은 항상 수동 검토” 정책을 교체했다. Doctor는
-Codex App Server `hooks/list`만 읽기 전용으로 조회하며, 현재 Blabee 네 Hook의
-활성화·신뢰 상태와 설치 source 대비 cache 바이트가 모두 정확할 때만
-`hook_trust_ok`로 통과한다. 집중 29/29와 전체 Swift Testing 434/434+XCTest 5/5,
-정상 fixture의 전체 exit `0`, 실제 설치 상태의 `hook_trust_ok`를 확인했다. 새
-dogfood 빌드로 교체한 뒤 Doctor 전체 exit `0`을 확인하는 실사용 게이트는 남아 있다.
+위 T-012a 표 행과 2026-09-01 `hooks/list` 자동 조회 기록은 과거 검증
+기록이다. 2026-09-02 후속으로 기본 Doctor의 경계를 완전한 정적·읽기
+전용으로 줄였다. 기본 Doctor는 `codex --version`, `codex plugin list`,
+App Server `hooks/list`를 실행하지 않는다. manifest allowlist가 통과해도
+실제 binary 버전, Plugin 설치·활성, Hook 신뢰와 code-mode는 별도
+live qualification 전까지 `action_required`다. 과거 29/29·434/434+XCTest 5/5와
+`hook_trust_ok`는 새 정책의 기본 Doctor 통과 근거로 사용하지 않는다.
 
 같은 날 runtime 회전 후속으로 signed assembly manifest v2와 이전 runtime의 제한적
 UDS 호환을 구현했다. raw identity 대신 검증된 이전 `Blabee.app`을 입력받고, 이전
@@ -93,7 +93,7 @@ project_enabled
 4. 공개 v0.1 자동 롤백 후보는 깨끗한 작업 트리에서 시작하고 범위가 완전한 프롬프트 에피소드 하나다. ignored 파일, 하위 모듈, LFS, 저장소 밖 파일, 크기 초과, 동시 편집, 브랜치·HEAD 변경, 외부 부수 효과가 있으면 비활성화한다.
 5. M0 센티널과 실행 스파이크는 2026-08-31 활성 트리에서 제거했다. 운영 결정 제안 채널은 프로젝트 로컬 MCP `emit_decision`이다.
 6. 지원 가능한 command형 Hook 권한 요청은 Pet의 별도 2선택 카드로 중계한다. Hook에서는 `거절`과 `Codex에서 직접 결정`만 제공한다. `이번만 허용`은 관리형 App Server의 단일 요청 `accept`로만 제공하고 세션·전역 허용은 만들지 않는다. 실패·만료·재시작에서는 Codex 네이티브 승인 체계로 반환하며 앱 복귀는 best-effort다.
-7. 현재 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. Hook/MCP, `codex queue`, 관리형 App Server의 exact 출력·세션 라우팅을 각 버전 계약 테스트로 확인한 경우에만 목록에 유지하거나 추가한다.
+7. 현재 protocol semantic allowlist는 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. production managed 실행은 여기에 더해 exact full-bundle fingerprint catalog와 live 자격을 통과해야 하며, 2026-09-02 등록 대상은 official `0.151.0` Apple Silicon뿐이다. Hook/MCP, `codex queue`, 관리형 App Server의 exact 출력·세션 라우팅을 각 버전 계약 테스트로 확인한 경우에만 목록과 catalog에 유지하거나 추가한다.
 8. 일반 로컬 코디네이터 연결은 2초, Hook 응답은 5초, Pet 선택은 큐 프로세스 10초보다 긴 12초로 제한한다. 실패해도 완료 중인 Codex 답변은 막지 않으며, 60초에 한 번 알리고 120초에 자동 선택 없이 만료해 늦은 입력을 거부한다.
 9. 여러 세션의 패킷은 `routing.pending` FIFO 대기열에 둔다. Pet은 선두 카드만 표시·focus·선택하고, 전면 대상 없이 선두가 선택 가능하면 대기열 길이와 관계없이 자동 focus한다. 선두가 제거되면 다음 카드로 자동 진행하며 뒤 카드는 직접 선택할 수 없다.
 10. Blabee는 별도 LLM API 키나 추론 서비스를 요구하지 않는다.

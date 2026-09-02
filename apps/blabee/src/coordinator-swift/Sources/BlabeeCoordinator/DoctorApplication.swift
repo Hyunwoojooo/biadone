@@ -144,6 +144,26 @@ struct DoctorProcessResult {
     let stdout: Data
 }
 
+struct DoctorCodexRuntimeBundleSummary: Equatable {
+    let manifestVersion: String
+    let target: String
+    let buildQualification: DoctorCodexRuntimeBuildQualification
+}
+
+enum DoctorCodexRuntimeBuildQualification: Equatable {
+    case qualified
+    case required
+    case fingerprintMismatch
+}
+
+enum DoctorCodexRuntimeBundleInspection: Equatable {
+    case validated(DoctorCodexRuntimeBundleSummary)
+    case invalidLayout
+    case invalidIdentity
+    case versionMismatch
+    case unavailable
+}
+
 struct DoctorDependencies {
     var environment: [String: String]
     var currentExecutableURL: URL?
@@ -153,6 +173,7 @@ struct DoctorDependencies {
     var currentRuntimeIdentity: String
     var installedRuntimeIdentity: (_ executable: URL) -> String?
     var processRunner: (_ executable: URL, _ arguments: [String], _ timeoutMilliseconds: Int) throws -> DoctorProcessResult
+    var codexRuntimeInspector: (_ executable: URL) -> DoctorCodexRuntimeBundleInspection
     var hookTrustRequester: (
         _ executable: URL,
         _ projectURL: URL,
@@ -171,6 +192,9 @@ struct DoctorDependencies {
                 )
             },
             processRunner: DoctorProcessRunner.run,
+            codexRuntimeInspector: { executableURL in
+                inspectCodexRuntime(executableURL)
+            },
             hookTrustRequester: DoctorHookTrustInspector.inspect,
             daemonRequester: { socketPath in
                 let client = try UnixDomainSocketClient(socketPath: socketPath)
@@ -183,6 +207,49 @@ struct DoctorDependencies {
                 return try StrictJSONTransport.data(forJSONObject: result)
             }
         )
+    }
+
+    static func inspectCodexRuntime(
+        _ executableURL: URL,
+        executableVerification: ManagedCodexRuntimeExecutableVerification = .production
+    ) -> DoctorCodexRuntimeBundleInspection {
+        do {
+            let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: executableURL,
+                executableVerification: executableVerification
+            )
+            let buildQualification: DoctorCodexRuntimeBuildQualification
+            do {
+                try ManagedCodexRuntimeBundleQualificationCatalog
+                    .requireQualified(inspection)
+                buildQualification = .qualified
+            } catch let error as ManagedCodexRuntimeBundleQualificationError {
+                switch error {
+                case .required:
+                    buildQualification = .required
+                case .fingerprintMismatch:
+                    buildQualification = .fingerprintMismatch
+                }
+            } catch {
+                return .unavailable
+            }
+            return .validated(DoctorCodexRuntimeBundleSummary(
+                manifestVersion: inspection.manifestVersion,
+                target: inspection.target,
+                buildQualification: buildQualification
+            ))
+        } catch let error as ManagedCodexRuntimeBundleError {
+            switch error {
+            case .layout, .bounds:
+                return .invalidLayout
+            case .identity, .changed, .targetMismatch:
+                return .invalidIdentity
+            case .versionMismatch:
+                return .versionMismatch
+            }
+        } catch {
+            return .unavailable
+        }
     }
 }
 
@@ -205,7 +272,10 @@ struct DoctorApplication {
     func run(arguments: DoctorArguments) -> DoctorExecution {
         var checks: [DoctorCheck] = []
 
-        checks.append(checkCoordinatorRuntime(appURL: arguments.appURL))
+        let coordinatorRuntimeCheck = checkCoordinatorRuntime(
+            appURL: arguments.appURL
+        )
+        checks.append(coordinatorRuntimeCheck)
         checks.append(checkAppBundle(arguments.appURL))
         checks.append(checkEmbeddedCoordinator(arguments.appURL))
 
@@ -220,31 +290,47 @@ struct DoctorApplication {
         }
         checks.append(checkCodexExecutable(codexURL))
 
-        let version = codexURL.flatMap { readCodexVersion(at: $0) }
-        checks.append(checkCodexVersion(version))
+        let runtimeInspection = codexURL.map(dependencies.codexRuntimeInspector)
+            ?? .unavailable
+        checks.append(checkCodexRuntimeLayout(runtimeInspection))
+        checks.append(checkCodexRuntimeIdentity(runtimeInspection))
 
-        let pluginInspection = codexURL.map(inspectPluginInstallation(at:))
-            ?? PluginInspection(check: DoctorCheck(
-                id: "plugin_installation",
-                status: .fail,
-                code: "plugin_status_unavailable",
-                summary: "Blabee 플러그인 설치 상태를 확인할 수 없습니다."
-            ), sourceURL: nil)
+        let manifestVersion: String? = {
+            guard case let .validated(summary) = runtimeInspection else { return nil }
+            return summary.manifestVersion
+        }()
+        checks.append(checkCodexVersion(manifestVersion))
+        let runtimeVersionCheck = checkCodexRuntimeVersion(runtimeInspection)
+        checks.append(runtimeVersionCheck)
+        checks.append(checkCodexCodeModeCompatibility(
+            runtimeInspection,
+            runtimeVersionCheck: runtimeVersionCheck
+        ))
+
+        let pluginInspection = inspectPluginStatically(
+            explicitPluginURL: arguments.pluginURL
+        )
         checks.append(pluginInspection.check)
 
-        let pluginURL = arguments.pluginURL ?? pluginInspection.sourceURL
-        checks.append(checkPluginLayout(
+        let pluginURL = pluginInspection.sourceURL
+        let pluginLayoutCheck = checkPluginLayout(
             pluginURL,
-            installedSourceURL: pluginInspection.sourceURL,
-            requireInstalledSourceMatch: arguments.pluginURL != nil
-                && pluginInspection.check.status == .pass
+            installedSourceURL: nil,
+            requireInstalledSourceMatch: false
+        )
+        checks.append(pluginLayoutCheck)
+        let mcpRuntimeInspection = checkMCPRuntime(
+            appURL: arguments.appURL,
+            pluginURL: pluginURL
+        )
+        let mcpRuntimeCheck = mcpRuntimeInspection.check
+        checks.append(mcpRuntimeCheck)
+        checks.append(checkBlabeeBuildIdentity(
+            coordinatorRuntime: coordinatorRuntimeCheck,
+            mcpRuntime: mcpRuntimeCheck,
+            pluginLocatorVerified: mcpRuntimeInspection.pluginLocatorVerified
         ))
-        checks.append(checkMCPRuntime(appURL: arguments.appURL, pluginURL: pluginURL))
-        checks.append(checkHookTrust(
-            codexURL: codexURL,
-            pluginInspection: pluginInspection,
-            projectURL: arguments.projectURL
-        ))
+        checks.append(checkHookTrustStatically(pluginLayout: pluginLayoutCheck))
 
         let daemonInspection = inspectDaemon(socketPath: arguments.socketPath)
         checks.append(daemonInspection.check)
@@ -356,12 +442,80 @@ private extension DoctorApplication {
         )
     }
 
-    func readCodexVersion(at url: URL) -> String? {
-        guard isExecutableRegularFile(url, allowingSymlink: false),
-              let result = try? dependencies.processRunner(url, ["--version"], 5_000),
-              result.exitCode == 0
-        else { return nil }
-        return CodexCompatibility.parseVersionOutput(result.stdout)
+    func checkCodexRuntimeLayout(
+        _ inspection: DoctorCodexRuntimeBundleInspection
+    ) -> DoctorCheck {
+        switch inspection {
+        case .validated:
+            return DoctorCheck(
+                id: "codex_runtime_layout", status: .pass,
+                code: "codex_runtime_layout_ok",
+                summary: "Codex package manifest와 필수 runtime 구조를 확인했습니다."
+            )
+        case .invalidLayout:
+            return DoctorCheck(
+                id: "codex_runtime_layout", status: .fail,
+                code: "codex_runtime_layout_invalid",
+                summary: "Codex package manifest 또는 필수 runtime 구조가 올바르지 않습니다."
+            )
+        case .invalidIdentity, .versionMismatch:
+            return DoctorCheck(
+                id: "codex_runtime_layout", status: .fail,
+                code: "codex_runtime_layout_unverified",
+                summary: "안전하지 않은 runtime identity 때문에 package 구조를 끝까지 확인하지 못했습니다."
+            )
+        case .unavailable:
+            return DoctorCheck(
+                id: "codex_runtime_layout", status: .fail,
+                code: "codex_runtime_layout_unavailable",
+                summary: "Codex package runtime 구조를 안전하게 확인하지 못했습니다."
+            )
+        }
+    }
+
+    func checkCodexRuntimeIdentity(
+        _ inspection: DoctorCodexRuntimeBundleInspection
+    ) -> DoctorCheck {
+        switch inspection {
+        case let .validated(summary):
+            if summary.buildQualification == .fingerprintMismatch {
+                return DoctorCheck(
+                    id: "codex_runtime_identity", status: .fail,
+                    code: "codex_runtime_build_fingerprint_mismatch",
+                    summary: "Codex runtime과 등록된 official build fingerprint가 일치하지 않습니다."
+                )
+            }
+            if summary.buildQualification == .required {
+                return DoctorCheck(
+                    id: "codex_runtime_identity", status: .actionRequired,
+                    code: "codex_runtime_build_qualification_required",
+                    summary: "Runtime 구조는 안전하지만 이 official build fingerprint는 아직 등록되지 않았습니다."
+                )
+            }
+            return DoctorCheck(
+                id: "codex_runtime_identity", status: .pass,
+                code: "codex_runtime_identity_ok",
+                summary: "Codex runtime identity와 등록된 official build fingerprint를 확인했습니다."
+            )
+        case .invalidIdentity:
+            return DoctorCheck(
+                id: "codex_runtime_identity", status: .fail,
+                code: "codex_runtime_identity_invalid",
+                summary: "Codex runtime의 소유권, 모드, 링크, 아키텍처 또는 identity가 안전하지 않습니다."
+            )
+        case .invalidLayout, .versionMismatch:
+            return DoctorCheck(
+                id: "codex_runtime_identity", status: .fail,
+                code: "codex_runtime_identity_unverified",
+                summary: "불완전한 package 구조 때문에 Codex runtime identity를 확인하지 못했습니다."
+            )
+        case .unavailable:
+            return DoctorCheck(
+                id: "codex_runtime_identity", status: .fail,
+                code: "codex_runtime_identity_unavailable",
+                summary: "Codex runtime identity를 안전하게 확인하지 못했습니다."
+            )
+        }
     }
 
     func checkCodexVersion(_ version: String?) -> DoctorCheck {
@@ -370,27 +524,170 @@ private extension DoctorApplication {
             return DoctorCheck(
                 id: "codex_version", status: .fail,
                 code: "codex_version_unavailable",
-                summary: "Codex CLI 버전을 안전하게 확인하지 못했습니다."
+                summary: "Codex package manifest 버전을 안전하게 확인하지 못했습니다."
             )
         case .supported:
             return DoctorCheck(
                 id: "codex_version", status: .pass,
                 code: "codex_version_supported",
-                summary: "지원 승인된 Codex CLI 버전입니다."
+                summary: "Codex package manifest 버전이 지원 allowlist에 있습니다."
             )
         case .alphaQualificationRequired:
             return DoctorCheck(
                 id: "codex_version", status: .actionRequired,
                 code: "codex_alpha_qualification_required",
-                summary: "Codex CLI alpha 기준 버전은 추가 호환성 승인이 필요합니다."
+                summary: "Codex package manifest의 alpha 기준 버전은 추가 호환성 승인이 필요합니다."
             )
         case .notAllowlisted:
             return DoctorCheck(
                 id: "codex_version", status: .fail,
                 code: "codex_version_not_allowlisted",
-                summary: "이 Codex CLI 버전은 지원 allowlist에 없습니다."
+                summary: "이 Codex package manifest 버전은 지원 allowlist에 없습니다."
             )
         }
+    }
+
+    func checkCodexRuntimeVersion(
+        _ inspection: DoctorCodexRuntimeBundleInspection
+    ) -> DoctorCheck {
+        if case .versionMismatch = inspection {
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .fail,
+                code: "codex_runtime_version_mismatch",
+                summary: "Codex package manifest와 자격 시험 버전이 일치하지 않습니다."
+            )
+        }
+        guard case let .validated(summary) = inspection else {
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .fail,
+                code: "codex_runtime_version_unavailable",
+                summary: "Codex runtime 버전을 안전하게 확인하지 못했습니다."
+            )
+        }
+
+        if summary.buildQualification == .fingerprintMismatch {
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .fail,
+                code: "codex_runtime_build_fingerprint_mismatch",
+                summary: "Manifest 버전은 알려졌지만 runtime 바이트가 등록된 official build와 다릅니다."
+            )
+        }
+
+        switch CodexCompatibility.qualify(version: summary.manifestVersion) {
+        case .supported:
+            if summary.buildQualification == .required {
+                return DoctorCheck(
+                    id: "codex_runtime_version", status: .actionRequired,
+                    code: "codex_runtime_build_qualification_required",
+                    summary: "Manifest 버전은 지원되지만 이 exact official bundle fingerprint는 아직 등록되지 않았습니다."
+                )
+            }
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .actionRequired,
+                code: "codex_runtime_live_version_required",
+                summary: "Manifest 버전은 승인됐지만 실제 Codex 실행 버전 일치는 별도 live 자격 시험이 필요합니다."
+            )
+        case .alphaQualificationRequired:
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .actionRequired,
+                code: "codex_runtime_alpha_qualification_required",
+                summary: "Codex alpha 기준 runtime은 실행 버전 일치와 호환성의 별도 live 자격 시험이 필요합니다."
+            )
+        case .notAllowlisted:
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .fail,
+                code: "codex_runtime_version_not_allowlisted",
+                summary: "이 Codex runtime 버전은 지원 allowlist에 없습니다."
+            )
+        case .unavailable:
+            return DoctorCheck(
+                id: "codex_runtime_version", status: .fail,
+                code: "codex_runtime_version_unavailable",
+                summary: "Codex runtime 버전을 안전하게 확인하지 못했습니다."
+            )
+        }
+    }
+
+    func checkCodexCodeModeCompatibility(
+        _ inspection: DoctorCodexRuntimeBundleInspection,
+        runtimeVersionCheck: DoctorCheck
+    ) -> DoctorCheck {
+        guard case .validated = inspection else {
+            return DoctorCheck(
+                id: "codex_code_mode_compatibility", status: .fail,
+                code: "codex_code_mode_runtime_invalid",
+                summary: "불완전하거나 안전하지 않은 runtime이라 code-mode 자격을 확인할 수 없습니다."
+            )
+        }
+        guard runtimeVersionCheck.status != .fail else {
+            return DoctorCheck(
+                id: "codex_code_mode_compatibility", status: .fail,
+                code: "codex_code_mode_version_unqualified",
+                summary: "승인되지 않은 runtime 버전이라 code-mode 자격을 확인할 수 없습니다."
+            )
+        }
+        return DoctorCheck(
+            id: "codex_code_mode_compatibility", status: .actionRequired,
+            code: "codex_code_mode_live_qualification_required",
+            summary: "이 runtime은 실제 code-mode 명령과 파일 작업의 별도 live 자격 시험이 필요합니다."
+        )
+    }
+
+    func checkBlabeeBuildIdentity(
+        coordinatorRuntime: DoctorCheck,
+        mcpRuntime: DoctorCheck,
+        pluginLocatorVerified: Bool
+    ) -> DoctorCheck {
+        guard pluginLocatorVerified else {
+            return DoctorCheck(
+                id: "blabee_build_identity", status: .actionRequired,
+                code: "blabee_build_identity_plugin_locator_required",
+                summary: "앱과 Plugin runtime의 build identity를 확인하려면 --plugin 경로와 locator 검증이 필요합니다."
+            )
+        }
+        guard coordinatorRuntime.status == .pass,
+              mcpRuntime.status == .pass
+        else {
+            return DoctorCheck(
+                id: "blabee_build_identity", status: .fail,
+                code: "blabee_build_identity_unverified",
+                summary: "실행 중인 Blabee와 앱·Plugin runtime의 build identity를 일치시킬 수 없습니다."
+            )
+        }
+        return DoctorCheck(
+            id: "blabee_build_identity", status: .pass,
+            code: "blabee_build_identity_ok",
+            summary: "실행 중인 Blabee와 앱·Plugin runtime의 build identity가 일치합니다."
+        )
+    }
+
+    func inspectPluginStatically(
+        explicitPluginURL: URL?
+    ) -> PluginInspection {
+        guard let explicitPluginURL else {
+            return PluginInspection(check: DoctorCheck(
+                id: "plugin_installation", status: .actionRequired,
+                code: "plugin_source_discovery_required",
+                summary: "기본 Doctor는 Codex를 실행하지 않으므로 --plugin 절대 경로가 필요합니다."
+            ), sourceURL: nil)
+        }
+        return PluginInspection(check: DoctorCheck(
+            id: "plugin_installation", status: .actionRequired,
+            code: "plugin_installation_live_verification_required",
+            summary: "Plugin 경로는 확인했지만 실제 Codex 설치·활성 상태는 별도 live 자격 시험이 필요합니다."
+        ), sourceURL: explicitPluginURL.standardizedFileURL)
+    }
+
+    func checkHookTrustStatically(pluginLayout: DoctorCheck) -> DoctorCheck {
+        DoctorCheck(
+            id: "hook_trust", status: .actionRequired,
+            code: pluginLayout.status == .pass
+                ? "hook_trust_live_verification_required"
+                : "hook_trust_unavailable",
+            summary: pluginLayout.status == .pass
+                ? "Hook 파일 계약은 확인했지만 Codex의 실제 신뢰·활성 상태는 별도 live 자격 시험이 필요합니다."
+                : "Hook 파일 계약과 Codex 신뢰 상태를 안전하게 확인하지 못했습니다."
+        )
     }
 
     func inspectPluginInstallation(at codexURL: URL) -> PluginInspection {
@@ -620,8 +917,14 @@ private extension DoctorApplication {
         installedSourceURL: URL?,
         requireInstalledSourceMatch: Bool
     ) -> DoctorCheck {
-        guard let pluginURL,
-              !requireInstalledSourceMatch
+        guard let pluginURL else {
+            return DoctorCheck(
+                id: "plugin_layout", status: .actionRequired,
+                code: "plugin_layout_source_required",
+                summary: "Plugin 구조를 정적 검사하려면 --plugin 절대 경로가 필요합니다."
+            )
+        }
+        guard !requireInstalledSourceMatch
                 || installedSourceURL.map({ sameDirectory(pluginURL, $0) }) == true,
               isDirectoryWithoutSymlink(pluginURL),
               isDirectoryWithoutSymlink(pluginURL.appendingPathComponent(".codex-plugin")),
@@ -650,7 +953,10 @@ private extension DoctorApplication {
         )
     }
 
-    func checkMCPRuntime(appURL: URL, pluginURL: URL?) -> DoctorCheck {
+    func checkMCPRuntime(
+        appURL: URL,
+        pluginURL: URL?
+    ) -> (check: DoctorCheck, pluginLocatorVerified: Bool) {
         let embedded = appURL.appendingPathComponent("Contents/MacOS/blabee-coordinator")
         if let pluginURL {
             let locator = pluginURL.appendingPathComponent("runtime/coordinator-path")
@@ -661,41 +967,41 @@ private extension DoctorApplication {
                       let target = runtimeCoordinatorURL(data),
                       resolvedExecutable(target) != nil
                 else {
-                    return DoctorCheck(
+                    return (DoctorCheck(
                         id: "mcp_runtime", status: .fail,
                         code: "mcp_runtime_locator_invalid",
                         summary: "Plugin runtime coordinator 경로가 안전한 단일 절대 실행 파일이 아닙니다."
-                    )
+                    ), false)
                 }
                 guard sameFile(target, embedded) else {
-                    return DoctorCheck(
+                    return (DoctorCheck(
                         id: "mcp_runtime", status: .fail,
                         code: "mcp_runtime_identity_mismatch",
                         summary: "Plugin runtime coordinator가 앱 내장 실행 파일과 다릅니다."
-                    )
+                    ), false)
                 }
                 guard let targetIdentity = dependencies.installedRuntimeIdentity(target),
                 let embeddedIdentity = dependencies.installedRuntimeIdentity(embedded),
                 targetIdentity == embeddedIdentity
                 else {
-                    return DoctorCheck(
+                    return (DoctorCheck(
                         id: "mcp_runtime", status: .fail,
                         code: "mcp_runtime_identity_manifest_invalid",
                         summary: "Plugin과 앱의 runtime identity를 일치시킬 수 없습니다."
-                    )
+                    ), false)
                 }
-                return DoctorCheck(
+                return (DoctorCheck(
                     id: "mcp_runtime", status: .pass,
                     code: "mcp_runtime_ok",
                     summary: "Plugin runtime coordinator가 앱 내장 실행 파일과 동일합니다."
-                )
+                ), true)
             }
             if errno != ENOENT {
-                return DoctorCheck(
+                return (DoctorCheck(
                     id: "mcp_runtime", status: .fail,
                     code: "mcp_runtime_locator_invalid",
                     summary: "Plugin runtime coordinator 경로를 안전하게 확인하지 못했습니다."
-                )
+                ), false)
             }
         }
 
@@ -703,17 +1009,17 @@ private extension DoctorApplication {
               isExecutableRegularFile(embedded, allowingSymlink: false),
               dependencies.installedRuntimeIdentity(embedded) != nil
         else {
-            return DoctorCheck(
+            return (DoctorCheck(
                 id: "mcp_runtime", status: .fail,
                 code: "mcp_runtime_locator_missing",
                 summary: "Plugin runtime 경로가 없고 앱도 표준 /Applications 위치에 있지 않습니다."
-            )
+            ), false)
         }
-        return DoctorCheck(
+        return (DoctorCheck(
             id: "mcp_runtime", status: .pass,
             code: "mcp_runtime_ok",
             summary: "MCP launcher가 표준 /Applications 앱 coordinator를 사용합니다."
-        )
+        ), false)
     }
 
     func runtimeCoordinatorURL(_ data: Data) -> URL? {

@@ -25,6 +25,26 @@ struct CodexRuntimeTrustTests {
         #expect(first != fixture.target)
         #expect(first == second)
         #expect(try Data(contentsOf: first) == Data(contentsOf: fixture.target))
+        let privateRoot = first.deletingLastPathComponent()
+            .deletingLastPathComponent()
+        #expect(try runtimeMode(privateRoot) == 0o700)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent("bin"))
+            == 0o700)
+        #expect(try runtimeMode(first) == 0o500)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent(
+            "bin/codex-code-mode-host"
+        )) == 0o500)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent(
+            "codex-path/rg"
+        )) == 0o500)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent(
+            "codex-package.json"
+        )) == 0o400)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent(".lease"))
+            == 0o600)
+        #expect(try runtimeMode(privateRoot.appendingPathComponent(
+            ".blabee-runtime-manifest.json"
+        )) == 0o400)
         #expect(versions.callCount == 1)
         #expect(versions.requestedURLs == [first])
     }
@@ -41,6 +61,7 @@ struct CodexRuntimeTrustTests {
                 "PATH": fixture.source.deletingLastPathComponent().path,
             ],
             pinParentURL: fixture.root,
+            runtimeExecutableVerification: .trustedTestFixture,
             versionReader: { versions.read($0) }
         )
 
@@ -51,7 +72,7 @@ struct CodexRuntimeTrustTests {
         #expect(first != fixture.source)
         #expect(first != fixture.target)
         #expect(first.deletingLastPathComponent().deletingLastPathComponent()
-            == fixture.root)
+            .deletingLastPathComponent() == fixture.root)
         #expect(versions.callCount == 1)
         #expect(versions.requestedURLs == [first])
     }
@@ -85,6 +106,7 @@ struct CodexRuntimeTrustTests {
             [.posixPermissions: 0o755],
             ofItemAtPath: candidate.path
         )
+        try fixture.installRuntimeBundle(for: candidate)
         let versions = RuntimeTrustVersionProbe(["0.150.1"])
         let provider = try ManagedCodexApprovedExecutableProvider.live(
             environment: [
@@ -92,6 +114,7 @@ struct CodexRuntimeTrustTests {
                 "PATH": "/nonexistent-managed-codex-bin",
             ],
             pinParentURL: fixture.root,
+            runtimeExecutableVerification: .trustedTestFixture,
             versionReader: { versions.read($0) }
         )
 
@@ -101,7 +124,7 @@ struct CodexRuntimeTrustTests {
         #expect(first == second)
         #expect(first != candidate)
         #expect(first.deletingLastPathComponent().deletingLastPathComponent()
-            == fixture.root)
+            .deletingLastPathComponent() == fixture.root)
         #expect(versions.callCount == 1)
         #expect(versions.requestedURLs == [first])
     }
@@ -127,6 +150,7 @@ struct CodexRuntimeTrustTests {
                         name: "/tmp/untrusted.dylib",
                     ],
                     pinParentURL: fixture.root,
+                    runtimeExecutableVerification: .trustedTestFixture,
                     versionReader: { versions.read($0) }
                 )
                 Issue.record("loader override unexpectedly entered managed mode")
@@ -372,7 +396,7 @@ struct CodexRuntimeTrustTests {
             pinParentURL: writableParent.root,
             versionReader: { writableVersions.read($0) }
         )
-        #expect(throws: CodexRuntimeTrustError.self) {
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
             _ = try writableResolver.resolveApproved()
         }
         #expect(writableVersions.callCount == 0)
@@ -387,7 +411,7 @@ struct CodexRuntimeTrustTests {
             pinParentURL: aclParent.root,
             versionReader: { aclVersions.read($0) }
         )
-        #expect(throws: CodexRuntimeTrustError.self) {
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
             _ = try aclResolver.resolveApproved()
         }
         #expect(aclVersions.callCount == 0)
@@ -423,7 +447,7 @@ struct CodexRuntimeTrustTests {
         let pinned = try provider.next()
 
         #expect(pinned.deletingLastPathComponent().deletingLastPathComponent()
-            == parentFixture.prefix)
+            .deletingLastPathComponent() == parentFixture.prefix)
         #expect(versions.callCount == 1)
     }
 
@@ -443,6 +467,7 @@ struct CodexRuntimeTrustTests {
 
         let pinned = try provider!.next()
         let directory = pinned.deletingLastPathComponent()
+            .deletingLastPathComponent()
         #expect(FileManager.default.fileExists(atPath: pinned.path))
         provider = nil
 
@@ -465,6 +490,7 @@ struct CodexRuntimeTrustTests {
             ManagedCodexApprovedExecutableProvider(resolver: resolver)
         let pinned = try provider!.next()
         let directory = pinned.deletingLastPathComponent()
+            .deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: directory) }
         let unexpected = directory.appendingPathComponent(
             "user-owned-unexpected",
@@ -494,6 +520,7 @@ struct CodexRuntimeTrustTests {
             )
         let firstPin = try firstProvider!.next()
         let firstDirectory = firstPin.deletingLastPathComponent()
+            .deletingLastPathComponent()
         defer {
             firstProvider = nil
             try? FileManager.default.removeItem(at: firstDirectory)
@@ -712,6 +739,394 @@ struct CodexRuntimeTrustTests {
         #expect(versions.callCount == 0)
     }
 
+    @Test("create failure after a complete copy still removes exact staging")
+    func managedProviderCreateFailureAfterCompleteCopyCleansExactStaging()
+        throws
+    {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let resolver = ManagedCodexTrustResolver(
+            candidateURLs: [fixture.source],
+            monitoredEntries: [],
+            pinParentURL: fixture.root,
+            versionReader: { versions.read($0) }
+        )
+
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(
+            .afterDestinationCopy
+        )
+        defer { ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil) }
+
+        #expect(throws: ManagedCodexPinnedExecutableInjectedFailure.self) {
+            _ = try resolver.resolveApproved()
+        }
+        let remaining = try FileManager.default.contentsOfDirectory(
+            atPath: fixture.root.path
+        ).filter { $0.hasPrefix("blabee-managed-codex.") }
+        #expect(remaining.isEmpty)
+        #expect(versions.callCount == 0)
+    }
+
+    @Test("abandoned runtime staging is lease aware and preserves unknown data")
+    func abandonedRuntimeStagingRecoveryIsExactAndLeaseAware() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let resolver = ManagedCodexTrustResolver(
+            candidateURLs: [fixture.source],
+            monitoredEntries: [],
+            pinParentURL: fixture.root,
+            versionReader: { versions.read($0) }
+        )
+        ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(true)
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(
+            .afterDestinationCopy
+        )
+        defer {
+            ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil)
+            ManagedCodexPinnedExecutableTesting
+                .preserveFailedRuntimeStaging(false)
+        }
+        #expect(throws: ManagedCodexPinnedExecutableInjectedFailure.self) {
+            _ = try resolver.resolveApproved()
+        }
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil)
+        ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(false)
+
+        let stagingName = try #require(
+            FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+                .first(where: {
+                    $0.hasPrefix("blabee-managed-codex.staging.")
+                })
+        )
+        let staging = fixture.root.appendingPathComponent(
+            stagingName,
+            isDirectory: true
+        )
+        let lease = staging.appendingPathComponent(".lease", isDirectory: false)
+        let leaseDescriptor = Darwin.open(lease.path, O_RDWR | O_NOFOLLOW)
+        #expect(leaseDescriptor >= 0)
+        guard leaseDescriptor >= 0 else { return }
+        defer { Darwin.close(leaseDescriptor) }
+        #expect(flock(leaseDescriptor, LOCK_EX | LOCK_NB) == 0)
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+        _ = flock(leaseDescriptor, LOCK_UN)
+
+        let unknown = staging.appendingPathComponent(
+            "unexpected-user-data",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: unknown)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o400],
+            ofItemAtPath: unknown.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+
+        try FileManager.default.removeItem(at: unknown)
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(versions.callCount == 0)
+    }
+
+    @Test("published but unmarked runtime staging is recovered on next start")
+    func publishedRuntimeStagingRecoveryIsDurable() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let resolver = ManagedCodexTrustResolver(
+            candidateURLs: [fixture.source],
+            monitoredEntries: [],
+            pinParentURL: fixture.root,
+            versionReader: { versions.read($0) }
+        )
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(
+            .afterStagingPublish
+        )
+        defer { ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil) }
+        #expect(throws: ManagedCodexPinnedExecutableInjectedFailure.self) {
+            _ = try resolver.resolveApproved()
+        }
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil)
+
+        let candidateName = try #require(
+            FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+                .first(where: {
+                    $0.hasPrefix("blabee-managed-codex.")
+                        && !$0.hasPrefix("blabee-managed-codex.staging.")
+                })
+        )
+        let candidate = fixture.root.appendingPathComponent(
+            candidateName,
+            isDirectory: true
+        )
+        #expect(FileManager.default.fileExists(atPath: candidate
+            .appendingPathComponent(".blabee-runtime-staging.json").path))
+
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(!FileManager.default.fileExists(atPath: candidate.path))
+        #expect(versions.callCount == 0)
+    }
+
+    @Test("hostile staging timestamps preserve the candidate without trapping")
+    func abandonedRuntimeStagingRejectsOverflowingAndFutureAges() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let staging = try makePreservedRuntimeStaging(in: fixture)
+        let plan = staging.appendingPathComponent(
+            ".blabee-runtime-staging.json",
+            isDirectory: false
+        )
+
+        for hostileTimestamp in [Int64.min, Int64.max] {
+            try rewriteStagingPlanTimestamp(
+                at: plan,
+                createdAtSeconds: hostileTimestamp
+            )
+            try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+                in: fixture.root
+            )
+            #expect(FileManager.default.fileExists(atPath: staging.path))
+        }
+
+        try rewriteStagingPlanTimestamp(
+            at: plan,
+            createdAtSeconds: Int64(Date().timeIntervalSince1970)
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 3_600)],
+            ofItemAtPath: staging.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+    }
+
+    @Test("crowded shared parent does not hide an exact abandoned runtime")
+    func abandonedRuntimeStagingIgnoresUnrelatedParentEntries() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let staging = try makePreservedRuntimeStaging(in: fixture)
+        var unrelated: [URL] = []
+        for index in 0..<4_105 {
+            let entry = fixture.root.appendingPathComponent(
+                "unrelated-\(index)",
+                isDirectory: false
+            )
+            try Data().write(to: entry)
+            unrelated.append(entry)
+        }
+
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(unrelated.allSatisfy {
+            FileManager.default.fileExists(atPath: $0.path)
+        })
+    }
+
+    @Test("over-limit managed names are scavenged through bounded windows")
+    func abandonedRuntimeStagingMakesBoundedProgress() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        let prefix = "blabee-managed-codex.staging."
+        let batchSize = ManagedCodexRuntimeBundleInspector.maximumEntryCount + 3
+        let total = batchSize + 6
+        for index in 0..<total {
+            let identifier = String(
+                format: "00000000-0000-0000-0000-%012llx",
+                UInt64(index + 1)
+            )
+            let name = prefix + identifier
+            let candidate = fixture.root.appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: candidate,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: candidate.path
+            )
+        }
+        let unrelated = fixture.root.appendingPathComponent(
+            "unrelated-user-file",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: unrelated)
+
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+
+        let firstRemainder = try FileManager.default.contentsOfDirectory(
+            atPath: fixture.root.path
+        ).filter { $0.hasPrefix(prefix) }.sorted()
+        #expect(firstRemainder.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: unrelated.path))
+
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        let secondRemainder = try FileManager.default.contentsOfDirectory(
+            atPath: fixture.root.path
+        ).filter { $0.hasPrefix(prefix) }
+        #expect(secondRemainder.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: unrelated.path))
+    }
+
+    @Test("protected first window cannot starve later removable runtimes")
+    func abandonedRuntimeStagingAdvancesPastProtectedWindow() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        let prefix = "blabee-managed-codex.staging."
+        let protectedCount =
+            ManagedCodexRuntimeBundleInspector.maximumEntryCount + 3
+        var protectedNames: [String] = []
+        var removableNames: [String] = []
+        for index in 0..<(protectedCount + 6) {
+            let identifier = String(
+                format: "00000000-0000-0000-0000-%012llx",
+                UInt64(index + 1)
+            )
+            let name = prefix + identifier
+            let candidate = fixture.root.appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            let isProtected = index < protectedCount
+            try FileManager.default.createDirectory(
+                at: candidate,
+                withIntermediateDirectories: false,
+                attributes: [
+                    .posixPermissions: isProtected ? 0o755 : 0o700,
+                ]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: isProtected ? 0o755 : 0o700],
+                ofItemAtPath: candidate.path
+            )
+            if isProtected {
+                protectedNames.append(name)
+            } else {
+                removableNames.append(name)
+            }
+        }
+        let unrelated = fixture.root.appendingPathComponent(
+            "unrelated-user-file",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: unrelated)
+
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+
+        let remaining = Set(try FileManager.default.contentsOfDirectory(
+            atPath: fixture.root.path
+        ))
+        #expect(protectedNames.allSatisfy(remaining.contains))
+        #expect(removableNames.allSatisfy { !remaining.contains($0) })
+        #expect(FileManager.default.fileExists(atPath: unrelated.path))
+    }
+
+    @Test("partial staging plan recovery is exact and fail closed")
+    func abandonedRuntimeStagingRecoversOnlyReservedPartialPlan() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+
+        let removable = try makePreservedRuntimeStaging(in: fixture)
+        try replacePublishedPlanWithPartial(in: removable)
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(!FileManager.default.fileExists(atPath: removable.path))
+
+        let preserved = try makePreservedRuntimeStaging(in: fixture)
+        try replacePublishedPlanWithPartial(in: preserved)
+        let unknown = preserved.appendingPathComponent(
+            "unexpected-user-data",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: unknown)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o400],
+            ofItemAtPath: unknown.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(FileManager.default.fileExists(atPath: preserved.path))
+        #expect(FileManager.default.fileExists(atPath: unknown.path))
+
+        try FileManager.default.removeItem(at: unknown)
+        let partial = preserved.appendingPathComponent(
+            ".blabee-runtime-staging.json.partial",
+            isDirectory: false
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: partial.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: fixture.root
+        )
+        #expect(FileManager.default.fileExists(atPath: preserved.path))
+    }
+
+    @Test("unchanged private runtime revalidation performs no full signature walk")
+    func unchangedPrivateRuntimeRevalidationIsMetadataOnly() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let provider = ManagedCodexApprovedExecutableProvider(
+            resolver: ManagedCodexTrustResolver(
+                candidateURLs: [fixture.source],
+                monitoredEntries: [],
+                pinParentURL: fixture.root,
+                versionReader: { versions.read($0) }
+            )
+        )
+        let first = try provider.next()
+        let signatureProbe = RuntimeSignatureValidationProbe()
+        ManagedCodexPinnedExecutableTesting.signatureValidation { _, _ in
+            signatureProbe.record()
+        }
+        defer {
+            ManagedCodexPinnedExecutableTesting.signatureValidation(nil)
+        }
+
+        #expect(try provider.next() == first)
+        #expect(try provider.next() == first)
+        #expect(try provider.next() == first)
+        #expect(signatureProbe.callCount == 0)
+        #expect(versions.callCount == 1)
+    }
+
     @Test("source drift is isolated while private pin drift fails without requalification")
     func managedProviderRejectsPrivatePinDriftWithoutRequalification() throws {
         let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
@@ -727,6 +1142,7 @@ struct CodexRuntimeTrustTests {
 
         let pinned = try provider.next()
         let pinnedDirectory = pinned.deletingLastPathComponent()
+            .deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: pinnedDirectory) }
         try fixture.replaceTargetWithNativeExecutable(
             URL(fileURLWithPath: "/usr/bin/false")
@@ -904,7 +1320,7 @@ struct CodexRuntimeTrustTests {
             versionReader: { versions.read($0) }
         )
 
-        #expect(throws: CodexRuntimeTrustError.self) {
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
             _ = try resolver.resolveApproved()
         }
         #expect(versions.callCount == 0)
@@ -1118,6 +1534,771 @@ struct CodexRuntimeTrustTests {
         #expect(versions.callCount == 1)
     }
 
+    @Test("a complete closed runtime bundle is inspected as one trust subject")
+    func completeRuntimeBundleIsAccepted() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+
+        let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+            executableURL: fixture.target,
+            executableVerification: .trustedTestFixture
+        )
+
+        #expect(inspection.rootURL == fixture.runtimeRoot)
+        #expect(inspection.executableURL == fixture.target)
+        #expect(inspection.codeModeHostURL == fixture.host)
+        #expect(inspection.pathDirectoryURL == fixture.ripgrep
+            .deletingLastPathComponent())
+        #expect(inspection.manifestVersion == "0.150.1")
+        #expect(inspection.target
+            == ManagedCodexRuntimeBundleInspector.expectedTarget)
+    }
+
+    @Test("the host and ripgrep companions are mandatory")
+    func mandatoryCompanionsCannotBeMissing() throws {
+        let missingHost = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { missingHost.remove() }
+        try missingHost.replaceTargetWithNativeExecutable()
+        try FileManager.default.removeItem(at: missingHost.host)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: missingHost.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let missingRipgrep = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { missingRipgrep.remove() }
+        try missingRipgrep.replaceTargetWithNativeExecutable()
+        try FileManager.default.removeItem(at: missingRipgrep.ripgrep)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: missingRipgrep.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("host and ripgrep unsafe permissions or ACLs fail closed")
+    func companionMetadataFailsClosed() throws {
+        let writableHost = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { writableHost.remove() }
+        try writableHost.replaceTargetWithNativeExecutable()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o775],
+            ofItemAtPath: writableHost.host.path
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: writableHost.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let aclRipgrep = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { aclRipgrep.remove() }
+        try aclRipgrep.replaceTargetWithNativeExecutable()
+        try addRuntimeTrustACL(at: aclRipgrep.ripgrep)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: aclRipgrep.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("links and special files are rejected without blocking")
+    func unsafeCompanionFileTypesAreRejected() throws {
+        let symbolic = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { symbolic.remove() }
+        try symbolic.replaceTargetWithNativeExecutable()
+        try FileManager.default.removeItem(at: symbolic.host)
+        try FileManager.default.createSymbolicLink(
+            at: symbolic.host,
+            withDestinationURL: URL(fileURLWithPath: "/usr/bin/true")
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: symbolic.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let special = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { special.remove() }
+        try special.replaceTargetWithNativeExecutable()
+        try FileManager.default.removeItem(at: special.host)
+        try #require(mkfifo(special.host.path, mode_t(0o500)) == 0)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: special.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let hardlink = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { hardlink.remove() }
+        try hardlink.replaceTargetWithNativeExecutable()
+        try FileManager.default.removeItem(at: hardlink.host)
+        try FileManager.default.linkItem(at: hardlink.target, to: hardlink.host)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: hardlink.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("manifest paths, duplicate keys, nulls, and unknown root entries fail closed")
+    func closedManifestAndRootRejectAmbiguity() throws {
+        let traversal = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { traversal.remove() }
+        try traversal.replaceTargetWithNativeExecutable()
+        try traversal.writeManifest(entrypoint: "../bin/codex")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: traversal.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let absolutePathDir = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { absolutePathDir.remove() }
+        try absolutePathDir.replaceTargetWithNativeExecutable()
+        try absolutePathDir.writeManifest(pathDir: "/tmp/codex-path")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: absolutePathDir.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let traversalResources = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { traversalResources.remove() }
+        try traversalResources.replaceTargetWithNativeExecutable()
+        try traversalResources.writeManifest(resourcesDir: "../resources")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: traversalResources.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let duplicate = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { duplicate.remove() }
+        try duplicate.replaceTargetWithNativeExecutable()
+        try duplicate.writeRawManifest(
+            #"{"entrypoint":"bin/codex","layoutVersion":1,"layoutVersion":1,"pathDir":"codex-path","target":"\#(ManagedCodexRuntimeBundleInspector.expectedTarget)","variant":"codex","version":"0.150.1"}"#
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: duplicate.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let nullResources = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { nullResources.remove() }
+        try nullResources.replaceTargetWithNativeExecutable()
+        try nullResources.writeRawManifest(
+            #"{"entrypoint":"bin/codex","layoutVersion":1,"pathDir":"codex-path","resourcesDir":null,"target":"\#(ManagedCodexRuntimeBundleInspector.expectedTarget)","variant":"codex","version":"0.150.1"}"#
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: nullResources.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let unknownField = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { unknownField.remove() }
+        try unknownField.replaceTargetWithNativeExecutable()
+        try unknownField.writeRawManifest(
+            #"{"entrypoint":"bin/codex","layoutVersion":1,"pathDir":"codex-path","target":"\#(ManagedCodexRuntimeBundleInspector.expectedTarget)","unexpected":true,"variant":"codex","version":"0.150.1"}"#
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: unknownField.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let unknown = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { unknown.remove() }
+        try unknown.replaceTargetWithNativeExecutable()
+        try Data("unknown".utf8).write(to: unknown.runtimeRoot
+            .appendingPathComponent("unexpected", isDirectory: false))
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: unknown.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("layout, target, qualified version, and 0.152 mismatches fail closed")
+    func bundleMetadataMustMatchQualification() throws {
+        let layout = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { layout.remove() }
+        try layout.replaceTargetWithNativeExecutable()
+        try layout.writeManifest(layoutVersion: 2)
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: layout.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let target = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { target.remove() }
+        try target.replaceTargetWithNativeExecutable()
+        try target.writeManifest(target: "unsupported-apple-darwin")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: target.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let version = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { version.remove() }
+        try version.replaceTargetWithNativeExecutable()
+        try version.writeManifest(version: "0.150.0")
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let resolver = ManagedCodexTrustResolver(
+            candidateURLs: [version.source],
+            monitoredEntries: [],
+            versionReader: { versions.read($0) }
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try resolver.resolveApproved()
+        }
+        #expect(versions.callCount == 1)
+
+        let future = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { future.remove() }
+        try future.replaceTargetWithNativeExecutable()
+        try future.writeManifest(version: "0.152.0")
+        let futureVersions = RuntimeTrustVersionProbe(["0.152.0"])
+        let futureResolver = ManagedCodexTrustResolver(
+            candidateURLs: [future.source],
+            monitoredEntries: [],
+            versionReader: { futureVersions.read($0) }
+        )
+        #expect(throws: CodexRuntimeTrustError.self) {
+            _ = try futureResolver.resolveApproved()
+        }
+        #expect(futureVersions.callCount == 1)
+    }
+
+    @Test("managed runtime catalog rejects unregistered and mismatched builds before a child")
+    func runtimeBuildQualificationFailsClosed() throws {
+        let unregistered = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { unregistered.remove() }
+        try unregistered.replaceTargetWithNativeExecutable()
+        let unregisteredInspection = try ManagedCodexRuntimeBundleInspector
+            .inspect(
+                executableURL: unregistered.target,
+                executableVerification: .trustedTestFixture
+            )
+        #expect(throws: ManagedCodexRuntimeBundleQualificationError.self) {
+            try ManagedCodexRuntimeBundleQualificationCatalog
+                .requireProductionQualificationForTesting(
+                    unregisteredInspection
+                )
+        }
+
+        let mismatched = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { mismatched.remove() }
+        try mismatched.replaceTargetWithNativeExecutable()
+        try mismatched.writeManifest(version: "0.151.0")
+        let mismatchedInspection = try ManagedCodexRuntimeBundleInspector.inspect(
+            executableURL: mismatched.target,
+            executableVerification: .trustedTestFixture
+        )
+        #expect(throws: ManagedCodexRuntimeBundleQualificationError.self) {
+            try ManagedCodexRuntimeBundleQualificationCatalog
+                .requireProductionQualificationForTesting(mismatchedInspection)
+        }
+    }
+
+    @Test("the audited Homebrew 0.151 arm64 bundle matches its catalog fingerprint")
+    func auditedProductionBundleMatchesCatalogWhenInstalled() throws {
+        let environment = ProcessInfo.processInfo.environment
+        let executable = URL(
+            fileURLWithPath: environment["BLABEE_CODEX_RUNTIME_ARTIFACT"]
+                ?? "/opt/homebrew/Caskroom/codex/0.151.0/bin/codex",
+            isDirectory: false
+        )
+        guard FileManager.default.fileExists(atPath: executable.path) else {
+            if environment["BLABEE_REQUIRE_CODEX_RUNTIME_ARTIFACT"] == "1" {
+                Issue.record(
+                    "required production Codex runtime artifact is missing"
+                )
+            }
+            return
+        }
+        let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+            executableURL: executable,
+            executableVerification: .production
+        )
+
+        #expect(ManagedCodexRuntimeBundleQualificationCatalog
+            .fingerprintForTesting(inspection)
+            == "3519a4614dbea34f15941b0886e29aa4c9a961b5b40bab942a3f38f61cc8eef9")
+        try ManagedCodexRuntimeBundleQualificationCatalog.requireQualified(
+            inspection
+        )
+    }
+
+    @Test("optional resources are accepted but depth and entry count are bounded")
+    func resourceTreeIsClosedAndBounded() throws {
+        let valid = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { valid.remove() }
+        try valid.replaceTargetWithNativeExecutable()
+        let resources = valid.runtimeRoot.appendingPathComponent(
+            "codex-resources",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: resources,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data("resource".utf8).write(to: resources.appendingPathComponent(
+            "defaults.json",
+            isDirectory: false
+        ))
+        try valid.writeManifest(resourcesDir: "codex-resources")
+        let inspection = try ManagedCodexRuntimeBundleInspector.inspect(
+            executableURL: valid.target,
+            executableVerification: .trustedTestFixture
+        )
+        #expect(inspection.resourcesDirectoryURL == resources)
+
+        let deep = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { deep.remove() }
+        try deep.replaceTargetWithNativeExecutable()
+        var current = deep.runtimeRoot.appendingPathComponent(
+            "codex-resources",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: current,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        for index in 0...ManagedCodexRuntimeBundleInspector.maximumDirectoryDepth {
+            current.appendPathComponent("d\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: current,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        try deep.writeManifest(resourcesDir: "codex-resources")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: deep.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let crowded = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { crowded.remove() }
+        try crowded.replaceTargetWithNativeExecutable()
+        let crowdedResources = crowded.runtimeRoot.appendingPathComponent(
+            "codex-resources",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: crowdedResources,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let crowdedDescriptor = open(
+            crowdedResources.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        try #require(crowdedDescriptor >= 0)
+        defer { close(crowdedDescriptor) }
+        for index in 0...ManagedCodexRuntimeBundleInspector.maximumEntryCount {
+            let descriptor = openat(
+                crowdedDescriptor,
+                "f\(index)",
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(0o600)
+            )
+            try #require(descriptor >= 0)
+            close(descriptor)
+        }
+        try crowded.writeManifest(resourcesDir: "codex-resources")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: crowded.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let noncanonical = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { noncanonical.remove() }
+        try noncanonical.replaceTargetWithNativeExecutable()
+        let noncanonicalResources = noncanonical.runtimeRoot
+            .appendingPathComponent("codex-resources", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: noncanonicalResources,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let decomposedName = "e\u{301}.txt"
+        let noncanonicalDescriptor = open(
+            noncanonicalResources.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        try #require(noncanonicalDescriptor >= 0)
+        let decomposedFile = openat(
+            noncanonicalDescriptor,
+            decomposedName,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o600)
+        )
+        close(noncanonicalDescriptor)
+        try #require(decomposedFile >= 0)
+        close(decomposedFile)
+        try noncanonical.writeManifest(resourcesDir: "codex-resources")
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: noncanonical.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("signer, architecture, and named-path ABA evidence fail closed")
+    func executableEvidenceIsBoundToTheOpenedFiles() throws {
+        let signer = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { signer.remove() }
+        try signer.replaceTargetWithNativeExecutable()
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: signer.target,
+                executableVerification: .mismatchedTeamTestFixture
+            )
+        }
+
+        let architecture = try RuntimeTrustFixture(
+            groupWritableAncestors: false
+        )
+        defer { architecture.remove() }
+        try architecture.replaceTargetWithNativeExecutable()
+        #if arch(arm64)
+            let otherCPU: UInt32 = 0x0100_0007
+        #else
+            let otherCPU: UInt32 = 0x0100_000C
+        #endif
+        let wrongArchitecture: [UInt8] = [
+            0xcf, 0xfa, 0xed, 0xfe,
+            UInt8(otherCPU & 0xff), UInt8((otherCPU >> 8) & 0xff),
+            UInt8((otherCPU >> 16) & 0xff), UInt8((otherCPU >> 24) & 0xff),
+        ]
+        try Data(wrongArchitecture).write(to: architecture.host)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: architecture.host.path
+        )
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: architecture.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+
+        let aba = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { aba.remove() }
+        try aba.replaceTargetWithNativeExecutable()
+        let backup = aba.host.appendingPathExtension("original")
+        ManagedCodexPinnedExecutableTesting.signatureValidation { label, _ in
+            guard label == "bin/codex-code-mode-host" else { return }
+            try FileManager.default.moveItem(at: aba.host, to: backup)
+            do {
+                try Data(contentsOf: URL(fileURLWithPath: "/usr/bin/false"))
+                    .write(to: aba.host)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: aba.host.path
+                )
+                try FileManager.default.removeItem(at: aba.host)
+                try FileManager.default.moveItem(at: backup, to: aba.host)
+            } catch {
+                try? FileManager.default.removeItem(at: aba.host)
+                try? FileManager.default.moveItem(at: backup, to: aba.host)
+                throw error
+            }
+        }
+        defer {
+            ManagedCodexPinnedExecutableTesting.signatureValidation(nil)
+        }
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: aba.target,
+                executableVerification: .trustedTestFixture
+            )
+        }
+    }
+
+    @Test("source mutation during copy and private host drift never execute")
+    func bundleMutationFailsBeforeReuse() throws {
+        let source = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { source.remove() }
+        try source.replaceTargetWithNativeExecutable()
+        let before = try managedPinDirectories()
+        let sourceVersions = RuntimeTrustVersionProbe(["0.150.1"])
+        let sourceResolver = ManagedCodexTrustResolver(
+            candidateURLs: [source.source],
+            monitoredEntries: [],
+            versionReader: { sourceVersions.read($0) }
+        )
+        ManagedCodexPinnedExecutableTesting.beforeRuntimeSourceRevalidation {
+            try Data(contentsOf: URL(fileURLWithPath: "/usr/bin/false"))
+                .write(to: source.host)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: source.host.path
+            )
+        }
+        defer {
+            ManagedCodexPinnedExecutableTesting
+                .beforeRuntimeSourceRevalidation(nil)
+        }
+        #expect(throws: ManagedCodexRuntimeBundleError.self) {
+            _ = try sourceResolver.resolveApproved()
+        }
+        #expect(sourceVersions.callCount == 0)
+        #expect(try managedPinDirectories() == before)
+
+        let pinned = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { pinned.remove() }
+        try pinned.replaceTargetWithNativeExecutable()
+        let pinnedVersions = RuntimeTrustVersionProbe(["0.150.1"])
+        let provider = ManagedCodexApprovedExecutableProvider(
+            resolver: ManagedCodexTrustResolver(
+                candidateURLs: [pinned.source],
+                monitoredEntries: [],
+                versionReader: { pinnedVersions.read($0) }
+            )
+        )
+        let executable = try provider.next()
+        let host = executable.deletingLastPathComponent()
+            .appendingPathComponent("codex-code-mode-host", isDirectory: false)
+        try replaceNativeExecutable(
+            at: host,
+            from: URL(fileURLWithPath: "/usr/bin/false")
+        )
+        do {
+            _ = try provider.next()
+            Issue.record("drifted private host unexpectedly revalidated")
+        } catch let error as CodexRuntimeTrustError {
+            #expect(error == .approvalDrift)
+        }
+        #expect(pinnedVersions.callCount == 1)
+    }
+
+    @Test("private runtime permission drift is never absorbed into its baseline")
+    func privateRuntimePermissionDriftFailsClosed() throws {
+        let fixture = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { fixture.remove() }
+        try fixture.replaceTargetWithNativeExecutable()
+        let versions = RuntimeTrustVersionProbe(["0.150.1"])
+        let provider = ManagedCodexApprovedExecutableProvider(
+            resolver: ManagedCodexTrustResolver(
+                candidateURLs: [fixture.source],
+                monitoredEntries: [],
+                versionReader: { versions.read($0) }
+            )
+        )
+        let executable = try provider.next()
+        let host = executable.deletingLastPathComponent()
+            .appendingPathComponent("codex-code-mode-host", isDirectory: false)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: host.path
+        )
+
+        do {
+            _ = try provider.next()
+            Issue.record("private permission drift unexpectedly revalidated")
+        } catch let error as CodexRuntimeTrustError {
+            #expect(error == .approvalDrift)
+        }
+        #expect(versions.callCount == 1)
+    }
+
+    @Test("sealed runtime cleanup honors leases and exact unknown-entry checks")
+    func sealedRuntimeScavengingIsExactAndLeaseAware() throws {
+        let active = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { active.remove() }
+        try active.replaceTargetWithNativeExecutable()
+        let activeVersions = RuntimeTrustVersionProbe(["0.150.1"])
+        var activeProvider: ManagedCodexApprovedExecutableProvider? =
+            ManagedCodexApprovedExecutableProvider(
+                resolver: ManagedCodexTrustResolver(
+                    candidateURLs: [active.source],
+                    monitoredEntries: [],
+                    pinParentURL: active.root,
+                    versionReader: { activeVersions.read($0) }
+                )
+            )
+        let activeExecutable = try activeProvider!.next()
+        let activeRoot = activeExecutable.deletingLastPathComponent()
+            .deletingLastPathComponent()
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -120)],
+            ofItemAtPath: activeRoot.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: active.root
+        )
+        #expect(FileManager.default.fileExists(atPath: activeRoot.path))
+        activeProvider = nil
+        #expect(!FileManager.default.fileExists(atPath: activeRoot.path))
+
+        let abandoned = try RuntimeTrustFixture(groupWritableAncestors: false)
+        defer { abandoned.remove() }
+        try abandoned.replaceTargetWithNativeExecutable()
+        let abandonedVersions = RuntimeTrustVersionProbe(["0.150.1"])
+        var abandonedProvider: ManagedCodexApprovedExecutableProvider? =
+            ManagedCodexApprovedExecutableProvider(
+                resolver: ManagedCodexTrustResolver(
+                    candidateURLs: [abandoned.source],
+                    monitoredEntries: [],
+                    pinParentURL: abandoned.root,
+                    versionReader: { abandonedVersions.read($0) }
+                )
+            )
+        let abandonedExecutable = try abandonedProvider!.next()
+        let abandonedRoot = abandonedExecutable.deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let marker = abandonedRoot.appendingPathComponent(
+            "unknown-entry",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: marker)
+        abandonedProvider = nil
+        #expect(FileManager.default.fileExists(atPath: abandonedRoot.path))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -120)],
+            ofItemAtPath: abandonedRoot.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: abandoned.root
+        )
+        #expect(FileManager.default.fileExists(atPath: abandonedRoot.path))
+        try FileManager.default.removeItem(at: marker)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -120)],
+            ofItemAtPath: abandonedRoot.path
+        )
+        try ManagedCodexPinnedExecutableTesting.scavengeRuntimeBundles(
+            in: abandoned.root
+        )
+        #expect(!FileManager.default.fileExists(atPath: abandonedRoot.path))
+    }
+
+}
+
+private func makePreservedRuntimeStaging(
+    in fixture: RuntimeTrustFixture
+) throws -> URL {
+    let versions = RuntimeTrustVersionProbe(["0.150.1"])
+    let resolver = ManagedCodexTrustResolver(
+        candidateURLs: [fixture.source],
+        monitoredEntries: [],
+        pinParentURL: fixture.root,
+        versionReader: { versions.read($0) }
+    )
+    ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(true)
+    ManagedCodexPinnedExecutableTesting.injectCreateFailure(.afterLease)
+    defer {
+        ManagedCodexPinnedExecutableTesting.injectCreateFailure(nil)
+        ManagedCodexPinnedExecutableTesting.preserveFailedRuntimeStaging(false)
+    }
+    do {
+        _ = try resolver.resolveApproved()
+        Issue.record("managed runtime staging failure was not injected")
+    } catch is ManagedCodexPinnedExecutableInjectedFailure {
+        // The preserved directory models a process that died after plan publish.
+    }
+    let name = try #require(
+        FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+            .first(where: {
+                $0.hasPrefix("blabee-managed-codex.staging.")
+            })
+    )
+    return fixture.root.appendingPathComponent(name, isDirectory: true)
+}
+
+private func rewriteStagingPlanTimestamp(
+    at planURL: URL,
+    createdAtSeconds: Int64
+) throws {
+    let data = try Data(contentsOf: planURL)
+    var object = try #require(
+        try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    object["createdAtSeconds"] = NSNumber(value: createdAtSeconds)
+    let updated = try JSONSerialization.data(
+        withJSONObject: object,
+        options: [.sortedKeys]
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: planURL.path
+    )
+    try updated.write(to: planURL)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o400],
+        ofItemAtPath: planURL.path
+    )
+}
+
+private func replacePublishedPlanWithPartial(in stagingURL: URL) throws {
+    let published = stagingURL.appendingPathComponent(
+        ".blabee-runtime-staging.json",
+        isDirectory: false
+    )
+    let partial = stagingURL.appendingPathComponent(
+        ".blabee-runtime-staging.json.partial",
+        isDirectory: false
+    )
+    try FileManager.default.moveItem(at: published, to: partial)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: partial.path
+    )
+    try Data("{".utf8).write(to: partial)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: partial.path
+    )
 }
 
 private final class RuntimeTrustFixture: @unchecked Sendable {
@@ -1126,6 +2307,28 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
     let source: URL
     let canonicalRoot: URL
     let target: URL
+
+    var runtimeRoot: URL {
+        target.deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    var host: URL {
+        runtimeRoot.appendingPathComponent(
+            "bin/codex-code-mode-host",
+            isDirectory: false
+        )
+    }
+
+    var ripgrep: URL {
+        runtimeRoot.appendingPathComponent("codex-path/rg", isDirectory: false)
+    }
+
+    var manifestURL: URL {
+        runtimeRoot.appendingPathComponent(
+            "codex-package.json",
+            isDirectory: false
+        )
+    }
 
     init(groupWritableAncestors: Bool) throws {
         // Resolve `/var` before constructing the fixture so every lexical
@@ -1164,6 +2367,7 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
             )
         }
         try replaceTargetBody("printf 'runtime-trust-fixture\\n'")
+        try installRuntimeBundle(for: target)
         try FileManager.default.createSymbolicLink(
             at: source,
             withDestinationURL: target
@@ -1196,6 +2400,77 @@ private final class RuntimeTrustFixture: @unchecked Sendable {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: target.path
+        )
+    }
+
+    func installRuntimeBundle(for executable: URL) throws {
+        let runtimeRoot = executable.deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bin = runtimeRoot.appendingPathComponent("bin", isDirectory: true)
+        let path = runtimeRoot.appendingPathComponent(
+            "codex-path",
+            isDirectory: true
+        )
+        for directory in [runtimeRoot, bin, path] {
+            try Self.makeDirectory(directory, mode: 0o700)
+        }
+        let native = URL(fileURLWithPath: "/usr/bin/true")
+        for companion in [
+            bin.appendingPathComponent(
+                "codex-code-mode-host",
+                isDirectory: false
+            ),
+            path.appendingPathComponent("rg", isDirectory: false),
+        ] {
+            try Data(contentsOf: native).write(to: companion)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: companion.path
+            )
+        }
+        let manifest = runtimeRoot.appendingPathComponent(
+            "codex-package.json",
+            isDirectory: false
+        )
+        try writeManifest(to: manifest)
+    }
+
+    func writeManifest(
+        layoutVersion: Int = 1,
+        version: String = "0.150.1",
+        target: String = ManagedCodexRuntimeBundleInspector.expectedTarget,
+        variant: String = "codex",
+        entrypoint: String = "bin/codex",
+        pathDir: String = "codex-path",
+        resourcesDir: String? = nil,
+        to destination: URL? = nil
+    ) throws {
+        var fields: [String: Any] = [
+            "entrypoint": entrypoint,
+            "layoutVersion": layoutVersion,
+            "pathDir": pathDir,
+            "target": target,
+            "variant": variant,
+            "version": version,
+        ]
+        if let resourcesDir { fields["resourcesDir"] = resourcesDir }
+        let body = try JSONSerialization.data(
+            withJSONObject: fields,
+            options: [.sortedKeys]
+        )
+        let manifest = destination ?? manifestURL
+        try body.write(to: manifest)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: manifest.path
+        )
+    }
+
+    func writeRawManifest(_ body: String) throws {
+        try Data(body.utf8).write(to: manifestURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: manifestURL.path
         )
     }
 
@@ -1244,12 +2519,30 @@ private final class RuntimeTrustVersionProbe: @unchecked Sendable {
     }
 }
 
+private final class RuntimeSignatureValidationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+
+    var callCount: Int { lock.withLock { calls } }
+
+    func record() {
+        lock.withLock { calls += 1 }
+    }
+}
+
 private func replaceNativeExecutable(at target: URL, from source: URL) throws {
     try FileManager.default.removeItem(at: target)
     try Data(contentsOf: source).write(to: target)
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o500],
         ofItemAtPath: target.path
+    )
+}
+
+private func runtimeMode(_ url: URL) throws -> Int {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    return try #require(
+        (attributes[.posixPermissions] as? NSNumber)?.intValue
     )
 }
 

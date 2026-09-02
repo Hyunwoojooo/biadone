@@ -5,7 +5,7 @@ import Foundation
 /// A process-local managed Codex selection. Only the private pinned copy is
 /// exposed to App Server, TUI, and fallback child spawns.
 struct ManagedCodexApprovedSelection: Sendable {
-    fileprivate let pin: ManagedCodexPinnedExecutable
+    fileprivate let pin: ManagedCodexPinnedRuntimeBundle
     let executable: CodexRuntimeApprovedExecutable
 }
 
@@ -62,6 +62,8 @@ struct ManagedCodexTrustResolver: Sendable {
     private let excludedCanonicalPaths: Set<String>
     private let excludedFileObjects: Set<ManagedCodexFileObjectIdentity>
     private let trustGate: CodexRuntimeTrustGate
+    private let runtimeExecutableVerification:
+        ManagedCodexRuntimeExecutableVerification
     private let pinParentURL: URL
     private let versionReader: @Sendable (URL) throws -> String?
 
@@ -71,6 +73,8 @@ struct ManagedCodexTrustResolver: Sendable {
         dynamicShimRootURLs: [URL] = [],
         monitoredEntries: [CodexRuntimeMonitoredEntry] =
             CodexRuntimeTrustGate.standardHomebrewEntries,
+        runtimeExecutableVerification:
+            ManagedCodexRuntimeExecutableVerification? = nil,
         pinParentURL: URL = FileManager.default.temporaryDirectory,
         versionReader: @escaping @Sendable (URL) throws -> String?
     ) {
@@ -91,6 +95,13 @@ struct ManagedCodexTrustResolver: Sendable {
             monitoredEntries: monitoredEntries,
             dynamicShimRootURLs: dynamicShimRootURLs
         )
+        #if DEBUG
+            self.runtimeExecutableVerification = runtimeExecutableVerification
+                ?? (monitoredEntries.isEmpty ? .trustedTestFixture : .production)
+        #else
+            self.runtimeExecutableVerification = runtimeExecutableVerification
+                ?? .production
+        #endif
         self.pinParentURL = pinParentURL
         self.versionReader = versionReader
     }
@@ -99,6 +110,8 @@ struct ManagedCodexTrustResolver: Sendable {
         bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         pinParentURL: URL = FileManager.default.temporaryDirectory,
+        runtimeExecutableVerification:
+            ManagedCodexRuntimeExecutableVerification = .production,
         versionReader: (@Sendable (URL) throws -> String?)? = nil
     ) throws -> ManagedCodexTrustResolver {
         let launchEnvironment = try ManagedCodexLaunchEnvironment.validated(
@@ -125,9 +138,16 @@ struct ManagedCodexTrustResolver: Sendable {
             excluded.append(URL(fileURLWithPath: rawCoordinator, isDirectory: false))
         }
         let effectiveVersionReader = versionReader ?? { executable in
-            try readCodexVersion(
+            var probeEnvironment = launchEnvironment
+            probeEnvironment["CODEX_CODE_MODE_HOST_PATH"] = executable
+                .deletingLastPathComponent()
+                .appendingPathComponent(
+                    "codex-code-mode-host",
+                    isDirectory: false
+                ).path
+            return try readCodexVersion(
                 executable,
-                environment: launchEnvironment
+                environment: probeEnvironment
             )
         }
         return ManagedCodexTrustResolver(
@@ -140,6 +160,7 @@ struct ManagedCodexTrustResolver: Sendable {
                 environment: launchEnvironment,
                 homeURL: homeURL
             ),
+            runtimeExecutableVerification: runtimeExecutableVerification,
             pinParentURL: pinParentURL,
             versionReader: effectiveVersionReader
         )
@@ -165,8 +186,16 @@ struct ManagedCodexTrustResolver: Sendable {
                 )
             }
 
-            let pin = try ManagedCodexPinnedExecutable.create(
-                from: inspected,
+            let runtime = try ManagedCodexRuntimeBundleInspector.inspect(
+                executableURL: URL(fileURLWithPath: inspected.canonicalPath),
+                expectedExecutableIdentity: inspected.targetIdentity,
+                executableVerification: runtimeExecutableVerification
+            )
+            try ManagedCodexRuntimeBundleQualificationCatalog.requireQualified(
+                runtime
+            )
+            let pin = try ManagedCodexPinnedRuntimeBundle.create(
+                from: runtime,
                 parentURL: pinParentURL
             )
             let approval = try trustGate.qualify(sourceURL: sourceURL) { _ in
@@ -176,6 +205,12 @@ struct ManagedCodexTrustResolver: Sendable {
             }
             guard approval.snapshot == inspected else {
                 throw CodexRuntimeTrustError.changedDuringQualification
+            }
+            guard runtime.manifest.version == approval.qualifiedVersion else {
+                throw ManagedCodexRuntimeBundleError.versionMismatch(
+                    manifest: runtime.manifest.version,
+                    qualified: approval.qualifiedVersion
+                )
             }
             let executable = try pin.revalidate(
                 qualifiedVersion: approval.qualifiedVersion
@@ -714,7 +749,7 @@ enum ManagedCodexVersionProbeRunner {
 /// An owner-only copy of one inspected native executable. The source is
 /// O_NOFOLLOW-opened and its descriptor identity must exactly match the trust
 /// snapshot before and after the copy. All later spawns use this private path.
-private final class ManagedCodexPinnedExecutable: @unchecked Sendable {
+final class ManagedCodexPinnedExecutable: @unchecked Sendable {
     private static let directoryPrefix = "blabee-managed-codex."
     private static let leaseName = ".lease"
     private static let maximumExecutableSize: Int64 = 512 * 1_024 * 1_024
@@ -1319,6 +1354,10 @@ private final class ManagedCodexPinnedExecutable: @unchecked Sendable {
         }
     }
 
+    static func scavengeLegacyPinsForRuntimeBundle(in parent: String) {
+        scavengeAbandonedPins(in: parent)
+    }
+
     /// Removes only the two captured regular files from the captured private
     /// directory. Unknown entries, symlinks, special files, or any identity
     /// drift make cleanup a no-op rather than risking unrelated user data.
@@ -1814,6 +1853,8 @@ private final class ManagedCodexPinnedExecutable: @unchecked Sendable {
 enum ManagedCodexPinnedExecutableCreateFailurePoint: Sendable {
     case afterLease
     case afterDestinationCreate
+    case afterDestinationCopy
+    case afterStagingPublish
     case afterPartialCopy
 }
 
@@ -1822,6 +1863,33 @@ struct ManagedCodexPinnedExecutableTesting {
         _ point: ManagedCodexPinnedExecutableCreateFailurePoint?
     ) {
         ManagedCodexPinnedExecutable.setInjectedCreateFailurePoint(point)
+        ManagedCodexPinnedRuntimeBundle.setInjectedFailurePoint(point)
+    }
+
+    static func beforeRuntimeSourceRevalidation(
+        _ hook: (@Sendable () throws -> Void)?
+    ) {
+        ManagedCodexPinnedRuntimeBundle.setBeforeSourceRevalidationHook(hook)
+    }
+
+    static func preserveFailedRuntimeStaging(_ preserve: Bool) {
+        ManagedCodexPinnedRuntimeBundle
+            .setPreserveFailedStagingForTesting(preserve)
+    }
+
+    static func signatureValidation(
+        _ hook: (@Sendable (_ label: String, _ path: String) throws -> Void)?
+    ) {
+        #if DEBUG
+            ManagedCodexRuntimeBundleInspector.setSignatureValidationHook(hook)
+        #endif
+    }
+
+    static func scavengeRuntimeBundles(in parentURL: URL) throws {
+        #if DEBUG
+            try ManagedCodexPinnedRuntimeBundle
+                .scavengeSealedBundlesForTesting(in: parentURL)
+        #endif
     }
 }
 
@@ -1848,6 +1916,8 @@ final class ManagedCodexApprovedExecutableProvider: @unchecked Sendable {
         bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         pinParentURL: URL = FileManager.default.temporaryDirectory,
+        runtimeExecutableVerification:
+            ManagedCodexRuntimeExecutableVerification = .production,
         versionReader: (@Sendable (URL) throws -> String?)? = nil
     ) throws -> ManagedCodexApprovedExecutableProvider {
         ManagedCodexApprovedExecutableProvider(
@@ -1855,6 +1925,7 @@ final class ManagedCodexApprovedExecutableProvider: @unchecked Sendable {
                 bundle: bundle,
                 environment: environment,
                 pinParentURL: pinParentURL,
+                runtimeExecutableVerification: runtimeExecutableVerification,
                 versionReader: versionReader
             )
         )

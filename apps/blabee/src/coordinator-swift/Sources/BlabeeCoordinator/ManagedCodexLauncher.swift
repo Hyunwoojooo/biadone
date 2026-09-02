@@ -9,6 +9,27 @@ typealias ManagedCodexExecutableProvider = @Sendable () throws -> URL
 typealias ManagedCodexAppServerDiagnosticsFactory = @Sendable () ->
     ManagedCodexAppServerDiagnostics
 
+enum ManagedCodexRuntimeEnvironment {
+    private static let codeModeHostEnvironmentName =
+        "CODEX_CODE_MODE_HOST_PATH"
+
+    /// Prevents a managed launch or its native fallback from escaping the
+    /// pinned bundle through an inherited host override. PATH is deliberately
+    /// unchanged; the bundle manifest owns its separate codex-path directory.
+    static func bindPinnedBundle(
+        in environment: inout [String: String],
+        executable: URL
+    ) {
+        let executableDirectory = executable.deletingLastPathComponent()
+        environment[codeModeHostEnvironmentName] = executableDirectory
+            .appendingPathComponent(
+                "codex-code-mode-host",
+                isDirectory: false
+            )
+            .path
+    }
+}
+
 /// Drains App Server stderr away from the interactive terminal. The captured
 /// bytes remain available in macOS unified logging for local diagnostics, but
 /// are private and capped per child so a noisy App Server cannot corrupt the
@@ -1216,6 +1237,7 @@ final class ManagedCodexAuxiliaryConnectionBroker: @unchecked Sendable {
         process.standardError = appServerDiagnostics.childPipe
         process.environment = try ManagedCodexLauncher.childEnvironment(
             environment,
+            executable: executable,
             authenticationToken: nil,
             coordinatorSocketPath: coordinatorSocketPath
         )
@@ -1360,6 +1382,7 @@ struct ManagedCodexLauncher {
         appServer.standardError = appServerDiagnostics.childPipe
         appServer.environment = try Self.childEnvironment(
             environment,
+            executable: executable,
             authenticationToken: nil,
             coordinatorSocketPath: arguments.coordinatorSocketPath
         )
@@ -1375,6 +1398,7 @@ struct ManagedCodexLauncher {
         tui.standardError = FileHandle.standardError
         tui.environment = try Self.childEnvironment(
             environment,
+            executable: executable,
             authenticationToken: token,
             coordinatorSocketPath: arguments.coordinatorSocketPath
         )
@@ -1538,10 +1562,15 @@ struct ManagedCodexLauncher {
 
     static func childEnvironment(
         _ inherited: [String: String],
+        executable: URL,
         authenticationToken: String?,
         coordinatorSocketPath: String
     ) throws -> [String: String] {
         var child = try ManagedCodexLaunchEnvironment.validated(inherited)
+        ManagedCodexRuntimeEnvironment.bindPinnedBundle(
+            in: &child,
+            executable: executable
+        )
         child["BLABEE_MANAGED_APPROVALS"] = "1"
         child["BLABEE_SOCKET"] = coordinatorSocketPath
         if let authenticationToken {

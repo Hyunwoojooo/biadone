@@ -44,6 +44,7 @@
 |---|---|---:|---|---|
 | `BLB-RUNTIME-001` | 2026-09-01 | 높음 | 검증 중 | 관리형 Codex가 본체 한 파일만 고정해 `codex-code-mode-host`가 누락됨 |
 | `BLB-RUNTIME-002` | 2026-09-01 | 높음 | 검증 중 | 다른 버전 또는 빌드의 host 혼입으로 IPC 스키마 불일치 발생 |
+| `BLB-RUNTIME-003` | 2026-09-02 | 중간 | 검증 중 | 비정상 종료 staging 회수의 원자성·경계·starvation 위험 |
 | `BLB-DEPLOY-001` | 2026-09-01 | 높음 | 조사 중 | pull한 소스와 실제 설치·실행 중인 Blabee 빌드가 다른 정황 |
 | `BLB-DIAG-001` | 2026-09-01 | 높음 | 검증 중 | Doctor가 본체 버전만 확인하고 host 및 실제 code-mode 동작을 확인하지 않음 |
 | `BLB-DIST-001` | 2026-09-02 | 높음 | 수정 예정 | 새 사용자 PC의 원클릭 설치와 지원 환경 자격 시험이 아직 완료되지 않음 |
@@ -201,7 +202,7 @@ fallback이 모두 같은 private runtime을 사용하도록 한다.
 - App Server, TUI, 보조 세션과 pre-child fallback은 같은 private bundle의 본체와 host를
   사용한다.
 - native `codex`, 공식 설치 파일, PATH와 셸 설정은 변경하지 않는다.
-- runtime trust 집중 테스트 50/50이 통과했다.
+- runtime trust 집중 테스트 60/60이 통과했다.
 
 소스와 자동 검증이 완료돼도 실제 0.152.0 package의 code-mode smoke와 다른 Mac
 설치 검증 전에는 이 이슈를 `해결됨`으로 바꾸지 않는다.
@@ -261,7 +262,49 @@ manifest/CLI 버전 불일치와 package identity drift도 관리형 자식 시�
 실패한다. 현재 production catalog는 official `0.151.0` Apple Silicon 하나만 등록하며,
 0.152.0이나 미등록 target은 자격을 상속하지 않는다.
 다만 보고된 다른 PC의 실제 host build identity는 보존된 증거가 없어 확정하지 못했으며,
-0.152.0 live qualification도 아직 수행하지 않았다.
+0.152.0·0.152.1 live qualification도 아직 수행하지 않았다.
+
+---
+
+## BLB-RUNTIME-003 — 비정상 종료 staging 회수 안정성
+
+- 최초 확인: 2026-09-02
+- 기록일: 2026-09-02
+- 심각도: 중간
+- 상태: 검증 중
+- 근거 수준: 소스·전용 자동 테스트·독립 보안 검토로 확인됨
+
+### 문제
+
+private runtime을 복사하거나 게시하던 프로세스가 비정상 종료되면 staging 잔여물이
+공유 임시 디렉터리에 남을 수 있다. 이 잔여물을 잘못 판정하면 다음 문제가 생긴다.
+
+- recovery plan을 쓰다 중단되어 partial 파일만 남는다.
+- 미래 timestamp, 음수 또는 정수 overflow를 오래된 잔여물로 오판한다.
+- 관련 없는 대량 파일 때문에 실제 Blabee 잔여물을 찾지 못한다.
+- 앞쪽의 보호된 managed 항목 4,099개가 뒤쪽의 회수 가능한 항목을 계속 굶긴다.
+
+### 2026-09-02 수정 현황
+
+- recovery plan은 owner-only partial 파일에 쓰고 `fsync`한 뒤 exclusive rename으로
+  원자 게시하며, 게시된 identity를 다시 확인한다.
+- exact managed UUID 이름, owner·mode·ACL·link·type, unlocked lease, plan과 partial
+  tree가 모두 일치하고 최소 age가 안전하게 계산되는 항목만 회수한다.
+- 미래·음수·overflow timestamp와 unknown entry는 삭제하지 않는다.
+- 관련 없는 이름은 managed 후보 상한에 포함하지 않고, 4,099개씩 bounded-memory로
+  검사하되 삭제 성공 여부와 무관하게 마지막 검사 이름 뒤로 cursor를 전진시킨다.
+- runtime trust 집중 테스트 60/60과 독립 filesystem 보안 검토를 통과했으며 새
+  P0~P2 finding은 없다.
+
+### 남은 위험과 완료 기준
+
+같은 UID가 exact managed 형식의 항목을 극단적으로 많이 계속 만들면 batch마다 부모
+디렉터리를 다시 훑는 비용이 커질 수 있다. 이는 잘못된 삭제나 메모리 폭증으로 이어지는
+문제는 아니지만 실행 지연 가능성이 있어 P3 성능 hardening으로 남긴다.
+
+- 설치본에서 비정상 종료 뒤 다음 실행의 회수를 실제 검증한다.
+- 극단적 same-UID managed-name 부하에서 허용 가능한 시간 상한을 정한다.
+- 필요하면 전용 private parent 또는 시간 제한·영속 cursor를 별도 설계한다.
 
 ---
 
@@ -369,7 +412,9 @@ artifact를 만들지 않고 `codex --version`, `codex plugin list`, App Server
 fingerprint와 다르면 실패한다. catalog가 일치해도 실제 binary 버전, Plugin 설치·활성, Hook 신뢰와
 `codex_code_mode_compatibility`는 별도 live qualification 전까지
 `action_required`다. daemon의 읽기 전용 `doctor_status` UDS는 계속 허용한다.
-Doctor 집중 테스트 31/31이 통과했다.
+또한 실제 Plugin locator가 확인되지 않은 표준 `/Applications` fallback만으로는
+`blabee_build_identity`를 통과시키지 않고 별도 `action_required`로 보고한다.
+Doctor 집중 테스트 30/30이 통과했다.
 
 ---
 
@@ -455,7 +500,7 @@ Blabee가 해당 트리 전체를 정확히 소유한다는 증거 없이 재귀
    - manifest, host, rg, 아키텍처와 기본 identity 검사
    - full-bundle canonical fingerprint를 닫힌 production catalog와 비교
    - 불완전한 managed runtime을 자식 시작 전에 차단
-   - 0.152.0은 계속 allowlist 밖으로 유지
+   - 0.152.0·0.152.1은 계속 allowlist 밖으로 유지
 2. **P1 — 전체 runtime bundle 원자 pin**
    - descriptor 기반 staging copy, source/destination 재검증, 원자 게시
    - 전체 bundle manifest 기반 cleanup과 lease 보존
@@ -464,7 +509,7 @@ Blabee가 해당 트리 전체를 정확히 소유한다는 증거 없이 재귀
    - 첫 자식 시작 후 자동 fallback과 중복 실행 금지
 4. **P3 — Doctor와 build identity 보강**
    - runtime layout·identity·version과 앱·service·Plugin build 일치 분리 보고
-5. **P4 — 실제 0.152.0 qualification**
+5. **P4 — 실제 0.152.0·0.152.1 qualification**
    - 격리된 명령·파일·App Server·`/resume`·cleanup 검증
    - 모든 검증 뒤 별도 작은 변경으로 allowlist 추가
 6. **P5 — 깨끗한 Mac 설치 자격**

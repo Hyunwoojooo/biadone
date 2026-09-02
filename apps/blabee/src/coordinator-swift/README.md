@@ -221,15 +221,26 @@ codex [Codex arguments]
 `codex`를 그대로 실행하며, Blabee는 그 argv나 환경을 정리하거나 바꾸지 않는다.
 `blabee-codex`는 호환 별칭이 아니라 사용자가 직접 선택한 관리형 실험 진입점이다.
 관리형 실행은 먼저 인자 문법을 검증하고, 첫 번째로 발견된 native Codex source의
-trust를 확인한 뒤 사용자 전용 고정 복사본으로 지원 버전을 검사한다. 이 단계가
+trust와 official package manifest를 확인한 뒤 본체, `codex-code-mode-host`, `rg`와
+resources를 하나의 사용자 전용 private runtime bundle로 고정하고 지원 버전을 검사한다. 이 단계가
 실패하면 안전한 실행 대상을 확정하지 못한 것이므로 fail-closed하며 네이티브
-fallback하지 않는다. 고정 복사본이 확정된 뒤 token·listener 같은 준비 단계가 첫
-관리형 자식을 시작하기 전에 실패한 경우에만 같은 argv로 그 복사본을 정확히 한 번
+fallback하지 않는다. private bundle이 확정된 뒤 token·listener 같은 준비 단계가 첫
+관리형 자식을 시작하기 전에 실패한 경우에만 같은 argv로 그 bundle의 `bin/codex`를 정확히 한 번
 실행한다. 자식이 하나라도
 시작된 뒤에는 사용자 작업이 시작됐을 수 있으므로 자동 재실행하지 않는다. 시작한
 자식은 정리하고 실패를 보고한다. signal로 끝난 자식의 종료 상태는
 `128 + signal` 규칙으로 보존한다.
 세부 신뢰 기준은 [관리형 Codex 실행 신뢰 경계](docs/MANAGED_CODEX_TRUST.md)에 고정한다.
+기본 `doctor`는 정적·읽기 전용이다. `codex --version`, Plugin 목록, Hook
+App Server를 실행하지 않고 package manifest·layout·identity와 Blabee
+build identity만 검사한다. 실제 Plugin locator가 확인되지 않으면 표준 앱 fallback만으로
+build identity를 통과시키지 않는다. 실제 binary 버전, Plugin/Hook 활성, code-mode는
+별도 live qualification 전까지 `action_required`로 보고한다.
+semantic version allowlist와 production bundle catalog는 별도다. 2026-09-02 현재
+exact full-bundle fingerprint가 등록된 production 대상은 official Homebrew Codex
+`0.151.0` Apple Silicon 하나이며, 같은 Team ID·version만으로 다른 release host를
+신뢰하지 않는다. `0.149.1`·`0.150.1`과 Intel target은 별도 bundle qualification 전
+관리형 실행 자격이 없고, `0.152.0`·`0.152.1`은 version allowlist에도 포함하지 않는다.
 
 Blabee는 `.zshrc`, alias, shell function 또는 전역 `codex` 명령을 설치하거나
 변경하지 않는다. 일반 Codex와 Plugin/Hook 통합은 다음과 같이 원래 명령 형태와
@@ -242,18 +253,26 @@ codex resume <thread-id>
 ```
 
 `blabee-codex`는 호출할 때마다 PATH·NVM·표준 Homebrew 후보의 소유권, 모드, ACL과
-심볼릭 링크 target을 새로 검사한다. 첫 번째로 존재하는 직접 실행형 Mach-O 후보를
-canonical current-user 전용 임시 경로에 고정 복사하고 그 복사본에서 지원 버전을
-한 번 확인한다. 버전 probe는 private process group과 bounded output을 사용하며 정상
+심볼릭 링크 target을 새로 검사한다. 첫 번째로 존재하는 후보의 bounded
+`codex-package.json`과 exact package tree를 검사해 본체·host·resource가 같은 배포
+단위인지 확인한다. 이를 canonical current-user 전용 임시 경로에 원자 복사하고 private
+bundle의 `bin/codex`에서 지원 버전을 한 번 확인한다. 다른 버전의 host를 섞거나 본체만
+복사하지 않는다. 버전 probe는 private process group과 bounded output을 사용하며 정상
 종료·timeout·출력 초과에서 descendant를 정리한다.
+복사 전에는 recovery plan을 임시 파일에 fsync한 뒤 원자 게시한다. 비정상 종료 뒤에는
+exact managed UUID 이름, owner-only root, unlocked lease, plan과 partial tree가 모두
+일치할 때만 잔여물을 회수하며 unrelated 임시 파일이나 unknown entry는 삭제하지 않는다.
 `blabee-codex` wrapper는 coordinator를 실행하기 전에 `DYLD_*`, `__XPC_DYLD_*`,
 `LD_*` loader override를 값 노출 없이 거부하고, coordinator도 같은 환경 경계를 다시
 검증한다. wrapper 검사 도구가 실패해도 실행을 계속하지 않는다. 관리형 경로만 실패
 폐쇄하며 일반 `codex` 환경은 변경하지 않는다.
 probe·App Server·TUI·보조 세션과 fallback은 모두 같은 검증된 환경 snapshot을 사용한다.
 승인 파일이나 원래 Codex 경로는 영속 저장하지 않는다. App Server·TUI·보조 세션과
-fallback은 모두 같은 복사본만 실행하며 첫 App Server 시작 직전을 포함한 각 spawn
-경계에서 identity가 바뀌면 실패 폐쇄한다. 이 검사는
+fallback은 모두 같은 private bundle만 실행하며 첫 App Server 시작 직전을 포함한 각
+spawn 경계에서 exact metadata tree와 작은 seal digest를 다시 확인한다. 전체 payload의
+digest·서명은 bundle 최초 생성 때 검증하며 매 spawn마다 수백 MB를 다시 해시하지 않는다.
+manifest·본체·host·resource identity가 바뀌면 실패 폐쇄한다. 관리형
+환경의 host override는 제거하고 검증한 bundle의 exact host만 사용한다. 이 검사는
 명시적 관리형 기능에만 적용되며 기본 `codex` 실행 허가에는 관여하지 않는다. 이미 실행 중인
 Codex를 관리형 App Server 승인 경로로 사후 전환할 수는 없으므로, 그 기능이 필요할
 때만 한 번 `/exit`한 뒤 `blabee-codex resume <thread-id>`로 다시 시작한다. 일반
@@ -276,7 +295,8 @@ binding으로 이를 확인했다는 뜻이다. App Server가 응답을 처리�
 stale/malformed coordinator 응답으로 거부하며, token 없는 응답은 Pet 선택이 아닌
 `decide_in_codex` fallback에만 허용한다.
 
-현재 관리형 계약 지원 버전은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. Pet은 요청의
+현재 protocol semantic allowlist는 Codex `0.149.1`, `0.150.1`, `0.151.0`이다.
+이 목록만으로 production managed runtime 승인을 뜻하지 않는다. Pet은 요청의
 `environmentId`를 함께 표시하고, 관리형 대기는 도착 시점부터 사용자 결정
 120초·브로커 130초·socket 135초의 순서화된 상한과 동시 8개로 제한한다. Pet 노출
 순서는 위 공통 `arrival_sequence`가 결정한다. 연결별 request ID 기억이

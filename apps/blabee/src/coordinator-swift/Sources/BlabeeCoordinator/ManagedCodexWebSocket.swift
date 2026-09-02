@@ -55,6 +55,28 @@ func managedCodexCoordinatorError(_ error: Error) -> CoordinatorError {
             return CoordinatorError("managed_codex_executable_unsafe")
         }
     }
+    if let error = error as? ManagedCodexRuntimeBundleError {
+        switch error {
+        case .changed:
+            return CoordinatorError("managed_codex_executable_changed")
+        case .versionMismatch:
+            return CoordinatorError("managed_codex_runtime_version_mismatch")
+        case .layout, .identity, .bounds, .targetMismatch:
+            return CoordinatorError("managed_codex_runtime_bundle_unsafe")
+        }
+    }
+    if let error = error as? ManagedCodexRuntimeBundleQualificationError {
+        switch error {
+        case .required:
+            return CoordinatorError(
+                "managed_codex_runtime_qualification_required"
+            )
+        case .fingerprintMismatch:
+            return CoordinatorError(
+                "managed_codex_runtime_fingerprint_mismatch"
+            )
+        }
+    }
     guard let error = error as? ManagedCodexWebSocketError else {
         return error.coordinatorError
     }

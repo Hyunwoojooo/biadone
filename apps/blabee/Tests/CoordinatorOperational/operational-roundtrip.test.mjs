@@ -484,21 +484,48 @@ test("managed Codex live trust pins once, execs fallback exactly, and reaps the 
     path.join(canonicalTemporaryDirectory, "blabee-managed-fallback-"),
   );
   await chmod(fixtureRoot, 0o700);
-  const binPath = path.join(fixtureRoot, "bin");
+  const runtimePath = path.join(fixtureRoot, "official-runtime");
+  const binPath = path.join(runtimePath, "bin");
+  const codexPath = path.join(runtimePath, "codex-path");
   const homePath = path.join(fixtureRoot, "home");
+  const pinPath = path.join(fixtureRoot, "pins");
+  await mkdir(runtimePath, { mode: 0o700 });
   await Promise.all([
     mkdir(binPath, { mode: 0o700 }),
+    mkdir(codexPath, { mode: 0o700 }),
     mkdir(homePath, { mode: 0o700 }),
+    mkdir(pinPath, { mode: 0o700 }),
   ]);
   const candidatePath = path.join(binPath, "codex");
-  const markerPath = path.join(fixtureRoot, "fallback-result.json");
-  const releasePath = path.join(fixtureRoot, "fallback-release");
-  await cp(build.binaryPath, candidatePath);
-  await chmod(candidatePath, 0o500);
+  const hostPath = path.join(binPath, "codex-code-mode-host");
+  const rgPath = path.join(codexPath, "rg");
+  const manifestPath = path.join(runtimePath, "codex-package.json");
+  const markerPath = path.join(pinPath, "fallback-result.json");
+  const releasePath = path.join(pinPath, "fallback-release");
+  await Promise.all([
+    cp(build.binaryPath, candidatePath),
+    cp(build.binaryPath, hostPath),
+    cp(build.binaryPath, rgPath),
+  ]);
+  await Promise.all([
+    chmod(candidatePath, 0o500),
+    chmod(hostPath, 0o500),
+    chmod(rgPath, 0o500),
+    writeFile(manifestPath, JSON.stringify({
+      entrypoint: "bin/codex",
+      layoutVersion: 1,
+      pathDir: "codex-path",
+      target: process.arch === "arm64"
+        ? "aarch64-apple-darwin"
+        : "x86_64-apple-darwin",
+      variant: "codex",
+      version: "0.150.1",
+    }), { mode: 0o400 }),
+  ]);
   const environment = {
     PATH: binPath,
     HOME: homePath,
-    TMPDIR: `${fixtureRoot}${path.sep}`,
+    TMPDIR: `${pinPath}${path.sep}`,
     NVM_BIN: "",
     ASDF_DATA_DIR: "",
     VOLTA_HOME: "",
@@ -524,13 +551,25 @@ test("managed Codex live trust pins once, execs fallback exactly, and reaps the 
       ],
       { cwd: fixtureRoot, environment, timeoutMs: 20_000 },
     );
-    const result = JSON.parse(await readFileEventually(markerPath));
+    const result = JSON.parse(await Promise.race([
+      readFileEventually(markerPath),
+      fallbackRun.completion.then((outcome) => {
+        fallbackRun = undefined;
+        assert.fail(
+          `managed fallback exited before writing its marker: ${JSON.stringify(outcome)}`,
+        );
+      }),
+    ]));
     const pinnedPath = result.argv[0];
-    const pinnedDirectory = path.dirname(pinnedPath);
+    const pinnedDirectory = path.dirname(path.dirname(pinnedPath));
     assert.equal(fallbackRun.child.exitCode, null);
     assert.equal(result.cwd, fixtureRoot);
     assert.deepEqual(result.forwarded, forwarded);
     assert.equal(result.safe_environment, "preserved");
+    assert.equal(
+      result.code_mode_host_path,
+      path.join(path.dirname(pinnedPath), "codex-code-mode-host"),
+    );
     assert.deepEqual(result.stripped_environment_still_present, []);
     assert.deepEqual(result.argv.slice(1, 3), [
       "managed-codex-fallback-test-target",
@@ -541,7 +580,7 @@ test("managed Codex live trust pins once, execs fallback exactly, and reaps the 
       "--",
       ...forwarded,
     ]);
-    assert.equal(await realpath(path.dirname(pinnedDirectory)), fixtureRoot);
+    assert.equal(await realpath(path.dirname(pinnedDirectory)), pinPath);
     assert.match(path.basename(pinnedDirectory), /^blabee-managed-codex\./);
     assert.equal((await stat(pinnedDirectory)).mode & 0o777, 0o700);
     assert.equal((await stat(pinnedPath)).mode & 0o777, 0o500);

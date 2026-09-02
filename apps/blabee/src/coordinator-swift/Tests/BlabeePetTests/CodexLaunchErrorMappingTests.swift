@@ -12,7 +12,9 @@ struct CodexLaunchErrorMappingTests {
         var nativeCalls = 0
         var nativeExecutable: URL?
         var nativeArguments: [String] = []
-        let expectedExecutable = URL(fileURLWithPath: "/opt/homebrew/bin/codex")
+        let expectedExecutable = URL(
+            fileURLWithPath: "/private/tmp/blabee-managed-pin/bin/codex"
+        )
         let expectedArguments = ["resume", "thread with spaces", "--no-alt-screen"]
 
         let status = try runExplicitManagedCodexLaunch(
@@ -44,6 +46,36 @@ struct CodexLaunchErrorMappingTests {
         #expect(nativeCalls == 1)
         #expect(nativeExecutable == expectedExecutable)
         #expect(nativeArguments == expectedArguments)
+    }
+
+    @Test("managed native fallback pins the bundle host without changing PATH")
+    func managedFallbackPinsBundleHostEnvironment() throws {
+        let executable = URL(
+            fileURLWithPath: "/private/tmp/blabee-managed-pin/bin/codex"
+        )
+        let environment = try managedCodexNativeFallbackEnvironment(
+            executable: executable,
+            inherited: [
+                "BLABEE_SOCKET": "/tmp/stale.sock",
+                "BLABEE_MANAGED_APPROVALS": "1",
+                "BLABEE_MANAGED_CODEX_AUTH_TOKEN": "stale-token",
+                "BLABEE_RUNTIME_IDENTITY": "stale-runtime",
+                "CODEX_CODE_MODE_HOST_PATH": "/tmp/untrusted-code-mode-host",
+                "PATH": "/usr/local/bin:/usr/bin",
+                "UNCHANGED": "value",
+            ]
+        )
+
+        #expect(
+            environment["CODEX_CODE_MODE_HOST_PATH"]
+                == "/private/tmp/blabee-managed-pin/bin/codex-code-mode-host"
+        )
+        #expect(environment["PATH"] == "/usr/local/bin:/usr/bin")
+        #expect(environment["UNCHANGED"] == "value")
+        #expect(environment["BLABEE_SOCKET"] == nil)
+        #expect(environment["BLABEE_MANAGED_APPROVALS"] == nil)
+        #expect(environment["BLABEE_MANAGED_CODEX_AUTH_TOKEN"] == nil)
+        #expect(environment["BLABEE_RUNTIME_IDENTITY"] == nil)
     }
 
     @Test("managed native fallback revalidates the pinned executable before exec")

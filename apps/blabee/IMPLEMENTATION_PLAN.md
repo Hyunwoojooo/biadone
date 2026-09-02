@@ -1,7 +1,53 @@
 # Blabee MVP 구현 계획
 
 상태: M0·T-005·T-006·T-007·T-015 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 실제 macOS 1차 qualification 통과 및 환경 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
-업데이트: 2026-08-23
+업데이트: 2026-09-02
+
+## 2026-09-02 관리형 Codex runtime bundle 복구
+
+2026-09-01 다른 사용자 PC에서 관리형 Codex 본체만 고정 경로에 존재하고
+`codex-code-mode-host`가 없거나 다른 IPC schema의 host가 혼입된 장애가 확인됐다.
+단일 executable pin을 다음 순서로 전체 runtime bundle 계약으로 교체한다.
+
+1. **P0 — shared read-only inspector**
+   - bounded `codex-package.json`, `bin/codex`, sibling host, `codex-path/rg`, optional
+     resources를 동일 package tree에서 검사한다.
+   - owner·mode·ACL·link·native target·bounds·identity drift를 fail-closed한다.
+   - 같은 Team ID·version만으로 승인하지 않고 package 전체 canonical fingerprint를
+     닫힌 production catalog와 비교한다. 현재 등록 대상은 official `0.151.0`
+     Apple Silicon 하나다.
+2. **P1 — atomic private bundle pin**
+   - descriptor 기반 staging copy, source 전후 identity와 destination digest 재검증,
+     seal·directory fsync 뒤 atomic publish를 수행한다.
+   - 복사 전 recovery plan을 fsync·원자 게시하고, 중단 뒤에는 exact UUID·lease·plan·partial
+     tree를 모두 검증한 항목만 회수한다. unrelated temp entry와 unknown data는 건드리지 않는다.
+   - 최초 생성에서만 전체 digest·서명을 검사하고 반복 spawn 경계는 exact metadata tree와
+     작은 seal hash로 재검증해 대용량 payload 재해시를 피한다.
+   - self-manifest에 포함된 exact entry만 정리하며 unknown entry는 남기고 중단한다.
+3. **P2 — launcher lifecycle 연결**
+   - version probe, App Server, TUI, auxiliary server와 pre-child fallback이 같은 private
+     bundle과 sibling host를 사용한다.
+   - 첫 child 이후 fallback·자동 retry를 금지한다.
+4. **P3 — Doctor 분리 보고**
+   - layout, identity, manifest allowlist/live version, code-mode compatibility, Blabee build identity를
+     독립 check로 출력한다.
+   - Plugin locator가 실제로 확인되지 않으면 표준 앱 fallback만으로 build identity를
+     통과시키지 않고 별도 `action_required`로 보고한다.
+   - 정적 Doctor는 read-only이며 Codex 버전·Plugin·Hook child를 실행하지
+     않고 live qualification을 대신하지 않는다.
+5. **P4 — 실제 version qualification**
+   - semantic allowlist의 미등록 `0.149.1`·`0.150.1`, 새 `0.152.0`·`0.152.1`과 필요한 target의
+     명령·파일·승인·`/resume`·cleanup을 실제 official package에서 검증한다.
+   - 각 exact bundle fingerprint는 이 gate 뒤 별도 review로 catalog에 추가하고,
+     0.152.0·0.152.1은 version allowlist도 별도 작은 변경으로만 추가한다.
+6. **P5 — 깨끗한 Mac 배포 gate**
+   - 최초 설치, 업데이트, 제거, 지원하지 않는 Codex와 native Codex 무변경을 검증한다.
+
+P0~P3의 소스와 자동 검증은 runtime trust 60/60, Doctor 30/30, managed broker 56/56,
+전체 Swift Testing 472/472+XCTest 5/5, 전체 Node 277/277, release build와 실제
+official `0.151.0` artifact 강제 catalog 시험 1/1로 통과했다.
+P4·P5와 실제 다른 PC 재검증은 소스 테스트로 완료 처리하지 않는다. 일반 `codex`, 공식
+설치 파일, PATH와 셸 설정은 모든 단계에서 Blabee 관리 범위 밖이다.
 
 ## 2026-08-26 PermissionRequest 후속 변경
 
@@ -66,7 +112,7 @@
 8. Codex 네이티브 질문/권한 요청을 Blabee 결정 패킷과 다른 상호작용 종류와 ID로 보존한다.
 9. **조건부 완료 — T-007b-A/A2/B1/B2:** SQLite 이벤트·패킷·검증 원장, Keychain freshness high-water, Swift 의미 projection, 세션 queue·foreground·continuous deadline projection을 구현했다. foreground와 monotonic anchor는 의도적으로 비영속이며 재시작 때 fail-closed한다.
 10. **구현·자동·실제 두 세션 도그푸드 완료 — T-015:** T-011의 Skill·Hook·로컬 MCP·Swift 단일 UDS owner 기반은 유지하되 Stop waiter와 finalization self-check를 제거한다. Stop은 결정 유무만 저장하고 즉시 끝나며, Pet 1·2 선택은 봉인된 action을 exact Codex session의 새 사용자 턴으로 한 번 큐잉한다. 새 `UserPromptSubmit`은 새 turn·prompt·episode·baseline을 만들고 queue receipt와 작업 outcome을 분리한다. 과거 `same_turn_stop`은 저널 replay에만 허용한다. `build/local-dogfood-async-next-turn-v1`로 app·service·Plugin·Pet을 교체한 실제 Codex `0.149.0` 두 세션에서 A→B FIFO 선택, `queued_next_turn` receipt, 같은 session의 새 turn·episode, `A_NEXT_TURN_OK`·`B_NEXT_TURN_OK` 완료를 관찰했다. 전송 완료 이벤트는 의도대로 `work_outcome_status = not_recorded`를 유지했고 실제 Codex 출력으로 작업 성공을 별도 확인했다.
-11. **조건부 완료:** `0.149.0` 로컬 실험은 역사적 증거로 보존하고, 현재 지원 허용 목록은 `0.149.1`·`0.150.1`·`0.151.0`으로 고정한다. Hook/MCP/queue/App Server의 버전별 계약을 재검증한 경우에만 목록을 유지하거나 확장한다.
+11. **조건부 완료:** `0.149.0` 로컬 실험은 역사적 증거로 보존하고, 현재 protocol semantic allowlist는 `0.149.1`·`0.150.1`·`0.151.0`으로 고정한다. production managed 실행은 exact bundle catalog와 live qualification을 추가로 요구한다. Hook/MCP/queue/App Server의 버전별 계약을 재검증한 경우에만 목록과 catalog를 유지하거나 확장한다.
 12. `blabee doctor`에 앱, 데몬, 플러그인, Hook 신뢰 설정, Codex 버전/허용 목록, 프로젝트 활성화 여부 검사를 추가한다.
 
 완료 조건:
@@ -291,7 +337,9 @@ Pet에는 Hook 큐와 분리한 process-local FIFO를 표시하며 `이번만 �
 설치본에서 실제 Codex App Server/Pet 왕복은 아직 검증하지 않았으므로 공개 사용
 가능 상태로 표시하지 않는다.
 
-현재 코드의 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. 관리형
+현재 코드의 protocol semantic allowlist는 Codex `0.149.1`, `0.150.1`, `0.151.0`이다.
+production bundle catalog는 official `0.151.0` Apple Silicon만 등록되어 있으며 이 두
+목록은 같은 승인이 아니다. 관리형
 대기는 도착 시점부터 사용자 결정 120초, 브로커 130초, socket 135초의 순서화된 상한과 동시 8개로 제한하며 Pet에는
 원본 환경 ID도 표시한다. 한 연결에서 기억한 승인 request
 ID가 256개에 도달하면 오래된 ID를 버리지 않고 이후 요청을 전부 공식 TUI에 맡기는
@@ -330,5 +378,5 @@ ID가 256개에 도달하면 오래된 ID를 버리지 않고 이후 요청을 �
 - 인증, 결제, 마이그레이션, 배포, 자격 증명, 파괴적 파일 작업에 대한 안전 픽스처
 - `high`·`critical` 작업의 전역 단축키 차단, 펼친 위험 확인, 이후 Codex 네이티브 승인 소유권 분리를 확인하는 테스트
 - 포커스를 빼앗지 않음, 동적 1·2/고정 3·4 표시, 2번 비활성, 네이티브 요청 분리, 다중 디스플레이, Spaces, 전체 화면, 단축키 충돌에 대한 macOS 테스트
-- Codex `0.148.0` 알파 픽스처와 지원 허용 목록의 모든 CLI 버전에 대한 실제 계약 테스트
+- Codex `0.148.0` 알파 픽스처, semantic allowlist의 모든 CLI 버전과 production catalog 대상의 실제 계약·bundle 테스트
 - 센티널이 운영 패키지에 포함되지 않고 로컬 MCP만 결정 제안 경로로 사용되는지 확인하는 패키지 검사

@@ -1016,25 +1016,36 @@ private func runTransportFixture(arguments: [String]) throws {
 }
 #endif
 
-private let managedCodexFallbackRemovedEnvironmentNames = [
-    "BLABEE_COORDINATOR_BINARY",
-    "BLABEE_SOCKET",
-    "BLABEE_MANAGED_APPROVALS",
-    "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
-    "BLABEE_RUNTIME_IDENTITY",
-]
+func managedCodexNativeFallbackEnvironment(
+    executable: URL,
+    inherited: [String: String]
+) throws -> [String: String] {
+    var environment = try ManagedCodexLaunchEnvironment.validated(inherited)
+    for name in [
+        "BLABEE_COORDINATOR_BINARY",
+        "BLABEE_SOCKET",
+        "BLABEE_MANAGED_APPROVALS",
+        "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+        "BLABEE_RUNTIME_IDENTITY",
+    ] {
+        environment.removeValue(forKey: name)
+    }
+    ManagedCodexRuntimeEnvironment.bindPinnedBundle(
+        in: &environment,
+        executable: executable
+    )
+    return environment
+}
 
 private func runResolvedNativeCodexLaunch(
     executable: URL,
     arguments: [String],
     environment: [String: String]
 ) throws {
-    var launchEnvironment = try ManagedCodexLaunchEnvironment.validated(
-        environment
+    let launchEnvironment = try managedCodexNativeFallbackEnvironment(
+        executable: executable,
+        inherited: environment
     )
-    for name in managedCodexFallbackRemovedEnvironmentNames {
-        launchEnvironment.removeValue(forKey: name)
-    }
     var cArguments = ([executable.path] + arguments).map { strdup($0) }
     guard !cArguments.contains(where: { $0 == nil }) else {
         for case let pointer? in cArguments { free(pointer) }
@@ -1206,7 +1217,8 @@ private func runManagedCodexFallbackTest(
         environment: environment,
         pinParentURL: try managedCodexFallbackTestTemporaryDirectory(
             environment: environment
-        )
+        ),
+        runtimeExecutableVerification: .trustedTestFixture
     )
     return try runExplicitManagedCodexLaunch(
         arguments: arguments,
@@ -1251,15 +1263,25 @@ private func runManagedCodexFallbackTestTarget(
         arguments: arguments,
         environment: environment
     )
-    let strippedEnvironmentStillPresent =
-        managedCodexFallbackRemovedEnvironmentNames.filter {
-            getenv($0) != nil
-        }
+    let removedEnvironmentNames: [String] = [
+        "BLABEE_COORDINATOR_BINARY",
+        "BLABEE_SOCKET",
+        "BLABEE_MANAGED_APPROVALS",
+        "BLABEE_MANAGED_CODEX_AUTH_TOKEN",
+        "BLABEE_RUNTIME_IDENTITY",
+    ]
+    let strippedEnvironmentStillPresent = removedEnvironmentNames.filter {
+        getenv($0) != nil
+    }
     let safeEnvironment = getenv("BLABEE_TEST_SAFE_ENVIRONMENT").map {
+        String(cString: $0)
+    }
+    let codeModeHostPath = getenv("CODEX_CODE_MODE_HOST_PATH").map {
         String(cString: $0)
     }
     let result: [String: Any] = [
         "argv": CommandLine.arguments,
+        "code_mode_host_path": codeModeHostPath ?? "",
         "cwd": FileManager.default.currentDirectoryPath,
         "forwarded": fixture.forwarded,
         "safe_environment": safeEnvironment ?? "",
@@ -1304,7 +1326,8 @@ private func runManagedCodexQualificationTest(
         environment: environment,
         pinParentURL: try managedCodexFallbackTestTemporaryDirectory(
             environment: environment
-        )
+        ),
+        runtimeExecutableVerification: .trustedTestFixture
     )
     _ = try provider.next()
 }
@@ -1482,11 +1505,18 @@ do {
             contentsOf: Data("codex-cli 0.150.1\n".utf8)
         )
     case "managed-codex-fallback-test":
-        let status = try runManagedCodexFallbackTest(
-            arguments: Array(commandLine.dropFirst(2)),
-            environment: ProcessInfo.processInfo.environment
-        )
-        if status != 0 { exit(status) }
+        do {
+            let status = try runManagedCodexFallbackTest(
+                arguments: Array(commandLine.dropFirst(2)),
+                environment: ProcessInfo.processInfo.environment
+            )
+            if status != 0 { exit(status) }
+        } catch {
+            try? FileHandle.standardError.write(contentsOf: Data(
+                "managed-codex-fallback-test: \(String(reflecting: error))\n".utf8
+            ))
+            throw error
+        }
     case "managed-codex-fallback-test-target":
         let status = try runManagedCodexFallbackTestTarget(
             arguments: Array(commandLine.dropFirst(2)),

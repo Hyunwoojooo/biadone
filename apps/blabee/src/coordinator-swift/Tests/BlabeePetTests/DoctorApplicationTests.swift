@@ -134,7 +134,10 @@ private final class DoctorFixture {
     let root: URL
     let app: URL
     let embeddedCoordinator: URL
+    let codexPackage: URL
     let codex: URL
+    let codeModeHost: URL
+    let ripgrep: URL
     let plugin: URL
     var runtimeIdentityManifest: URL {
         app.appendingPathComponent("Contents/Resources/assembly-manifest.json")
@@ -149,7 +152,10 @@ private final class DoctorFixture {
             .appendingPathComponent("bdt-\(UUID().uuidString.prefix(8))", isDirectory: true)
         app = root.appendingPathComponent("Blabee.app", isDirectory: true)
         embeddedCoordinator = app.appendingPathComponent("Contents/MacOS/blabee-coordinator")
-        codex = root.appendingPathComponent("codex")
+        codexPackage = root.appendingPathComponent("codex-package", isDirectory: true)
+        codex = codexPackage.appendingPathComponent("bin/codex")
+        codeModeHost = codexPackage.appendingPathComponent("bin/codex-code-mode-host")
+        ripgrep = codexPackage.appendingPathComponent("codex-path/rg")
         plugin = root.appendingPathComponent("plugin", isDirectory: true)
         try FileManager.default.createDirectory(
             at: embeddedCoordinator.deletingLastPathComponent(),
@@ -157,7 +163,7 @@ private final class DoctorFixture {
         )
         try writeAppPlist(executable: "blabee-coordinator")
         try makeExecutable(embeddedCoordinator)
-        try makeExecutable(codex)
+        try writeCodexPackage(version: "0.148.0")
         try writePlugin()
         try writeRuntimeIdentity()
         processes.pluginPath = plugin.path
@@ -213,6 +219,11 @@ private final class DoctorFixture {
                 ),
             installedRuntimeIdentity: installedRuntimeIdentity,
             processRunner: processes.run,
+            codexRuntimeInspector: { executableURL in
+                DoctorDependencies.inspectCodexRuntime(
+                    executableURL, executableVerification: .trustedTestFixture
+                )
+            },
             hookTrustRequester: processes.inspectHooks,
             daemonRequester: { _ in
                 guard let daemonProjects else { throw CoordinatorError("daemon_unavailable") }
@@ -298,6 +309,49 @@ private final class DoctorFixture {
                 ],
             ],
         ], to: runtimeIdentityManifest)
+    }
+
+    func writeCodexPackage(version: String) throws {
+        try FileManager.default.createDirectory(
+            at: codex.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: ripgrep.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: codexPackage.appendingPathComponent("codex-resources", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        #if arch(arm64)
+            let cpuType: UInt32 = 0x0100_000C
+        #else
+            let cpuType: UInt32 = 0x0100_0007
+        #endif
+        let machOFixture = Data([
+            0xcf, 0xfa, 0xed, 0xfe,
+            UInt8(cpuType & 0xff), UInt8((cpuType >> 8) & 0xff),
+            UInt8((cpuType >> 16) & 0xff), UInt8((cpuType >> 24) & 0xff),
+        ])
+        if !FileManager.default.fileExists(atPath: codex.path) {
+            try makeExecutable(codex, data: machOFixture)
+        }
+        if !FileManager.default.fileExists(atPath: codeModeHost.path) {
+            try makeExecutable(codeModeHost, data: machOFixture)
+        }
+        if !FileManager.default.fileExists(atPath: ripgrep.path) {
+            try makeExecutable(ripgrep, data: machOFixture)
+        }
+        try writeJSON([
+            "layoutVersion": 1,
+            "version": version,
+            "target": ManagedCodexRuntimeBundleInspector.expectedTarget,
+            "variant": "codex",
+            "entrypoint": "bin/codex",
+            "resourcesDir": "codex-resources",
+            "pathDir": "codex-path",
+        ], to: codexPackage.appendingPathComponent("codex-package.json"))
     }
 
     func writeMCP(includeEnvironment: Bool) throws {
@@ -388,6 +442,42 @@ private func doctorCheck(_ execution: DoctorExecution, id: String) throws -> Doc
     try #require(execution.report.checks.first(where: { $0.id == id }))
 }
 
+private func doctorFixtureTree(_ root: URL) throws -> [String] {
+    let enumerator = try #require(FileManager.default.enumerator(
+        at: root,
+        includingPropertiesForKeys: nil
+    ))
+    var result: [String] = []
+    while let url = enumerator.nextObject() as? URL {
+        let relative = String(url.path.dropFirst(root.path.count + 1))
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else {
+            throw CoordinatorError("test_snapshot_failed")
+        }
+        let fileType = info.st_mode & S_IFMT
+        let kind = fileType == S_IFDIR ? "d"
+            : fileType == S_IFREG ? "f"
+            : fileType == S_IFLNK ? "l" : "o"
+        let digest: String
+        if fileType == S_IFREG {
+            digest = SHA256.hash(data: try Data(contentsOf: url))
+                .map { String(format: "%02x", $0) }.joined()
+        } else {
+            digest = "-"
+        }
+        result.append([
+            relative, kind, String(info.st_mode), String(info.st_uid),
+            String(info.st_gid), String(info.st_nlink), String(info.st_dev),
+            String(info.st_ino), String(info.st_size),
+            String(info.st_mtimespec.tv_sec),
+            String(info.st_mtimespec.tv_nsec),
+            String(info.st_ctimespec.tv_sec),
+            String(info.st_ctimespec.tv_nsec), digest,
+        ].joined(separator: "|"))
+    }
+    return result.sorted()
+}
+
 private func expectDoctorArgumentFailure(_ values: [String]) {
     do {
         _ = try DoctorArguments(
@@ -402,6 +492,13 @@ private func expectDoctorArgumentFailure(_ values: [String]) {
         Issue.record("unexpected error \(error)")
     }
 }
+
+// The production inspector intentionally fails closed if any named ancestor
+// changes during inspection. These tests create and delete `/tmp` fixtures,
+// so the suite is serialized to keep unrelated fixture churn from simulating
+// an ancestor-path ABA attack.
+@Suite(.serialized)
+struct DoctorApplicationTestSuite {
 
 @Test("Doctor arguments accept only unique absolute allowlisted flags")
 func doctorArgumentsFailClosed() throws {
@@ -438,28 +535,29 @@ func doctorCodexVersionPolicy() throws {
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "codex_version").status == .actionRequired)
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_alpha_qualification_required")
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").status == .actionRequired)
 
     for supportedVersion in ["0.149.1", "0.150.1", "0.151.0"] {
-        fixture.processes.versionOutput = "codex-cli \(supportedVersion)\n"
+        try fixture.writeCodexPackage(version: supportedVersion)
         execution = DoctorApplication(dependencies: fixture.dependencies())
             .run(arguments: try fixture.arguments())
-        #expect(try doctorCheck(execution, id: "codex_version").status == .pass)
+        #expect(
+            try doctorCheck(execution, id: "codex_version").status == .pass,
+            "version=\(supportedVersion)"
+        )
         #expect(try doctorCheck(execution, id: "codex_version").code
-            == "codex_version_supported")
+            == "codex_version_supported", "version=\(supportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_runtime_version").status
+            == .actionRequired, "version=\(supportedVersion)")
+        #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+            == "codex_runtime_live_version_required", "version=\(supportedVersion)")
     }
 
-    fixture.processes.versionOutput = "codex-cli 0.149.0\n"
+    try fixture.writeCodexPackage(version: "0.149.0")
     execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_version_not_allowlisted")
     #expect(execution.exitCode == 1)
-
-    fixture.processes.versionOutput = "Codex version unknown\n"
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "codex_version").code == "codex_version_unavailable")
-    #expect(fixture.processes.invocations.contains(["--version"]))
-    #expect(fixture.processes.invocations.contains(["plugin", "list", "--json"]))
 
     let missingCodex = fixture.root.appendingPathComponent("missing-codex")
     execution = DoctorApplication(dependencies: fixture.dependencies())
@@ -468,66 +566,131 @@ func doctorCodexVersionPolicy() throws {
     #expect(try doctorCheck(execution, id: "codex_version").code == "codex_version_unavailable")
 }
 
-@Test("Doctor fails closed for missing disabled ambiguous or malformed plugin state")
-func doctorPluginStateFailsClosed() throws {
+@Test("Doctor separates semantic version support from exact bundle qualification")
+func doctorSeparatesVersionSupportFromBundleQualification() throws {
+    let fixture = try DoctorFixture()
+    var dependencies = fixture.dependencies()
+
+    dependencies.codexRuntimeInspector = { _ in
+        .validated(DoctorCodexRuntimeBundleSummary(
+            manifestVersion: "0.150.1",
+            target: "aarch64-apple-darwin",
+            buildQualification: .required
+        ))
+    }
+    var execution = DoctorApplication(dependencies: dependencies)
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_layout").status == .pass)
+    #expect(try doctorCheck(execution, id: "codex_version").code
+        == "codex_version_supported")
+    #expect(try doctorCheck(execution, id: "codex_runtime_identity").code
+        == "codex_runtime_build_qualification_required")
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+        == "codex_runtime_build_qualification_required")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status
+        == .actionRequired)
+
+    dependencies.codexRuntimeInspector = { _ in
+        .validated(DoctorCodexRuntimeBundleSummary(
+            manifestVersion: "0.151.0",
+            target: "aarch64-apple-darwin",
+            buildQualification: .fingerprintMismatch
+        ))
+    }
+    execution = DoctorApplication(dependencies: dependencies)
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_identity").code
+        == "codex_runtime_build_fingerprint_mismatch")
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+        == "codex_runtime_build_fingerprint_mismatch")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status
+        == .fail)
+
+    dependencies.codexRuntimeInspector = { _ in
+        .validated(DoctorCodexRuntimeBundleSummary(
+            manifestVersion: "0.152.0",
+            target: "aarch64-apple-darwin",
+            buildQualification: .required
+        ))
+    }
+    execution = DoctorApplication(dependencies: dependencies)
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "codex_version").code
+        == "codex_version_not_allowlisted")
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+        == "codex_runtime_version_not_allowlisted")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status
+        == .fail)
+}
+
+@Test("Doctor fails closed for missing host malformed manifest unsafe identity and version mismatch")
+func doctorCodexRuntimeBundleFailsClosed() throws {
+    let missingHost = try DoctorFixture()
+    try FileManager.default.removeItem(at: missingHost.codeModeHost)
+    var execution = DoctorApplication(dependencies: missingHost.dependencies())
+        .run(arguments: try missingHost.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_layout").code
+        == "codex_runtime_layout_invalid")
+    #expect(try doctorCheck(execution, id: "codex_runtime_identity").code
+        == "codex_runtime_identity_unverified")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status == .fail)
+
+    let malformedManifest = try DoctorFixture()
+    try Data("{".utf8).write(
+        to: malformedManifest.codexPackage.appendingPathComponent("codex-package.json")
+    )
+    execution = DoctorApplication(dependencies: malformedManifest.dependencies())
+        .run(arguments: try malformedManifest.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_layout").code
+        == "codex_runtime_layout_invalid")
+
+    let unsafeIdentity = try DoctorFixture()
+    guard chmod(unsafeIdentity.codeModeHost.path, mode_t(0o722)) == 0 else {
+        throw CoordinatorError("test_chmod_failed")
+    }
+    execution = DoctorApplication(dependencies: unsafeIdentity.dependencies())
+        .run(arguments: try unsafeIdentity.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_identity").code
+        == "codex_runtime_identity_invalid")
+
+    let mismatchedVersion = try DoctorFixture()
+    var mismatchedDependencies = mismatchedVersion.dependencies()
+    mismatchedDependencies.codexRuntimeInspector = { _ in .versionMismatch }
+    execution = DoctorApplication(dependencies: mismatchedDependencies)
+        .run(arguments: try mismatchedVersion.arguments())
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+        == "codex_runtime_version_mismatch")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").status
+        == .fail)
+}
+
+@Test("Doctor runtime inspection is read only and creates no persistent artifact")
+func doctorCodexRuntimeInspectionIsReadOnly() throws {
+    let fixture = try DoctorFixture()
+    let before = try doctorFixtureTree(fixture.root)
+
+    _ = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+
+    #expect(try doctorFixtureTree(fixture.root) == before)
+}
+
+@Test("Static Doctor requires explicit plugin source and never claims live installation")
+func doctorPluginStateRequiresLiveQualification() throws {
     let fixture = try DoctorFixture()
 
     var execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments(includePluginOverride: false))
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_enabled")
+    #expect(try doctorCheck(execution, id: "plugin_installation").code
+        == "plugin_source_discovery_required")
+    #expect(try doctorCheck(execution, id: "plugin_layout").code
+        == "plugin_layout_source_required")
+
+    execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+    #expect(try doctorCheck(execution, id: "plugin_installation").code
+        == "plugin_installation_live_verification_required")
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_ok")
-
-    fixture.processes.pluginEnabled = false
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_disabled")
-
-    fixture.processes.pluginEnabled = true
-    fixture.processes.pluginInstalled = false
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_not_installed")
-
-    fixture.processes.pluginInstalled = 1
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_not_installed")
-
-    fixture.processes.pluginInstalled = true
-    fixture.processes.pluginEnabled = 1
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_disabled")
-
-    fixture.processes.pluginEnabled = true
-    fixture.processes.pluginPresent = false
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_not_installed")
-
-    fixture.processes.pluginPresent = true
-    fixture.processes.duplicatePlugin = true
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_installation_ambiguous")
-
-    fixture.processes.duplicatePlugin = false
-    fixture.processes.pluginVersion = "0.1.1"
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_version_mismatch")
-
-    fixture.processes.pluginVersion = "0.1.0"
-    fixture.processes.pluginSourceKind = "remote"
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_source_invalid")
-
-    fixture.processes.pluginSourceKind = "local"
-    fixture.processes.malformedPluginList = true
-    execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_list_malformed")
 }
 
 @Test("Doctor validates plugin layout without following a manifest symlink")
@@ -555,15 +718,17 @@ func doctorPluginLayoutFailsClosed() throws {
     #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
 }
 
-@Test("Doctor rejects an override that differs from the installed plugin source identity")
-func doctorPluginOverrideMustMatchInstalledSource() throws {
+@Test("Static Doctor validates an explicit override without claiming installed source identity")
+func doctorPluginOverrideIsOnlyAStaticSource() throws {
     let installed = try DoctorFixture()
     let override = try DoctorFixture()
     let execution = DoctorApplication(dependencies: installed.dependencies())
         .run(arguments: try installed.arguments(pluginOverrideURL: override.plugin))
-    #expect(try doctorCheck(execution, id: "plugin_installation").code == "plugin_enabled")
-    #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_invalid")
-    #expect(execution.exitCode == 1)
+    #expect(try doctorCheck(execution, id: "plugin_installation").code
+        == "plugin_installation_live_verification_required")
+    #expect(try doctorCheck(execution, id: "plugin_layout").code == "plugin_layout_ok")
+    #expect(try doctorCheck(execution, id: "mcp_runtime").code
+        == "mcp_runtime_identity_mismatch")
 }
 
 @Test("Doctor rejects launcher Hook and MCP contract drift")
@@ -749,6 +914,8 @@ func doctorMCPRuntimeIdentity() throws {
     var execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     #expect(try doctorCheck(execution, id: "mcp_runtime").code == "mcp_runtime_ok")
+    #expect(try doctorCheck(execution, id: "blabee_build_identity").code
+        == "blabee_build_identity_ok")
 
     execution = DoctorApplication(dependencies: fixture.dependencies(
         path: fixture.root.appendingPathComponent("missing-path").path
@@ -761,6 +928,8 @@ func doctorMCPRuntimeIdentity() throws {
         .run(arguments: try missing.arguments())
     #expect(try doctorCheck(execution, id: "mcp_runtime").code
         == "mcp_runtime_locator_missing")
+    #expect(try doctorCheck(execution, id: "blabee_build_identity").code
+        == "blabee_build_identity_plugin_locator_required")
 
     let mismatchedFixture = try DoctorFixture()
     let mismatched = mismatchedFixture.root.appendingPathComponent("blabee-coordinator")
@@ -833,6 +1002,17 @@ func doctorMCPRuntimeIdentity() throws {
         .run(arguments: try unsorted.arguments())
     #expect(try doctorCheck(execution, id: "coordinator_runtime").code
         == "coordinator_runtime_identity_unverified")
+}
+
+@Test("Doctor does not claim Plugin build identity without an explicit locator")
+func doctorBuildIdentityRequiresExplicitPluginLocator() throws {
+    let fixture = try DoctorFixture()
+    let execution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments(includePluginOverride: false))
+
+    let identity = try doctorCheck(execution, id: "blabee_build_identity")
+    #expect(identity.status == .actionRequired)
+    #expect(identity.code == "blabee_build_identity_plugin_locator_required")
 }
 
 @Test("Doctor distinguishes exact descendant other and unavailable daemon project scopes")
@@ -933,22 +1113,34 @@ func doctorReconciliationStatus() throws {
         == "reconciliation_status_unavailable")
 }
 
-@Test("Doctor JSON is deterministic redacted and accepts trusted Blabee hooks")
+@Test("Doctor JSON is deterministic redacted and leaves live checks pending")
 func doctorJSONIsDeterministicAndRedacted() throws {
     let fixture = try DoctorFixture()
     let execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
     let first = try execution.outputData()
-    let second = try execution.outputData()
+    let repeatedExecution = DoctorApplication(dependencies: fixture.dependencies())
+        .run(arguments: try fixture.arguments())
+    let second = try repeatedExecution.outputData()
     #expect(first == second)
     let text = try #require(String(data: first, encoding: .utf8))
     #expect(text.contains("\"kind\":\"blabee_doctor_report\""))
     #expect(text.contains("\"overall_status\":\"action_required\""))
     #expect(!text.contains(fixture.root.path))
     #expect(!text.contains("project_id"))
-    #expect(try doctorCheck(execution, id: "hook_trust").status == .pass)
-    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
-    #expect(fixture.processes.hookTrustInvocations == 1)
+    let checkIDs = Set(execution.report.checks.map(\.id))
+    #expect(checkIDs.isSuperset(of: [
+        "codex_runtime_layout",
+        "codex_runtime_identity",
+        "codex_runtime_version",
+        "codex_code_mode_compatibility",
+        "blabee_build_identity",
+    ]))
+    #expect(try doctorCheck(execution, id: "hook_trust").status == .actionRequired)
+    #expect(try doctorCheck(execution, id: "hook_trust").code
+        == "hook_trust_live_verification_required")
+    #expect(fixture.processes.invocations.isEmpty)
+    #expect(fixture.processes.hookTrustInvocations == 0)
     #expect(execution.exitCode == 2)
 
     let mismatched = DoctorApplication(dependencies: fixture.dependencies(
@@ -969,10 +1161,10 @@ func doctorJSONIsDeterministicAndRedacted() throws {
         == "coordinator_runtime_ok")
 }
 
-@Test("Doctor exits successfully when every check including Hook trust passes")
-func doctorPassesWithTrustedHooksAndHealthyRuntime() throws {
+@Test("Doctor keeps code-mode action required after every static check passes")
+func doctorRequiresLiveCodeModeSmokeAfterStaticChecksPass() throws {
     let fixture = try DoctorFixture()
-    fixture.processes.versionOutput = "codex-cli 0.151.0\n"
+    try fixture.writeCodexPackage(version: "0.151.0")
     let execution = DoctorApplication(dependencies: fixture.dependencies(
         daemonReconciliation: [
             "state": "healthy",
@@ -983,115 +1175,33 @@ func doctorPassesWithTrustedHooksAndHealthyRuntime() throws {
         ]
     )).run(arguments: try fixture.arguments())
 
-    #expect(execution.report.overallStatus == .pass)
-    #expect(execution.exitCode == 0)
-    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
-    #expect(execution.report.checks.allSatisfy { $0.status == .pass })
+    #expect(execution.report.overallStatus == .actionRequired)
+    #expect(execution.exitCode == 2)
+    #expect(try doctorCheck(execution, id: "hook_trust").code
+        == "hook_trust_live_verification_required")
+    #expect(try doctorCheck(execution, id: "codex_runtime_version").code
+        == "codex_runtime_live_version_required")
+    #expect(try doctorCheck(execution, id: "codex_code_mode_compatibility").code
+        == "codex_code_mode_live_qualification_required")
+    #expect(try doctorCheck(execution, id: "plugin_installation").status
+        == .actionRequired)
+    #expect(fixture.processes.invocations.isEmpty)
+    #expect(fixture.processes.hookTrustInvocations == 0)
 }
 
-@Test("Doctor fails closed for unsafe or unavailable Blabee hook trust states")
-func doctorHookTrustFailsClosed() throws {
+@Test("Static Doctor never spawns Codex or requests live Hook state")
+func doctorStaticRunDoesNotSpawnCodexOrInspectLiveHooks() throws {
     let fixture = try DoctorFixture()
-
-    func hookCheck() throws -> DoctorCheck {
-        try doctorCheck(
-            DoctorApplication(dependencies: fixture.dependencies())
-                .run(arguments: fixture.arguments()),
-            id: "hook_trust"
-        )
-    }
-
-    fixture.processes.hookTrustStatus = "untrusted"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustStatus = "modified"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustStatus = "trusted"
-    fixture.processes.hookTrustIsManaged = true
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustStatus = "managed"
-    fixture.processes.hookTrustIsManaged = false
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustStatus = "trusted"
-    fixture.processes.hookTrustIsManaged = false
-    fixture.processes.hookTrustEnabled = false
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustEnabled = true
-    fixture.processes.hookTrustSource = "config"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustSource = "plugin"
-    fixture.processes.hookTrustPluginID = "another-plugin@test"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustPluginID = "blabee@test"
-    fixture.processes.hookTrustMissingEvent = "stop"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustMissingEvent = nil
-    fixture.processes.hookTrustDuplicateEvent = "stop"
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustDuplicateEvent = nil
-    let mismatchedHooks = fixture.root
-        .appendingPathComponent("other/hooks/hooks.json")
-    try FileManager.default.createDirectory(
-        at: mismatchedHooks.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-    )
-    try Data("different-hook-definition".utf8).write(to: mismatchedHooks)
-    fixture.processes.hookTrustSourcePath = mismatchedHooks.path
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustSourcePath = nil
-    fixture.processes.hookTrustCWD = fixture.root.appendingPathComponent("other-project").path
-    #expect(try hookCheck().code == "hook_trust_unavailable")
-
-    fixture.processes.hookTrustCWD = nil
-    fixture.processes.hookTrustWarnings = 1
-    #expect(try hookCheck().code == "hook_trust_unavailable")
-
-    fixture.processes.hookTrustWarnings = [String]()
-    fixture.processes.hookTrustErrors = ["hook discovery failed"]
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustErrors = []
-    fixture.processes.hookTrustCurrentHash = ""
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustCurrentHash = String(repeating: "h", count: 257)
-    #expect(try hookCheck().code == "hook_review_required")
-
-    fixture.processes.hookTrustCurrentHash = nil
-    fixture.processes.hookTrustMalformed = true
-    #expect(try hookCheck().code == "hook_trust_unavailable")
-
-    fixture.processes.hookTrustMalformed = false
-    fixture.processes.hookTrustThrows = true
-    #expect(try hookCheck().code == "hook_trust_unavailable")
-}
-
-@Test("Doctor accepts Codex-managed Blabee hooks")
-func doctorHookTrustAcceptsManagedHooks() throws {
-    let fixture = try DoctorFixture()
-    fixture.processes.hookTrustStatus = "managed"
-    fixture.processes.hookTrustIsManaged = true
     let execution = DoctorApplication(dependencies: fixture.dependencies())
         .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
-}
-
-@Test("Doctor ignores unrelated Hook warnings when Blabee hooks are trusted")
-func doctorHookTrustIgnoresUnrelatedWarnings() throws {
-    let fixture = try DoctorFixture()
-    fixture.processes.hookTrustWarnings = ["another plugin has a deprecated hook"]
-    let execution = DoctorApplication(dependencies: fixture.dependencies())
-        .run(arguments: try fixture.arguments())
-    #expect(try doctorCheck(execution, id: "hook_trust").code == "hook_trust_ok")
+    #expect(try doctorCheck(execution, id: "codex_version").code
+        == "codex_alpha_qualification_required")
+    #expect(try doctorCheck(execution, id: "plugin_installation").code
+        == "plugin_installation_live_verification_required")
+    #expect(try doctorCheck(execution, id: "hook_trust").code
+        == "hook_trust_live_verification_required")
+    #expect(fixture.processes.invocations.isEmpty)
+    #expect(fixture.processes.hookTrustInvocations == 0)
 }
 
 @Test("Doctor compares the process-captured identity after the app is replaced")
@@ -1476,4 +1586,6 @@ func udsRuntimeIdentityCompatibilityBoundary() async throws {
     let counts = await spy.counts()
     #expect(counts.handledTypes == ["session_start", "emit_decision"])
     #expect(counts.doctor == 1)
+}
+
 }

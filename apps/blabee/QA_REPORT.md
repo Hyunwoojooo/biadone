@@ -1,8 +1,48 @@
 # Blabee M0, T-005, T-006, T-007, T-010, T-011, T-012 및 T-015 QA 보고서
 
 상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인, T-015 소스·계약·자동·실제 두 세션 dogfood 완료
-검토일: 2026-08-23
+최초 검토일: 2026-08-23
+최종 업데이트: 2026-09-02
 대상: 당시 `spikes/m0/`, 현재 `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서. M0 실행 소스는 역사적 결과를 이 문서와 Git 기록에 보존한 뒤 2026-08-31 활성 트리에서 제거했다.
+
+## 2026-09-02 관리형 Codex runtime bundle 후속 QA
+
+- 현재 판정: **소스·focused 자동 검증 통과, 설치본 live·다른 Mac 활성화 미승인**
+- 단일 `codex` 파일 고정을 official package manifest, sibling
+  `codex-code-mode-host`, `rg`, resources를 함께 검사·복사하는 private runtime
+  bundle 계약으로 교체했다.
+- production launcher와 Doctor가 같은 bounded inspector를 사용하며 missing host,
+  malformed manifest, unsafe identity, version qualification mismatch를 fail-closed한다.
+- semantic version allowlist와 exact production bundle catalog를 분리했다. 같은 Team
+  ID·version이어도 package 전체 canonical fingerprint가 등록 release와 다르면
+  실패하며, 2026-09-02 등록 대상은 official `0.151.0` Apple Silicon 하나다.
+- 기본 Doctor는 정적·읽기 전용으로 `codex --version`, Plugin 목록, Hook
+  App Server를 실행하지 않는다. daemon의 전용 `doctor_status` UDS만
+  운영 상태를 변경하지 않는 읽기 경로로 사용한다.
+- staging recovery plan은 payload 복사 전에 원자 게시하며, active lease·unknown entry,
+  손상 또는 미래 timestamp, 안전하지 않은 ACL·link·type은 보존한다. 공유 임시 폴더의
+  관련 없는 항목 수 때문에 Blabee 잔여물 회수가 중단되지 않도록 별도 경계를 검증한다.
+- 반복 provider/spawn 검증은 전체 payload를 다시 해시하지 않고 exact metadata tree와
+  작은 seal digest를 사용한다. 최초 bundle 생성의 전체 digest·서명 검사는 유지한다.
+- manifest allowlist가 통과해도 catalog 미등록 release는 `action_required`, 등록
+  fingerprint mismatch는 실패한다. catalog 일치 뒤에도 실제 binary 버전, Plugin 설치·활성, Hook
+  신뢰, code-mode는 별도 live qualification 전까지 `action_required`다.
+- 일반 `codex`, 공식 설치 파일, PATH, `.zshrc`·alias·shell function은 변경하지
+  않는다. 관리형 실패도 native Codex를 수정·다운그레이드·롤백하지 않는다.
+- `blabee_build_identity`는 실제 Plugin locator가 확인된 경우에만 통과한다. 표준 앱
+  fallback만 확인된 경우에는 Plugin 일치를 추정하지 않고 `action_required`로 남긴다.
+
+공유 runtime trust 집중 테스트 60/60, Doctor 집중 테스트 30/30, managed broker
+56/56, 전체 Swift Testing 472/472+XCTest 5/5, 전체 Node 277/277, release build와
+실제 official `0.151.0` artifact 강제 catalog 시험 1/1이 통과했다. Node의 첫
+Plugin 단독 실행에서는 높은 host 부하와 1초 wall-clock 경계가 겹쳐 timing 실패가
+발생했지만, 해당 두 테스트 2/2, Plugin 14/14, UDS 29/29와 전체 277/277 직접
+재실행에서 재현되지 않아 production runtime 회귀로 판정하지 않았다. Doctor
+재실행은 JSON 결정성·경로 redaction, 기본 run의 processRunner/Hook requester 0회,
+persistent artifact 부재, missing host·malformed manifest·unsafe identity·version 및
+catalog qualification 분기를 포함한다. Codex `0.152.0`·`0.152.1`은 실제 official package의 version/code-mode/approval/
+`/resume`/cleanup을 통과하기 전까지 allowlist에 추가하지 않는다. 깨끗한 다른
+Mac의 최초 설치·업데이트·제거·native non-interference도 공개 활성화 gate다.
 
 ## 판정
 
