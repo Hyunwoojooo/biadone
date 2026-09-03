@@ -1,6 +1,6 @@
 # Blabee 작업 현황
 
-업데이트: 2026-09-02
+업데이트: 2026-09-03
 
 ## 현재 단계
 
@@ -30,6 +30,7 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 | T-012b-2 제품 service·정적 LaunchAgent | foreground 제품 자격 완료, 자동 시작 미승인 | `service`는 exact app/Resources/real Contracts와 Application Support 고정 경로만 사용하고 추가 인자·환경 경로 우회를 거부한다. strict `service.json`과 정적 LaunchAgent exact 네 키를 구현했다. Product 10/10, 패키징 7/7, T-011 24/24와 ad-hoc strict 서명 계약이 통과했다. 후속 dogfood에서 primary login Keychain과 임시 `launchctl submit` service는 실행했지만, 번들 정적 LaunchAgent 또는 `SMAppService` 등록과 로그인 자동 시작은 실행하지 않음 |
 | T-012b-3a 프로젝트 설정 writer | 안전한 설정 변경 계약 자격 완료, 제품 UI·자동 시작 미승인 | exact 앱 전용 `project-settings`, current-user 0700/0600·single-link 경계, mutex+flock, strict locked RMW, file/directory fsync와 atomic rename을 구현했다. reader도 Application Support ancestor symlink를 거부한다. Writer 12/12, fresh reader+writer 23/23, Swift Pet 78/78, 이 단계 완료 당시 전체 Swift Testing 150/150+XCTest 5/5, release build와 패키징 7/7 통과. 후속 dogfood에서 foreground service와 primary login Keychain을 실행했지만 SMAppService·launchctl·자동 시작은 실행하지 않음 |
 | T-012b-3b Pet 온보딩 UI·서비스 상태 계약 | UI·fake adapter 자격 완료, 실제 자동 시작 미승인 | 수동 상태/설정 조회, 명시적 버튼 전용 등록·해제·System Settings·프로젝트 변경, single-flight와 configured/active 분리를 구현했다. Onboarding 10/10, Pet 88/88, 최신 전체 Swift Testing 161/161+XCTest 5/5, T-011 24/24, 패키징 7/7, 계약 114/114가 통과했다. 후속 dogfood에서 Application Support와 primary Keychain을 사용했지만 실제 SMAppService·System Settings 변경은 하지 않음 |
+| T-012c 내부 테스트용 DMG | 자동 패키징 자격 완료, 깨끗한 Mac·공개 배포 미승인 | release coordinator를 private snapshot으로 고정하고 기존 앱 조립기로 ad-hoc 서명한 뒤 `Blabee.app`, `Applications` 링크, `INTERNAL_TESTING.txt`를 담은 DMG와 SHA-256 sidecar를 생성한다. 출력별 잠금, 중단 transaction 복구와 부분 attach 정리를 포함한 집중 12/12 및 전체 패키징 26/26가 통과했고 실제 arm64 DMG의 read-only mount·서명·구조·checksum을 확인했다. Developer ID·공증·stapling·자동 업데이트는 포함하지 않으며, DMG 성공과 Pet/Hook·SMAppService 실사용 성공은 별도 증거로 취급한다. 정확한 절차와 깨끗한 Mac 수동 gate는 `INTERNAL_DMG_PACKAGING.md`에 기록했다. |
 | 프로젝트 로컬 MCP 검색 | 완료 | 직접 MCP `-c` 주입 없이 임시 프로젝트 `.codex/config.toml`만으로 전체 왕복 통과 |
 | 설명 전용 음성 계약 | 완료 | 결정 제안·대기 0건, 파일 변경 없음, 마지막 메시지 `M0_EXPLAINED` |
 | 플러그인 구조 | 실제 로컬 설치·신뢰·회전 조건부 완료 | 실제 Codex CLI `0.149.0`의 격리 lifecycle과 실제 사용자 marketplace/Plugin 설치를 통과했다. 현재 활성 selector는 `blabee@blabee-local-dogfood-dbc4be6d1786` 하나이며 네 guarded Hook은 `/hooks`에서 각각 검토·신뢰했다. 설치 cache 제거 뒤 fail-open과 재설치 후 새 세션 연결도 통과했다. 제공 Python validator는 PyYAML 부재로 실행하지 않았고 공개 배포 신뢰 UX는 별도 |
@@ -102,7 +103,7 @@ project_enabled
 
 - 완료: T-001, T-002, T-003, T-005, T-006, T-007, T-015
 - M0 합성 픽스처 검증 완료: T-008. 실제 사용자 작업공간 연결은 아직 하지 않았다.
-- 진행 중: T-004, T-010, T-011, T-012. T-015의 실제 `답변 완료 → FIFO Pet 선택 → 같은 세션 새 턴` 왕복은 완료했다. T-010은 확장 카드 시각 캡처·디스플레이·Space·키보드 레이아웃·sleep·호스트 앱 매트릭스, T-011은 실제 sleep/복귀, T-012는 LaunchAgent 등록/승인·signed Keychain·DMG·공증·버전 allowlist·터미널 매트릭스가 남았다.
+- 진행 중: T-004, T-010, T-011, T-012. T-015의 실제 `답변 완료 → FIFO Pet 선택 → 같은 세션 새 턴` 왕복은 완료했다. T-010은 확장 카드 시각 캡처·디스플레이·Space·키보드 레이아웃·sleep·호스트 앱 매트릭스, T-011은 실제 sleep/복귀, T-012는 내부 DMG의 깨끗한 Mac 스모크와 LaunchAgent 등록/승인·signed Keychain·Developer ID·공증·공개 DMG·버전 allowlist·터미널 매트릭스가 남았다.
 - 대기: T-009, T-013, T-014.
 
 ## 다음 작업
@@ -112,7 +113,7 @@ project_enabled
 3. T-010의 확장 카드 시각 캡처와 다중 디스플레이·Spaces·키보드 레이아웃·시각 만료·호스트 복귀 매트릭스를 순서대로 검증한다. 물리 `Option+3` pause 경로는 통과했으므로 반복하지 않는다.
 4. 사용자 배포 작업은 뒤로 미루고 T-009의 읽기 전용 도입과 실제 evidence/risk 수집부터 구현한다. 실제 저장소 rollback mutation은 별도 사용자 승인 전까지 계속 비활성화한다.
 5. T-004에서 일반 Hook PermissionRequest의 `거절`·`Codex에서 직접 결정` 왕복과 두 세션 FIFO, timeout·서비스 재시작 fallback을 검증하고, 별도 관리형 App Server 세션에서 `이번만 허용 = accept`와 원래 TUI 전달을 검증한다. polling 시점 frontmost 앱으로의 복귀는 best-effort다.
-6. 내부 실사용 뒤 T-012b-3c의 실제 `SMAppService`, signed Data Protection Keychain, Developer ID·공증·DMG·updater, exact Codex allowlist와 Terminal/iTerm/VS Code/Orca 매트릭스를 순서대로 검증한다.
+6. 내부 DMG의 깨끗한 Mac 스모크와 내부 실사용 뒤 T-012b-3c의 실제 `SMAppService`, signed Data Protection Keychain, Developer ID·공증·공개 DMG·updater, exact Codex allowlist와 Terminal/iTerm/VS Code/Orca 매트릭스를 순서대로 검증한다.
 
 ## 알려진 위험과 경계
 
@@ -129,7 +130,7 @@ project_enabled
 - Swift replay와 JS replay의 단일 결함 오류 코드는 맞췄다. 한 이벤트에 여러 결함이 동시에 있는 경우에는 raw-token/DTO 파싱 순서 때문에 첫 오류 코드가 다를 수 있으며, 이는 수용성 우회가 아닌 진단 우선순위의 낮은 잔여 parity 위험이다.
 - T-007b-B2는 dispatch 후 300초 연속 단조 deadline에서 `unknown`을 정확히 한 번 기록하고 자동 재시도하지 않는다. 프로세스 재시작으로 anchor가 사라진 pending/unterminated 상태도 각각 expiry/`unknown`으로 fail-closed한다. T-011 storage authority가 정규화한 절대 DB 경로별 단일 제품 owner를 storage 초기화 전에 강제한다. symlink/hard-link/특수 mount의 서로 다른 path alias는 같은 inode로 합치지 못하는 잔여 위험이다.
 - M0 하네스는 프로젝트 신뢰를 정확한 whole-table CLI override로 설정하고 Hook 해시 검토를 테스트 전용 `--dangerously-bypass-hook-trust`로 우회했다. 제품 설치에서는 이 우회를 사용할 수 없다.
-- 프로젝트 로컬 MCP 검색 중복 우려는 해소됐고 T-011에서 격리 lifecycle과 실제 사용자 local marketplace/Plugin 설치·개별 Hook 신뢰가 Codex `0.149.0`으로 통과했다. 번들 코디네이터 자동 시작·Developer ID 서명·공증·실제 앱 DMG는 아직 검증하지 않았다.
+- 프로젝트 로컬 MCP 검색 중복 우려는 해소됐고 T-011에서 격리 lifecycle과 실제 사용자 local marketplace/Plugin 설치·개별 Hook 신뢰가 Codex `0.149.0`으로 통과했다. 번들 코디네이터 자동 시작·Developer ID 서명·공증·공개 앱 DMG는 아직 검증하지 않았다. ad-hoc 앱을 담은 내부 DMG는 별도 T-012c이며 공개 배포 증거가 아니다.
 - 설정에서는 수정 전 Blabee selector를 제거해 새 세션이 최신 selector 하나만 읽는다. 다만 수정 전 Hook command를 메모리에 보유한 다른 열린 Codex 세션의 마지막 Hook을 깨뜨리지 않기 위해 이전 cache root는 실행 가능한 상태로 보존했다. 이는 최신 Plugin 자동 재연결 증거가 아니며, 해당 세션들이 종료·재개된 뒤 별도 정리해야 한다.
 - T-012b-3a writer의 `flock`은 advisory lock이므로 같은 UID의 비협조 프로세스를 강제로 차단하지 않는다. 실제 crash가 unique temporary file을 남길 수 있으나 다음 write와 충돌하지 않으며, 정리 정책은 설치 수명주기 단계에 남아 있다. 기존 개발용 `daemon`의 임의 storage path 계약도 유지되며 새 제품 설정 명령의 identity gate가 범용 파일 sandbox를 뜻하지 않는다.
 - T-012b-3b는 `.enabled`를 등록·실행 자격 상태로만 표시하고 daemon health로 해석하지 않는다. 앱 시작·poll·snapshot·설정 화면 열기는 `SMAppService.register()`를 호출하지 않으며, 실제 등록·해제·System Settings 상태 전이는 아직 signed 앱에서 검증하지 않았다. 설정 변경은 service를 자동 재시작하지 않아 configured와 active가 다음 재시작까지 다를 수 있다.

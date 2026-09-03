@@ -257,7 +257,7 @@ P4·P5와 실제 다른 PC 재검증은 소스 테스트로 완료 처리하지 
 
 1. 플러그인 미리보기/설치/업데이트/제거 흐름을 만든다.
 2. 명시적 동의를 거쳐 선택적으로 CLI와 로그인 항목을 설치하도록 한다.
-3. 서명과 공증을 거쳐 DMG를 빌드한다.
+3. 먼저 ad-hoc 서명 앱을 담은 미공증 내부 테스트 DMG와 checksum을 만들고 깨끗한 Mac에서 수동 검증한다. 공개 배포는 별도 Developer ID 서명과 공증을 거쳐 새 DMG로 빌드한다.
 4. Terminal, iTerm, VS Code 터미널, Orca에서 동일한 기본 플러그인 경로를 테스트한다.
 5. 알파에서 Codex `0.148.0` 계약 픽스처를 실행하고, 공개 버전 허용 목록과 비지원 버전 차단/안내를 검증한다.
 6. `blabee doctor`에서 Codex 버전, 앱/데몬, Plugin/MCP, Hook 신뢰, 프로젝트 활성화 상태를 진단한다.
@@ -314,6 +314,13 @@ T-012b-3b 실행 결과:
 - 저장된 `configured projects`와 현재 daemon snapshot의 `active projects`를 구분한다. 설정에서 제거했지만 아직 실행 중인 프로젝트도 `현재 서비스에서만 활성`로 유지하며, 변경은 다음 service 재시작부터 적용된다고 안내한다.
 - fake adapter 집중 10/10, Pet 88/88, 전체 Swift package XCTest 5/5+Swift Testing 160/160, T-011 23/23, 패키징 7/7, v1 계약 114/114, release build와 임시 ad-hoc 앱 deep/strict 서명 검증이 통과했다. 온보딩 집중 테스트는 fake만 사용했고 실제 `SMAppService`, `service`, `NSOpenPanel`, System Settings, 사용자 Application Support 또는 제품 primary Keychain은 호출·변경하지 않았다. 전체 Swift 회귀가 사용한 격리된 임의 test-only Keychain account는 종료 전에 정리했다.
 - 이 단계는 UI와 수명주기 어댑터의 코드 계약 자격이다. signed app에서 실제 등록·승인·해제와 로그인/재부팅 수명주기를 검증하는 T-012b-3c는 시스템 상태 변경 전 사용자 동의를 받는 별도 실기기 gate다.
+
+T-012c 내부 테스트용 DMG — 2026-09-03:
+
+- 먼저 Swift release coordinator를 빌드하고, 기존 macOS 앱 조립기를 통해 ad-hoc 서명된 `Blabee.app`을 만든다. 내부 DMG에는 앱, `/Applications` 링크와 내부 테스트 안내만 포함한다.
+- 입력 바이너리와 출력은 명시적 절대 경로로 받고 기존 출력·symlink·특수 파일·안전 범위 밖 쓰기를 거부한다. 이미지 검증과 앱의 deep/strict 서명 검증을 마친 뒤 SHA-256 sidecar를 함께 만든다.
+- 빌드 명령, 팀원 전달·checksum·안전한 Gatekeeper 처리와 깨끗한 Mac 스모크 절차는 `INTERNAL_DMG_PACKAGING.md`를 source of truth로 사용한다. 입력 snapshot, 출력별 잠금, 중단 transaction 복구와 부분 attach 정리를 포함한 집중 12/12, 전체 패키징 26/26 및 실제 arm64 이미지의 `hdiutil verify`·read-only mount·서명·구조·checksum이 통과했다.
+- 내부 DMG 성공은 Pet/Hook, 프로젝트 활성화 또는 `SMAppService` 등록 왕복의 증거가 아니다. Developer ID inner-to-outer signing, DMG signing, `notarytool`·staple·Gatekeeper, 버전 주입, Universal 지원 판단, clean Mac 공개 gate와 updater는 후속 공개 배포 단계다.
 
 완료 조건:
 

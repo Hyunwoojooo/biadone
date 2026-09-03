@@ -14,6 +14,7 @@
     "test:t012": "node --test --test-concurrency=1 Tests/AppPackaging/*.test.mjs",
     "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs",
+    "build:internal-dmg": "node scripts/build-internal-dmg.mjs",
     "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
     "m1:qualify": "node spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
   },

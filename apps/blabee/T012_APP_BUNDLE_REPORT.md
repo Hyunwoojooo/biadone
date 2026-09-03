@@ -1,7 +1,7 @@
 # T-012b-1 로컬 Blabee.app 조립 보고서
 
-업데이트: 2026-08-22
-상태: 로컬 조립·ad-hoc 자격 완료, 공개 배포 미승인
+업데이트: 2026-09-03
+상태: 로컬 조립·ad-hoc 앱을 담은 내부 DMG 자동 자격 완료, 깨끗한 Mac·공개 배포 미승인
 
 ## 결과
 
@@ -80,13 +80,53 @@ Blabee.app/
 이 결과는 Developer ID, 공증, Gatekeeper 허용, provisioning profile,
 Data Protection Keychain access group 또는 공개 DMG를 승인하지 않는다.
 
+## 2026-09-03 내부 테스트용 DMG 후속
+
+기존 `Blabee.app` 조립기를 사용해 ad-hoc 서명 앱을 만들고, 내부 팀원에게 전달할
+DMG와 SHA-256 sidecar를 생성하는 범위를 추가한다. DMG에는 `Blabee.app`,
+`Applications -> /Applications`, `INTERNAL_TESTING.txt`만 포함한다.
+
+입력 coordinator는 private pinned snapshot으로 고정하고 hash를 기록한다. 같은
+출력에는 cross-process lock을 두며, checksum 게시 중 중단되면 transaction marker와
+inode/hash를 확인해 다음 실행에서 복구한다. 부분 attach의 disk device도 추적해
+정상 detach를 증명하지 못하면 게시하지 않고 조사 경로를 보존한다. 정리 오류는 최초
+패키징 오류를 덮지 않고 함께 보고한다.
+
+빌드는 먼저 Swift release coordinator를 만든 뒤 명시적 절대 경로를 사용한다.
+
+```sh
+swift build -c release \
+  --package-path /Users/joo/BiaDone/apps/blabee/src/coordinator-swift
+
+npm run build:internal-dmg -- \
+  --binary /Users/joo/BiaDone/apps/blabee/src/coordinator-swift/.build/release/blabee-coordinator \
+  --output /Users/joo/BiaDone/apps/blabee/build/internal-dmg/Blabee-0.1.0-internal.dmg
+```
+
+이 단계는 ad-hoc 서명·미공증 내부 산출물만 다룬다. Developer ID identity 조회,
+notary credential, 공개 DMG 서명, 자동 설치와 업데이트는 다루지 않는다. 팀원 전달,
+checksum 확인, 안전한 Gatekeeper 처리와 깨끗한 Mac 스모크 기준은
+`INTERNAL_DMG_PACKAGING.md`를 따른다.
+
+실제 arm64 release coordinator로 다음 산출물을 만들고 다시 검증했다.
+
+- DMG: `build/internal-dmg-20260903/Blabee-0.1.0-internal-arm64.dmg`
+- 크기: 2,141,249 bytes
+- SHA-256: `0d2cdb0367641365eb88b4695a247a5da91c9b49f377b071ac38aac583d1a945`
+- 입력 coordinator SHA-256: `aabc3b8c867b6194dc03eeed4616627eceba1636e50c43404876e54834dc8812`
+- 결과: `hdiutil verify`, sidecar `shasum -c`, read-only mount, exact 3개 root,
+  plist·arm64·ad-hoc deep/strict 서명, 정상 detach 통과
+
 ## 실행 증거
 
-- `npm run test:t012`: 5/5
+- 내부 DMG 집중 테스트: 12/12
+- `npm run test:t012`: 26/26
+- 최종 전체 `npm test`: 289/289 통과
+- 정식 Xcode toolchain Swift release `blabee-coordinator` 빌드: 통과
+- 실제 arm64 DMG 생성·독립 `hdiutil verify`·SHA-256 확인: 통과
 - `swift test --filter BlabeePetTests`: 55/55
 - `npm run test:t011`: 23/23
 - `npm run test:contracts`: 114/114
-- Swift release `blabee-coordinator` 빌드: 통과
 - 실제 app ad-hoc Hardened Runtime 서명과 deep/strict 검증: 통과
 - 서명 후 Info.plist 변조 탐지: 통과
 - 번들 내부 Doctor의 coordinator runtime, app bundle, embedded coordinator,
@@ -102,7 +142,8 @@ PATH MCP, daemon, 프로젝트 활성화가 아직 제품 설치 상태가 아�
 - launchd/Login Item 등록
 - Keychain 읽기·쓰기·삭제 또는 비밀번호 prompt
 - Developer ID identity 조회·사용
-- 공증, Gatekeeper 평가, DMG 생성
+- 공개 배포용 DMG 서명, 공증, stapling, Gatekeeper 공개 배포 평가
+- 자동 업데이트, 공개 다운로드와 불특정 사용자 재배포
 
 ## 후속 구현 상태
 
@@ -114,6 +155,10 @@ T-012b-2에서 번들 Contracts와 Application Support 설정을 사용하는 �
 UI 계약이다. 실제 로그인 항목 등록, 제품 Keychain 최초 실행, Developer ID
 credential 사용은 시스템 상태나 암호 요청에 영향을 줄 수 있으므로 별도의 사용자
 동의를 받은 뒤 수행한다.
+
+내부 DMG 생성 성공은 위 제품 수명주기 또는 Pet/Hook 왕복의 실사용 증거가 아니다.
+소스와 기존 Blabee 상태가 없는 깨끗한 Mac에서 설치·첫 실행·등록·선택 왕복을 별도
+수동 검증해야 한다.
 
 ## Apple 기준
 
