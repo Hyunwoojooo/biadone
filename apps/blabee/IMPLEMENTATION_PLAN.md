@@ -322,6 +322,15 @@ T-012c 내부 테스트용 DMG — 2026-09-03:
 - 빌드 명령, 팀원 전달·checksum·안전한 Gatekeeper 처리와 깨끗한 Mac 스모크 절차는 `INTERNAL_DMG_PACKAGING.md`를 source of truth로 사용한다. 입력 snapshot, 출력별 잠금, 중단 transaction 복구와 부분 attach 정리를 포함한 집중 12/12, 전체 패키징 26/26 및 실제 arm64 이미지의 `hdiutil verify`·read-only mount·서명·구조·checksum이 통과했다.
 - 내부 DMG 성공은 Pet/Hook, 프로젝트 활성화 또는 `SMAppService` 등록 왕복의 증거가 아니다. Developer ID inner-to-outer signing, DMG signing, `notarytool`·staple·Gatekeeper, 버전 주입, Universal 지원 판단, clean Mac 공개 gate와 updater는 후속 공개 배포 단계다.
 
+T-012d DMG 설치 후 Codex 간편 연결 — 2026-09-03:
+
+- `Blabee.app`의 Resources를 Codex가 읽을 수 있는 local marketplace로 함께 패키징하고, Pet 설정 화면에 명시적 `Codex 연결하기`·업데이트·연결 해제 동작을 추가한다. 앱은 공식 Codex Plugin CLI를 셸 없이 실행한 뒤 `plugin list --json`을 다시 조회해 exact `blabee@blabee-app`의 설치·활성·버전·local source를 확인한다.
+- 앱 시작, 상태 poll과 설정 화면 열기는 Codex CLI 조회나 변경을 수행하지 않고 `확인 전` 상태만 보여준다. 상태 확인·Plugin 설치·업데이트·제거는 사용자가 해당 버튼을 누른 경우에만 single-flight로 실행한다. 충돌하거나 Blabee가 소유했다고 증명할 수 없는 marketplace/Plugin은 자동으로 삭제하거나 덮어쓰지 않는다.
+- Plugin 설치와 Hook 신뢰를 서로 다른 상태로 표시한다. 설치 후에는 Blabee가 Hook 신뢰 완료 여부를 자동 판정하지 못한다는 점과 새 Codex 세션에서 `/hooks`로 `SessionStart`·`UserPromptSubmit`·`Stop`·`PermissionRequest`를 직접 확인해야 한다는 점을 정확히 안내한다. Hook 신뢰 우회 플래그는 제품 흐름에서 사용하지 않는다.
+- 일반 `codex`, 공식 Codex 설치 파일, `.zshrc`, `PATH`, alias·wrapper와 native `/resume`은 변경하지 않는다. 앱·설정 화면을 여는 것만으로 Codex subprocess도 실행하지 않는다. 명시적 사용자 동작 뒤에도 경로 identity·OpenAI 서명과 Plugin 전용 지원 버전을 통과한 후보만 실행하고 각 subprocess 직전에 identity를 다시 검사한다. 앱이 `/Applications/Blabee.app`에 설치되지 않았거나 실행 파일·JSON 응답을 안전하게 확인할 수 없으면 변경 없이 실패한다.
+- 2026-09-03 후속 안정화에서 Plugin JSON·manifest·ACL·lock·실행 환경과 충돌 처리를 실패 폐쇄로 보강하고, 앱 조립의 descriptor snapshot·조상 symlink 차단·용량/entry budget·서명 후 최종 트리 재검증·출력 publish·실패 정리를 강화했다. Pet 상태 변경과 새로고침 경쟁, 테스트 전용 signature Hook·SQLite fixture·managed bridge 자원 누수도 회귀로 닫았다. 전체 Swift Testing 528/528+XCTest 5/5를 정상 권한에서 최종 12회 연속 통과했고, Plugin 집중 51/51, 전체 Node 304/304, 앱 조립 집중 27/27과 격리 release build가 통과했다. 셸 반복문 안에서 발생한 socket/Keychain 49 issues는 외부 Codex tool sandbox의 `EPERM` 환경 오류였고, Node의 단일 1초 Hook timing failure는 80회 실측 후 테스트 전용 상한만 2.5초로 보정해 재검증했다.
+- 이는 소스·패키징 계약 자격이다. 다른 Mac에서 DMG 설치 → 프로젝트 추가 → Codex 연결 → 새 Codex `/hooks` 검토 → 실제 Hook/Pet 왕복은 깨끗한 Mac 수동 gate로 남는다. 검증과 path 기반 Codex 실행·Plugin 제거 사이의 same-user TOCTOU, quarantine 경로 기반 정리의 낮은 경쟁 구간과 NVM·Volta shim 비지원 가능성은 `KNOWN_ISSUES.md`에서 추적한다. Developer ID·공증·자동 업데이트도 별도 공개 배포 단계다.
+
 완료 조건:
 
 - 터미널에 다시 입력하지 않고 저위험 루프 세 번을 연속으로 성공한다.

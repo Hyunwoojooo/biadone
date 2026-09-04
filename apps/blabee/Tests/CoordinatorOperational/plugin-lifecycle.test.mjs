@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
 const pluginRoot = path.join(repositoryRoot, "Plugin/blabee");
+const packagedMarketplaceManifest = path.join(
+  repositoryRoot,
+  "Packaging/macos/Resources/CodexMarketplace.json",
+);
 
 function runCodex(args, env) {
   return new Promise((resolve, reject) => {
@@ -123,6 +127,74 @@ test("Codex can install, cache-bust update, remove, and forget an isolated Blabe
 
     const marketplaces = await expectCodexJSON(["plugin", "marketplace", "list", "--json"], env);
     assert.equal(containsJSONValue(marketplaces, marketplaceName), false);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("Codex accepts the packaged Blabee Resources layout as a local marketplace", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "blabee-product-marketplace-"));
+  const codexHome = path.join(temporaryRoot, "codex-home");
+  const resourcesRoot = path.join(temporaryRoot, "Resources");
+  const marketplaceConfigDirectory = path.join(resourcesRoot, ".agents/plugins");
+  const packagedPlugin = path.join(resourcesRoot, "Plugin/blabee");
+  const marketplaceName = "blabee-app";
+  const selector = `blabee@${marketplaceName}`;
+  const env = {
+    ...process.env,
+    CODEX_HOME: codexHome,
+    NO_COLOR: "1",
+  };
+
+  try {
+    await mkdir(codexHome, { recursive: true, mode: 0o700 });
+    await mkdir(marketplaceConfigDirectory, { recursive: true });
+    await mkdir(path.dirname(packagedPlugin), { recursive: true });
+    await cp(pluginRoot, packagedPlugin, { recursive: true });
+    await cp(
+      packagedMarketplaceManifest,
+      path.join(marketplaceConfigDirectory, "marketplace.json"),
+    );
+
+    const marketplaceAdd = await expectCodexJSON(
+      ["plugin", "marketplace", "add", resourcesRoot, "--json"],
+      env,
+    );
+    assert.equal(marketplaceAdd.marketplaceName, marketplaceName);
+    assert.equal(marketplaceAdd.alreadyAdded, false);
+    assert.equal(
+      await realpath(marketplaceAdd.installedRoot),
+      await realpath(resourcesRoot),
+    );
+
+    const marketplaceAddAgain = await expectCodexJSON(
+      ["plugin", "marketplace", "add", resourcesRoot, "--json"],
+      env,
+    );
+    assert.equal(marketplaceAddAgain.marketplaceName, marketplaceName);
+    assert.equal(marketplaceAddAgain.alreadyAdded, true);
+    assert.equal(
+      await realpath(marketplaceAddAgain.installedRoot),
+      await realpath(resourcesRoot),
+    );
+
+    const pluginAdd = await expectCodexJSON(["plugin", "add", selector, "--json"], env);
+    assert.equal(pluginAdd.pluginId, selector);
+    assert.equal(pluginAdd.version, "0.1.0");
+
+    const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
+    const entry = installed.installed.find((value) => value.pluginId === selector);
+    assert.equal(entry.enabled, true);
+    assert.equal(entry.source.source, "local");
+    assert.equal(await realpath(entry.source.path), await realpath(packagedPlugin));
+
+    await expectCodexJSON(["plugin", "remove", selector, "--json"], env);
+    await expectCodexJSON(
+      ["plugin", "marketplace", "remove", marketplaceName, "--json"],
+      env,
+    );
+    const afterRemove = await expectCodexJSON(["plugin", "list", "--json"], env);
+    assert.equal(afterRemove.installed.some((value) => value.name === "blabee"), false);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

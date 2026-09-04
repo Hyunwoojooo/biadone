@@ -1113,16 +1113,16 @@ struct CodexRuntimeTrustTests {
         )
         let first = try provider.next()
         let signatureProbe = RuntimeSignatureValidationProbe()
-        ManagedCodexPinnedExecutableTesting.signatureValidation { _, _ in
-            signatureProbe.record()
+        try ManagedCodexRuntimeBundleInspector.withSignatureValidationHook(
+            { _, _ in signatureProbe.record() }
+        ) { () throws -> Void in
+            let second = try provider.next()
+            let third = try provider.next()
+            let fourth = try provider.next()
+            #expect(second == first)
+            #expect(third == first)
+            #expect(fourth == first)
         }
-        defer {
-            ManagedCodexPinnedExecutableTesting.signatureValidation(nil)
-        }
-
-        #expect(try provider.next() == first)
-        #expect(try provider.next() == first)
-        #expect(try provider.next() == first)
         #expect(signatureProbe.callCount == 0)
         #expect(versions.callCount == 1)
     }
@@ -2036,32 +2036,35 @@ struct CodexRuntimeTrustTests {
         defer { aba.remove() }
         try aba.replaceTargetWithNativeExecutable()
         let backup = aba.host.appendingPathExtension("original")
-        ManagedCodexPinnedExecutableTesting.signatureValidation { label, _ in
-            guard label == "bin/codex-code-mode-host" else { return }
-            try FileManager.default.moveItem(at: aba.host, to: backup)
-            do {
-                try Data(contentsOf: URL(fileURLWithPath: "/usr/bin/false"))
-                    .write(to: aba.host)
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o755],
-                    ofItemAtPath: aba.host.path
-                )
-                try FileManager.default.removeItem(at: aba.host)
-                try FileManager.default.moveItem(at: backup, to: aba.host)
-            } catch {
-                try? FileManager.default.removeItem(at: aba.host)
-                try? FileManager.default.moveItem(at: backup, to: aba.host)
-                throw error
+        try ManagedCodexRuntimeBundleInspector.withSignatureValidationHook(
+            { label, path in
+                guard label == "bin/codex-code-mode-host",
+                      URL(fileURLWithPath: path).standardizedFileURL
+                        == aba.host.standardizedFileURL
+                else { return }
+                try FileManager.default.moveItem(at: aba.host, to: backup)
+                do {
+                    try Data(contentsOf: URL(fileURLWithPath: "/usr/bin/false"))
+                        .write(to: aba.host)
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: 0o755],
+                        ofItemAtPath: aba.host.path
+                    )
+                    try FileManager.default.removeItem(at: aba.host)
+                    try FileManager.default.moveItem(at: backup, to: aba.host)
+                } catch {
+                    try? FileManager.default.removeItem(at: aba.host)
+                    try? FileManager.default.moveItem(at: backup, to: aba.host)
+                    throw error
+                }
             }
-        }
-        defer {
-            ManagedCodexPinnedExecutableTesting.signatureValidation(nil)
-        }
-        #expect(throws: ManagedCodexRuntimeBundleError.self) {
-            _ = try ManagedCodexRuntimeBundleInspector.inspect(
-                executableURL: aba.target,
-                executableVerification: .trustedTestFixture
-            )
+        ) { () -> Void in
+            #expect(throws: ManagedCodexRuntimeBundleError.self) {
+                _ = try ManagedCodexRuntimeBundleInspector.inspect(
+                    executableURL: aba.target,
+                    executableVerification: .trustedTestFixture
+                )
+            }
         }
     }
 

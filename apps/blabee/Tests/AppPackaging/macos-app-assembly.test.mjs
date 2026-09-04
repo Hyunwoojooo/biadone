@@ -9,8 +9,10 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,13 +22,17 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { assembleMacOSApp } from "../../scripts/build-macos-app.mjs";
+import {
+  assembleMacOSApp,
+  macOSAppAssemblyTestSupport,
+} from "../../scripts/build-macos-app.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const assemblyScript = join(repositoryRoot, "scripts", "build-macos-app.mjs");
 const execFile = promisify(execFileCallback);
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
 const menuBarIconFileName = "BlabeeMenuBar.svg";
+const codexMarketplaceFileName = "CodexMarketplace.json";
 const canonicalLaunchAgent = join(
   repositoryRoot,
   "Packaging",
@@ -40,6 +46,13 @@ const canonicalMenuBarIcon = join(
   "macos",
   "Resources",
   menuBarIconFileName,
+);
+const canonicalCodexMarketplace = join(
+  repositoryRoot,
+  "Packaging",
+  "macos",
+  "Resources",
+  codexMarketplaceFileName,
 );
 const defaultInspectedRuntimeIdentity = `sha256:${"f".repeat(64)}`;
 const defaultInspectedManifestDigest = `sha256:${"e".repeat(64)}`;
@@ -68,6 +81,17 @@ async function regularFiles(root, current = root) {
     files.push(relative(root, path).split(sep).join("/"));
   }
   return files;
+}
+
+async function filesystemEntryCount(path) {
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory()) return 1;
+  const entries = await readdir(path);
+  let count = 1;
+  for (const entry of entries) {
+    count += await filesystemEntryCount(join(path, entry));
+  }
+  return count;
 }
 
 function compareNames(left, right) {
@@ -141,6 +165,17 @@ async function waitForPath(path) {
   throw new Error(`timed out waiting for ${path}`);
 }
 
+async function waitForStagingPath(root) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const entry = (await readdir(root)).find((candidate) =>
+      candidate.startsWith(".Blabee.app.staging-"));
+    if (entry !== undefined) return join(root, entry);
+    await delay(10);
+  }
+  throw new Error(`timed out waiting for a staging directory in ${root}`);
+}
+
 async function copyCanonicalPackagingSupport(sourceRoot) {
   const directory = join(sourceRoot, "Packaging", "macos", "LaunchAgents");
   await mkdir(directory, { recursive: true });
@@ -148,7 +183,64 @@ async function copyCanonicalPackagingSupport(sourceRoot) {
   const resources = join(sourceRoot, "Packaging", "macos", "Resources");
   await mkdir(resources, { recursive: true });
   await copyFile(canonicalMenuBarIcon, join(resources, menuBarIconFileName));
+  await copyFile(
+    canonicalCodexMarketplace,
+    join(resources, codexMarketplaceFileName),
+  );
 }
+
+test("file handle cleanup preserves the primary error and reports every close error", async () => {
+  const primaryError = new Error("primary read failure");
+  const firstCloseError = new Error("first close failure");
+  const secondCloseError = new Error("second close failure");
+  let successfulCloseAttempted = false;
+
+  await assert.rejects(
+    macOSAppAssemblyTestSupport.closeFileHandlesPreservingPrimary([
+      { close: async () => { throw firstCloseError; } },
+      { close: async () => { successfulCloseAttempted = true; } },
+      { close: async () => { throw secondCloseError; } },
+    ], primaryError),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.equal(error.cause, primaryError);
+      assert.equal(error.errors[0], primaryError);
+      assert.deepEqual(error.errors.slice(1), [firstCloseError, secondCloseError]);
+      assert.deepEqual(error.closeErrors, [firstCloseError, secondCloseError]);
+      assert.match(error.message, /primary read failure/);
+      return true;
+    },
+  );
+  assert.equal(successfulCloseAttempted, true);
+});
+
+test("stable open fails promptly when a regular path becomes a FIFO after inspection", {
+  skip: process.platform !== "darwin" ? "macOS packaging race contract" : false,
+}, async (t) => {
+  const fixture = await makeWorkspace(t);
+  const source = join(fixture.root, "open-race-source");
+  const original = join(fixture.root, "open-race-source.original");
+  await writeFile(source, "trusted payload\n");
+
+  await assert.rejects(
+    Promise.race([
+      macOSAppAssemblyTestSupport.openStableRegularFile(
+        source,
+        "open-race source",
+        1024,
+        async () => {
+          await rename(source, original);
+          await execFile("/usr/bin/mkfifo", [source]);
+        },
+      ),
+      delay(1_000).then(() => {
+        throw new Error("stable open race timed out");
+      }),
+    ]),
+    /changed while it was being opened/,
+  );
+  assert.equal(await readFile(original, "utf8"), "trusted payload\n");
+});
 
 test("assembler creates the required Blabee.app payload and deterministic manifest", async (t) => {
   const fixture = await makeWorkspace(t);
@@ -164,6 +256,13 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   const infoPlist = join(contents, "Info.plist");
   const launchAgent = join(contents, "Library", "LaunchAgents", launchAgentFileName);
   const menuBarIcon = join(contents, "Resources", menuBarIconFileName);
+  const codexMarketplace = join(
+    contents,
+    "Resources",
+    ".agents",
+    "plugins",
+    "marketplace.json",
+  );
   const contract = join(contents, "Resources", "Contracts", "v1", "manifest.json");
   const plugin = join(
     contents,
@@ -186,6 +285,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     infoPlist,
     launchAgent,
     menuBarIcon,
+    codexMarketplace,
     contract,
     plugin,
     launcher,
@@ -200,6 +300,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(await mode(join(contents, "Library", "LaunchAgents")), 0o755);
   assert.equal(await mode(launchAgent), 0o644);
   assert.equal(await mode(menuBarIcon), 0o644);
+  assert.equal(await mode(codexMarketplace), 0o644);
   assert.equal(await mode(contract), 0o644);
   assert.equal(await mode(plugin), 0o644);
   assert.equal(await mode(launcher), 0o755);
@@ -256,6 +357,18 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.notEqual(launchTargetMetadata.mode & 0o111, 0);
   assert.equal(await digest(launchAgent), await digest(canonicalLaunchAgent));
   assert.equal(await digest(menuBarIcon), await digest(canonicalMenuBarIcon));
+  assert.equal(
+    await digest(codexMarketplace),
+    await digest(canonicalCodexMarketplace),
+  );
+  const marketplace = JSON.parse(await readFile(codexMarketplace, "utf8"));
+  assert.equal(marketplace.name, "blabee-app");
+  assert.deepEqual(marketplace.plugins, [{
+    name: "blabee",
+    source: { source: "local", path: "./Plugin/blabee" },
+    policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+    category: "Productivity",
+  }]);
 
   const sourceContracts = join(repositoryRoot, "Contracts", "v1");
   const bundledContracts = join(contents, "Resources", "Contracts", "v1");
@@ -268,6 +381,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     "Contents/Info.plist",
     `Contents/Library/LaunchAgents/${launchAgentFileName}`,
     "Contents/MacOS/blabee-coordinator",
+    "Contents/Resources/.agents/plugins/marketplace.json",
     `Contents/Resources/${menuBarIconFileName}`,
     "Contents/Resources/assembly-manifest.json",
     ...contractFiles.map((path) => `Contents/Resources/Contracts/v1/${path}`),
@@ -330,9 +444,14 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     );
   }
 
-  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+  const fixtureEntries = await readdir(fixture.root);
+  const leftovers = fixtureEntries.filter((entry) =>
     entry.startsWith(".Blabee.app.staging-"));
   assert.deepEqual(leftovers, []);
+  assert.deepEqual(
+    fixtureEntries.filter((entry) => entry.includes(".cleanup-")),
+    [],
+  );
 });
 
 test("assembler embeds only directly inspected previous runtime identities in sorted v2 policy", async (t) => {
@@ -688,9 +807,14 @@ test("assembler rejects Info.plist value type drift and cleans staging", async (
     /Info\.plist LSUIElement must be true \(boolean\)/,
   );
   await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
-  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+  const cleanupEntries = await readdir(fixture.root);
+  const leftovers = cleanupEntries.filter((entry) =>
     entry.startsWith(".Blabee.app.staging-"));
   assert.deepEqual(leftovers, []);
+  assert.deepEqual(
+    cleanupEntries.filter((entry) => entry.includes(".cleanup-")),
+    [],
+  );
 });
 
 test("assembler cleanup opt-out preserves its exact partial staging tree", async (t) => {
@@ -786,6 +910,112 @@ test("assembler rejects LaunchAgent key, type, and service argv drift", async (t
   }
 });
 
+test("assembler rejects Codex marketplace identity and plugin source drift", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceRoot = join(fixture.root, "source-marketplace-drift");
+  const infoDirectory = join(sourceRoot, "Packaging", "macos");
+  await mkdir(infoDirectory, { recursive: true });
+  await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
+  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await copyFile(
+    join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+    join(infoDirectory, "Info.plist"),
+  );
+  await copyCanonicalPackagingSupport(sourceRoot);
+  const fixtureMarketplace = join(
+    sourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    codexMarketplaceFileName,
+  );
+  const canonical = await readFile(canonicalCodexMarketplace, "utf8");
+  const mutations = [
+    canonical.replace('"name": "blabee-app"', '"name": "other-marketplace"'),
+    canonical.replace('"path": "./Plugin/blabee"', '"path": "../../outside"'),
+  ];
+  for (const content of mutations) {
+    await writeFile(fixtureMarketplace, content);
+    await assert.rejects(
+      assembleMacOSApp({
+        binaryPath: fixture.binary,
+        outputPath: fixture.output,
+        sourceRoot,
+      }),
+      /Codex marketplace manifest (identity|plugin contract) is invalid/,
+    );
+    await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  }
+});
+
+test("assembler bounds and strictly decodes Codex marketplace JSON", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceRoot = join(fixture.root, "source-strict-marketplace");
+  const infoDirectory = join(sourceRoot, "Packaging", "macos");
+  await mkdir(infoDirectory, { recursive: true });
+  await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
+  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await copyFile(
+    join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+    join(infoDirectory, "Info.plist"),
+  );
+  await copyCanonicalPackagingSupport(sourceRoot);
+  const fixtureMarketplace = join(
+    sourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    codexMarketplaceFileName,
+  );
+  const canonical = await readFile(canonicalCodexMarketplace, "utf8");
+  const cases = [
+    {
+      name: "oversized input",
+      content: Buffer.alloc((64 * 1024) + 1, 0x20),
+      pattern: /exceeds the 65536-byte limit/,
+    },
+    {
+      name: "invalid UTF-8",
+      content: Buffer.concat([
+        Buffer.from(canonical.slice(0, -2), "utf8"),
+        Buffer.from([0xC3, 0x28]),
+        Buffer.from("}\n", "utf8"),
+      ]),
+      pattern: /must be valid UTF-8/,
+    },
+    {
+      name: "escaped duplicate top-level key",
+      content: canonical.replace(
+        "{",
+        "{\n  \"\\u006eame\": \"blabee-app\",",
+      ),
+      pattern: /contains duplicate JSON object keys/,
+    },
+    {
+      name: "duplicate nested key",
+      content: canonical.replace(
+        '"source": "local",',
+        '"source": "local", "source": "local",',
+      ),
+      pattern: /contains duplicate JSON object keys/,
+    },
+  ];
+
+  for (const invalidCase of cases) {
+    await writeFile(fixtureMarketplace, invalidCase.content);
+    await assert.rejects(
+      assembleMacOSApp({
+        binaryPath: fixture.binary,
+        outputPath: fixture.output,
+        sourceRoot,
+      }),
+      invalidCase.pattern,
+      invalidCase.name,
+    );
+    await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  }
+});
+
 test("assembler rejects implicit destinations, unsafe output, existing output, and invalid binaries", async (t) => {
   const fixture = await makeWorkspace(t);
   await assert.rejects(
@@ -851,6 +1081,54 @@ test("concurrent assemblers never replace or mix the final app", async (t) => {
   assert.deepEqual(leftovers, []);
 });
 
+test("an output created after assembly starts is preserved and blocks publish", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const previousApp = await makePreviousApp(
+    fixture.root,
+    "publish-race-previous",
+    `sha256:${"6".repeat(64)}`,
+  );
+  const inspectorStarted = join(fixture.root, "publish-inspector-started");
+  const releaseInspector = join(fixture.root, "publish-inspector-release");
+  await writeFile(
+    fixture.binary,
+    [
+      "#!/bin/sh",
+      'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
+      `  touch '${inspectorStarted}'`,
+      `  while [ ! -f '${releaseInspector}' ]; do /bin/sleep 0.01; done`,
+      `  printf '{"assembly_manifest_sha256":"${defaultInspectedManifestDigest}","runtime_identity":"${defaultInspectedRuntimeIdentity}","schema_version":"blabee.runtime-identity-inspection.v2"}\\n'`,
+      "  exit 0",
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  const assembly = assembleMacOSApp({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+    compatiblePreviousApps: [previousApp],
+  });
+  try {
+    await waitForPath(inspectorStarted);
+    await mkdir(fixture.output);
+    await writeFile(join(fixture.output, "external-sentinel.txt"), "preserve me\n");
+  } finally {
+    await writeFile(releaseInspector, "release\n");
+  }
+
+  await assert.rejects(assembly, /output appeared during assembly/);
+  assert.equal(
+    await readFile(join(fixture.output, "external-sentinel.txt"), "utf8"),
+    "preserve me\n",
+  );
+  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+    entry.startsWith(".Blabee.app.staging-"));
+  assert.deepEqual(leftovers, []);
+});
+
 test("resource symlinks fail closed and the exact staging directory is cleaned", async (t) => {
   const fixture = await makeWorkspace(t);
   const sourceRoot = join(fixture.root, "source");
@@ -883,6 +1161,300 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
   const leftovers = (await readdir(fixture.root)).filter((entry) =>
     entry.startsWith(".Blabee.app.staging-"));
   assert.deepEqual(leftovers, []);
+});
+
+test("intermediate source path symlinks cannot import external packaging trees", async (t) => {
+  for (const component of ["Packaging", "Contracts", "Plugin"]) {
+    await t.test(component, async (t) => {
+      const fixture = await makeWorkspace(t);
+      const sourceRoot = join(fixture.root, `source-${component.toLowerCase()}`);
+      const infoDirectory = join(sourceRoot, "Packaging", "macos");
+      const contracts = join(sourceRoot, "Contracts", "v1");
+      const plugin = join(sourceRoot, "Plugin", "blabee");
+      await mkdir(infoDirectory, { recursive: true });
+      await mkdir(contracts, { recursive: true });
+      await mkdir(plugin, { recursive: true });
+      await copyCanonicalPackagingSupport(sourceRoot);
+      await copyFile(
+        join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+        join(infoDirectory, "Info.plist"),
+      );
+      await writeFile(join(contracts, "manifest.json"), "{}\n");
+      await writeFile(join(plugin, "external-marker.txt"), "outside source root\n");
+
+      const sourceComponent = join(sourceRoot, component);
+      const externalComponent = join(
+        fixture.root,
+        `external-${component.toLowerCase()}`,
+      );
+      await rename(sourceComponent, externalComponent);
+      await symlink(externalComponent, sourceComponent);
+
+      await assert.rejects(
+        assembleMacOSApp({
+          binaryPath: fixture.binary,
+          outputPath: fixture.output,
+          sourceRoot,
+        }),
+        /must not contain symlink path components/,
+      );
+      await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+      const leftovers = (await readdir(fixture.root)).filter((entry) =>
+        entry.startsWith(".Blabee.app.staging-"));
+      assert.deepEqual(leftovers, []);
+    });
+  }
+});
+
+test("resource copies reject a file larger than the bounded descriptor snapshot", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceRoot = join(fixture.root, "source-oversized-resource");
+  const infoDirectory = join(sourceRoot, "Packaging", "macos");
+  const contracts = join(sourceRoot, "Contracts", "v1");
+  const plugin = join(sourceRoot, "Plugin", "blabee");
+  await mkdir(infoDirectory, { recursive: true });
+  await mkdir(contracts, { recursive: true });
+  await mkdir(plugin, { recursive: true });
+  await copyCanonicalPackagingSupport(sourceRoot);
+  await copyFile(
+    join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+    join(infoDirectory, "Info.plist"),
+  );
+  await writeFile(join(contracts, "manifest.json"), "{}\n");
+  const oversized = join(plugin, "oversized-resource.bin");
+  await writeFile(oversized, "");
+  await truncate(oversized, (512 * 1024 * 1024) + 1);
+
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: fixture.binary,
+      outputPath: fixture.output,
+      sourceRoot,
+    }),
+    /exceeds the 536870912-byte limit/,
+  );
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+    entry.startsWith(".Blabee.app.staging-"));
+  assert.deepEqual(leftovers, []);
+});
+
+test("source preflight bounds total payload entries and cumulative bytes", async (t) => {
+  async function makeBoundedSource(fixture, suffix) {
+    const sourceRoot = join(fixture.root, suffix);
+    const infoDirectory = join(sourceRoot, "Packaging", "macos");
+    const contracts = join(sourceRoot, "Contracts", "v1");
+    const plugin = join(sourceRoot, "Plugin", "blabee");
+    await mkdir(infoDirectory, { recursive: true });
+    await mkdir(contracts, { recursive: true });
+    await mkdir(plugin, { recursive: true });
+    await copyCanonicalPackagingSupport(sourceRoot);
+    await copyFile(
+      join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+      join(infoDirectory, "Info.plist"),
+    );
+    await writeFile(join(contracts, "manifest.json"), "{}\n");
+    return { sourceRoot, plugin };
+  }
+
+  const fileCountFixture = await makeWorkspace(t);
+  const fileCountSource = await makeBoundedSource(
+    fileCountFixture,
+    "source-file-count-limit",
+  );
+  for (let index = 0; index < 1019; index += 1) {
+    await writeFile(
+      join(fileCountSource.plugin, `payload-${String(index).padStart(4, "0")}.txt`),
+      "x",
+    );
+  }
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: fileCountFixture.binary,
+      outputPath: fileCountFixture.output,
+      sourceRoot: fileCountSource.sourceRoot,
+    }),
+    /packaged payload exceeds the 1024-entry limit/,
+  );
+  await assert.rejects(lstat(fileCountFixture.output), { code: "ENOENT" });
+
+  const directoryCountFixture = await makeWorkspace(t);
+  const directoryCountSource = await makeBoundedSource(
+    directoryCountFixture,
+    "source-directory-count-limit",
+  );
+  for (let index = 0; index < 1025; index += 1) {
+    await mkdir(
+      join(
+        directoryCountSource.plugin,
+        `empty-${String(index).padStart(4, "0")}`,
+      ),
+    );
+  }
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: directoryCountFixture.binary,
+      outputPath: directoryCountFixture.output,
+      sourceRoot: directoryCountSource.sourceRoot,
+    }),
+    /packaged payload exceeds the 1024-entry limit/,
+  );
+  await assert.rejects(lstat(directoryCountFixture.output), { code: "ENOENT" });
+
+  const byteCountFixture = await makeWorkspace(t);
+  const byteCountSource = await makeBoundedSource(
+    byteCountFixture,
+    "source-byte-count-limit",
+  );
+  for (const name of ["large-a.bin", "large-b.bin"]) {
+    const path = join(byteCountSource.plugin, name);
+    await writeFile(path, "");
+    await truncate(path, 256 * 1024 * 1024);
+  }
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: byteCountFixture.binary,
+      outputPath: byteCountFixture.output,
+      sourceRoot: byteCountSource.sourceRoot,
+    }),
+    /packaged payload exceeds the 536870912-byte cumulative limit/,
+  );
+  await assert.rejects(lstat(byteCountFixture.output), { code: "ENOENT" });
+});
+
+test("final payload entry budget reserves the assembly manifest", async (t) => {
+  async function makeBoundarySource(fixture, suffix, emptyDirectoryCount) {
+    const sourceRoot = join(fixture.root, suffix);
+    const infoDirectory = join(sourceRoot, "Packaging", "macos");
+    const contracts = join(sourceRoot, "Contracts", "v1");
+    const plugin = join(sourceRoot, "Plugin", "blabee");
+    await mkdir(infoDirectory, { recursive: true });
+    await mkdir(contracts, { recursive: true });
+    await mkdir(plugin, { recursive: true });
+    await copyCanonicalPackagingSupport(sourceRoot);
+    await copyFile(
+      join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+      join(infoDirectory, "Info.plist"),
+    );
+    await writeFile(join(contracts, "manifest.json"), "{}\n");
+    for (let index = 0; index < emptyDirectoryCount; index += 1) {
+      await mkdir(join(plugin, `empty-${String(index).padStart(4, "0")}`));
+    }
+    return sourceRoot;
+  }
+
+  const acceptedFixture = await makeWorkspace(t);
+  const acceptedSource = await makeBoundarySource(
+    acceptedFixture,
+    "source-final-entry-boundary-accepted",
+    1005,
+  );
+  await assembleMacOSApp({
+    binaryPath: acceptedFixture.binary,
+    outputPath: acceptedFixture.output,
+    sourceRoot: acceptedSource,
+  });
+  assert.equal(await filesystemEntryCount(acceptedFixture.output), 1024);
+
+  const rejectedFixture = await makeWorkspace(t);
+  const rejectedSource = await makeBoundarySource(
+    rejectedFixture,
+    "source-final-entry-boundary-rejected",
+    1006,
+  );
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: rejectedFixture.binary,
+      outputPath: rejectedFixture.output,
+      sourceRoot: rejectedSource,
+    }),
+    /packaged payload exceeds the 1024-entry limit at/,
+  );
+  await assert.rejects(lstat(rejectedFixture.output), { code: "ENOENT" });
+  const leftovers = (await readdir(rejectedFixture.root)).filter((entry) =>
+    entry.startsWith(".Blabee.app.staging-"));
+  assert.deepEqual(leftovers, []);
+});
+
+test("post-signing entry budget includes generated code-signature entries", {
+  skip: process.platform !== "darwin" ? "codesign is available only on macOS" : false,
+}, async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceRoot = join(fixture.root, "source-signed-entry-boundary");
+  const infoDirectory = join(sourceRoot, "Packaging", "macos");
+  const contracts = join(sourceRoot, "Contracts", "v1");
+  const plugin = join(sourceRoot, "Plugin", "blabee");
+  await mkdir(infoDirectory, { recursive: true });
+  await mkdir(contracts, { recursive: true });
+  await mkdir(plugin, { recursive: true });
+  await copyCanonicalPackagingSupport(sourceRoot);
+  await copyFile(
+    join(repositoryRoot, "Packaging", "macos", "Info.plist"),
+    join(infoDirectory, "Info.plist"),
+  );
+  await writeFile(join(contracts, "manifest.json"), "{}\n");
+  for (let index = 0; index < 1005; index += 1) {
+    await mkdir(join(plugin, `empty-${String(index).padStart(4, "0")}`));
+  }
+
+  await assert.rejects(
+    assembleMacOSApp({
+      binaryPath: fixture.binary,
+      outputPath: fixture.output,
+      sourceRoot,
+      adhocSign: true,
+    }),
+    /packaged payload exceeds the 1024-entry limit at/,
+  );
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  const leftovers = (await readdir(fixture.root)).filter((entry) =>
+    entry.startsWith(".Blabee.app.staging-")
+      || entry.includes(".cleanup-"));
+  assert.deepEqual(leftovers, []);
+});
+
+test("failure cleanup preserves a staging path whose reserved identity changed", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const previousApp = await makePreviousApp(
+    fixture.root,
+    "cleanup-previous",
+    `sha256:${"7".repeat(64)}`,
+  );
+  const inspectorStarted = join(fixture.root, "cleanup-inspector-started");
+  const releaseInspector = join(fixture.root, "cleanup-inspector-release");
+  await writeFile(
+    fixture.binary,
+    [
+      "#!/bin/sh",
+      `touch '${inspectorStarted}'`,
+      `while [ ! -f '${releaseInspector}' ]; do /bin/sleep 0.01; done`,
+      "printf 'not-json\\n'",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  const assembly = assembleMacOSApp({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+    compatiblePreviousApps: [previousApp],
+  });
+  await waitForPath(inspectorStarted);
+  const staging = await waitForStagingPath(fixture.root);
+  const originalStaging = `${staging}.original`;
+  await rename(staging, originalStaging);
+  await mkdir(staging);
+  const sentinel = join(staging, "must-not-be-deleted.txt");
+  await writeFile(sentinel, "external replacement\n");
+  await writeFile(releaseInspector, "release\n");
+
+  await assert.rejects(
+    assembly,
+    /cleanup failed safely: cleanup refused because the staging reservation identity changed/,
+  );
+  assert.equal(await readFile(sentinel, "utf8"), "external replacement\n");
+  assert.equal((await lstat(originalStaging)).isDirectory(), true);
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
 });
 
 test("an ad-hoc signed app rejects a mutated bundled LaunchAgent", {

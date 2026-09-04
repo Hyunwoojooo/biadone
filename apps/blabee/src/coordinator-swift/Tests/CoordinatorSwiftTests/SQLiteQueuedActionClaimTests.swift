@@ -108,15 +108,48 @@ private final class SQLiteClaimIDs: @unchecked Sendable {
     }
 }
 
-private struct SQLiteClaimFixture {
+private final class SQLiteClaimFixture: @unchecked Sendable {
     let directory: URL
-    let journalA: SQLiteJournal
-    let journalB: SQLiteJournal
-    let routingA: CoordinatorRoutingApplication
-    let routingB: CoordinatorRoutingApplication
     let binding: [String: Any]
     let continuationID: String
     let actionJSON: Data
+    private var retainedJournalA: SQLiteJournal?
+    private var retainedJournalB: SQLiteJournal?
+    private var retainedRoutingA: CoordinatorRoutingApplication?
+    private var retainedRoutingB: CoordinatorRoutingApplication?
+
+    init(
+        directory: URL,
+        journalA: SQLiteJournal,
+        journalB: SQLiteJournal,
+        routingA: CoordinatorRoutingApplication,
+        routingB: CoordinatorRoutingApplication,
+        binding: [String: Any],
+        continuationID: String,
+        actionJSON: Data
+    ) {
+        self.directory = directory
+        retainedJournalA = journalA
+        retainedJournalB = journalB
+        retainedRoutingA = routingA
+        retainedRoutingB = routingB
+        self.binding = binding
+        self.continuationID = continuationID
+        self.actionJSON = actionJSON
+    }
+
+    var journalA: SQLiteJournal { retainedJournalA! }
+    var journalB: SQLiteJournal { retainedJournalB! }
+    var routingA: CoordinatorRoutingApplication { retainedRoutingA! }
+    var routingB: CoordinatorRoutingApplication { retainedRoutingB! }
+
+    func remove() {
+        retainedRoutingA = nil
+        retainedRoutingB = nil
+        retainedJournalA = nil
+        retainedJournalB = nil
+        try? FileManager.default.removeItem(at: directory)
+    }
 }
 
 private func sqliteClaimBinding(_ suffix: String) -> [String: Any] {
@@ -363,117 +396,135 @@ private func runOverlappingSQLiteClaims(
     return await [firstOutcome, secondOutcome]
 }
 
+private func withSQLiteClaimFixture<Result>(
+    _ suffix: String,
+    perform body: (SQLiteClaimFixture) throws -> Result
+) throws -> Result {
+    let fixture = try makeSQLiteClaimFixture(suffix)
+    defer { fixture.remove() }
+    return try body(fixture)
+}
+
+private func withSQLiteClaimFixture<Result>(
+    _ suffix: String,
+    perform body: (SQLiteClaimFixture) async throws -> Result
+) async throws -> Result {
+    let fixture = try makeSQLiteClaimFixture(suffix)
+    defer { fixture.remove() }
+    return try await body(fixture)
+}
+
 @Test("SQLite rejects a persisted duplicate queued action claim")
 func sqliteQueuedActionClaimPersistsOneUniqueEvent() throws {
-    let fixture = try makeSQLiteClaimFixture("direct_unique")
-    defer { try? FileManager.default.removeItem(at: fixture.directory) }
-    let command = try sqliteClaimCommand(
-        fixture: fixture,
-        eventID: "event_sqlite_claim_direct_unique_first",
-        turnID: "delivery_turn_direct_unique"
-    )
-    let semantic = CoordinatorSemanticApplication(journal: fixture.journalA)
-    let first = try semantic.execute(command: command)
-    #expect(first.commit.eventCount == 1)
-    let exactRetry = try semantic.execute(command: command)
-    #expect(exactRetry.commit.eventCount == 0)
-
-    let snapshot = try fixture.journalB.load()
-    let claims = try sqliteClaimEvents(snapshot)
-    #expect(claims.count == 1)
-    var duplicate = try #require(claims.first)
-    duplicate["event_id"] = "event_sqlite_claim_direct_unique_duplicate"
-    duplicate["event_sequence"] = snapshot.journalSequence + 1
-    duplicate["occurred_at"] = "2026-08-21T12:00:05Z"
-    sqliteClaimExpectCode("queued_action_context_already_claimed") {
-        _ = try fixture.journalB.append(
-            expectedSequence: snapshot.journalSequence,
-            events: [sqliteClaimData(duplicate)]
-        )
-    }
-    let afterDuplicate = try fixture.journalA.load()
-    #expect(afterDuplicate.journalSequence == snapshot.journalSequence)
-    #expect(try sqliteClaimEvents(afterDuplicate).count == 1)
-
-    sqliteClaimExpectCode("queued_action_context_already_claimed") {
-        _ = try semantic.execute(command: sqliteClaimCommand(
+    try withSQLiteClaimFixture("direct_unique") { fixture in
+        let command = try sqliteClaimCommand(
             fixture: fixture,
-            eventID: "event_sqlite_claim_direct_unique_other_turn",
-            turnID: "delivery_turn_direct_other"
-        ))
+            eventID: "event_sqlite_claim_direct_unique_first",
+            turnID: "delivery_turn_direct_unique"
+        )
+        let semantic = CoordinatorSemanticApplication(journal: fixture.journalA)
+        let first = try semantic.execute(command: command)
+        #expect(first.commit.eventCount == 1)
+        let exactRetry = try semantic.execute(command: command)
+        #expect(exactRetry.commit.eventCount == 0)
+
+        let snapshot = try fixture.journalB.load()
+        let claims = try sqliteClaimEvents(snapshot)
+        #expect(claims.count == 1)
+        var duplicate = try #require(claims.first)
+        duplicate["event_id"] = "event_sqlite_claim_direct_unique_duplicate"
+        duplicate["event_sequence"] = snapshot.journalSequence + 1
+        duplicate["occurred_at"] = "2026-08-21T12:00:05Z"
+        sqliteClaimExpectCode("queued_action_context_already_claimed") {
+            _ = try fixture.journalB.append(
+                expectedSequence: snapshot.journalSequence,
+                events: [sqliteClaimData(duplicate)]
+            )
+        }
+        let afterDuplicate = try fixture.journalA.load()
+        #expect(afterDuplicate.journalSequence == snapshot.journalSequence)
+        #expect(try sqliteClaimEvents(afterDuplicate).count == 1)
+
+        sqliteClaimExpectCode("queued_action_context_already_claimed") {
+            _ = try semantic.execute(command: sqliteClaimCommand(
+                fixture: fixture,
+                eventID: "event_sqlite_claim_direct_unique_other_turn",
+                turnID: "delivery_turn_direct_other"
+            ))
+        }
     }
 }
 
 @Test("two SQLite routing instances recover one same-turn claim")
 func sqliteQueuedActionClaimConcurrentSameTurnIsIdempotent() async throws {
-    let fixture = try makeSQLiteClaimFixture("concurrent_same")
-    defer { try? FileManager.default.removeItem(at: fixture.directory) }
-    let commandA = try sqliteClaimCommand(
-        fixture: fixture,
-        eventID: "event_sqlite_claim_concurrent_same_a",
-        turnID: "delivery_turn_concurrent_same"
-    )
-    let commandB = try sqliteClaimCommand(
-        fixture: fixture,
-        eventID: "event_sqlite_claim_concurrent_same_b",
-        turnID: "delivery_turn_concurrent_same"
-    )
-    let routingA = fixture.routingA
-    let routingB = fixture.routingB
+    try await withSQLiteClaimFixture("concurrent_same") { fixture in
+        let commandA = try sqliteClaimCommand(
+            fixture: fixture,
+            eventID: "event_sqlite_claim_concurrent_same_a",
+            turnID: "delivery_turn_concurrent_same"
+        )
+        let commandB = try sqliteClaimCommand(
+            fixture: fixture,
+            eventID: "event_sqlite_claim_concurrent_same_b",
+            turnID: "delivery_turn_concurrent_same"
+        )
+        let routingA = fixture.routingA
+        let routingB = fixture.routingB
 
-    let outcomes = await runOverlappingSQLiteClaims(
-        { try routingA.routeQueuedActionContextClaim(commandA) },
-        { try routingB.routeQueuedActionContextClaim(commandB) }
-    )
-    #expect(outcomes.count == 2)
-    for outcome in outcomes {
-        guard case let .success(actionJSON) = outcome else {
-            Issue.record("same-turn claim must recover through both routing instances")
-            continue
+        let outcomes = await runOverlappingSQLiteClaims(
+            { try routingA.routeQueuedActionContextClaim(commandA) },
+            { try routingB.routeQueuedActionContextClaim(commandB) }
+        )
+        #expect(outcomes.count == 2)
+        for outcome in outcomes {
+            guard case let .success(actionJSON) = outcome else {
+                Issue.record("same-turn claim must recover through both routing instances")
+                continue
+            }
+            #expect(actionJSON == fixture.actionJSON)
         }
-        #expect(actionJSON == fixture.actionJSON)
+        #expect(try sqliteClaimEvents(fixture.journalA.load()).count == 1)
     }
-    #expect(try sqliteClaimEvents(fixture.journalA.load()).count == 1)
 }
 
 @Test("two SQLite routing instances allow only one different-turn claim")
 func sqliteQueuedActionClaimConcurrentDifferentTurnsHasOneWinner() async throws {
-    let fixture = try makeSQLiteClaimFixture("concurrent_different")
-    defer { try? FileManager.default.removeItem(at: fixture.directory) }
-    let commandA = try sqliteClaimCommand(
-        fixture: fixture,
-        eventID: "event_sqlite_claim_concurrent_different_a",
-        turnID: "delivery_turn_concurrent_a"
-    )
-    let commandB = try sqliteClaimCommand(
-        fixture: fixture,
-        eventID: "event_sqlite_claim_concurrent_different_b",
-        turnID: "delivery_turn_concurrent_b"
-    )
-    let routingA = fixture.routingA
-    let routingB = fixture.routingB
+    try await withSQLiteClaimFixture("concurrent_different") { fixture in
+        let commandA = try sqliteClaimCommand(
+            fixture: fixture,
+            eventID: "event_sqlite_claim_concurrent_different_a",
+            turnID: "delivery_turn_concurrent_a"
+        )
+        let commandB = try sqliteClaimCommand(
+            fixture: fixture,
+            eventID: "event_sqlite_claim_concurrent_different_b",
+            turnID: "delivery_turn_concurrent_b"
+        )
+        let routingA = fixture.routingA
+        let routingB = fixture.routingB
 
-    let outcomes = await runOverlappingSQLiteClaims(
-        { try routingA.routeQueuedActionContextClaim(commandA) },
-        { try routingB.routeQueuedActionContextClaim(commandB) }
-    )
-    let successes = outcomes.compactMap { outcome -> Data? in
-        guard case let .success(data) = outcome else { return nil }
-        return data
+        let outcomes = await runOverlappingSQLiteClaims(
+            { try routingA.routeQueuedActionContextClaim(commandA) },
+            { try routingB.routeQueuedActionContextClaim(commandB) }
+        )
+        let successes = outcomes.compactMap { outcome -> Data? in
+            guard case let .success(data) = outcome else { return nil }
+            return data
+        }
+        let failures = outcomes.compactMap { outcome -> String? in
+            guard case let .failure(code) = outcome else { return nil }
+            return code
+        }
+        #expect(successes == [fixture.actionJSON])
+        #expect(failures == ["queued_action_context_already_claimed"])
+        let claims = try sqliteClaimEvents(fixture.journalB.load())
+        #expect(claims.count == 1)
+        let firstClaim = try #require(claims.first)
+        let payload = try #require(firstClaim["payload"] as? [String: Any])
+        let winningTurn = payload["delivery_turn_id"] as? String
+        #expect(
+            winningTurn == "delivery_turn_concurrent_a"
+                || winningTurn == "delivery_turn_concurrent_b"
+        )
     }
-    let failures = outcomes.compactMap { outcome -> String? in
-        guard case let .failure(code) = outcome else { return nil }
-        return code
-    }
-    #expect(successes == [fixture.actionJSON])
-    #expect(failures == ["queued_action_context_already_claimed"])
-    let claims = try sqliteClaimEvents(fixture.journalB.load())
-    #expect(claims.count == 1)
-    let firstClaim = try #require(claims.first)
-    let payload = try #require(firstClaim["payload"] as? [String: Any])
-    let winningTurn = payload["delivery_turn_id"] as? String
-    #expect(
-        winningTurn == "delivery_turn_concurrent_a"
-            || winningTurn == "delivery_turn_concurrent_b"
-    )
 }

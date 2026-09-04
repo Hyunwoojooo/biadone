@@ -149,10 +149,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             )
         }
         let suggestionModeStore = BlabeeSuggestionModeStore()
+        let codexPluginSetupManager = CodexPluginSetupManager.live()
         let viewModel = PetViewModel(
             transport: transport,
             externalApplicationOpener: opener,
             onboardingAdapter: onboardingAdapter,
+            codexPluginSetupManager: codexPluginSetupManager,
             suggestionModeStore: suggestionModeStore,
             projectFolderChooser: PetOpenPanelProjectFolderChooser()
         )

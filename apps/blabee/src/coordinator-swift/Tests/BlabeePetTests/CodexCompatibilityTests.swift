@@ -30,6 +30,16 @@ func codexCompatibilityVersionParsing() {
 @Test("Codex compatibility keeps managed use fail closed")
 func codexCompatibilityQualification() {
     #expect(CodexCompatibility.supportedVersions == ["0.149.1", "0.150.1", "0.151.0"])
+    #expect(CodexCompatibility.pluginCLISupportedVersions == [
+        "0.151.0", "0.152.0", "0.152.1",
+    ])
+    #expect(CodexCompatibility.supportedVersions(for: .managedAppServer)
+        == CodexCompatibility.supportedVersions)
+    #expect(CodexCompatibility.supportedVersions(for: .pluginCLI)
+        == CodexCompatibility.pluginCLISupportedVersions)
+    #expect(CodexCompatibility.supportedVersions.intersection(
+        CodexCompatibility.pluginCLISupportedVersions
+    ) == ["0.151.0"])
 
     for version in CodexCompatibility.supportedVersions {
         let qualification = CodexCompatibility.qualify(version: version)

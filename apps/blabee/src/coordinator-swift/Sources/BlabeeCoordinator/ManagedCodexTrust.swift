@@ -436,16 +436,19 @@ struct ManagedCodexVersionProbeResult: Sendable {
     let stderr: Data
 }
 
-/// Runs only the managed Codex version probe. The child starts in its own
+/// Runs a bounded, shell-free Codex subprocess. The managed version probe and
+/// Plugin setup share this implementation so the child always starts in its own
 /// session, output is drained without waiting for pipe EOF, and every exit path
-/// terminates remaining group members. Timeout and output-limit failures own
-/// the entire process group through TERM, KILL, and direct-child reaping.
+/// terminates remaining group members. Timeout and output-limit failures own the
+/// entire process group through TERM, KILL, and direct-child reaping.
 enum ManagedCodexVersionProbeRunner {
-    private static let outputLimit = 64 * 1_024
+    private static let defaultOutputLimit = 64 * 1_024
+    private static let maximumOutputLimit = 1 * 1_024 * 1_024
     private static let drainIntervalMicroseconds: useconds_t = 5_000
     private static let terminationGraceMilliseconds = 250
 
     private struct BoundedCapture {
+        let limit: Int
         var data = Data()
         var exceededLimit = false
 
@@ -456,7 +459,7 @@ enum ManagedCodexVersionProbeRunner {
                     Darwin.read(descriptor, bytes.baseAddress, bytes.count)
                 }
                 if count > 0 {
-                    let remaining = max(0, outputLimit - data.count)
+                    let remaining = max(0, limit - data.count)
                     let retained = min(count, remaining)
                     if retained > 0 {
                         data.append(contentsOf: buffer.prefix(retained))
@@ -479,10 +482,13 @@ enum ManagedCodexVersionProbeRunner {
         executable: URL,
         arguments: [String],
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeoutMilliseconds: Int
+        timeoutMilliseconds: Int,
+        outputLimit: Int = defaultOutputLimit
     ) throws -> ManagedCodexVersionProbeResult {
         guard executable.isFileURL, executable.path.hasPrefix("/"),
-              !executable.path.utf8.contains(0)
+              !executable.path.utf8.contains(0),
+              outputLimit > 0,
+              outputLimit <= maximumOutputLimit
         else {
             throw CoordinatorError("managed_codex_version_probe_unavailable")
         }
@@ -633,8 +639,8 @@ enum ManagedCodexVersionProbeRunner {
             }
         }
 
-        var output = BoundedCapture()
-        var errors = BoundedCapture()
+        var output = BoundedCapture(limit: outputLimit)
+        var errors = BoundedCapture(limit: outputLimit)
         let deadline = DispatchTime.now().uptimeNanoseconds
             + UInt64(max(1, timeoutMilliseconds)) * 1_000_000
         var waitStatus: Int32 = 0
@@ -1875,14 +1881,6 @@ struct ManagedCodexPinnedExecutableTesting {
     static func preserveFailedRuntimeStaging(_ preserve: Bool) {
         ManagedCodexPinnedRuntimeBundle
             .setPreserveFailedStagingForTesting(preserve)
-    }
-
-    static func signatureValidation(
-        _ hook: (@Sendable (_ label: String, _ path: String) throws -> Void)?
-    ) {
-        #if DEBUG
-            ManagedCodexRuntimeBundleInspector.setSignatureValidationHook(hook)
-        #endif
     }
 
     static func scavengeRuntimeBundles(in parentURL: URL) throws {

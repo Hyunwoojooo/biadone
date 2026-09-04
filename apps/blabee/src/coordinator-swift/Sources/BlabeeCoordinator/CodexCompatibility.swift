@@ -6,8 +6,34 @@ import Foundation
 /// on an appropriate worker and then apply the same fail-closed policy.
 enum CodexCompatibility {
     static let alphaBaselineVersion = "0.148.0"
-    static let supportedVersions: Set<String> = ["0.149.1", "0.150.1", "0.151.0"]
     static let maximumVersionOutputBytes = 4_096
+
+    enum CapabilityProfile: Hashable, Sendable {
+        case managedAppServer
+        case pluginCLI
+    }
+
+    /// One version-to-capability matrix keeps feature-specific qualification
+    /// explicit without duplicating version literals across independent
+    /// allowlists. A version is approved only for the capabilities listed here.
+    private static let capabilityMatrix: [String: Set<CapabilityProfile>] = [
+        "0.149.1": [.managedAppServer],
+        "0.150.1": [.managedAppServer],
+        "0.151.0": [.managedAppServer, .pluginCLI],
+        "0.152.0": [.pluginCLI],
+        "0.152.1": [.pluginCLI],
+    ]
+
+    static let supportedVersions = supportedVersions(for: .managedAppServer)
+    static let pluginCLISupportedVersions = supportedVersions(for: .pluginCLI)
+
+    static func supportedVersions(
+        for capability: CapabilityProfile
+    ) -> Set<String> {
+        Set(capabilityMatrix.compactMap { version, capabilities in
+            capabilities.contains(capability) ? version : nil
+        })
+    }
 
     enum Qualification: Equatable, Sendable {
         case supported(version: String)

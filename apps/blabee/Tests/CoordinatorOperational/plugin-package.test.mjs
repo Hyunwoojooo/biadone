@@ -122,6 +122,10 @@ test("four supported hooks call the native coordinator through the plugin launch
 });
 
 test("guarded Hook commands quote plugin roots and preserve valid launcher output", async () => {
+  // Keep this comfortably below the smallest 5-second native Hook deadline,
+  // while allowing loaded CI and developer Macs to schedule the shell/FIFO
+  // helpers without turning harmless scheduler delay into a product failure.
+  const responsiveHookUpperBoundMilliseconds = 2_500;
   const directory = await mkdtemp(path.join(os.tmpdir(), "blabee-plugin-quoted-hook-"));
   const injectionMarkerName = "blabee-hook-injection-marker";
   const cachedPluginRoot = path.join(
@@ -170,7 +174,7 @@ test("guarded Hook commands quote plugin roots and preserve valid launcher outpu
       assert.equal(result.stdout, `hook-output:hook:${eventName}`, eventName);
       assert.equal(result.stderr, "", eventName);
       assert.ok(
-        elapsedMilliseconds < 1_000,
+        elapsedMilliseconds < responsiveHookUpperBoundMilliseconds,
         `${eventName}: valid Hook waited ${elapsedMilliseconds}ms`,
       );
     }

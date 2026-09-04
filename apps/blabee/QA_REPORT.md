@@ -2,8 +2,62 @@
 
 상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인, T-015 소스·계약·자동·실제 두 세션 dogfood 완료
 최초 검토일: 2026-08-23
-최종 업데이트: 2026-09-02
+최종 업데이트: 2026-09-03
 대상: 당시 `spikes/m0/`, 현재 `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서. M0 실행 소스는 역사적 결과를 이 문서와 Git 기록에 보존한 뒤 2026-08-31 활성 트리에서 제거했다.
+
+## 2026-09-03 설치·패키징·Pet 안정성 후속 QA
+
+- 현재 판정: **소스·자동 회귀·release build 통과, 깨끗한 Mac 실사용 미승인**
+- Codex Plugin 설치 경로는 strict JSON Boolean, bounded descriptor manifest read,
+  owner-only ancestor/lock ACL, lock 재검증, 명시적 사용자 mutation, 외부 Plugin 충돌 차단,
+  호출 전후 identity·상태 재검증을 적용했다. managed App Server와 Plugin CLI의 지원 버전
+  목록은 기능별로 분리했다. 일반 `codex`, 공식 설치 파일, `PATH`, `.zshrc`, wrapper와
+  native `/resume`은 변경하지 않는다.
+- 앱 조립기는 marketplace JSON의 중복 키·비정상 UTF-8·크기·타입을 같은 descriptor
+  snapshot에서 검사한다. 입력 경로의 모든 조상 구성요소에서 symlink를 거부하고, 모든 입력
+  file descriptor의 종료 오류를 보존한다. 파일별 512 MiB 제한과 전체 byte 한도를 적용하며,
+  codesign 뒤 `_CodeSignature`까지 포함한 최종 트리를 다시 세어 1,024 entry 한도를 지킨다.
+  기존 또는 조립 중 생성된 출력은 덮어쓰지 않으며, 실패 staging은 임의 quarantine으로
+  이동해 identity를 다시 확인한다.
+- Pet은 Plugin 작업과 서비스·프로젝트 작업을 독립적으로 표시하되 같은 변경 영역은
+  single-flight로 직렬화한다. 변경 중 새로고침은 합쳐서 마지막 상태만 적용하고, 설정 화면을
+  여는 수동 조회 경계에서는 Codex subprocess를 실행하지 않는다.
+- 테스트 전용 signature Hook, SQLite fixture와 managed bridge child/descriptor 수명주기를
+  격리했다. 테스트가 임시 경로를 먼저 지우거나 다음 테스트에 전역 Hook·child process를
+  남기는 경로를 회귀로 막았다.
+
+검증 결과:
+
+- 전체 Swift package: XCTest 5/5와 Swift Testing 528/528, 동일 소스·정상 권한에서 최종 12회 연속 통과
+- 집중 Swift Plugin setup: 51/51 통과
+- 전체 Node: 304/304 통과; 실제 내부 DMG 생성·검증과 격리 Codex Plugin lifecycle 포함
+- 앱 조립 집중 Node: 27/27 통과
+- 격리 release `blabee-coordinator` build 통과
+- 독립 QA가 찾은 입력 조상 symlink와 서명 후 entry 재검증 P2 두 건, Hook 신뢰 상태 문구 P3 한 건을
+  수정하고 재검토 승인을 받았다. 최종 재검토에서 새 P0~P2 finding은 없었으며, 아래 플랫폼·제품
+  경계의 잔여 P3 위험은 별도로 유지한다.
+
+반복 Swift 검증 중 상세가 보존되지 않은 단일 issue가 한 차례 있었으나 즉시 재실행과 이후
+12회 연속 전체 실행에서 재현되지 않았다. 별도로 한 차례 발생한 Swift 49 issues도 제품 실패로
+집계하지 않는다. 셸 반복문이 Codex
+도구 sandbox 안에서 실행되어 TCP·UDS bind와 Keychain 접근이 `EPERM`으로 차단된 환경 오류였고,
+같은 테스트를 승인된 환경에서 독립 실행하면 통과했다. `swift test --disable-sandbox`는 SwiftPM
+자체 sandbox만 해제한다.
+
+전체 Node의 첫 정상 권한 실행에서는 가짜 즉시 성공 Hook의 1초 wall-clock 성능 단정이 시스템
+스케줄링 지연으로 1.42초를 기록해 303/304가 됐다. 같은 경로 80회에서 중앙값 131~134ms,
+최대 846.5ms였고 기능·출력은 모두 정상이었다. 제품의 최소 native Hook deadline 5초는 유지한 채
+테스트 전용 응답성 상한만 절반인 2.5초로 조정했고, 집중 반복과 최종 전체 304/304가 통과했다.
+
+남은 위험은 자동 성공으로 숨기지 않는다. 검증된 Codex 경로와 path 기반 `posix_spawn` 사이,
+Plugin 최종 검사와 외부 `codex plugin remove` 사이에는 same-user TOCTOU가 남는다. 완전 제거에는
+private runtime snapshot 또는 Codex의 조건부/CAS Plugin API가 필요하지만, private snapshot은
+native Codex 위에 가볍게 올라가는 현재 제품 원칙과 충돌한다. 조립기 quarantine의 `lstat` 뒤
+경로 기반 재귀 삭제, 입력 경로 구성요소 검사 뒤 실제 복사, output parent의 경로 기반 publish에도
+낮은 이론적 same-user 경쟁 구간이 있다. NVM·Volta script/shim Codex가
+공식 Mach-O 서명 gate에서 unavailable이 될 수 있는 호환성 제한도 남는다. 공개 배포 전에는
+깨끗한 Mac의 DMG 설치·Plugin 설치/업데이트/제거·Hook 검토·Pet 왕복과 native Codex 무변경을
+실사용으로 확인해야 한다.
 
 ## 2026-09-02 관리형 Codex runtime bundle 후속 QA
 

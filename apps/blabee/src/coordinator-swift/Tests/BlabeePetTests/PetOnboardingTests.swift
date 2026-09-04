@@ -99,10 +99,71 @@ private final class PetFakeProjectFolderChooser: PetProjectFolderChoosing {
     }
 }
 
+private actor PetFakeCodexPluginSetupManager: CodexPluginSetupManaging {
+    var inspectState: CodexPluginSetupState
+    var connectState: CodexPluginSetupState
+    var disconnectState: CodexPluginSetupState
+    private(set) var inspectCalls = 0
+    private(set) var connectCalls = 0
+    private(set) var disconnectCalls = 0
+    private var blocksConnect = false
+    private var connectWaiter: CheckedContinuation<Void, Never>?
+
+    init(
+        inspectState: CodexPluginSetupState = .notInstalled,
+        connectState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0"),
+        disconnectState: CodexPluginSetupState = .notInstalled
+    ) {
+        self.inspectState = inspectState
+        self.connectState = connectState
+        self.disconnectState = disconnectState
+    }
+
+    func inspect() async -> CodexPluginSetupState {
+        inspectCalls += 1
+        return inspectState
+    }
+
+    func connect() async -> CodexPluginSetupState {
+        connectCalls += 1
+        if blocksConnect {
+            await withCheckedContinuation { continuation in
+                connectWaiter = continuation
+            }
+        }
+        return connectState
+    }
+
+    func disconnect() async -> CodexPluginSetupState {
+        disconnectCalls += 1
+        return disconnectState
+    }
+
+    func setBlocksConnect(_ value: Bool) {
+        blocksConnect = value
+    }
+
+    func setInspectState(_ state: CodexPluginSetupState) {
+        inspectState = state
+    }
+
+    func resumeConnect() {
+        blocksConnect = false
+        let waiter = connectWaiter
+        connectWaiter = nil
+        waiter?.resume()
+    }
+
+    func callCounts() -> (inspect: Int, connect: Int, disconnect: Int) {
+        (inspectCalls, connectCalls, disconnectCalls)
+    }
+}
+
 @MainActor
 private func petOnboardingViewModel(
     adapter: PetFakeOnboardingAdapter,
-    chooser: PetFakeProjectFolderChooser = PetFakeProjectFolderChooser()
+    chooser: PetFakeProjectFolderChooser = PetFakeProjectFolderChooser(),
+    pluginSetupManager: any CodexPluginSetupManaging = PetFakeCodexPluginSetupManager()
 ) -> (PetViewModel, PetFakeTransport) {
     let transport = PetFakeTransport()
     return (
@@ -110,11 +171,220 @@ private func petOnboardingViewModel(
             transport: transport,
             externalApplicationOpener: PetFakeApplicationOpener(),
             onboardingAdapter: adapter,
+            codexPluginSetupManager: pluginSetupManager,
             projectFolderChooser: chooser,
             processIdentifier: 999
         ),
         transport
     )
+}
+
+@Test("Opening settings does not execute Codex and Plugin actions remain explicit")
+@MainActor
+func petCodexPluginSetupUsesExplicitActions() async {
+    let adapter = PetFakeOnboardingAdapter()
+    let pluginSetupManager = PetFakeCodexPluginSetupManager()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: pluginSetupManager
+    )
+
+    #expect(viewModel.codexPluginSetupState == .unchecked)
+    #expect((await pluginSetupManager.callCounts()).connect == 0)
+    await viewModel.refreshOnboarding()
+    #expect(viewModel.codexPluginSetupState == .unchecked)
+    #expect((await pluginSetupManager.callCounts()).inspect == 0)
+    #expect((await pluginSetupManager.callCounts()).connect == 0)
+    #expect(viewModel.canConnectCodexPlugin)
+
+    await viewModel.refreshCodexPluginSetup()
+    #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect(viewModel.canConnectCodexPlugin)
+    #expect((await pluginSetupManager.callCounts()).inspect == 1)
+    #expect((await pluginSetupManager.callCounts()).connect == 0)
+
+    await viewModel.connectCodexPlugin()
+    #expect(viewModel.codexPluginSetupState == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(!viewModel.canConnectCodexPlugin)
+    #expect(viewModel.canDisconnectCodexPlugin)
+    #expect((await pluginSetupManager.callCounts()).connect == 1)
+
+    await viewModel.disconnectCodexPlugin()
+    #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect((await pluginSetupManager.callCounts()).disconnect == 1)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet Codex Plugin setup blocks duplicate clicks while an operation is running")
+@MainActor
+func petCodexPluginSetupSingleFlight() async {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.configuredPaths = []
+    let chooser = PetFakeProjectFolderChooser(
+        result: URL(fileURLWithPath: "/tmp/blabee-pet-plugin-independent", isDirectory: true)
+    )
+    let pluginSetupManager = PetFakeCodexPluginSetupManager()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        chooser: chooser,
+        pluginSetupManager: pluginSetupManager
+    )
+    await viewModel.refreshOnboarding()
+    await pluginSetupManager.setBlocksConnect(true)
+
+    let first = Task { @MainActor in
+        await viewModel.connectCodexPlugin()
+    }
+    for _ in 0..<100 {
+        if (await pluginSetupManager.callCounts()).connect > 0 { break }
+        await Task.yield()
+    }
+    #expect(viewModel.isOnboardingOperationInFlight)
+    #expect(viewModel.isCodexPluginOperationInFlight)
+    #expect(!viewModel.isOnboardingServiceOperationInFlight)
+    #expect(!viewModel.isOnboardingProjectOperationInFlight)
+
+    await viewModel.connectCodexPlugin()
+    #expect((await pluginSetupManager.callCounts()).connect == 1)
+
+    await viewModel.registerOnboardingService()
+    await viewModel.chooseAndEnableProject()
+    #expect(adapter.registerCalls == 1)
+    #expect(adapter.enabledPaths == ["/tmp/blabee-pet-plugin-independent"])
+    #expect(chooser.calls == 1)
+    #expect(viewModel.isCodexPluginOperationInFlight)
+    #expect(!viewModel.isOnboardingServiceOperationInFlight)
+    #expect(!viewModel.isOnboardingProjectOperationInFlight)
+
+    await pluginSetupManager.resumeConnect()
+    await first.value
+    #expect(!viewModel.isOnboardingOperationInFlight)
+    #expect(viewModel.codexPluginSetupState == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet settings refresh detects external Codex Plugin changes")
+@MainActor
+func petOnboardingRefreshIncludesCodexPluginState() async {
+    let adapter = PetFakeOnboardingAdapter()
+    let pluginSetupManager = PetFakeCodexPluginSetupManager(inspectState: .notInstalled)
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: pluginSetupManager
+    )
+
+    await viewModel.refreshAllOnboardingSettings()
+    #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect((await pluginSetupManager.callCounts()).inspect == 1)
+
+    await pluginSetupManager.setInspectState(
+        .updateAvailable(installedVersion: "0.1.0", bundledVersion: "0.2.0")
+    )
+    await viewModel.refreshAllOnboardingSettings()
+    #expect(
+        viewModel.codexPluginSetupState
+            == .updateAvailable(installedVersion: "0.1.0", bundledVersion: "0.2.0")
+    )
+    #expect((await pluginSetupManager.callCounts()).inspect == 2)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet coalesces a Plugin refresh requested during a Plugin mutation")
+@MainActor
+func petCodexPluginRefreshCoalescesDuringMutation() async {
+    let adapter = PetFakeOnboardingAdapter()
+    let pluginSetupManager = PetFakeCodexPluginSetupManager(inspectState: .notInstalled)
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: pluginSetupManager
+    )
+    await pluginSetupManager.setBlocksConnect(true)
+
+    let connect = Task { @MainActor in
+        await viewModel.connectCodexPlugin()
+    }
+    for _ in 0..<100 {
+        if (await pluginSetupManager.callCounts()).connect > 0 { break }
+        await Task.yield()
+    }
+
+    await viewModel.refreshCodexPluginSetup()
+    await viewModel.refreshCodexPluginSetup()
+    #expect((await pluginSetupManager.callCounts()).inspect == 0)
+
+    await pluginSetupManager.resumeConnect()
+    await connect.value
+
+    #expect((await pluginSetupManager.callCounts()).connect == 1)
+    #expect((await pluginSetupManager.callCounts()).inspect == 1)
+    #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect(!viewModel.isCodexPluginOperationInFlight)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet coalesces repeated settings refreshes into a service operation final reload")
+@MainActor
+func petOnboardingRefreshCoalescesDuringServiceMutation() async {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.state = .enabled
+    adapter.blocksUnregister = true
+    adapter.stateAfterUnregister = .notRegistered
+    let (viewModel, transport) = petOnboardingViewModel(adapter: adapter)
+    await viewModel.refreshOnboarding()
+
+    let unregister = Task { @MainActor in
+        await viewModel.unregisterOnboardingService()
+    }
+    for _ in 0..<100 where adapter.unregisterCalls == 0 {
+        await Task.yield()
+    }
+
+    let statusCallsWhileBlocked = adapter.statusCalls
+    await viewModel.refreshOnboarding()
+    await viewModel.refreshOnboarding()
+    #expect(adapter.statusCalls == statusCallsWhileBlocked)
+
+    adapter.resumeUnregister()
+    await unregister.value
+    #expect(adapter.statusCalls == statusCallsWhileBlocked + 1)
+    #expect(viewModel.onboardingServiceState == .notRegistered)
+    #expect(!viewModel.isOnboardingOperationInFlight)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("A crossing project action cannot erase a failed service operation error")
+@MainActor
+func petOnboardingFailureSurvivesRejectedCrossDomainMutation() async {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.state = .enabled
+    adapter.configuredPaths = ["/tmp/blabee-pet-configured"]
+    adapter.blocksUnregister = true
+    adapter.stateAfterUnregister = .requiresApproval
+    adapter.unregisterError = PetOnboardingTestError.injected
+    let chooser = PetFakeProjectFolderChooser(
+        result: URL(fileURLWithPath: "/tmp/blabee-pet-crossing", isDirectory: true)
+    )
+    let (viewModel, transport) = petOnboardingViewModel(adapter: adapter, chooser: chooser)
+    await viewModel.refreshOnboarding()
+
+    let unregister = Task { @MainActor in
+        await viewModel.unregisterOnboardingService()
+    }
+    for _ in 0..<100 where adapter.unregisterCalls == 0 {
+        await Task.yield()
+    }
+
+    await viewModel.refreshOnboarding()
+    await viewModel.chooseAndEnableProject()
+    #expect(chooser.calls == 0)
+    #expect(adapter.enabledPaths.isEmpty)
+
+    adapter.resumeUnregister()
+    await unregister.value
+    #expect(viewModel.onboardingServiceState == .requiresApproval)
+    #expect(viewModel.onboardingError?.contains("injected") == true)
+    #expect(!viewModel.isOnboardingOperationInFlight)
+    #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
 @Test("Pet onboarding exposes all service states and refresh never mutates")
@@ -153,7 +423,11 @@ func petOnboardingStatesAndRefreshAreReadOnly() async {
 @MainActor
 func petOnboardingPassivePathsDoNotMutate() async throws {
     let adapter = PetFakeOnboardingAdapter()
-    let (viewModel, transport) = petOnboardingViewModel(adapter: adapter)
+    let pluginSetupManager = PetFakeCodexPluginSetupManager()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: pluginSetupManager
+    )
     #expect(adapter.statusCalls == 0)
     #expect(adapter.configuredPathsCalls == 0)
 
@@ -175,6 +449,9 @@ func petOnboardingPassivePathsDoNotMutate() async throws {
 
     #expect(adapter.registerCalls == 0)
     #expect(adapter.unregisterCalls == 0)
+    #expect((await pluginSetupManager.callCounts()).inspect == 0)
+    #expect((await pluginSetupManager.callCounts()).connect == 0)
+    #expect((await pluginSetupManager.callCounts()).disconnect == 0)
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
@@ -260,7 +537,7 @@ func petOnboardingRefreshesAfterError() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding blocks duplicate operations while unregister is in flight")
+@Test("Pet service operations stay single-flight without blocking Plugin inspection")
 @MainActor
 func petOnboardingSingleFlight() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -271,7 +548,12 @@ func petOnboardingSingleFlight() async {
     let chooser = PetFakeProjectFolderChooser(
         result: URL(fileURLWithPath: "/tmp/blabee-pet-new", isDirectory: true)
     )
-    let (viewModel, transport) = petOnboardingViewModel(adapter: adapter, chooser: chooser)
+    let pluginSetupManager = PetFakeCodexPluginSetupManager()
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        chooser: chooser,
+        pluginSetupManager: pluginSetupManager
+    )
     await viewModel.refreshOnboarding()
 
     let first = Task { @MainActor in
@@ -281,6 +563,9 @@ func petOnboardingSingleFlight() async {
         await Task.yield()
     }
     #expect(viewModel.isOnboardingOperationInFlight)
+    #expect(viewModel.isOnboardingServiceOperationInFlight)
+    #expect(!viewModel.isCodexPluginOperationInFlight)
+    #expect(!viewModel.isOnboardingProjectOperationInFlight)
     let duplicate = Task { @MainActor in
         await viewModel.unregisterOnboardingService()
     }
@@ -290,13 +575,19 @@ func petOnboardingSingleFlight() async {
     let statusCallsWhileBlocked = adapter.statusCalls
     let configuredPathsCallsWhileBlocked = adapter.configuredPathsCalls
     await viewModel.refreshOnboarding()
-    await viewModel.chooseAndEnableProject()
-    await viewModel.disableConfiguredProject("/tmp/blabee-pet-configured")
     #expect(adapter.statusCalls == statusCallsWhileBlocked)
     #expect(adapter.configuredPathsCalls == configuredPathsCallsWhileBlocked)
+
+    await viewModel.refreshCodexPluginSetup()
+    await viewModel.chooseAndEnableProject()
+    await viewModel.disableConfiguredProject("/tmp/blabee-pet-configured")
+    #expect((await pluginSetupManager.callCounts()).inspect == 1)
     #expect(chooser.calls == 0)
     #expect(adapter.enabledPaths.isEmpty)
     #expect(adapter.disabledPaths.isEmpty)
+    #expect(viewModel.isOnboardingServiceOperationInFlight)
+    #expect(!viewModel.isCodexPluginOperationInFlight)
+    #expect(!viewModel.isOnboardingProjectOperationInFlight)
 
     adapter.resumeUnregister()
     await first.value

@@ -141,7 +141,11 @@ enum ManagedCodexRuntimeBundleInspector {
     private static let stagingMarkerName = ".blabee-runtime-staging.json"
 
     #if DEBUG
-        private static let testingLock = NSLock()
+        // A test hook changes process-wide validation behavior. Keep the lock
+        // for the entire scoped test body so independently serialized suites
+        // cannot observe each other's hook. Validation re-enters the lock on
+        // the same thread, hence the recursive lock.
+        private static let testingLock = NSRecursiveLock()
         private nonisolated(unsafe) static var signatureValidationHook:
             (@Sendable (_ label: String, _ path: String) throws -> Void)?
     #endif
@@ -948,8 +952,9 @@ enum ManagedCodexRuntimeBundleInspector {
             if mode == .trustedTestFixture
                 || mode == .mismatchedTeamTestFixture
             {
-                let hook = testingLock.withLock { signatureValidationHook }
-                try hook?(label, path)
+                try testingLock.withLock {
+                    try signatureValidationHook?(label, path)
+                }
                 teamIdentifier = mode == .mismatchedTeamTestFixture
                     && label == "bin/codex-code-mode-host"
                     ? "BLABEE_OTHER_TEST_FIXTURE"
@@ -1118,13 +1123,24 @@ enum ManagedCodexRuntimeBundleInspector {
         return teamIdentifier
     }
 
-    #if DEBUG
-        static func setSignatureValidationHook(
-            _ hook: (@Sendable (_ label: String, _ path: String) throws -> Void)?
-        ) {
-            testingLock.withLock { signatureValidationHook = hook }
-        }
-    #endif
+    static func withSignatureValidationHook<Result>(
+        _ hook: @escaping @Sendable (
+            _ label: String,
+            _ path: String
+        ) throws -> Void,
+        perform body: () throws -> Result
+    ) rethrows -> Result {
+        #if DEBUG
+            return try testingLock.withLock {
+                let previous = signatureValidationHook
+                signatureValidationHook = hook
+                defer { signatureValidationHook = previous }
+                return try body()
+            }
+        #else
+            return try body()
+        #endif
+    }
 
     private static func machOArchitectures(
         descriptor: Int32,

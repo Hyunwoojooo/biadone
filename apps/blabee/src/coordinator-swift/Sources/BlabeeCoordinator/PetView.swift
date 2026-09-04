@@ -988,7 +988,7 @@ struct PetRootView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Blabee 설정")
                         .font(.title2.weight(.semibold))
-                    Text("후속 제안, 프로젝트 관찰 범위와 백그라운드 서비스를 관리합니다.")
+                    Text("Codex 연결, 후속 제안, 프로젝트 관찰 범위와 백그라운드 서비스를 관리합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1033,6 +1033,8 @@ struct PetRootView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .petInsetSurface(emphasized: true)
+
+            codexPluginSetupCard
 
             suggestionModeCard
 
@@ -1104,6 +1106,131 @@ struct PetRootView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var codexPluginSetupCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 12) {
+                Image(systemName: codexPluginSetupSymbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(codexPluginSetupColor)
+                    .frame(width: 38, height: 38)
+                    .background(codexPluginSetupColor.opacity(0.13), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Codex 연결")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.codexPluginSetupState.title)
+                        .font(.body.weight(.semibold))
+                }
+                Spacer(minLength: 8)
+                Text(codexPluginSetupBadgeTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(codexPluginSetupColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(codexPluginSetupColor.opacity(0.12), in: Capsule())
+            }
+
+            Text(viewModel.codexPluginSetupState.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if case .installedNeedsHookReview = viewModel.codexPluginSetupState {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Codex에서 Hook 상태 확인")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text("/hooks")
+                        .font(.callout.monospaced().weight(.semibold))
+                        .textSelection(.enabled)
+                    Text("SessionStart · UserPromptSubmit · Stop · PermissionRequest")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("이미 열려 있던 세션은 설정을 캐시할 수 있습니다. 닫은 뒤 평소처럼 codex resume으로 다시 열거나 새 세션을 시작하세요.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .petInsetSurface(cornerRadius: PetPanelVisualStyle.rowRadius)
+            }
+
+            codexPluginSetupActions
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface(emphasized: true)
+    }
+
+    @ViewBuilder
+    private var codexPluginSetupActions: some View {
+        HStack(spacing: 8) {
+            switch viewModel.codexPluginSetupState {
+            case .unchecked, .notInstalled:
+                Button {
+                    Task { await viewModel.connectCodexPlugin() }
+                } label: {
+                    Label("Codex 연결하기", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canConnectCodexPlugin)
+            case .marketplaceInstalledNeedsPlugin:
+                Button {
+                    Task { await viewModel.connectCodexPlugin() }
+                } label: {
+                    Label("연결 마무리", systemImage: "link")
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canConnectCodexPlugin)
+                Button("안전하게 정리") {
+                    Task { await viewModel.disconnectCodexPlugin() }
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canDisconnectCodexPlugin)
+            case .updateAvailable:
+                Button {
+                    Task { await viewModel.connectCodexPlugin() }
+                } label: {
+                    Label("Plugin 업데이트", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canConnectCodexPlugin)
+                Button("연결 해제") {
+                    Task { await viewModel.disconnectCodexPlugin() }
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canDisconnectCodexPlugin)
+            case .installedNeedsHookReview:
+                Button("연결 해제") {
+                    Task { await viewModel.disconnectCodexPlugin() }
+                }
+                .buttonStyle(.bordered)
+                .petCapsuleButtonBorder()
+                .disabled(!viewModel.canDisconnectCodexPlugin)
+            case .unavailable, .conflict, .error:
+                EmptyView()
+            }
+            Spacer()
+            Button {
+                Task { await viewModel.refreshCodexPluginSetup() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .petCircleButtonBorder()
+            .accessibilityLabel("Codex Plugin 상태 새로고침")
+            .disabled(viewModel.isCodexPluginOperationInFlight)
+        }
     }
 
     private var suggestionModeCard: some View {
@@ -1229,14 +1356,13 @@ struct PetRootView: View {
             }
             Spacer()
             Button {
-                Task { await viewModel.refreshOnboarding() }
+                Task { await viewModel.refreshAllOnboardingSettings() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
             .petCircleButtonBorder()
-            .accessibilityLabel("Blabee 설정 새로고침")
-            .disabled(viewModel.isOnboardingOperationInFlight)
+            .accessibilityLabel("모든 Blabee 설정 새로고침")
         }
     }
 
@@ -1344,6 +1470,39 @@ struct PetRootView: View {
         case .requiresApproval: .orange
         case .notRegistered: .secondary
         case .notFound, .unknown: .secondary
+        }
+    }
+
+    private var codexPluginSetupSymbol: String {
+        switch viewModel.codexPluginSetupState {
+        case .installedNeedsHookReview: "checkmark.circle.fill"
+        case .marketplaceInstalledNeedsPlugin: "link.circle.fill"
+        case .updateAvailable: "arrow.triangle.2.circlepath.circle.fill"
+        case .conflict, .error: "exclamationmark.triangle.fill"
+        case .notInstalled: "link.circle.fill"
+        case .unchecked, .unavailable: "questionmark.circle"
+        }
+    }
+
+    private var codexPluginSetupColor: Color {
+        switch viewModel.codexPluginSetupState {
+        case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: .orange
+        case .conflict, .error: .red
+        case .notInstalled: .indigo
+        case .unchecked, .unavailable: .secondary
+        }
+    }
+
+    private var codexPluginSetupBadgeTitle: String {
+        switch viewModel.codexPluginSetupState {
+        case .unchecked: "확인 전"
+        case .unavailable: "사용 불가"
+        case .notInstalled: "미연결"
+        case .marketplaceInstalledNeedsPlugin: "마무리 필요"
+        case .installedNeedsHookReview: "상태 확인"
+        case .updateAvailable: "업데이트"
+        case .conflict: "충돌"
+        case .error: "오류"
         }
     }
 

@@ -261,6 +261,10 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
     private let appServerOutput = Pipe()
     private let appServerInput = Pipe()
     private let bridge: ManagedCodexAppServerBridge
+    private let lifecycleLock = NSLock()
+    private var started = false
+    private var closed = false
+    private var appServerResponseReaderClosed = false
 
     init(
         decider: any ManagedCodexApprovalDeciding,
@@ -307,6 +311,16 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
     }
 
     func start() {
+        lifecycleLock.lock()
+        guard !started, !closed else {
+            lifecycleLock.unlock()
+            Issue.record(
+                "managed bridge harness started more than once or after close"
+            )
+            return
+        }
+        started = true
+        lifecycleLock.unlock()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             defer { finished.leave() }
             do { try bridge.run() }
@@ -328,6 +342,13 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
     }
 
     func closeAppServerResponseReader() {
+        lifecycleLock.lock()
+        guard !appServerResponseReaderClosed else {
+            lifecycleLock.unlock()
+            return
+        }
+        appServerResponseReaderClosed = true
+        lifecycleLock.unlock()
         try? appServerInput.fileHandleForReading.close()
     }
 
@@ -336,12 +357,35 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
     }
 
     func close() {
+        lifecycleLock.lock()
+        guard !closed else {
+            lifecycleLock.unlock()
+            return
+        }
+        closed = true
+        let shouldWait = started
+        let shouldCloseResponseReader = !appServerResponseReaderClosed
+        appServerResponseReaderClosed = true
+        lifecycleLock.unlock()
+
         bridge.stop()
         try? appServerOutput.fileHandleForWriting.close()
         _ = shutdown(client, SHUT_RDWR)
         Darwin.close(client)
-        _ = finished.wait(timeout: .now() + .seconds(2))
-        try? appServerInput.fileHandleForReading.close()
+        if shouldWait {
+            #expect(
+                finished.wait(timeout: .now() + .seconds(2)) == .success,
+                "managed bridge background work must finish during cleanup"
+            )
+        }
+        // Close both ends of both synthetic App Server pipes. The bridge owns
+        // one endpoint of each pipe, but the harness must not rely on the
+        // bridge's deinitialization timing to release test descriptors.
+        try? appServerOutput.fileHandleForReading.close()
+        try? appServerInput.fileHandleForWriting.close()
+        if shouldCloseResponseReader {
+            try? appServerInput.fileHandleForReading.close()
+        }
     }
 }
 
@@ -1984,6 +2028,18 @@ func managedCodexWebSocketWriteDeadlineBoundsAStalledPeer() throws {
     #expect(elapsedMilliseconds < 300)
     _ = shutdown(descriptors[0], SHUT_RDWR)
     _ = shutdown(descriptors[1], SHUT_RDWR)
+}
+
+@Test("Managed bridge harness cleanup is complete and idempotent")
+func managedCodexBridgeHarnessCleanupIsIdempotent() throws {
+    let harness = try ManagedCodexBridgeHarness(
+        decider: ManagedCodexCountingDecider()
+    )
+    harness.start()
+    harness.closeAppServerResponseReader()
+    harness.closeAppServerResponseReader()
+    harness.close()
+    harness.close()
 }
 
 @Test("Managed App Server delivery is acknowledged once after response bytes are written")

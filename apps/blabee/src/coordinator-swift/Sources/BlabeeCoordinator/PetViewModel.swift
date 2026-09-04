@@ -87,6 +87,12 @@ enum PetActionAccessoryPresentation: Sendable, Equatable {
 
 @MainActor
 final class PetViewModel: ObservableObject {
+    private enum OnboardingOperationDomain {
+        case service
+        case codexPlugin
+        case project
+    }
+
     @Published private(set) var snapshot: PetSnapshot? {
         didSet {
             let priorActionCount = oldValue?.interactions.first?.actionChoices.count
@@ -158,6 +164,7 @@ final class PetViewModel: ObservableObject {
         }
     }
     @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
+    @Published private(set) var codexPluginSetupState: CodexPluginSetupState = .unchecked
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
     @Published private(set) var onboardingError: String?
@@ -169,11 +176,14 @@ final class PetViewModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var isOnboardingOperationInFlight = false
+    @Published private(set) var isOnboardingServiceOperationInFlight = false
+    @Published private(set) var isCodexPluginOperationInFlight = false
+    @Published private(set) var isOnboardingProjectOperationInFlight = false
 
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
     private let onboardingAdapter: any PetOnboardingAdapting
+    private let codexPluginSetupManager: any CodexPluginSetupManaging
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
     private let selectionIDGenerator: @Sendable () -> String
@@ -194,6 +204,8 @@ final class PetViewModel: ObservableObject {
     private var nextSnapshotRequest: UInt64 = 0
     private var lastAppliedSnapshotRequest: UInt64 = 0
     private var refreshInProgress = false
+    private var onboardingRefreshRequested = false
+    private var codexPluginRefreshRequested = false
     private var autoFocusAttemptedIdentity: PetInteractionIdentity?
     private var persistentApprovalResolutionError: String?
 
@@ -208,6 +220,7 @@ final class PetViewModel: ObservableObject {
         transport: any PetCoordinatorTransport,
         externalApplicationOpener: any PetExternalApplicationOpening,
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
+        codexPluginSetupManager: any CodexPluginSetupManaging = CodexUnavailablePluginSetupManager(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -224,6 +237,7 @@ final class PetViewModel: ObservableObject {
         self.transport = transport
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
+        self.codexPluginSetupManager = codexPluginSetupManager
         self.suggestionModeStore = suggestionModeStore
         self.projectFolderChooser = projectFolderChooser
         self.processIdentifier = processIdentifier
@@ -363,27 +377,55 @@ final class PetViewModel: ObservableObject {
             .sorted()
     }
 
+    var isOnboardingOperationInFlight: Bool {
+        isOnboardingServiceOperationInFlight
+            || isCodexPluginOperationInFlight
+            || isOnboardingProjectOperationInFlight
+    }
+
+    private var isOnboardingConfigurationOperationInFlight: Bool {
+        isOnboardingServiceOperationInFlight || isOnboardingProjectOperationInFlight
+    }
+
     var canRegisterOnboardingService: Bool {
-        onboardingServiceState == .notRegistered && !isOnboardingOperationInFlight
+        onboardingServiceState == .notRegistered
+            && !isOnboardingConfigurationOperationInFlight
     }
 
     var canUnregisterOnboardingService: Bool {
         (onboardingServiceState == .enabled
             || onboardingServiceState == .requiresApproval)
-            && !isOnboardingOperationInFlight
+            && !isOnboardingConfigurationOperationInFlight
     }
 
     var canOpenOnboardingSystemSettings: Bool {
-        onboardingServiceState == .requiresApproval && !isOnboardingOperationInFlight
+        onboardingServiceState == .requiresApproval
+            && !isOnboardingConfigurationOperationInFlight
     }
 
     var canMutateOnboardingProjects: Bool {
         guard configuredProjectPathsAreAuthoritative else { return false }
         return switch onboardingServiceState {
         case .notRegistered, .enabled, .requiresApproval:
-            !isOnboardingOperationInFlight
+            !isOnboardingConfigurationOperationInFlight
         case .notFound, .unknown:
             false
+        }
+    }
+
+    var canConnectCodexPlugin: Bool {
+        guard !isCodexPluginOperationInFlight else { return false }
+        return switch codexPluginSetupState {
+        case .unchecked, .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable: true
+        case .unavailable, .installedNeedsHookReview, .conflict, .error: false
+        }
+    }
+
+    var canDisconnectCodexPlugin: Bool {
+        guard !isCodexPluginOperationInFlight else { return false }
+        return switch codexPluginSetupState {
+        case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: true
+        case .unchecked, .unavailable, .notInstalled, .conflict, .error: false
         }
     }
 
@@ -447,80 +489,109 @@ final class PetViewModel: ObservableObject {
     }
 
     func refreshOnboarding() async {
-        guard !isOnboardingOperationInFlight else { return }
-        isOnboardingOperationInFlight = true
+        guard !isOnboardingServiceOperationInFlight,
+              !isOnboardingProjectOperationInFlight
+        else {
+            onboardingRefreshRequested = true
+            return
+        }
         reloadOnboardingState()
-        isOnboardingOperationInFlight = false
+    }
+
+    func refreshAllOnboardingSettings() async {
+        await refreshOnboarding()
+        await refreshCodexPluginSetup()
+    }
+
+    func refreshCodexPluginSetup() async {
+        guard !isCodexPluginOperationInFlight else {
+            codexPluginRefreshRequested = true
+            return
+        }
+        await performOnboardingOperation(.codexPlugin) {
+            codexPluginSetupState = await codexPluginSetupManager.inspect()
+        }
+    }
+
+    func connectCodexPlugin() async {
+        guard canConnectCodexPlugin else { return }
+        await performOnboardingOperation(.codexPlugin) {
+            codexPluginSetupState = await codexPluginSetupManager.connect()
+        }
+    }
+
+    func disconnectCodexPlugin() async {
+        guard canDisconnectCodexPlugin else { return }
+        await performOnboardingOperation(.codexPlugin) {
+            codexPluginSetupState = await codexPluginSetupManager.disconnect()
+        }
     }
 
     func registerOnboardingService() async {
         guard canRegisterOnboardingService else { return }
-        isOnboardingOperationInFlight = true
-        let operationError: String?
-        do {
-            try onboardingAdapter.registerService()
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
+        await performOnboardingOperation(.service) {
+            let operationError: String?
+            do {
+                try onboardingAdapter.registerService()
+                operationError = nil
+            } catch {
+                operationError = String(describing: error)
+            }
+            reloadOnboardingState(operationError: operationError)
         }
-        reloadOnboardingState(operationError: operationError)
-        isOnboardingOperationInFlight = false
     }
 
     func unregisterOnboardingService() async {
         guard canUnregisterOnboardingService else { return }
-        isOnboardingOperationInFlight = true
-        let operationError: String?
-        do {
-            try await onboardingAdapter.unregisterService()
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
+        await performOnboardingOperation(.service) {
+            let operationError: String?
+            do {
+                try await onboardingAdapter.unregisterService()
+                operationError = nil
+            } catch {
+                operationError = String(describing: error)
+            }
+            reloadOnboardingState(operationError: operationError)
         }
-        reloadOnboardingState(operationError: operationError)
-        isOnboardingOperationInFlight = false
     }
 
     func openOnboardingSystemSettings() async {
         guard canOpenOnboardingSystemSettings else { return }
-        isOnboardingOperationInFlight = true
-        onboardingAdapter.openSystemSettingsLoginItems()
-        reloadOnboardingState()
-        isOnboardingOperationInFlight = false
+        await performOnboardingOperation(.service) {
+            onboardingAdapter.openSystemSettingsLoginItems()
+            reloadOnboardingState()
+        }
     }
 
     func chooseAndEnableProject() async {
         guard canMutateOnboardingProjects else { return }
-        isOnboardingOperationInFlight = true
-        guard let projectURL = projectFolderChooser.chooseProjectFolder() else {
-            isOnboardingOperationInFlight = false
-            return
+        await performOnboardingOperation(.project) {
+            guard let projectURL = projectFolderChooser.chooseProjectFolder() else { return }
+            let operationError: String?
+            do {
+                try onboardingAdapter.enableProject(at: projectURL.standardizedFileURL.path)
+                operationError = nil
+            } catch {
+                operationError = String(describing: error)
+            }
+            reloadOnboardingState(operationError: operationError)
         }
-        let operationError: String?
-        do {
-            try onboardingAdapter.enableProject(at: projectURL.standardizedFileURL.path)
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
-        }
-        reloadOnboardingState(operationError: operationError)
-        isOnboardingOperationInFlight = false
     }
 
     func disableConfiguredProject(_ path: String) async {
         guard canMutateOnboardingProjects,
               configuredProjectPaths.contains(path)
         else { return }
-        isOnboardingOperationInFlight = true
-        let operationError: String?
-        do {
-            try onboardingAdapter.disableProject(at: path)
-            operationError = nil
-        } catch {
-            operationError = String(describing: error)
+        await performOnboardingOperation(.project) {
+            let operationError: String?
+            do {
+                try onboardingAdapter.disableProject(at: path)
+                operationError = nil
+            } catch {
+                operationError = String(describing: error)
+            }
+            reloadOnboardingState(operationError: operationError)
         }
-        reloadOnboardingState(operationError: operationError)
-        isOnboardingOperationInFlight = false
     }
 
     func restoreDefaultShortcutDraft() {
@@ -1268,6 +1339,69 @@ final class PetViewModel: ObservableObject {
 
     private func refreshShortcutSettingsValidation() {
         shortcutSettingsError = shortcutDraft.validationIssue()?.message
+    }
+
+    private func performOnboardingOperation(
+        _ domain: OnboardingOperationDomain,
+        operation: () async -> Void
+    ) async {
+        guard !isOnboardingOperationInFlight(domain) else { return }
+        setOnboardingOperationInFlight(true, domain: domain)
+        defer { finishOnboardingOperation(domain) }
+        await operation()
+        if domain == .codexPlugin {
+            await drainCodexPluginRefreshRequests()
+        }
+    }
+
+    private func isOnboardingOperationInFlight(
+        _ domain: OnboardingOperationDomain
+    ) -> Bool {
+        switch domain {
+        case .service, .project:
+            isOnboardingConfigurationOperationInFlight
+        case .codexPlugin:
+            isCodexPluginOperationInFlight
+        }
+    }
+
+    private func setOnboardingOperationInFlight(
+        _ inFlight: Bool,
+        domain: OnboardingOperationDomain
+    ) {
+        switch domain {
+        case .service:
+            isOnboardingServiceOperationInFlight = inFlight
+        case .codexPlugin:
+            isCodexPluginOperationInFlight = inFlight
+        case .project:
+            isOnboardingProjectOperationInFlight = inFlight
+        }
+    }
+
+    private func finishOnboardingOperation(_ domain: OnboardingOperationDomain) {
+        setOnboardingOperationInFlight(false, domain: domain)
+
+        switch domain {
+        case .codexPlugin:
+            break
+        case .service, .project:
+            guard onboardingRefreshRequested,
+                  !isOnboardingServiceOperationInFlight,
+                  !isOnboardingProjectOperationInFlight
+            else { return }
+            // Every configuration mutation performs a final authoritative reload.
+            // Treat refresh clicks received during that mutation as coalesced into
+            // that reload so a successful read cannot erase the mutation error.
+            onboardingRefreshRequested = false
+        }
+    }
+
+    private func drainCodexPluginRefreshRequests() async {
+        while codexPluginRefreshRequested {
+            codexPluginRefreshRequested = false
+            codexPluginSetupState = await codexPluginSetupManager.inspect()
+        }
     }
 
     private func reloadOnboardingState(operationError: String? = nil) {
