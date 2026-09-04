@@ -148,6 +148,23 @@ func blabeePetOutsideClickDismissalPolicy() {
     ))
 }
 
+@Test("BlabeePet routes only a secondary menu-bar click to its quit menu")
+func blabeePetMenuBarInteractionPolicy() {
+    #expect(PetMenuBarInteractionPolicy.action(for: .leftMouseUp) == .togglePanel)
+    #expect(PetMenuBarInteractionPolicy.action(for: .rightMouseDown) == .showQuitMenu)
+    #expect(PetMenuBarInteractionPolicy.action(for: .rightMouseUp) == .showQuitMenu)
+
+    // Preserve the existing toggle path for keyboard accessibility and
+    // programmatic invocations that do not carry a mouse event.
+    #expect(PetMenuBarInteractionPolicy.action(for: .keyDown) == .togglePanel)
+    #expect(PetMenuBarInteractionPolicy.action(for: nil) == .togglePanel)
+}
+
+@Test("BlabeePet exposes one clear quit-menu label")
+func blabeePetQuitMenuMetadata() {
+    #expect(PetMenuBarInteractionPolicy.quitMenuTitle == "Blabee 종료")
+}
+
 @Test("BlabeePet auto-presentation is owned by the exact approval head")
 func blabeePetExactApprovalPresentationPolicy() {
     let first = PetApprovalHeadIdentity.permission(requestID: "permission_first")

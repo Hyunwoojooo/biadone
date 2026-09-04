@@ -181,6 +181,25 @@ enum PetPanelDismissalPolicy {
     }
 }
 
+enum PetMenuBarInteractionAction: Sendable, Equatable {
+    case togglePanel
+    case showQuitMenu
+}
+
+enum PetMenuBarInteractionPolicy {
+    static let quitMenuTitle = "Blabee 종료"
+
+    static func action(for eventType: NSEvent.EventType?) -> PetMenuBarInteractionAction {
+        guard let eventType else { return .togglePanel }
+        switch eventType {
+        case .rightMouseDown, .rightMouseUp:
+            return .showQuitMenu
+        default:
+            return .togglePanel
+        }
+    }
+}
+
 enum PetAutomaticPresentationOwner: Sendable, Equatable {
     case genericAttention
     case approval(PetApprovalHeadIdentity)
@@ -544,7 +563,8 @@ final class PetMenuBarController: NSObject {
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyDown
             button.target = self
-            button.action = #selector(togglePanel(_:))
+            button.action = #selector(handleStatusItemInteraction(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.toolTip = "Blabee"
             button.setAccessibilityLabel("Blabee 메뉴")
             panelController.attach(to: button)
@@ -577,6 +597,29 @@ final class PetMenuBarController: NSObject {
         panelController.stopObservingScreenChanges()
         panelController.hide()
         NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    @objc private func handleStatusItemInteraction(_ sender: NSStatusBarButton) {
+        let event = NSApplication.shared.currentEvent
+        switch PetMenuBarInteractionPolicy.action(for: event?.type) {
+        case .togglePanel:
+            togglePanel(sender)
+        case .showQuitMenu:
+            guard let event else { return }
+            let menu = NSMenu()
+            let quitItem = NSMenuItem(
+                title: PetMenuBarInteractionPolicy.quitMenuTitle,
+                action: #selector(terminateApplication(_:)),
+                keyEquivalent: ""
+            )
+            quitItem.target = self
+            menu.addItem(quitItem)
+            NSMenu.popUpContextMenu(menu, with: event, for: sender)
+        }
+    }
+
+    @objc private func terminateApplication(_ sender: NSMenuItem) {
+        NSApplication.shared.terminate(sender)
     }
 
     @objc private func togglePanel(_ sender: Any?) {

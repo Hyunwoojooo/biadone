@@ -1,6 +1,6 @@
 # Blabee 내부 테스트용 DMG 패키징
 
-- 작성일: 2026-09-03
+- 작성일: 2026-09-04
 - 대상: 개발팀과 지정된 내부 테스터
 - 상태: 내부 테스트 패키징 구현 범위
 - 공개 배포: 미승인
@@ -44,17 +44,41 @@ file /absolute/path/to/blabee-coordinator
 
 ## 빌드 절차
 
-저장소 루트가 `/Users/joo/BiaDone/apps/blabee`인 개발 환경의 예시는 다음과 같다.
-각 입력과 출력은 반드시 절대 경로로 지정한다.
+저장소 루트에서 다음과 같이 실행한다. 릴리스 바이너리에 개발자 계정명과 로컬
+체크아웃 경로가 남지 않도록 Swift의 source path를 중립 경로로 치환한다. 각 입력과
+출력은 반드시 절대 경로로 지정한다.
 
 ```sh
-swift build -c release \
-  --package-path /Users/joo/BiaDone/apps/blabee/src/coordinator-swift
+BLABEE_SOURCE_ROOT="$PWD"
+BLABEE_RELEASE_SCRATCH="/private/tmp/blabee-internal-release-YYYYMMDD"
+
+swift build -c release --disable-sandbox \
+  --package-path "$BLABEE_SOURCE_ROOT/src/coordinator-swift" \
+  --scratch-path "$BLABEE_RELEASE_SCRATCH" \
+  -debug-info-format none \
+  -Xswiftc -file-prefix-map \
+  -Xswiftc "$BLABEE_SOURCE_ROOT=/blabee"
+
+BLABEE_RELEASE_BINARY="$BLABEE_RELEASE_SCRATCH/arm64-apple-macosx/release/blabee-coordinator"
+
+if LC_ALL=C grep -aq '/Users/' "$BLABEE_RELEASE_BINARY"; then
+  echo "release binary contains a local user path" >&2
+  exit 1
+fi
 
 npm run build:internal-dmg -- \
-  --binary /Users/joo/BiaDone/apps/blabee/src/coordinator-swift/.build/release/blabee-coordinator \
-  --output /Users/joo/BiaDone/apps/blabee/build/internal-dmg/Blabee-0.1.0-internal.dmg
+  --binary "$BLABEE_RELEASE_BINARY" \
+  --output "$BLABEE_SOURCE_ROOT/build/internal-dmg-YYYYMMDD/Blabee-0.1.0-internal-arm64-YYYYMMDD.dmg"
 ```
+
+`-debug-info-format none`은 테스터에게 전달할 앱에서 dSYM과 debug map을 만들지
+않는다. 따라서 충돌 로그의 파일·행 symbolication 품질은 낮아진다. 별도의 dSYM이
+필요한 릴리스에서는 이를 DMG에 넣지 말고 개발팀 전용 저장소에 보관한 뒤, 패키징할
+실행 파일만 코드 서명 전에 별도로 strip하는 절차를 사용해야 한다.
+
+경로 검사는 macOS의 `/Users/<계정명>/...` 형태가 바이너리에 남는 실수를 막는
+패키징 gate다. 실패하면 바이너리를 배포하지 말고 debug info와
+`-file-prefix-map` 적용 여부를 먼저 확인한다.
 
 빌더는 기존 출력 파일을 덮어쓰지 않는다. 같은 이름의 산출물이 이미 있으면 보존한
 채 실패하므로, 새 버전이나 새 검증 시도에는 새 출력 이름을 사용한다.
@@ -69,8 +93,8 @@ npm run build:internal-dmg -- \
 성공 시 다음 두 파일이 함께 생성된다.
 
 ```text
-Blabee-0.1.0-internal.dmg
-Blabee-0.1.0-internal.dmg.sha256
+Blabee-0.1.0-internal-arm64-YYYYMMDD.dmg
+Blabee-0.1.0-internal-arm64-YYYYMMDD.dmg.sha256
 ```
 
 DMG의 루트 구조는 다음과 같다.
@@ -152,9 +176,10 @@ DMG 빌더는 성공을 보고하기 전에 다음을 검사한다.
   파일은 덮어쓰거나 삭제하지 않는다. 정리 자체도 실패하면 최초 오류를 유지한 채
   정리 오류를 함께 보고한다.
 
-2026-09-03 기준 실제 DMG 집중 테스트 12/12와 전체 T-012 패키징 테스트 26/26가
-통과했다. 실행 환경과 실제 산출물 hash는 `T012_APP_BUNDLE_REPORT.md`와
-`TASK_STATUS.md`에 기록한다.
+2026-09-04 기준 전체 T-012 패키징 테스트 40/40가 macOS DiskImages 사용이 가능한
+환경에서 통과했다. 샌드박스에서 `hdiutil`이 차단된 실패와 코드 실패는 구분한다.
+실행 환경과 실제 산출물 hash는 `T012_APP_BUNDLE_REPORT.md`와 `TASK_STATUS.md`에
+기록한다.
 
 ## 실패했을 때
 
@@ -179,7 +204,7 @@ DMG와 `.sha256` 파일을 반드시 함께 전달한다. 받은 팀원은 두 �
 직접 검토한다.
 
 ```sh
-shasum -a 256 -c Blabee-0.1.0-internal.dmg.sha256
+shasum -a 256 -c Blabee-0.1.0-internal-arm64-YYYYMMDD.dmg.sha256
 ```
 
 검사가 성공한 경우에만 다음 순서로 진행한다.

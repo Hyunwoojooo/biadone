@@ -1,6 +1,6 @@
 # Blabee 내부 테스트 설치·설정 가이드
 
-- 작성일: 2026-09-03
+- 작성일: 2026-09-04
 - 대상: Blabee 개발팀과 지정된 내부 테스터
 - 대상 빌드: `Blabee 0.1.0-internal`
 - 공개 배포 상태: 미승인
@@ -20,8 +20,9 @@
    검토하고 신뢰한다.
 
 **Codex 연결하기**는 Plugin 설치까지만 처리한다. Hook 신뢰는 보안상 Blabee가
-대신 선택하지 않는다. 따라서 화면에 **Plugin 설치됨 · Hook 검토 필요**가 보이면
-설치는 끝났지만 `/hooks` 확인은 아직 남았다는 뜻이다.
+대신 선택하지 않는다. 따라서 화면에 **Plugin 설치됨 · Hook 상태 확인**이 보이면
+Plugin 설치는 끝났지만 Blabee가 Hook 신뢰 완료 여부를 자동 판정하지 않는다는
+뜻이다. 새 Codex 세션에서 `/hooks`를 열어 사용자가 직접 상태를 확인한다.
 
 앱 실행이나 설정 화면 열기만으로 Codex 프로세스를 실행하거나 Plugin을 설치하지
 않는다. 사용자가 **Codex 연결하기** 또는 **다시 확인**을 명시적으로 눌렀을 때만
@@ -47,8 +48,14 @@ Codex는 설치 전과 같은 방법으로 실행한다.
 예시 파일:
 
 ```text
-Blabee-0.1.0-internal-arm64.dmg
-Blabee-0.1.0-internal-arm64.dmg.sha256
+Blabee-0.1.0-internal-arm64-20260904-r2.dmg
+Blabee-0.1.0-internal-arm64-20260904-r2.dmg.sha256
+```
+
+이번 전달본의 DMG SHA-256은 다음과 같다.
+
+```text
+4928ea8ac1cec3aaaa3b3f0bc955370e6d4321f25816ae72f5c3be11e44df397
 ```
 
 Intel Mac 또는 조직 정책상 미공증 앱을 실행할 수 없는 Mac에서는 테스트를
@@ -66,7 +73,7 @@ DMG를 열기 전에 두 파일을 같은 폴더에 둔다. 터미널에서 그 
 명령을 실행한다.
 
 ```sh
-shasum -a 256 -c Blabee-0.1.0-internal-arm64.dmg.sha256
+shasum -a 256 -c Blabee-0.1.0-internal-arm64-20260904-r2.dmg.sha256
 ```
 
 출력 끝에 `OK`가 표시될 때만 설치한다. 실패하면 DMG를 열지 말고 두 파일을 다시
@@ -74,7 +81,7 @@ shasum -a 256 -c Blabee-0.1.0-internal-arm64.dmg.sha256
 
 ## 3. Blabee 앱 설치하기
 
-1. `Blabee-0.1.0-internal-arm64.dmg`를 연다.
+1. `Blabee-0.1.0-internal-arm64-20260904-r2.dmg`를 연다.
 2. DMG 창의 `Blabee.app`을 같은 창에 있는 `Applications`로 끌어 놓는다.
 3. 복사가 끝나면 Finder의 **응용 프로그램**에서 `Blabee`를 찾는다.
 4. 처음 한 번은 앱을 Control-클릭 또는 우클릭하고 **열기**를 선택한다.
@@ -130,7 +137,7 @@ Blabee는 Dock 아이콘 대신 macOS 메뉴바 아이콘으로 실행된다. �
 
 1. **Codex 연결**에서 **Codex 연결하기**를 누른다.
 2. 작업이 끝날 때까지 앱을 종료하지 않는다.
-3. 상태가 **Plugin 설치됨 · Hook 검토 필요**로 바뀌는지 확인한다.
+3. 상태가 **Plugin 설치됨 · Hook 상태 확인**으로 바뀌는지 확인한다.
 4. 이미 열려 있던 Codex 세션을 종료하고 새 세션을 시작한다.
 5. 새 세션에서 `/hooks`를 실행한다.
 6. 아래 네 Hook의 이름과 내용을 직접 확인한 뒤 신뢰한다.
@@ -211,9 +218,10 @@ Pet 우측 상단의 **톱니바퀴 아이콘**을 눌러 단축키 설정을 �
 
 - 앱이 실행되고 메뉴바에 Blabee 아이콘이 나타난다.
 - 아이콘을 누르면 Pet 패널이 열리고 바깥을 누르면 닫힌다.
+- 메뉴바 아이콘을 우클릭하면 **Blabee 종료** 메뉴가 나타나고 앱이 정상 종료된다.
 - 설정 화면에서 프로젝트를 추가·제거할 수 있다.
 - 후속 제안 모드를 저장할 수 있다.
-- **Codex 연결하기** 뒤 **Plugin 설치됨 · Hook 검토 필요**가 표시된다.
+- **Codex 연결하기** 뒤 **Plugin 설치됨 · Hook 상태 확인**이 표시된다.
 - 새 Codex 세션의 `/hooks`에서 Blabee Hook 네 개를 검토할 수 있다.
 - 백그라운드 서비스의 등록 상태가 표시된다.
 - 서비스 재시작 뒤 프로젝트가 **현재 서비스에서 활성**로 표시된다.
@@ -279,7 +287,7 @@ swift build -c release --package-path src/coordinator-swift
 ```sh
 npm run prepare:dogfood -- \
   --binary "$PWD/src/coordinator-swift/.build/release/blabee-coordinator" \
-  --output "/private/tmp/blabee-dogfood-20260903-01"
+  --output "/private/tmp/blabee-dogfood-20260904-01"
 ```
 
 출력의 `dogfood-summary.json`에서 아래 값을 확인한다.
@@ -361,7 +369,7 @@ Plugin 설치 뒤 이미 열려 있던 Codex 세션에는 새 Plugin이 소급 �
 
 ### Codex 답변 뒤 카드가 나타나지 않는다
 
-- Blabee 설정에서 Codex 상태가 **Plugin 설치됨 · Hook 검토 필요**인지 확인한다.
+- Blabee 설정에서 Codex 상태가 **Plugin 설치됨 · Hook 상태 확인**인지 확인한다.
 - 설치되지 않았다면 **Codex 연결하기**를 누른다.
 - 새 Codex 세션에서 `/hooks`를 열어 네 Hook의 신뢰 상태를 확인한다.
 - 대상 프로젝트가 현재 서비스에서 활성인지 확인한다.
@@ -430,16 +438,25 @@ guarded rotation 명령을 사용한다. 실행 중 Codex, Pet 또는 service가
 
 ## 10. 테스트 결과를 전달할 때
 
-다음 항목을 함께 보낸다. 비밀번호, token, API key, 전체 Keychain 내용은 보내지
-않는다.
+다음 항목을 함께 보낸다.
 
-- 사용한 DMG 파일명과 SHA-256 검사 성공 여부
+- 사용한 DMG 파일명: `Blabee-0.1.0-internal-arm64-20260904-r2.dmg`
+- 함께 받은 `.sha256` 파일의 검사 성공 여부와 확인된 SHA-256 값
 - Mac 모델/아키텍처와 macOS 버전
 - Codex 연동을 시험했다면 `codex --version`
 - 앱 설치 위치
-- 서비스 상태와 프로젝트 상태 문구
-- 재현 순서와 마지막 오류 문구
+- 설정 화면의 Codex Plugin 상태 문구
+- `/hooks`에서 확인한 `SessionStart`, `UserPromptSubmit`, `Stop`,
+  `PermissionRequest` 각각의 상태
+- 메뉴바 실행, 프로젝트 활성화, Plugin 설치, Hook 확인, Pet 카드 표시,
+  같은 세션의 다음 턴 전달을 각각 `통과`, `실패`, `실행하지 않음`으로 구분한 결과
+- 두 세션을 시험했다면 카드가 들어온 순서와 실제 표시 순서
+- 명령 권한 카드를 시험했다면 일반 후속 제안 왕복과 구분한 결과
+- 실패한 단계, 발생 시각, 재현 순서와 화면에 표시된 마지막 오류 문구
 - 필요한 경우 민감 정보가 보이지 않는 화면 캡처
+
+비밀번호, token, API key, 전체 Keychain 내용, 전체 journal 또는 다른 프로젝트의
+대화 내용은 보내지 않는다.
 
 DMG 생성·검증 방법과 공개 배포 전 남은 작업은
 [`INTERNAL_DMG_PACKAGING.md`](./INTERNAL_DMG_PACKAGING.md)를 참고한다.
