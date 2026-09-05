@@ -1,4 +1,5 @@
 import Darwin
+import CryptoKit
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -141,25 +142,33 @@ private final class CodexPluginSetupFakeCLI: @unchecked Sendable {
                 ? malformedMutationResult(exitCode: pluginAddExitCode)
                 : normal
 
-        case ["plugin", "remove", CodexPluginSetupManager.pluginSelector, "--json"]:
+        case let arguments
+            where arguments.count == 4
+                && arguments[0] == "plugin"
+                && arguments[1] == "remove"
+                && arguments[3] == "--json":
+            let selector = arguments[2]
             if pluginRemoveCreatesEffect {
                 plugins.removeAll {
-                    $0["pluginId"] as? String == CodexPluginSetupManager.pluginSelector
+                    $0["pluginId"] as? String == selector
                 }
             }
             return mutationSuccess([
-                "pluginId": CodexPluginSetupManager.pluginSelector,
+                "pluginId": selector,
             ], arguments: arguments)
 
-        case [
-            "plugin", "marketplace", "remove", CodexPluginSetupManager.marketplaceName,
-            "--json",
-        ]:
+        case let arguments
+            where arguments.count == 5
+                && arguments[0] == "plugin"
+                && arguments[1] == "marketplace"
+                && arguments[2] == "remove"
+                && arguments[4] == "--json":
+            let marketplaceName = arguments[3]
             if marketplaceRemoveCreatesEffect {
-                marketplaces.removeAll { $0.name == CodexPluginSetupManager.marketplaceName }
+                marketplaces.removeAll { $0.name == marketplaceName }
             }
             return mutationSuccess([
-                "marketplaceName": CodexPluginSetupManager.marketplaceName,
+                "marketplaceName": marketplaceName,
             ], arguments: arguments)
 
         default:
@@ -262,7 +271,11 @@ private final class CodexPluginSetupFixture {
         resolver: CodexPluginSetupExecutableResolving? = nil,
         processRunner: CodexPluginSetupProcessRunning? = nil,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
-        mutationLock: CodexPluginSetupMutationLock? = nil
+        mutationLock: CodexPluginSetupMutationLock? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        operationTimeoutMilliseconds: Int = 45_000
     ) -> CodexPluginSetupManager {
         let selectedResolver = resolver ?? { [executable] in executable }
         let selectedRunner = processRunner ?? fake.run
@@ -272,7 +285,9 @@ private final class CodexPluginSetupFixture {
             executableResolver: selectedResolver,
             processRunner: selectedRunner,
             bundleRevalidator: bundleRevalidator,
-            mutationLock: mutationLock
+            mutationLock: mutationLock,
+            monotonicNow: monotonicNow,
+            operationTimeoutMilliseconds: operationTimeoutMilliseconds
         )
     }
 
@@ -281,7 +296,11 @@ private final class CodexPluginSetupFixture {
         revalidator: @escaping CodexPluginSetupExecutableRevalidating,
         processRunner: CodexPluginSetupProcessRunning? = nil,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
-        mutationLock: CodexPluginSetupMutationLock? = nil
+        mutationLock: CodexPluginSetupMutationLock? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        operationTimeoutMilliseconds: Int = 45_000
     ) -> CodexPluginSetupManager {
         let selectedRunner = processRunner ?? fake.run
         return CodexPluginSetupManager(
@@ -290,7 +309,9 @@ private final class CodexPluginSetupFixture {
             executableRevalidator: revalidator,
             processRunner: selectedRunner,
             bundleRevalidator: bundleRevalidator,
-            mutationLock: mutationLock
+            mutationLock: mutationLock,
+            monotonicNow: monotonicNow,
+            operationTimeoutMilliseconds: operationTimeoutMilliseconds
         )
     }
 }
@@ -340,6 +361,23 @@ private final class CodexPluginSetupProcessProbe: @unchecked Sendable {
     }
 }
 
+private final class CodexPluginSetupManualClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nanoseconds: UInt64 = 0
+
+    func now() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return nanoseconds
+    }
+
+    func advance(milliseconds: UInt64) {
+        lock.lock()
+        nanoseconds += milliseconds * 1_000_000
+        lock.unlock()
+    }
+}
+
 private final class CodexPluginSetupBundleProbe: @unchecked Sendable {
     private let lock = NSLock()
     private let failureCall: Int?
@@ -366,6 +404,41 @@ private final class CodexPluginSetupBundleProbe: @unchecked Sendable {
     }
 }
 
+private final class CodexPluginSetupBundleActionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let actionCall: Int
+    private let action: @Sendable () throws -> Void
+    private var count = 0
+    private var actionWasRun = false
+
+    init(
+        actionCall: Int,
+        action: @escaping @Sendable () throws -> Void
+    ) {
+        self.actionCall = actionCall
+        self.action = action
+    }
+
+    func validate() throws {
+        lock.lock()
+        count += 1
+        let shouldRun = count == actionCall && !actionWasRun
+        if shouldRun {
+            actionWasRun = true
+        }
+        lock.unlock()
+        if shouldRun {
+            try action()
+        }
+    }
+
+    func snapshot() -> (calls: Int, actionWasRun: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (count, actionWasRun)
+    }
+}
+
 private final class CodexPluginSetupOperationProbe: @unchecked Sendable {
     private let lock = NSLock()
     private var errorCode: String?
@@ -381,6 +454,104 @@ private final class CodexPluginSetupOperationProbe: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return errorCode
+    }
+}
+
+private struct CodexPluginSetupPinnedValidationCall: Equatable {
+    let executable: String
+    let expectedIdentity: CodexRuntimeFileIdentity
+    let expectedVersion: String?
+}
+
+private final class CodexPluginSetupFallbackTrustProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private let artifact: CodexPluginSetupPinnedArtifact
+    private let reportedVersion: String
+    private let trustSnapshot: CodexRuntimeTrustSnapshot
+    private var inspectedPaths: [String] = []
+    private var signaturePaths: [String] = []
+    private var pinnedCalls: [CodexPluginSetupPinnedValidationCall] = []
+    private var processInvocations: [CodexPluginSetupInvocation] = []
+
+    init(
+        artifact: CodexPluginSetupPinnedArtifact,
+        reportedVersion: String = "0.153.2",
+        trustSnapshot: CodexRuntimeTrustSnapshot
+    ) {
+        self.artifact = artifact
+        self.reportedVersion = reportedVersion
+        self.trustSnapshot = trustSnapshot
+    }
+
+    func inspect(_ executable: URL) throws -> CodexRuntimeTrustSnapshot {
+        lock.lock()
+        inspectedPaths.append(executable.path)
+        lock.unlock()
+        return trustSnapshot
+    }
+
+    func rejectSignature(_ executable: URL) throws {
+        lock.lock()
+        signaturePaths.append(executable.path)
+        lock.unlock()
+        throw CoordinatorError("codex_plugin_setup_signature_invalid")
+    }
+
+    func rejectSignatureUnexpectedly(_ executable: URL) throws {
+        lock.lock()
+        signaturePaths.append(executable.path)
+        lock.unlock()
+        throw CoordinatorError("unexpected_signature_validator_failure")
+    }
+
+    func acceptSignature(_ executable: URL) throws {
+        lock.lock()
+        signaturePaths.append(executable.path)
+        lock.unlock()
+    }
+
+    func acceptPinned(
+        _ executable: URL,
+        _ expectedIdentity: CodexRuntimeFileIdentity,
+        _ expectedVersion: String?
+    ) throws -> CodexPluginSetupPinnedArtifact {
+        lock.lock()
+        pinnedCalls.append(CodexPluginSetupPinnedValidationCall(
+            executable: executable.path,
+            expectedIdentity: expectedIdentity,
+            expectedVersion: expectedVersion
+        ))
+        lock.unlock()
+        return artifact
+    }
+
+    func runVersion(
+        executable: URL,
+        arguments: [String],
+        timeoutMilliseconds: Int
+    ) throws -> CodexPluginSetupProcessResult {
+        lock.lock()
+        processInvocations.append(CodexPluginSetupInvocation(
+            executable: executable.path,
+            arguments: arguments,
+            timeoutMilliseconds: timeoutMilliseconds
+        ))
+        lock.unlock()
+        return CodexPluginSetupProcessResult(
+            exitCode: 0,
+            stdout: Data("codex-cli \(reportedVersion)\n".utf8)
+        )
+    }
+
+    func snapshot() -> (
+        inspectedPaths: [String],
+        signaturePaths: [String],
+        pinnedCalls: [CodexPluginSetupPinnedValidationCall],
+        processInvocations: [CodexPluginSetupInvocation]
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (inspectedPaths, signaturePaths, pinnedCalls, processInvocations)
     }
 }
 
@@ -507,6 +678,830 @@ func codexPluginSetupRejectsOtherMarketplacePlugin() async throws {
         return
     }
     #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+private func codexPluginSetupLegacyRoot(
+    _ fixture: CodexPluginSetupFixture
+) -> URL {
+    fixture.root
+        .appendingPathComponent("legacy-output", isDirectory: true)
+        .appendingPathComponent("marketplace", isDirectory: true)
+}
+
+private func codexPluginSetupLegacyMarketplaceName(
+    marketplaceRoot: URL
+) -> String {
+    let outputRoot = marketplaceRoot.standardizedFileURL.deletingLastPathComponent()
+    let suffix = SHA256.hash(data: Data(outputRoot.path.utf8))
+        .prefix(6)
+        .map { String(format: "%02x", $0) }
+        .joined()
+    return "blabee-local-dogfood-\(suffix)"
+}
+
+private func codexPluginSetupLegacyPlugin(
+    marketplaceName: String? = nil,
+    marketplaceRoot: URL,
+    pluginID: String? = nil,
+    sourcePath: URL? = nil,
+    enabled: Bool = true
+) -> [String: Any] {
+    let marketplaceName = marketplaceName
+        ?? codexPluginSetupLegacyMarketplaceName(marketplaceRoot: marketplaceRoot)
+    return [
+        "pluginId": pluginID ?? "blabee@\(marketplaceName)",
+        "name": CodexPluginSetupManager.pluginName,
+        "marketplaceName": marketplaceName,
+        "version": "0.1.0",
+        "installed": true,
+        "enabled": enabled,
+        "source": [
+            "source": "local",
+            "path": (sourcePath ?? marketplaceRoot
+                .appendingPathComponent("plugins/blabee", isDirectory: true)).path,
+        ],
+    ]
+}
+
+private func codexPluginSetupLegacyMigrationConfirmation(
+    marketplaceName: String? = nil,
+    marketplaceRoot: URL,
+    pluginSelector: String? = nil,
+    pluginRoot: URL? = nil,
+    pluginIsInstalled: Bool = true,
+    pluginVersion: String? = "0.1.0"
+) -> CodexPluginSetupLegacyMigrationConfirmation {
+    let marketplaceName = marketplaceName
+        ?? codexPluginSetupLegacyMarketplaceName(marketplaceRoot: marketplaceRoot)
+    return CodexPluginSetupLegacyMigrationConfirmation(
+        marketplaceName: marketplaceName,
+        marketplaceRootPath: marketplaceRoot.standardizedFileURL.path,
+        pluginSelector: pluginSelector ?? "blabee@\(marketplaceName)",
+        pluginRootPath: (pluginRoot ?? marketplaceRoot
+            .appendingPathComponent("plugins/blabee", isDirectory: true))
+            .standardizedFileURL.path,
+        pluginIsInstalled: pluginIsInstalled,
+        pluginVersion: pluginIsInstalled ? pluginVersion : nil,
+        filesystemIdentity: .allMissing
+    )
+}
+
+private func codexPluginSetupCreateLegacyFilesystem(
+    marketplaceRoot: URL,
+    marker: String
+) throws {
+    let marketplaceManifest = marketplaceRoot.appendingPathComponent(
+        ".agents/plugins/marketplace.json",
+        isDirectory: false
+    )
+    let pluginManifest = marketplaceRoot.appendingPathComponent(
+        "plugins/blabee/.codex-plugin/plugin.json",
+        isDirectory: false
+    )
+    try FileManager.default.createDirectory(
+        at: marketplaceManifest.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+        at: pluginManifest.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try Data("marketplace-\(marker)".utf8).write(to: marketplaceManifest)
+    try Data("plugin-\(marker)".utf8).write(to: pluginManifest)
+}
+
+@Test("Legacy dogfood connection is detected but never changed automatically")
+func codexPluginSetupDetectsLegacyWithoutAutomaticMutation() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+    let manager = fixture.manager()
+    let expected = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: legacyName,
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot
+        )
+    )
+
+    #expect(await manager.inspect() == expected)
+    #expect(await manager.connect() == expected)
+    #expect(await manager.disconnect() == expected)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Orphaned legacy marketplace is actionable but never changed automatically")
+func codexPluginSetupDetectsOrphanedLegacyWithoutAutomaticMutation() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    let manager = fixture.manager()
+    let expected = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: legacyName,
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot,
+            pluginIsInstalled: false
+        )
+    )
+
+    #expect(await manager.inspect() == expected)
+    #expect(await manager.connect() == expected)
+    #expect(await manager.disconnect() == expected)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Ambiguous orphaned legacy marketplaces remain fail closed")
+func codexPluginSetupRejectsAmbiguousOrphanedLegacyMarketplaces() async throws {
+    for scenario in ["duplicate", "extra-plugin", "current-marketplace"] {
+        let fixture = try CodexPluginSetupFixture()
+        let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+        let legacyName = codexPluginSetupLegacyMarketplaceName(
+            marketplaceRoot: legacyRoot
+        )
+        fixture.fake.marketplaces = [
+            (legacyName, legacyRoot.path),
+        ]
+        switch scenario {
+        case "duplicate":
+            fixture.fake.marketplaces.append((
+                legacyName,
+                legacyRoot.path
+            ))
+        case "extra-plugin":
+            fixture.fake.plugins = [[
+                "pluginId": "other@\(legacyName)",
+                "name": "other",
+                "marketplaceName": legacyName,
+                "version": "1.0.0",
+                "installed": true,
+                "enabled": true,
+                "source": [
+                    "source": "local",
+                    "path": legacyRoot.appendingPathComponent("plugins/other").path,
+                ],
+            ]]
+        case "current-marketplace":
+            fixture.fake.marketplaces.append((
+                CodexPluginSetupManager.marketplaceName,
+                fixture.root.path
+            ))
+        default:
+            Issue.record("Unexpected orphaned legacy scenario")
+        }
+
+        let confirmation = codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot,
+            pluginIsInstalled: false
+        )
+        guard case .conflict = await fixture.manager().migrateLegacyInstallation(
+            confirmation: confirmation
+        ) else {
+            Issue.record("Expected fail-closed orphan conflict for \(scenario)")
+            continue
+        }
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
+}
+
+@Test("Explicit legacy migration removes only the exact legacy pair then installs blabee-app")
+func codexPluginSetupMigratesExactLegacyInstallation() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    let legacySelector = "blabee@\(legacyName)"
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+    let probe = CodexPluginSetupTrustProbe()
+    let executable = fixture.executable
+    let manager = fixture.manager(
+        qualifier: { _ in probe.qualify(executable) },
+        revalidator: probe.revalidate
+    )
+
+    #expect(await manager.migrateLegacyInstallation(
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot
+        )
+    )
+        == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(pluginSetupMutationArguments(fixture) == [
+        ["plugin", "remove", legacySelector, "--json"],
+        [
+            "plugin", "marketplace", "remove",
+            legacyName, "--json",
+        ],
+        ["plugin", "marketplace", "add", fixture.root.path, "--json"],
+        ["plugin", "add", CodexPluginSetupManager.pluginSelector, "--json"],
+    ])
+    #expect(probe.snapshot().qualifications == 1)
+}
+
+@Test("Legacy migration confirmation rejects a replacement target before mutation")
+func codexPluginSetupLegacyMigrationRejectsReplacedConfirmedTarget() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let originalRoot = codexPluginSetupLegacyRoot(fixture)
+    let originalName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: originalRoot
+    )
+    fixture.fake.marketplaces = [(originalName, originalRoot.path)]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: originalRoot
+    )]
+    let manager = fixture.manager()
+    let originalConfirmation = codexPluginSetupLegacyMigrationConfirmation(
+        marketplaceRoot: originalRoot
+    )
+    #expect(await manager.inspect() == .legacyInstallationDetected(
+        marketplaceName: originalName,
+        confirmation: originalConfirmation
+    ))
+
+    let replacementRoot = fixture.root
+        .appendingPathComponent("replacement-output", isDirectory: true)
+        .appendingPathComponent("marketplace", isDirectory: true)
+    let replacementName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: replacementRoot
+    )
+    fixture.fake.marketplaces = [(replacementName, replacementRoot.path)]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: replacementRoot
+    )]
+    let replacementState = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: replacementName,
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: replacementRoot
+        )
+    )
+
+    #expect(await manager.migrateLegacyInstallation(
+        confirmation: originalConfirmation
+    ) == replacementState)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Legacy migration confirmation rejects same-path file identity replacement")
+func codexPluginSetupLegacyMigrationRejectsSamePathIdentityReplacement() async throws {
+    for scenario in [
+        "marketplace-directory", "marketplace-manifest",
+        "plugin-directory", "plugin-manifest",
+    ] {
+        let fixture = try CodexPluginSetupFixture()
+        let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+        let legacyName = codexPluginSetupLegacyMarketplaceName(
+            marketplaceRoot: legacyRoot
+        )
+        try codexPluginSetupCreateLegacyFilesystem(
+            marketplaceRoot: legacyRoot,
+            marker: "original"
+        )
+        fixture.fake.marketplaces = [(legacyName, legacyRoot.path)]
+        fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+            marketplaceRoot: legacyRoot
+        )]
+        let manager = fixture.manager()
+        guard case let .legacyInstallationDetected(_, originalConfirmation) =
+            await manager.inspect()
+        else {
+            Issue.record("Expected an exact legacy installation before replacement")
+            continue
+        }
+
+        let pluginRoot = legacyRoot.appendingPathComponent(
+            "plugins/blabee",
+            isDirectory: true
+        )
+        switch scenario {
+        case "marketplace-directory":
+            try FileManager.default.removeItem(at: legacyRoot)
+            try codexPluginSetupCreateLegacyFilesystem(
+                marketplaceRoot: legacyRoot,
+                marker: "replacement"
+            )
+        case "marketplace-manifest":
+            try Data("marketplace-replacement-with-different-size".utf8).write(
+                to: legacyRoot.appendingPathComponent(
+                    ".agents/plugins/marketplace.json",
+                    isDirectory: false
+                )
+            )
+        case "plugin-directory":
+            try FileManager.default.removeItem(at: pluginRoot)
+            try codexPluginSetupCreateLegacyFilesystem(
+                marketplaceRoot: legacyRoot,
+                marker: "replacement"
+            )
+        case "plugin-manifest":
+            try Data("plugin-replacement-with-different-size".utf8).write(
+                to: pluginRoot.appendingPathComponent(
+                    ".codex-plugin/plugin.json",
+                    isDirectory: false
+                )
+            )
+        default:
+            Issue.record("Unexpected same-path replacement scenario")
+        }
+
+        let state = await manager.migrateLegacyInstallation(
+            confirmation: originalConfirmation
+        )
+        guard case let .legacyInstallationDetected(
+            returnedName,
+            replacementConfirmation
+        ) = state else {
+            Issue.record("Expected replacement identity to require a new confirmation")
+            continue
+        }
+        #expect(returnedName == legacyName)
+        #expect(replacementConfirmation != originalConfirmation)
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
+}
+
+@Test("Legacy migration rechecks target identity after mutation trust preflight")
+func codexPluginSetupLegacyMigrationRejectsSwapAfterTrustPreflight() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    try codexPluginSetupCreateLegacyFilesystem(
+        marketplaceRoot: legacyRoot,
+        marker: "original"
+    )
+    fixture.fake.marketplaces = [(legacyName, legacyRoot.path)]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+
+    let legacyManifest = legacyRoot.appendingPathComponent(
+        "plugins/blabee/.codex-plugin/plugin.json",
+        isDirectory: false
+    )
+    let probe = CodexPluginSetupBundleActionProbe(actionCall: 2) {
+        try Data("plugin-swapped-after-trust-preflight".utf8).write(
+            to: legacyManifest
+        )
+    }
+    let manager = fixture.manager(bundleRevalidator: probe.validate)
+    guard case let .legacyInstallationDetected(_, confirmation) =
+        await manager.inspect()
+    else {
+        Issue.record("Expected an exact legacy installation before migration")
+        return
+    }
+
+    guard case .conflict = await manager.migrateLegacyInstallation(
+        confirmation: confirmation
+    ) else {
+        Issue.record("Expected a same-path swap after trust preflight to fail closed")
+        return
+    }
+    let probeState = probe.snapshot()
+    #expect(probeState.calls == 2)
+    #expect(probeState.actionWasRun)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Legacy marketplace removal rechecks identity after mutation trust preflight")
+func codexPluginSetupLegacyMarketplaceRemovalRejectsSwapAfterTrustPreflight() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    try codexPluginSetupCreateLegacyFilesystem(
+        marketplaceRoot: legacyRoot,
+        marker: "original"
+    )
+    fixture.fake.marketplaces = [(legacyName, legacyRoot.path)]
+    fixture.fake.plugins = []
+
+    let legacyManifest = legacyRoot.appendingPathComponent(
+        ".agents/plugins/marketplace.json",
+        isDirectory: false
+    )
+    let probe = CodexPluginSetupBundleActionProbe(actionCall: 2) {
+        try Data("marketplace-swapped-after-trust-preflight".utf8).write(
+            to: legacyManifest
+        )
+    }
+    let manager = fixture.manager(bundleRevalidator: probe.validate)
+    guard case let .legacyInstallationDetected(_, confirmation) =
+        await manager.inspect()
+    else {
+        Issue.record("Expected an orphaned legacy Marketplace before migration")
+        return
+    }
+
+    guard case .conflict = await manager.migrateLegacyInstallation(
+        confirmation: confirmation
+    ) else {
+        Issue.record("Expected a Marketplace swap after trust preflight to fail closed")
+        return
+    }
+    let probeState = probe.snapshot()
+    #expect(probeState.calls == 2)
+    #expect(probeState.actionWasRun)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Legacy migration rejects duplicate or inexact ownership shapes")
+func codexPluginSetupRejectsAmbiguousLegacyInstallations() async throws {
+    for scenario in [
+        "duplicate-marketplace", "wrong-source", "disabled", "extra-plugin",
+        "uppercase-suffix", "forged-suffix", "wrong-marketplace-path",
+        "wrong-selector",
+    ] {
+        let fixture = try CodexPluginSetupFixture()
+        let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+        var marketplaceName = codexPluginSetupLegacyMarketplaceName(
+            marketplaceRoot: legacyRoot
+        )
+        var plugin = codexPluginSetupLegacyPlugin(marketplaceRoot: legacyRoot)
+        fixture.fake.marketplaces = [(marketplaceName, legacyRoot.path)]
+        switch scenario {
+        case "duplicate-marketplace":
+            fixture.fake.marketplaces.append((marketplaceName, legacyRoot.path))
+        case "wrong-source":
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceRoot: legacyRoot,
+                sourcePath: legacyRoot.appendingPathComponent("Plugin/blabee")
+            )
+        case "disabled":
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceRoot: legacyRoot,
+                enabled: false
+            )
+        case "extra-plugin":
+            fixture.fake.plugins.append([
+                "pluginId": "other@\(marketplaceName)",
+                "name": "other",
+                "marketplaceName": marketplaceName,
+                "version": "1.0.0",
+                "installed": true,
+                "enabled": true,
+                "source": [
+                    "source": "local",
+                    "path": legacyRoot.appendingPathComponent("plugins/other").path,
+                ],
+            ])
+        case "uppercase-suffix":
+            marketplaceName = "blabee-local-dogfood-16D56627DFE5"
+            fixture.fake.marketplaces = [(marketplaceName, legacyRoot.path)]
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceName: marketplaceName,
+                marketplaceRoot: legacyRoot
+            )
+        case "forged-suffix":
+            marketplaceName = String(marketplaceName.dropLast())
+                + (marketplaceName.last == "0" ? "1" : "0")
+            fixture.fake.marketplaces = [(marketplaceName, legacyRoot.path)]
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceName: marketplaceName,
+                marketplaceRoot: legacyRoot
+            )
+        case "wrong-marketplace-path":
+            let malformedRoot = legacyRoot.deletingLastPathComponent()
+                .appendingPathComponent("legacy-marketplace", isDirectory: true)
+            fixture.fake.marketplaces = [(marketplaceName, malformedRoot.path)]
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceName: marketplaceName,
+                marketplaceRoot: malformedRoot
+            )
+        case "wrong-selector":
+            plugin = codexPluginSetupLegacyPlugin(
+                marketplaceRoot: legacyRoot,
+                pluginID: "blabee@wrong-marketplace"
+            )
+        default:
+            Issue.record("Unexpected legacy scenario")
+        }
+        fixture.fake.plugins.append(plugin)
+
+        let confirmation = codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceName: marketplaceName,
+            marketplaceRoot: legacyRoot
+        )
+        guard case .conflict = await fixture.manager().migrateLegacyInstallation(
+            confirmation: confirmation
+        ) else {
+            Issue.record("Expected fail-closed legacy conflict for \(scenario)")
+            continue
+        }
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
+}
+
+@Test("Legacy migration makes partial removal failures explicit")
+func codexPluginSetupReportsLegacyPartialFailures() async throws {
+    do {
+        let fixture = try CodexPluginSetupFixture()
+        let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+        let legacyName = codexPluginSetupLegacyMarketplaceName(
+            marketplaceRoot: legacyRoot
+        )
+        fixture.fake.marketplaces = [
+            (legacyName, legacyRoot.path),
+        ]
+        fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+            marketplaceRoot: legacyRoot
+        )]
+        fixture.fake.pluginRemoveCreatesEffect = false
+
+        #expect(await fixture.manager().migrateLegacyInstallation(
+            confirmation: codexPluginSetupLegacyMigrationConfirmation(
+                marketplaceRoot: legacyRoot
+            )
+        )
+            == .error(code: "legacy_plugin_remove_not_applied"))
+        #expect(pluginSetupMutationArguments(fixture).count == 1)
+    }
+
+    do {
+        let fixture = try CodexPluginSetupFixture()
+        let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+        let legacyName = codexPluginSetupLegacyMarketplaceName(
+            marketplaceRoot: legacyRoot
+        )
+        fixture.fake.marketplaces = [
+            (legacyName, legacyRoot.path),
+        ]
+        fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+            marketplaceRoot: legacyRoot
+        )]
+        fixture.fake.marketplaceRemoveCreatesEffect = false
+
+        let manager = fixture.manager()
+        let installedConfirmation = codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot
+        )
+        let orphanedConfirmation = codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot,
+            pluginIsInstalled: false
+        )
+        #expect(await manager.migrateLegacyInstallation(
+            confirmation: installedConfirmation
+        )
+            == .error(code: "legacy_marketplace_remove_not_applied"))
+        #expect(pluginSetupMutationArguments(fixture).count == 2)
+        let expected = CodexPluginSetupState.legacyInstallationDetected(
+            marketplaceName: legacyName,
+            confirmation: orphanedConfirmation
+        )
+        #expect(await manager.inspect() == expected)
+        #expect(await manager.connect() == expected)
+        #expect(pluginSetupMutationArguments(fixture).count == 2)
+
+        fixture.fake.marketplaceRemoveCreatesEffect = true
+        #expect(await manager.migrateLegacyInstallation(
+            confirmation: installedConfirmation
+        ) == expected)
+        #expect(pluginSetupMutationArguments(fixture).count == 2)
+        #expect(await manager.migrateLegacyInstallation(
+            confirmation: orphanedConfirmation
+        )
+            == .installedNeedsHookReview(version: "0.1.0"))
+        #expect(pluginSetupMutationArguments(fixture) == [
+            [
+                "plugin", "remove",
+                "blabee@\(legacyName)", "--json",
+            ],
+            [
+                "plugin", "marketplace", "remove",
+                legacyName, "--json",
+            ],
+            [
+                "plugin", "marketplace", "remove",
+                legacyName, "--json",
+            ],
+            ["plugin", "marketplace", "add", fixture.root.path, "--json"],
+            ["plugin", "add", CodexPluginSetupManager.pluginSelector, "--json"],
+        ])
+    }
+}
+
+@Test("Legacy migration timeout requires a fresh orphan confirmation before resuming")
+func codexPluginSetupLegacyTimeoutResumesAtMarketplaceRemoval() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+    let clock = CodexPluginSetupManualClock()
+    let fake = fixture.fake
+    let legacyRemove = [
+        "plugin", "remove",
+        "blabee@\(legacyName)", "--json",
+    ]
+    let manager = fixture.manager(
+        processRunner: { executable, arguments, timeout in
+            let result = try fake.run(
+                executable: executable,
+                arguments: arguments,
+                timeoutMilliseconds: timeout
+            )
+            if arguments == legacyRemove {
+                clock.advance(milliseconds: 10)
+            }
+            return result
+        },
+        monotonicNow: clock.now,
+        operationTimeoutMilliseconds: 10
+    )
+
+    let installedConfirmation = codexPluginSetupLegacyMigrationConfirmation(
+        marketplaceRoot: legacyRoot
+    )
+    let orphanedConfirmation = codexPluginSetupLegacyMigrationConfirmation(
+        marketplaceRoot: legacyRoot,
+        pluginIsInstalled: false
+    )
+    #expect(await manager.migrateLegacyInstallation(
+        confirmation: installedConfirmation
+    )
+        == .error(code: "codex_plugin_setup_operation_timed_out"))
+    #expect(pluginSetupMutationArguments(fixture) == [legacyRemove])
+    let orphanedState = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: legacyName,
+        confirmation: orphanedConfirmation
+    )
+    #expect(await manager.inspect() == orphanedState)
+    #expect(await manager.migrateLegacyInstallation(
+        confirmation: installedConfirmation
+    ) == orphanedState)
+    #expect(pluginSetupMutationArguments(fixture) == [legacyRemove])
+    #expect(await manager.migrateLegacyInstallation(
+        confirmation: orphanedConfirmation
+    )
+        == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(pluginSetupMutationArguments(fixture).filter { $0 == legacyRemove }.count == 1)
+}
+
+@Test("Legacy migration rechecks ownership before its first destructive command")
+func codexPluginSetupLegacyMigrationRejectsLateOwnershipDrift() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+    fixture.fake.pluginAppendedOnListCall = (call: 2, plugin: [
+        "pluginId": "other@\(legacyName)",
+        "name": "other",
+        "marketplaceName": legacyName,
+        "version": "1.0.0",
+        "installed": true,
+        "enabled": true,
+        "source": [
+            "source": "local",
+            "path": legacyRoot.appendingPathComponent("plugins/other").path,
+        ],
+    ])
+
+    guard case .conflict = await fixture.manager().migrateLegacyInstallation(
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot
+        )
+    ) else {
+        Issue.record("Expected late legacy ownership drift to fail closed")
+        return
+    }
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Legacy migration rechecks ownership before removing the marketplace")
+func codexPluginSetupLegacyMigrationRejectsDriftAfterPluginRemoval() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let legacyRoot = codexPluginSetupLegacyRoot(fixture)
+    let legacyName = codexPluginSetupLegacyMarketplaceName(
+        marketplaceRoot: legacyRoot
+    )
+    fixture.fake.marketplaces = [
+        (legacyName, legacyRoot.path),
+    ]
+    fixture.fake.plugins = [codexPluginSetupLegacyPlugin(
+        marketplaceRoot: legacyRoot
+    )]
+    fixture.fake.pluginAppendedOnListCall = (call: 3, plugin: [
+        "pluginId": "blabee@unexpected-marketplace",
+        "name": CodexPluginSetupManager.pluginName,
+        "marketplaceName": "unexpected-marketplace",
+        "version": "0.1.0",
+        "installed": true,
+        "enabled": true,
+        "source": [
+            "source": "local",
+            "path": "/tmp/unexpected-marketplace/plugins/blabee",
+        ],
+    ])
+
+    guard case .conflict = await fixture.manager().migrateLegacyInstallation(
+        confirmation: codexPluginSetupLegacyMigrationConfirmation(
+            marketplaceRoot: legacyRoot
+        )
+    ) else {
+        Issue.record("Expected Marketplace removal to reject late Blabee drift")
+        return
+    }
+    #expect(pluginSetupMutationArguments(fixture) == [[
+        "plugin", "remove",
+        "blabee@\(legacyName)", "--json",
+    ]])
+}
+
+@Test("Unrelated remote Plugin without a source path is tolerated")
+func codexPluginSetupToleratesUnrelatedRemotePluginWithoutPath() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    fixture.fake.plugins = [[
+        "pluginId": "remote-tool@public-marketplace",
+        "name": "remote-tool",
+        "marketplaceName": "public-marketplace",
+        "version": "1.0.0",
+        "installed": true,
+        "enabled": true,
+        "source": ["source": "remote"],
+    ]]
+
+    #expect(await fixture.manager().inspect() == .notInstalled)
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+}
+
+@Test("Remote Blabee Plugin without a source path is a conflict")
+func codexPluginSetupRejectsRemoteBlabeePluginWithoutPath() async throws {
+    for (pluginID, name) in [
+        ("blabee@public-marketplace", "remote-tool"),
+        ("remote-tool@public-marketplace", CodexPluginSetupManager.pluginName),
+    ] {
+        let fixture = try CodexPluginSetupFixture()
+        fixture.fake.plugins = [[
+            "pluginId": pluginID,
+            "name": name,
+            "marketplaceName": "public-marketplace",
+            "version": "1.0.0",
+            "installed": true,
+            "enabled": true,
+            "source": ["source": "remote"],
+        ]]
+
+        guard case .conflict = await fixture.manager().inspect() else {
+            Issue.record("Expected a fail-closed remote Blabee Plugin conflict")
+            continue
+        }
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
+}
+
+@Test("Local Plugin without an absolute source path remains malformed")
+func codexPluginSetupRejectsLocalPluginWithoutPath() async throws {
+    for source: [String: Any] in [
+        ["source": "local"],
+        ["source": "local", "path": "relative/plugin"],
+    ] {
+        let fixture = try CodexPluginSetupFixture()
+        fixture.fake.plugins = [[
+            "pluginId": "local-tool@team-marketplace",
+            "name": "local-tool",
+            "marketplaceName": "team-marketplace",
+            "version": "1.0.0",
+            "installed": true,
+            "enabled": true,
+            "source": source,
+        ]]
+
+        #expect(await fixture.manager().inspect() == .error(
+            code: "plugin_list_malformed"
+        ))
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
 }
 
 @Test("Foreign Plugin in the owned marketplace is always a conflict")
@@ -801,13 +1796,13 @@ func codexPluginSetupRevalidatesBeforeEveryInvocation() async throws {
     let probe = CodexPluginSetupTrustProbe()
     let executable = fixture.executable
     let manager = fixture.manager(
-        qualifier: { probe.qualify(executable) },
+        qualifier: { _ in probe.qualify(executable) },
         revalidator: probe.revalidate
     )
 
     #expect(await manager.connect() == .installedNeedsHookReview(version: "0.1.0"))
     let counts = probe.snapshot()
-    #expect(counts.qualifications == 4)
+    #expect(counts.qualifications == 1)
     #expect(counts.revalidations == fixture.fake.snapshotInvocations().count * 2)
     #expect(counts.revalidations == 20)
 }
@@ -817,7 +1812,7 @@ func codexPluginSetupRevalidationFailureFailsClosed() async throws {
     let fixture = try CodexPluginSetupFixture()
     let executable = fixture.executable
     let manager = fixture.manager(
-        qualifier: { .testOnly(url: executable) },
+        qualifier: { _ in .testOnly(url: executable) },
         revalidator: { _ in
             throw CodexRuntimeTrustError.approvalDrift
         }
@@ -825,6 +1820,36 @@ func codexPluginSetupRevalidationFailureFailsClosed() async throws {
 
     #expect(await manager.connect() == .error(code: "marketplace_list_failed"))
     #expect(fixture.fake.snapshotInvocations().isEmpty)
+}
+
+@Test("One operation deadline bounds all repeated Plugin CLI steps")
+func codexPluginSetupUsesSharedOperationDeadline() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let clock = CodexPluginSetupManualClock()
+    let fake = fixture.fake
+    let manager = fixture.manager(
+        processRunner: { executable, arguments, timeout in
+            let result = try fake.run(
+                executable: executable,
+                arguments: arguments,
+                timeoutMilliseconds: timeout
+            )
+            clock.advance(milliseconds: 6)
+            return result
+        },
+        monotonicNow: clock.now,
+        operationTimeoutMilliseconds: 10
+    )
+
+    #expect(await manager.connect()
+        == .error(code: "codex_plugin_setup_operation_timed_out"))
+    let invocations = fixture.fake.snapshotInvocations()
+    #expect(invocations.map(\.arguments) == [
+        ["plugin", "marketplace", "list", "--json"],
+        ["plugin", "list", "--json"],
+    ])
+    #expect(invocations.map(\.timeoutMilliseconds) == [10, 4])
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
 }
 
 @Test("Bundle identity drift immediately before mutation prevents execution")
@@ -1251,8 +2276,595 @@ func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
 @Test("Production Plugin CLI allowlist is explicit")
 func codexPluginSetupProductionAllowlistIsExplicit() {
     #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
-        "0.151.0", "0.152.0", "0.152.1",
+        "0.151.0", "0.152.0", "0.152.1", "0.153.2",
     ])
+}
+
+@Test("Production pinned executable catalog is exact for Codex 0.153.2 arm64")
+func codexPluginSetupPinnedExecutableCatalogIsExact() throws {
+    let artifact = CodexPluginSetupPinnedArtifact(
+        version: "0.153.2",
+        architecture: CodexPluginSetupPinnedExecutableTrust.arm64CPUType,
+        executableBytes: 220_551_344,
+        executableSHA256: "195ace4100a634a9df39147f493e730e666b5bd87795f3c9f3251d8542400424"
+    )
+    #expect(CodexPluginSetupPinnedExecutableTrust.officialArtifacts == [artifact])
+    #expect(CodexPluginSetupPinnedExecutableTrust.matchingArtifact(
+        version: "0.153.2",
+        architecture: artifact.architecture,
+        executableBytes: artifact.executableBytes,
+        executableSHA256: artifact.executableSHA256
+    ) == artifact)
+    #expect(CodexPluginSetupPinnedExecutableTrust.matchingArtifact(
+        version: "0.153.2",
+        architecture: artifact.architecture,
+        executableBytes: artifact.executableBytes,
+        executableSHA256: String(repeating: "0", count: 64)
+    ) == nil)
+    #expect(CodexPluginSetupPinnedExecutableTrust.matchingArtifact(
+        version: "0.153.1",
+        architecture: artifact.architecture,
+        executableBytes: artifact.executableBytes,
+        executableSHA256: artifact.executableSHA256
+    ) == nil)
+    #expect(CodexPluginSetupPinnedExecutableTrust.matchingArtifact(
+        version: "0.153.2",
+        architecture: artifact.architecture,
+        executableBytes: artifact.executableBytes - 1,
+        executableSHA256: artifact.executableSHA256
+    ) == nil)
+    #expect(CodexPluginSetupPinnedExecutableTrust.matchingArtifact(
+        version: "0.153.2",
+        architecture: 0x0100_0007,
+        executableBytes: artifact.executableBytes,
+        executableSHA256: artifact.executableSHA256
+    ) == nil)
+}
+
+@Test("Production trust binds one pinned hash to a stable qualification snapshot")
+func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-trust-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let artifact = try #require(
+        CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+    )
+    let targetIdentity = try codexPluginSetupFileIdentity(at: executable)
+    let sourceIdentitySentinel = CodexRuntimeFileIdentity(
+        device: targetIdentity.device,
+        inode: targetIdentity.inode &+ 1,
+        mode: targetIdentity.mode,
+        owner: targetIdentity.owner,
+        group: targetIdentity.group,
+        size: targetIdentity.size,
+        modificationSeconds: targetIdentity.modificationSeconds,
+        modificationNanoseconds: targetIdentity.modificationNanoseconds,
+        changeSeconds: targetIdentity.changeSeconds,
+        changeNanoseconds: targetIdentity.changeNanoseconds
+    )
+    let trustSnapshot = try codexPluginSetupTrustSnapshot(
+        at: executable,
+        sourceIdentity: sourceIdentitySentinel
+    )
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: artifact,
+        trustSnapshot: trustSnapshot
+    )
+    let qualified = try CodexPluginSetupProductionTrust.qualify(
+        sourceURL: executable,
+        processRunner: probe.runVersion,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.rejectSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    )
+
+    #expect(probe.snapshot().inspectedPaths == [executable.path, executable.path])
+
+    #expect(qualified.version == "0.153.2")
+    #expect(qualified.sourceURL.path == executable.path)
+    #expect(try CodexPluginSetupProductionTrust.revalidate(
+        qualified,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.rejectSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    ) == qualified.canonicalURL)
+
+    let snapshot = probe.snapshot()
+    #expect(snapshot.inspectedPaths == [
+        executable.path,
+        executable.path,
+        executable.path,
+    ])
+    #expect(snapshot.signaturePaths == [
+        qualified.canonicalURL.path,
+    ])
+    #expect(snapshot.pinnedCalls == [
+        CodexPluginSetupPinnedValidationCall(
+            executable: qualified.canonicalURL.path,
+            expectedIdentity: trustSnapshot.targetIdentity,
+            expectedVersion: nil
+        ),
+    ])
+    #expect(snapshot.pinnedCalls.first?.expectedIdentity == targetIdentity)
+    #expect(snapshot.pinnedCalls.first?.expectedIdentity != sourceIdentitySentinel)
+    #expect(snapshot.processInvocations == [CodexPluginSetupInvocation(
+        executable: qualified.canonicalURL.path,
+        arguments: ["--version"],
+        timeoutMilliseconds: 5_000
+    )])
+}
+
+@Test("Valid official signatures never invoke the pinned hash fallback")
+func codexPluginSetupProductionTrustKeepsValidSignaturePath() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-signed-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let trustSnapshot = try codexPluginSetupTrustSnapshot(at: executable)
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: try #require(
+            CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+        ),
+        trustSnapshot: trustSnapshot
+    )
+    let qualified = try CodexPluginSetupProductionTrust.qualify(
+        sourceURL: executable,
+        processRunner: probe.runVersion,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.acceptSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    )
+
+    #expect(try CodexPluginSetupProductionTrust.revalidate(
+        qualified,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.acceptSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    ) == qualified.canonicalURL)
+
+    let snapshot = probe.snapshot()
+    #expect(snapshot.signaturePaths == [
+        qualified.canonicalURL.path,
+        qualified.canonicalURL.path,
+        qualified.canonicalURL.path,
+    ])
+    #expect(snapshot.pinnedCalls.isEmpty)
+    #expect(snapshot.processInvocations == [CodexPluginSetupInvocation(
+        executable: qualified.canonicalURL.path,
+        arguments: ["--version"],
+        timeoutMilliseconds: 5_000
+    )])
+}
+
+@Test("Pinned fallback handles only an explicit invalid-signature result")
+func codexPluginSetupProductionTrustDoesNotMaskUnexpectedSignatureErrors() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-signature-error-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: try #require(
+            CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+        ),
+        trustSnapshot: try codexPluginSetupTrustSnapshot(at: executable)
+    )
+    #expect(throws: CoordinatorError("unexpected_signature_validator_failure")) {
+        try CodexPluginSetupProductionTrust.qualify(
+            sourceURL: executable,
+            processRunner: probe.runVersion,
+            trustInspector: probe.inspect,
+            signatureValidator: probe.rejectSignatureUnexpectedly,
+            pinnedExecutableValidator: probe.acceptPinned
+        )
+    }
+
+    let snapshot = probe.snapshot()
+    #expect(snapshot.signaturePaths == [executable.path])
+    #expect(snapshot.pinnedCalls.isEmpty)
+    #expect(snapshot.processInvocations.isEmpty)
+}
+
+@Test("Production qualification forwards one absolute deadline to its version probe")
+func codexPluginSetupProductionQualificationUsesSharedDeadline() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-deadline-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let clock = CodexPluginSetupManualClock()
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: try #require(
+            CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+        ),
+        trustSnapshot: try codexPluginSetupTrustSnapshot(at: executable)
+    )
+    #expect(throws: CoordinatorError("codex_plugin_setup_operation_timed_out")) {
+        try CodexPluginSetupProductionTrust.qualify(
+            sourceURL: executable,
+            processRunner: { executable, arguments, timeout in
+                let result = try probe.runVersion(
+                    executable: executable,
+                    arguments: arguments,
+                    timeoutMilliseconds: timeout
+                )
+                clock.advance(milliseconds: 10)
+                return result
+            },
+            trustInspector: probe.inspect,
+            signatureValidator: probe.acceptSignature,
+            pinnedExecutableValidator: probe.acceptPinned,
+            deadlineNanoseconds: 10_000_000,
+            monotonicNow: clock.now
+        )
+    }
+    #expect(probe.snapshot().processInvocations.map(\.timeoutMilliseconds) == [10])
+}
+
+@Test("Pinned selection rejects structural drift before reusing hash evidence")
+func codexPluginSetupPinnedSelectionRejectsSnapshotDrift() throws {
+    let temporaryPath = FileManager.default.temporaryDirectory.path
+    let canonicalTemporaryPath = temporaryPath.hasPrefix("/var/")
+        ? "/private" + temporaryPath
+        : temporaryPath
+    let root = URL(fileURLWithPath: canonicalTemporaryPath, isDirectory: true)
+        .appendingPathComponent("blabee-plugin-pin-drift-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(
+        at: root,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: root.path
+    )
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let gate = CodexRuntimeTrustGate(monitoredEntries: [])
+    let initial = try gate.inspect(sourceURL: executable)
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: try #require(
+            CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+        ),
+        trustSnapshot: initial
+    )
+    let qualified = try CodexPluginSetupProductionTrust.qualify(
+        sourceURL: executable,
+        processRunner: probe.runVersion,
+        trustInspector: gate.inspect,
+        signatureValidator: probe.rejectSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    )
+
+    var changed = try Data(contentsOf: executable)
+    changed[changed.index(before: changed.endIndex)] ^= 0x01
+    try changed.write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+
+    #expect(throws: CodexRuntimeTrustError.approvalDrift) {
+        try CodexPluginSetupProductionTrust.revalidate(
+            qualified,
+            trustInspector: gate.inspect,
+            signatureValidator: probe.rejectSignature,
+            pinnedExecutableValidator: probe.acceptPinned
+        )
+    }
+    let snapshot = probe.snapshot()
+    #expect(snapshot.pinnedCalls.count == 1)
+    #expect(snapshot.signaturePaths.count == 1)
+}
+
+@Test("Pinned 0.153.2 bytes cannot report a different supported version")
+func codexPluginSetupProductionTrustRejectsPinnedVersionMismatch() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-version-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let artifact = try #require(
+        CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first
+    )
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: artifact,
+        reportedVersion: "0.152.1",
+        trustSnapshot: try codexPluginSetupTrustSnapshot(at: executable)
+    )
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupProductionTrust.qualify(
+            sourceURL: executable,
+            processRunner: probe.runVersion,
+            trustInspector: probe.inspect,
+            signatureValidator: probe.rejectSignature,
+            pinnedExecutableValidator: probe.acceptPinned
+        )
+    }
+
+    let snapshot = probe.snapshot()
+    #expect(snapshot.inspectedPaths == [executable.path])
+    #expect(snapshot.signaturePaths.count == 1)
+    #expect(snapshot.pinnedCalls.map(\.expectedVersion) == [nil])
+    #expect(snapshot.processInvocations.map(\.arguments) == [["--version"]])
+}
+
+@Test("Pinned executable revalidation rejects identity and content changes")
+func codexPluginSetupPinnedExecutableRejectsMutation() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blabee-plugin-pin-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let bytes = Data([
+        0xCF, 0xFA, 0xED, 0xFE,
+        0x0C, 0x00, 0x00, 0x01,
+        0x42, 0x4C, 0x41, 0x42, 0x45, 0x45,
+    ])
+    try bytes.write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let initialIdentity = try codexPluginSetupFileIdentity(at: executable)
+    let digest = SHA256.hash(data: bytes)
+        .map { String(format: "%02x", $0) }.joined()
+    let artifact = CodexPluginSetupPinnedArtifact(
+        version: "0.153.2",
+        architecture: CodexPluginSetupPinnedExecutableTrust.arm64CPUType,
+        executableBytes: Int64(bytes.count),
+        executableSHA256: digest
+    )
+
+    #expect(try CodexPluginSetupPinnedExecutableTrust.validate(
+        executable: executable,
+        expectedIdentity: initialIdentity,
+        expectedVersion: "0.153.2",
+        artifacts: [artifact]
+    ) == artifact)
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: initialIdentity,
+            expectedVersion: "0.153.1",
+            artifacts: [artifact]
+        )
+    }
+
+    let hardlink = root.appendingPathComponent("codex-hardlink", isDirectory: false)
+    try FileManager.default.linkItem(at: executable, to: hardlink)
+    let linkedIdentity = try codexPluginSetupFileIdentity(at: executable)
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: linkedIdentity,
+            expectedVersion: "0.153.2",
+            artifacts: [artifact]
+        )
+    }
+    try FileManager.default.removeItem(at: hardlink)
+    let originalIdentity = try codexPluginSetupFileIdentity(at: executable)
+    #expect(try CodexPluginSetupPinnedExecutableTrust.validate(
+        executable: executable,
+        expectedIdentity: originalIdentity,
+        expectedVersion: "0.153.2",
+        artifacts: [artifact]
+    ) == artifact)
+
+    let handle = try FileHandle(forWritingTo: executable)
+    try handle.seek(toOffset: UInt64(bytes.count - 1))
+    try handle.write(contentsOf: Data([0x00]))
+    try handle.synchronize()
+    try handle.close()
+
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: originalIdentity,
+            expectedVersion: "0.153.2",
+            artifacts: [artifact]
+        )
+    }
+    let changedIdentity = try codexPluginSetupFileIdentity(at: executable)
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: changedIdentity,
+            expectedVersion: "0.153.2",
+            artifacts: [artifact]
+        )
+    }
+}
+
+@Test("Pinned executable hashing covers multiple chunks and exact EOF")
+func codexPluginSetupPinnedExecutableStreamsAndRejectsSizeChanges() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-stream-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var bytes = Data(repeating: 0xA5, count: 1024 * 1024 + 17)
+    bytes.replaceSubrange(0 ..< 8, with: [
+        0xCF, 0xFA, 0xED, 0xFE,
+        0x0C, 0x00, 0x00, 0x01,
+    ])
+    try bytes.write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let digest = SHA256.hash(data: bytes)
+        .map { String(format: "%02x", $0) }.joined()
+    let artifact = CodexPluginSetupPinnedArtifact(
+        version: "0.153.2",
+        architecture: CodexPluginSetupPinnedExecutableTrust.arm64CPUType,
+        executableBytes: Int64(bytes.count),
+        executableSHA256: digest
+    )
+    let originalIdentity = try codexPluginSetupFileIdentity(at: executable)
+    #expect(try CodexPluginSetupPinnedExecutableTrust.validate(
+        executable: executable,
+        expectedIdentity: originalIdentity,
+        expectedVersion: "0.153.2",
+        artifacts: [artifact]
+    ) == artifact)
+
+    let appendHandle = try FileHandle(forWritingTo: executable)
+    try appendHandle.seekToEnd()
+    try appendHandle.write(contentsOf: Data([0xFF]))
+    try appendHandle.synchronize()
+    try appendHandle.close()
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: try codexPluginSetupFileIdentity(at: executable),
+            expectedVersion: "0.153.2",
+            artifacts: [artifact]
+        )
+    }
+
+    let truncateHandle = try FileHandle(forWritingTo: executable)
+    try truncateHandle.truncate(atOffset: UInt64(bytes.count - 1))
+    try truncateHandle.synchronize()
+    try truncateHandle.close()
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: try codexPluginSetupFileIdentity(at: executable),
+            expectedVersion: "0.153.2",
+            artifacts: [artifact]
+        )
+    }
+}
+
+@Test("Pinned executable rejects a deterministic append at the exact EOF boundary")
+func codexPluginSetupPinnedExecutableRejectsExactEOFRace() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-eof-race-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var bytes = Data(repeating: 0x7A, count: 4_097)
+    bytes.replaceSubrange(0 ..< 8, with: [
+        0xCF, 0xFA, 0xED, 0xFE,
+        0x0C, 0x00, 0x00, 0x01,
+    ])
+    try bytes.write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let artifact = CodexPluginSetupPinnedArtifact(
+        version: "0.153.2",
+        architecture: CodexPluginSetupPinnedExecutableTrust.arm64CPUType,
+        executableBytes: Int64(bytes.count),
+        executableSHA256: SHA256.hash(data: bytes)
+            .map { String(format: "%02x", $0) }.joined()
+    )
+    let identity = try codexPluginSetupFileIdentity(at: executable)
+
+    #expect(throws: CoordinatorError("codex_plugin_setup_signature_invalid")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: identity,
+            expectedVersion: "0.153.2",
+            artifacts: [artifact],
+            beforeExactEOFCheck: {
+                let handle = try FileHandle(forWritingTo: executable)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data([0xFF]))
+                try handle.synchronize()
+                try handle.close()
+            }
+        )
+    }
+    #expect(try codexPluginSetupFileIdentity(at: executable).size
+        == Int64(bytes.count + 1))
+}
+
+@Test("Pinned executable hashing stops at the shared operation deadline")
+func codexPluginSetupPinnedExecutableHonorsOperationDeadline() throws {
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("blabee-plugin-hash-deadline-\(UUID().uuidString)", isDirectory: true)
+    let executable = root.appendingPathComponent("codex", isDirectory: false)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var bytes = Data(repeating: 0x42, count: 4_097)
+    bytes.replaceSubrange(0 ..< 8, with: [
+        0xCF, 0xFA, 0xED, 0xFE,
+        0x0C, 0x00, 0x00, 0x01,
+    ])
+    try bytes.write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let artifact = CodexPluginSetupPinnedArtifact(
+        version: "0.153.2",
+        architecture: CodexPluginSetupPinnedExecutableTrust.arm64CPUType,
+        executableBytes: Int64(bytes.count),
+        executableSHA256: SHA256.hash(data: bytes)
+            .map { String(format: "%02x", $0) }.joined()
+    )
+    let clock = CodexPluginSetupManualClock()
+
+    #expect(throws: CoordinatorError("codex_plugin_setup_operation_timed_out")) {
+        try CodexPluginSetupPinnedExecutableTrust.validate(
+            executable: executable,
+            expectedIdentity: try codexPluginSetupFileIdentity(at: executable),
+            expectedVersion: "0.153.2",
+            artifacts: [artifact],
+            beforeExactEOFCheck: { clock.advance(milliseconds: 10) },
+            deadlineNanoseconds: 10_000_000,
+            monotonicNow: clock.now
+        )
+    }
+}
+
+private func codexPluginSetupFileIdentity(
+    at url: URL
+) throws -> CodexRuntimeFileIdentity {
+    var info = stat()
+    guard lstat(url.path, &info) == 0 else {
+        throw CoordinatorError("test_file_identity_unavailable")
+    }
+    return CodexRuntimeFileIdentity(
+        device: UInt64(bitPattern: Int64(info.st_dev)),
+        inode: UInt64(info.st_ino),
+        mode: UInt32(info.st_mode),
+        owner: UInt32(info.st_uid),
+        group: UInt32(info.st_gid),
+        size: Int64(info.st_size),
+        modificationSeconds: Int64(info.st_mtimespec.tv_sec),
+        modificationNanoseconds: Int64(info.st_mtimespec.tv_nsec),
+        changeSeconds: Int64(info.st_ctimespec.tv_sec),
+        changeNanoseconds: Int64(info.st_ctimespec.tv_nsec)
+    )
+}
+
+private func codexPluginSetupTrustSnapshot(
+    at url: URL,
+    sourceIdentity: CodexRuntimeFileIdentity? = nil
+) throws -> CodexRuntimeTrustSnapshot {
+    let identity = try codexPluginSetupFileIdentity(at: url)
+    return CodexRuntimeTrustSnapshot(
+        stableSourcePath: url.path,
+        canonicalPath: url.path,
+        sourceIdentity: sourceIdentity ?? identity,
+        targetIdentity: identity,
+        sourceAncestors: [],
+        canonicalAncestors: []
+    )
 }
 
 @Test("Production Plugin CLI version gate rejects unsupported canonical output")
@@ -1266,9 +2878,9 @@ func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
     }
     let supported = CodexPluginSetupProcessResult(
         exitCode: 0,
-        stdout: Data("codex-cli 0.152.1\n".utf8)
+        stdout: Data("codex-cli 0.153.2\n".utf8)
     )
-    #expect(try CodexPluginSetupProductionTrust.supportedVersion(from: supported) == "0.152.1")
+    #expect(try CodexPluginSetupProductionTrust.supportedVersion(from: supported) == "0.153.2")
 }
 
 @Test("Production qualification rejects a signed non-Codex binary before execution")

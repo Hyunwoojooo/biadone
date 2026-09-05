@@ -1017,7 +1017,7 @@ struct PetRootView: View {
                             .font(.body.weight(.semibold))
                     }
                     Spacer(minLength: 8)
-                    Text(viewModel.onboardingServiceState.displayTitle)
+                    Text(onboardingServiceBadgeTitle)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(onboardingServiceColor)
                         .padding(.horizontal, 9)
@@ -1028,6 +1028,28 @@ struct PetRootView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if viewModel.onboardingServiceNeedsRuntimeAttention,
+                   let coordinatorError = viewModel.coordinatorTransportError
+                {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            "서비스는 등록되어 있지만 Coordinator에 연결하지 못했습니다.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                            .font(.caption.weight(.semibold))
+                        Text(coordinatorError)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        Color.orange.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
+                }
                 onboardingServiceActions
             }
             .padding(16)
@@ -1138,6 +1160,32 @@ struct PetRootView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if case let .legacyInstallationDetected(marketplaceName, _) = viewModel.codexPluginSetupState {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("이전 Blabee 연결이 감지되었습니다", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text("감지된 연결: \(marketplaceName)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Text("계속하면 이 이전 Blabee 연결만 정리한 뒤 현재 앱의 Blabee Plugin을 연결합니다. Codex 자체와 다른 Plugin은 변경하지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if viewModel.isConfirmingLegacyCodexPluginMigration {
+                        Divider()
+                        Text("정리 대상을 다시 확인했습니다. 아래 버튼을 누르면 이전 연결 정리와 새 연결을 시작합니다.")
+                            .font(.caption.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+            }
+
             if case .installedNeedsHookReview = viewModel.codexPluginSetupState {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Codex에서 Hook 상태 확인")
@@ -1217,6 +1265,29 @@ struct PetRootView: View {
                 .buttonStyle(.bordered)
                 .petCapsuleButtonBorder()
                 .disabled(!viewModel.canDisconnectCodexPlugin)
+            case .legacyInstallationDetected:
+                if viewModel.isConfirmingLegacyCodexPluginMigration {
+                    Button("취소", action: viewModel.cancelLegacyCodexPluginMigrationConfirmation)
+                        .buttonStyle(.bordered)
+                        .petCapsuleButtonBorder()
+                    Button {
+                        Task { await viewModel.migrateLegacyCodexPlugin() }
+                    } label: {
+                        Label("정리하고 새로 연결", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .petCapsuleButtonBorder()
+                    .disabled(!viewModel.canMigrateLegacyCodexPlugin)
+                } else {
+                    Button(action: viewModel.beginLegacyCodexPluginMigrationConfirmation) {
+                        Label("이전 연결 정리 후 새로 연결", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .petCapsuleButtonBorder()
+                    .disabled(!viewModel.canMigrateLegacyCodexPlugin)
+                }
             case .unavailable, .conflict, .error:
                 EmptyView()
             }
@@ -1314,11 +1385,16 @@ struct PetRootView: View {
     private var onboardingServiceActions: some View {
         HStack(spacing: 8) {
             switch viewModel.onboardingServiceState {
-            case .notRegistered:
+            case .notRegistered, .notFound:
                 Button {
                     Task { await viewModel.registerOnboardingService() }
                 } label: {
-                    Label("서비스 등록", systemImage: "play.fill")
+                    Label(
+                        viewModel.onboardingServiceState == .notFound
+                            ? "서비스 등록 시도"
+                            : "서비스 등록",
+                        systemImage: "play.fill"
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .petCapsuleButtonBorder()
@@ -1349,7 +1425,7 @@ struct PetRootView: View {
                 .buttonStyle(.bordered)
                 .petCapsuleButtonBorder()
                 .disabled(!viewModel.canUnregisterOnboardingService)
-            case .notFound, .unknown:
+            case .unknown:
                 Text("이 상태에서는 등록 정보를 변경할 수 없습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1465,7 +1541,8 @@ struct PetRootView: View {
     }
 
     private var onboardingServiceColor: Color {
-        switch viewModel.onboardingServiceState {
+        if viewModel.onboardingServiceNeedsRuntimeAttention { return .orange }
+        return switch viewModel.onboardingServiceState {
         case .enabled: .green
         case .requiresApproval: .orange
         case .notRegistered: .secondary
@@ -1473,11 +1550,18 @@ struct PetRootView: View {
         }
     }
 
+    private var onboardingServiceBadgeTitle: String {
+        viewModel.onboardingServiceNeedsRuntimeAttention
+            ? "실행 확인 필요"
+            : viewModel.onboardingServiceState.displayTitle
+    }
+
     private var codexPluginSetupSymbol: String {
         switch viewModel.codexPluginSetupState {
         case .installedNeedsHookReview: "checkmark.circle.fill"
         case .marketplaceInstalledNeedsPlugin: "link.circle.fill"
         case .updateAvailable: "arrow.triangle.2.circlepath.circle.fill"
+        case .legacyInstallationDetected: "exclamationmark.triangle.fill"
         case .conflict, .error: "exclamationmark.triangle.fill"
         case .notInstalled: "link.circle.fill"
         case .unchecked, .unavailable: "questionmark.circle"
@@ -1486,7 +1570,8 @@ struct PetRootView: View {
 
     private var codexPluginSetupColor: Color {
         switch viewModel.codexPluginSetupState {
-        case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: .orange
+        case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable,
+             .legacyInstallationDetected: .orange
         case .conflict, .error: .red
         case .notInstalled: .indigo
         case .unchecked, .unavailable: .secondary
@@ -1501,6 +1586,7 @@ struct PetRootView: View {
         case .marketplaceInstalledNeedsPlugin: "마무리 필요"
         case .installedNeedsHookReview: "상태 확인"
         case .updateAvailable: "업데이트"
+        case .legacyInstallationDetected: "이전 연결 발견"
         case .conflict: "충돌"
         case .error: "오류"
         }

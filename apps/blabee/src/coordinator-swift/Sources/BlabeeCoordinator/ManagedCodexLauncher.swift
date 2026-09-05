@@ -215,21 +215,31 @@ private final class ManagedCodexErrorBox: @unchecked Sendable {
     }
 }
 
-private final class ManagedCodexChildProcesses: @unchecked Sendable {
+final class ManagedCodexChildProcesses: @unchecked Sendable {
     let appServer: Process
     let tui: Process
     private let lock = NSLock()
+    private let processIsRunning: (Process) -> Bool
+    private let terminateProcess: (Process) -> Bool
 
-    init(appServer: Process, tui: Process) {
+    init(
+        appServer: Process,
+        tui: Process,
+        processIsRunning: @escaping (Process) -> Bool = { $0.isRunning },
+        terminateProcess: @escaping (Process) -> Bool =
+            managedCodexTerminateProcess
+    ) {
         self.appServer = appServer
         self.tui = tui
+        self.processIsRunning = processIsRunning
+        self.terminateProcess = terminateProcess
     }
 
     func terminateAll() {
         lock.lock()
         defer { lock.unlock() }
-        managedCodexTerminateProcess(tui)
-        managedCodexTerminateProcess(appServer)
+        _ = terminateProcess(tui)
+        _ = terminateProcess(appServer)
     }
 
     func finish(graceMilliseconds: Int) -> Int32 {
@@ -238,18 +248,37 @@ private final class ManagedCodexChildProcesses: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         let duration = UInt64(max(0, graceMilliseconds)) * 1_000_000
         let (deadline, overflow) = now.addingReportingOverflow(duration)
-        while tui.isRunning,
+        while processIsRunning(tui),
               !overflow,
               DispatchTime.now().uptimeNanoseconds < deadline
         {
             usleep(20_000)
         }
-        if tui.isRunning { _ = managedCodexTerminateProcess(tui) }
-        else { tui.waitUntilExit() }
-        let appServerTerminatedByBroker = managedCodexTerminateProcess(appServer)
+        if processIsRunning(tui) { _ = terminateProcess(tui) }
+        let appServerTerminatedByBroker = terminateProcess(appServer)
+        guard !processIsRunning(tui) else {
+            // Foundation can fail to publish a reaped child's termination
+            // state. Never block the broker indefinitely waiting for that
+            // notification. Both exact children have already received bounded
+            // cleanup before this synthetic status is returned.
+            return managedCodexShellExitStatus(
+                status: SIGKILL,
+                reason: .uncaughtSignal
+            )
+        }
+        let tuiStatus = tui.terminationStatus
+        let tuiReason = tui.terminationReason
+        guard !processIsRunning(appServer) else {
+            // The App Server is broker-owned, so an unobservable status after
+            // bounded TERM/KILL cleanup must not replace the TUI's real exit.
+            return managedCodexShellExitStatus(
+                status: tuiStatus,
+                reason: tuiReason
+            )
+        }
         return managedCodexResolvedExitStatus(
-            tuiStatus: tui.terminationStatus,
-            tuiReason: tui.terminationReason,
+            tuiStatus: tuiStatus,
+            tuiReason: tuiReason,
             appServerStatus: appServer.terminationStatus,
             appServerReason: appServer.terminationReason,
             appServerTerminatedByBroker: appServerTerminatedByBroker
@@ -1519,11 +1548,18 @@ struct ManagedCodexLauncher {
         } catch {
             admission.stop()
             if !tui.isRunning {
-                tui.waitUntilExit()
                 let appServerTerminatedByBroker = Self.terminate(appServer)
+                let tuiStatus = tui.terminationStatus
+                let tuiReason = tui.terminationReason
+                guard !appServer.isRunning else {
+                    return managedCodexShellExitStatus(
+                        status: tuiStatus,
+                        reason: tuiReason
+                    )
+                }
                 return managedCodexResolvedExitStatus(
-                    tuiStatus: tui.terminationStatus,
-                    tuiReason: tui.terminationReason,
+                    tuiStatus: tuiStatus,
+                    tuiReason: tuiReason,
                     appServerStatus: appServer.terminationStatus,
                     appServerReason: appServer.terminationReason,
                     appServerTerminatedByBroker: appServerTerminatedByBroker
@@ -1660,21 +1696,34 @@ func managedCodexShellExitStatus(
 }
 
 @discardableResult
-private func managedCodexTerminateProcess(_ process: Process) -> Bool {
-    guard process.isRunning else {
-        process.waitUntilExit()
-        return false
-    }
+func managedCodexTerminateProcess(_ process: Process) -> Bool {
+    guard process.isRunning else { return false }
     process.terminate()
-    let deadline = DispatchTime.now().uptimeNanoseconds + 750_000_000
+    if !managedCodexAwaitProcessExit(
+        process,
+        timeoutMilliseconds: 750
+    ), process.isRunning {
+        _ = kill(process.processIdentifier, SIGKILL)
+    }
+    _ = managedCodexAwaitProcessExit(
+        process,
+        timeoutMilliseconds: 750
+    )
+    return true
+}
+
+private func managedCodexAwaitProcessExit(
+    _ process: Process,
+    timeoutMilliseconds: Int
+) -> Bool {
+    let now = DispatchTime.now().uptimeNanoseconds
+    let duration = UInt64(max(0, timeoutMilliseconds)) * 1_000_000
+    let (deadline, overflow) = now.addingReportingOverflow(duration)
+    guard !overflow else { return !process.isRunning }
     while process.isRunning,
           DispatchTime.now().uptimeNanoseconds < deadline
     {
         usleep(20_000)
     }
-    if process.isRunning {
-        _ = kill(process.processIdentifier, SIGKILL)
-    }
-    process.waitUntilExit()
-    return true
+    return !process.isRunning
 }

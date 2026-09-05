@@ -1,7 +1,7 @@
 # T-012b-1 로컬 Blabee.app 조립 보고서
 
-업데이트: 2026-09-03
-상태: 로컬 조립·ad-hoc 앱을 담은 내부 DMG 자동 자격 완료, 깨끗한 Mac·공개 배포 미승인
+업데이트: 2026-09-05
+상태: r8 조립·패키징·한 개발 Mac 설치/service 복구 확인, 깨끗한 Mac·Hook/Pet 왕복·공개 배포 미승인
 
 ## 결과
 
@@ -92,15 +92,15 @@ inode/hash를 확인해 다음 실행에서 복구한다. 부분 attach의 disk 
 정상 detach를 증명하지 못하면 게시하지 않고 조사 경로를 보존한다. 정리 오류는 최초
 패키징 오류를 덮지 않고 함께 보고한다.
 
-빌드는 먼저 Swift release coordinator를 만든 뒤 명시적 절대 경로를 사용한다.
+아래 fresh source builder가 현재 지원되는 내부 DMG 생성 경로다. 2026-09-03 최초
+검증에서는 미리 빌드한 coordinator를 `--binary`로 전달했지만, 그 직접 CLI는 stale
+바이너리 재사용을 막기 위해 이후 비활성화됐다. 현재 절차는
+`INTERNAL_DMG_PACKAGING.md`를 따른다.
 
 ```sh
-swift build -c release \
-  --package-path /Users/joo/BiaDone/apps/blabee/src/coordinator-swift
-
 npm run build:internal-dmg -- \
-  --binary /Users/joo/BiaDone/apps/blabee/src/coordinator-swift/.build/release/blabee-coordinator \
-  --output /Users/joo/BiaDone/apps/blabee/build/internal-dmg/Blabee-0.1.0-internal.dmg
+  --build-number N \
+  --output "$PWD/Blabee-0.1.0-internal-arm64-YYYYMMDD-rN.dmg"
 ```
 
 이 단계는 ad-hoc 서명·미공증 내부 산출물만 다룬다. Developer ID identity 조회,
@@ -117,7 +117,62 @@ checksum 확인, 안전한 Gatekeeper 처리와 깨끗한 Mac 스모크 기준�
 - 결과: `hdiutil verify`, sidecar `shasum -c`, read-only mount, exact 3개 root,
   plist·arm64·ad-hoc deep/strict 서명, 정상 detach 통과
 
+## 2026-09-05 r8 final internal candidate
+
+패키징 transaction schema v2는 게시·복구 identity에 `build_number`와
+`expected_architecture = arm64`를 함께 봉인한다. 다음 실행은 두 값이 정확히 같은
+checksum-only transaction만 복구하며 legacy schema v1 또는 값 불일치는 자동 복구하지
+않고 실패 폐쇄한다. Swift fresh build, 조립된 앱, 읽기 전용 mount와 최종 결과는 exact
+`arm64`만 허용해 x86 또는 Universal 입력을 거부한다.
+
+현재 내부 후보는 다음과 같다.
+
+- DMG: `/Users/joo/BiaDone/apps/blabee/build/internal-dmg-20260905-r8/Blabee-0.1.0-internal-arm64-20260905-r8.dmg`
+- 앱 버전/build: `0.1.0` / `8`
+- 아키텍처: exact `arm64`
+- SHA-256: `e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`
+- 앱 서명: ad-hoc, deep/strict 검증 대상
+- DMG 서명·공증: 없음
+- `public_distribution_ready`: `false`
+
+r7과 그 이전 산출물은 이 후보로 대체된 로컬 artifact이며 내부 테스터에게 배포하지
+않는다. r8은 `/Applications/Blabee.app`에 설치해 버전 `0.1.0`, build `8`, 최소
+macOS 13, exact `arm64`, deep/strict ad-hoc 서명을 확인했다.
+
+관리형 Codex child cleanup의 무제한 `waitUntilExit()`도 제거했다. 이미 종료한 자식은
+즉시 실제 상태를 보존하고, 실행 중인 exact child만 TERM 후 최대 750ms, 필요할 때
+SIGKILL 후 최대 750ms를 기다린다. 전용 종료 회귀와 보조 연결 회귀가 통과했으며 독립
+QA에서 열린 Medium 이상 finding은 없다.
+
+서비스 설정 UI는 coordinator transport 오류와 `SMAppService` 등록 상태를 분리한다.
+transport 실패를 등록 해제로 표시하거나 자동 재등록하지 않고, 등록됐지만 응답이 없으면
+`실행 확인 필요`로 표시한다. 설치 직후 첫 service 시작은 `OS_REASON_CODESIGNING` 뒤
+`Unable to get updated LWCR... Invalid argument`로 실패했다. 앱의 명시적 서비스
+재시작이 unregister/re-register를 수행해 새 BTM UUID를 만들었고, 이후 launchctl
+running과 실제 service 응답을 확인했다. Pet 설정에는 `operational_socket_unavailable`이
+남지 않고 **Plugin 설치됨 · Hook 상태 확인**이 표시됐다.
+
+설치된 Doctor는 `coordinator_runtime`, `app_bundle`, `embedded_coordinator`,
+`mcp_runtime`, `daemon_status`, `reconciliation_status`, `project_scope`를 통과했다.
+Codex `0.153.2`의 managed runtime identity/version/code-mode allowlist는 실패한다.
+이는 일반 `0.153.2` Plugin CLI 호환성과 별개이며 관리형 App Server 승인을 지원한다고
+주장하지 않는다.
+
+Pet은 동일 snapshot publish와 불필요한 status icon·단축키 재등록을 줄였다. r8 설치본의
+6-sample idle `top`은 UI와 service 각각 0.0~0.1% CPU, 메모리 약 65 MiB와 151 MiB였고,
+최근 2분 freshness-key 로그에는 실제 access entry가 없었다. 짧은 단일 Mac 표본이므로
+장시간 CPU·발열·전력 개선의 일반 증거는 아니다.
+
 ## 실행 증거
+
+- 2026-09-05 최종 전체 Node: 346/346
+- 2026-09-05 최종 Swift Testing: 568/568+XCTest 5/5
+- r8 DMG의 build 8·exact arm64·checksum·ad-hoc app 계약 검증: 통과
+- r8 `/Applications` metadata·아키텍처·deep/strict ad-hoc 서명: 통과
+- r8 명시적 service 재시작 뒤 새 BTM 등록·launchctl running·실제 socket: 통과
+- r8 Doctor 앱·MCP·daemon·reconciliation·project 범위: 통과
+- Codex 0.153.2 managed runtime identity/version/code-mode allowlist: 실패, 미지원 유지
+- r8 Hook 신뢰·실제 Pet 선택 왕복과 clean Mac 설치: 미실행
 
 - 내부 DMG 집중 테스트: 12/12
 - `npm run test:t012`: 26/26
@@ -132,15 +187,16 @@ checksum 확인, 안전한 Gatekeeper 처리와 깨끗한 Mac 스모크 기준�
 - 번들 내부 Doctor의 coordinator runtime, app bundle, embedded coordinator,
   Plugin layout 검사: 통과
 
-Doctor 전체 결과는 의도대로 실패다. 현재 Codex 버전 allowlist, Plugin 설치,
-PATH MCP, daemon, 프로젝트 활성화가 아직 제품 설치 상태가 아니기 때문이다.
+위 2026-09-03 Doctor 전체 실패는 당시 미설치 상태의 역사적 결과다. 2026-09-05 r8
+설치본에서도 Doctor 전체는 실패하지만, 현재 원인은 일반 Plugin CLI가 아니라 별도
+managed Codex `0.153.2` allowlist 미승인이다.
 
 ## 하지 않은 작업
 
-- `/Applications` 설치
+- 깨끗한 Mac의 r8 최초 설치와 업데이트 수명주기
+- r8의 Hook 신뢰·실제 Pet 선택 왕복과 managed Codex 승인
 - PATH 또는 shell startup 파일 수정
-- launchd/Login Item 등록
-- Keychain 읽기·쓰기·삭제 또는 비밀번호 prompt
+- 제품 Keychain migration·삭제 또는 credential 변경
 - Developer ID identity 조회·사용
 - 공개 배포용 DMG 서명, 공증, stapling, Gatekeeper 공개 배포 평가
 - 자동 업데이트, 공개 다운로드와 불특정 사용자 재배포
@@ -151,10 +207,10 @@ T-012b-2에서 번들 Contracts와 Application Support 설정을 사용하는 �
 `service` 모드와 실제 등록 전 정적 LaunchAgent 계약을 구현했다. 상세한 경로,
 설정 보안 경계와 검증 결과는 `T012_SERVICE_BOOTSTRAP_REPORT.md`에 기록했다.
 
-다음은 안전한 project 설정 writer/onboarding과 명시적 `SMAppService` 등록·해제·상태
-UI 계약이다. 실제 로그인 항목 등록, 제품 Keychain 최초 실행, Developer ID
-credential 사용은 시스템 상태나 암호 요청에 영향을 줄 수 있으므로 별도의 사용자
-동의를 받은 뒤 수행한다.
+안전한 project 설정 writer/onboarding과 명시적 `SMAppService` 등록·해제·상태 UI
+계약을 구현했고 r8에서 로컬 복구 경로까지 확인했다. 제품 Keychain 최초 실행과
+Developer ID credential 사용은 시스템 상태나 암호 요청에 영향을 줄 수 있으므로
+별도의 사용자 동의를 받은 뒤 수행한다.
 
 내부 DMG 생성 성공은 위 제품 수명주기 또는 Pet/Hook 왕복의 실사용 증거가 아니다.
 소스와 기존 Blabee 상태가 없는 깨끗한 Mac에서 설치·첫 실행·등록·선택 왕복을 별도

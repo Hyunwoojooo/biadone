@@ -408,6 +408,17 @@ enum PetShortcutBindingStatus: Sendable, Equatable {
 struct PetShortcutApplyFailure: Sendable, Equatable {
     let intent: PetShortcutIntent
     let status: PetShortcutBindingStatus
+    let isRetryAttempt: Bool
+
+    init(
+        intent: PetShortcutIntent,
+        status: PetShortcutBindingStatus,
+        isRetryAttempt: Bool = false
+    ) {
+        self.intent = intent
+        self.status = status
+        self.isRetryAttempt = isRetryAttempt
+    }
 
     var message: String {
         let reason = switch status {
@@ -438,8 +449,13 @@ enum PetShortcutApplyResult: Sendable, Equatable {
         case .invalidConfiguration(let issue):
             issue.message
         case .registrationRejected(let failures):
-            "새 단축키를 등록하지 못해 기존 설정으로 복원했습니다. "
-                + failures.map(\.message).joined(separator: ", ")
+            if failures.allSatisfy(\.isRetryAttempt) {
+                "단축키 등록 재시도에 실패했습니다. "
+                    + failures.map(\.message).joined(separator: ", ")
+            } else {
+                "새 단축키를 등록하지 못해 기존 설정으로 복원했습니다. "
+                    + failures.map(\.message).joined(separator: ", ")
+            }
         case .rollbackFailed(let candidateFailures, let rollbackFailures):
             "새 단축키를 등록하지 못했고 기존 단축키도 완전히 복원하지 못했습니다. "
                 + "새 설정: " + candidateFailures.map(\.message).joined(separator: ", ")
@@ -458,6 +474,11 @@ final class PetHotKeyRegistry {
         let reference: PetHotKeyReference
     }
 
+    private struct ReconciliationPlan: Equatable {
+        let configuration: PetShortcutConfiguration
+        let eligibleSlots: Set<Int>
+    }
+
     private let backend: PetHotKeyBackend
     private let store: (any PetShortcutConfigurationStoring)?
     private let onIntent: @MainActor (PetShortcutIntent) -> Void
@@ -466,6 +487,8 @@ final class PetHotKeyRegistry {
     private var intentByEventID: [UInt32: PetShortcutIntent] = [:]
     private var eligibleSlots: Set<Int> = []
     private var generation: UInt32 = 0
+    private var lastReconciliationPlan: ReconciliationPlan?
+    private var failedRegistrationIntents: Set<PetShortcutIntent> = []
 
     private(set) var statuses: [PetShortcutIntent: PetShortcutBindingStatus] = [:]
 
@@ -495,7 +518,7 @@ final class PetHotKeyRegistry {
 
         let previousConfiguration = self.configuration
         self.configuration = configuration
-        reconcile(eligibleSlots: eligibleSlots)
+        reconcile(eligibleSlots: eligibleSlots, retryFailedRegistrations: true)
 
         let candidateFailures = activeRegistrationFailures()
         guard !candidateFailures.isEmpty else {
@@ -503,8 +526,18 @@ final class PetHotKeyRegistry {
             return .applied
         }
 
+        guard previousConfiguration != configuration else {
+            return .registrationRejected(candidateFailures.map {
+                PetShortcutApplyFailure(
+                    intent: $0.intent,
+                    status: $0.status,
+                    isRetryAttempt: true
+                )
+            })
+        }
+
         self.configuration = previousConfiguration
-        reconcile(eligibleSlots: eligibleSlots)
+        reconcile(eligibleSlots: eligibleSlots, retryFailedRegistrations: true)
         let rollbackFailures = activeRegistrationFailures()
         if rollbackFailures.isEmpty {
             return .registrationRejected(candidateFailures)
@@ -515,8 +548,19 @@ final class PetHotKeyRegistry {
         )
     }
 
-    func reconcile(eligibleSlots: Set<Int>) {
+    func reconcile(
+        eligibleSlots: Set<Int>,
+        retryFailedRegistrations: Bool = false
+    ) {
         self.eligibleSlots = eligibleSlots.intersection(Set(1...4))
+        let plan = ReconciliationPlan(
+            configuration: configuration,
+            eligibleSlots: self.eligibleSlots
+        )
+        if retryFailedRegistrations || plan != lastReconciliationPlan {
+            failedRegistrationIntents.removeAll()
+        }
+        lastReconciliationPlan = plan
         var desired: [PetShortcutIntent: PetShortcut] = [
             .toggle: configuration.toggle,
         ]
@@ -544,7 +588,10 @@ final class PetHotKeyRegistry {
         for intent in bindingsToRetire { retire(intent) }
 
         let needsNewRegistration = PetShortcutIntent.allCases.contains { intent in
-            !collisions.contains(intent) && desired[intent] != nil && active[intent] == nil
+            !collisions.contains(intent)
+                && desired[intent] != nil
+                && active[intent] == nil
+                && !failedRegistrationIntents.contains(intent)
         }
         if needsNewRegistration {
             generation &+= 1
@@ -564,6 +611,9 @@ final class PetHotKeyRegistry {
                 statuses[intent] = .registered(eventID: current.eventID)
                 continue
             }
+            if failedRegistrationIntents.contains(intent) {
+                continue
+            }
             let ordinal = UInt32(PetShortcutIntent.allCases.firstIndex(of: intent)! + 1)
             let eventID = (generation << 8) | ordinal
             let event = PetHotKeyEvent(signature: Self.signature, id: eventID)
@@ -579,14 +629,18 @@ final class PetHotKeyRegistry {
                     reference: reference
                 )
                 intentByEventID[eventID] = intent
+                failedRegistrationIntents.remove(intent)
                 statuses[intent] = .registered(eventID: eventID)
             } catch let PetHotKeyBackendError.registration(status)
                 where status == OSStatus(eventHotKeyExistsErr)
             {
+                failedRegistrationIntents.insert(intent)
                 statuses[intent] = .systemCollision
             } catch let PetHotKeyBackendError.registration(status) {
+                failedRegistrationIntents.insert(intent)
                 statuses[intent] = .registrationFailure(status: status)
             } catch {
+                failedRegistrationIntents.insert(intent)
                 statuses[intent] = .registrationFailure(status: nil)
             }
         }

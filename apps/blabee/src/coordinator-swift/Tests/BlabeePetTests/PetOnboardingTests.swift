@@ -103,20 +103,27 @@ private actor PetFakeCodexPluginSetupManager: CodexPluginSetupManaging {
     var inspectState: CodexPluginSetupState
     var connectState: CodexPluginSetupState
     var disconnectState: CodexPluginSetupState
+    var migrateLegacyState: CodexPluginSetupState
     private(set) var inspectCalls = 0
     private(set) var connectCalls = 0
     private(set) var disconnectCalls = 0
+    private(set) var migrateLegacyCalls = 0
+    private(set) var migrateLegacyConfirmations: [
+        CodexPluginSetupLegacyMigrationConfirmation
+    ] = []
     private var blocksConnect = false
     private var connectWaiter: CheckedContinuation<Void, Never>?
 
     init(
         inspectState: CodexPluginSetupState = .notInstalled,
         connectState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0"),
-        disconnectState: CodexPluginSetupState = .notInstalled
+        disconnectState: CodexPluginSetupState = .notInstalled,
+        migrateLegacyState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0")
     ) {
         self.inspectState = inspectState
         self.connectState = connectState
         self.disconnectState = disconnectState
+        self.migrateLegacyState = migrateLegacyState
     }
 
     func inspect() async -> CodexPluginSetupState {
@@ -139,6 +146,14 @@ private actor PetFakeCodexPluginSetupManager: CodexPluginSetupManaging {
         return disconnectState
     }
 
+    func migrateLegacyInstallation(
+        confirmation: CodexPluginSetupLegacyMigrationConfirmation
+    ) async -> CodexPluginSetupState {
+        migrateLegacyCalls += 1
+        migrateLegacyConfirmations.append(confirmation)
+        return migrateLegacyState
+    }
+
     func setBlocksConnect(_ value: Bool) {
         blocksConnect = value
     }
@@ -154,8 +169,14 @@ private actor PetFakeCodexPluginSetupManager: CodexPluginSetupManaging {
         waiter?.resume()
     }
 
-    func callCounts() -> (inspect: Int, connect: Int, disconnect: Int) {
-        (inspectCalls, connectCalls, disconnectCalls)
+    func callCounts() -> (inspect: Int, connect: Int, disconnect: Int, migrateLegacy: Int) {
+        (inspectCalls, connectCalls, disconnectCalls, migrateLegacyCalls)
+    }
+
+    func receivedLegacyMigrationConfirmations()
+        -> [CodexPluginSetupLegacyMigrationConfirmation]
+    {
+        migrateLegacyConfirmations
     }
 }
 
@@ -212,6 +233,87 @@ func petCodexPluginSetupUsesExplicitActions() async {
     await viewModel.disconnectCodexPlugin()
     #expect(viewModel.codexPluginSetupState == .notInstalled)
     #expect((await pluginSetupManager.callCounts()).disconnect == 1)
+    #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet requires two explicit steps before migrating a detected legacy Blabee connection")
+@MainActor
+func petCodexPluginSetupRequiresLegacyMigrationConfirmation() async {
+    let adapter = PetFakeOnboardingAdapter()
+    let originalConfirmation = CodexPluginSetupLegacyMigrationConfirmation(
+        marketplaceName: "blabee-local-dogfood-original",
+        marketplaceRootPath: "/tmp/blabee-original/marketplace",
+        pluginSelector: "blabee@blabee-local-dogfood-original",
+        pluginRootPath: "/tmp/blabee-original/marketplace/plugins/blabee",
+        pluginIsInstalled: true,
+        pluginVersion: "0.1.0",
+        filesystemIdentity: .allMissing
+    )
+    let originalState = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: originalConfirmation.marketplaceName,
+        confirmation: originalConfirmation
+    )
+    let replacementConfirmation = CodexPluginSetupLegacyMigrationConfirmation(
+        marketplaceName: "blabee-local-dogfood-replacement",
+        marketplaceRootPath: "/tmp/blabee-replacement/marketplace",
+        pluginSelector: "blabee@blabee-local-dogfood-replacement",
+        pluginRootPath: "/tmp/blabee-replacement/marketplace/plugins/blabee",
+        pluginIsInstalled: true,
+        pluginVersion: "0.1.0",
+        filesystemIdentity: .allMissing
+    )
+    let replacementState = CodexPluginSetupState.legacyInstallationDetected(
+        marketplaceName: replacementConfirmation.marketplaceName,
+        confirmation: replacementConfirmation
+    )
+    let pluginSetupManager = PetFakeCodexPluginSetupManager(inspectState: originalState)
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: pluginSetupManager
+    )
+
+    await viewModel.refreshCodexPluginSetup()
+    #expect(viewModel.codexPluginSetupState == originalState)
+    #expect(viewModel.canMigrateLegacyCodexPlugin)
+    #expect(!viewModel.canConnectCodexPlugin)
+    #expect(!viewModel.canDisconnectCodexPlugin)
+
+    await viewModel.migrateLegacyCodexPlugin()
+    #expect((await pluginSetupManager.callCounts()).migrateLegacy == 0)
+
+    viewModel.beginLegacyCodexPluginMigrationConfirmation()
+    #expect(viewModel.isConfirmingLegacyCodexPluginMigration)
+    #expect((await pluginSetupManager.callCounts()).migrateLegacy == 0)
+
+    viewModel.cancelLegacyCodexPluginMigrationConfirmation()
+    #expect(!viewModel.isConfirmingLegacyCodexPluginMigration)
+    await viewModel.migrateLegacyCodexPlugin()
+    #expect((await pluginSetupManager.callCounts()).migrateLegacy == 0)
+
+    viewModel.beginLegacyCodexPluginMigrationConfirmation()
+    await pluginSetupManager.setInspectState(replacementState)
+    await viewModel.refreshCodexPluginSetup()
+    #expect(!viewModel.isConfirmingLegacyCodexPluginMigration)
+    #expect((await pluginSetupManager.callCounts()).inspect == 2)
+    #expect(viewModel.codexPluginSetupState == replacementState)
+    #expect(viewModel.canMigrateLegacyCodexPlugin)
+    await viewModel.migrateLegacyCodexPlugin()
+    #expect((await pluginSetupManager.callCounts()).migrateLegacy == 0)
+
+    viewModel.beginLegacyCodexPluginMigrationConfirmation()
+    await viewModel.migrateLegacyCodexPlugin()
+    #expect((await pluginSetupManager.callCounts()).migrateLegacy == 1)
+    #expect(
+        await pluginSetupManager.receivedLegacyMigrationConfirmations()
+            == [replacementConfirmation]
+    )
+    #expect(
+        viewModel.codexPluginSetupState
+            == .installedNeedsHookReview(version: "0.1.0")
+    )
+    #expect(!viewModel.isConfirmingLegacyCodexPluginMigration)
+    #expect(!viewModel.canMigrateLegacyCodexPlugin)
+    #expect(viewModel.canDisconnectCodexPlugin)
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
@@ -396,7 +498,7 @@ func petOnboardingStatesAndRefreshAreReadOnly() async {
         (.notRegistered, true, false, false),
         (.enabled, false, true, false),
         (.requiresApproval, false, true, true),
-        (.notFound, false, false, false),
+        (.notFound, true, false, false),
         (.unknown, false, false, false),
     ]
 
@@ -417,6 +519,36 @@ func petOnboardingStatesAndRefreshAreReadOnly() async {
     #expect(adapter.enabledPaths.isEmpty)
     #expect(adapter.disabledPaths.isEmpty)
     #expect(await transport.requestCount(type: "get_state") == 0)
+}
+
+@Test("Pet distinguishes service registration from Coordinator transport health")
+@MainActor
+func petOnboardingSeparatesRegistrationAndRuntimeHealth() async throws {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.state = .enabled
+    let (viewModel, transport) = petOnboardingViewModel(adapter: adapter)
+    await viewModel.refreshOnboarding()
+
+    #expect(viewModel.onboardingServiceState == .enabled)
+    #expect(viewModel.coordinatorTransportError == nil)
+    #expect(!viewModel.onboardingServiceNeedsRuntimeAttention)
+
+    await transport.enqueueFailure(type: "get_state", code: "service_unreachable")
+    await viewModel.refresh()
+
+    #expect(viewModel.onboardingServiceState == .enabled)
+    #expect(viewModel.coordinatorTransportError?.contains("service_unreachable") == true)
+    #expect(viewModel.onboardingServiceNeedsRuntimeAttention)
+    #expect(!viewModel.canRegisterOnboardingService)
+    #expect(viewModel.canUnregisterOnboardingService)
+
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await viewModel.refresh()
+
+    #expect(viewModel.onboardingServiceState == .enabled)
+    #expect(viewModel.coordinatorTransportError == nil)
+    #expect(!viewModel.onboardingServiceNeedsRuntimeAttention)
+    #expect(await transport.requestCount(type: "get_state") == 2)
 }
 
 @Test("Pet onboarding initializes, applies snapshots, and changes screens without mutation")
@@ -480,7 +612,7 @@ func petOnboardingExplicitRegistrationActions() async {
     #expect(await transport.requestCount(type: "get_state") == 0)
 }
 
-@Test("Pet onboarding requires-approval and fail-closed states allow only safe actions")
+@Test("Pet onboarding registers unseen services while unknown state remains fail closed")
 @MainActor
 func petOnboardingApprovalAndFailClosedActions() async {
     let adapter = PetFakeOnboardingAdapter()
@@ -500,16 +632,20 @@ func petOnboardingApprovalAndFailClosedActions() async {
     await viewModel.unregisterOnboardingService()
     #expect(adapter.unregisterCalls == 1)
 
-    for state in [PetServiceRegistrationState.notFound, .unknown] {
-        adapter.state = state
-        await viewModel.refreshOnboarding()
-        await viewModel.registerOnboardingService()
-        await viewModel.unregisterOnboardingService()
-        await viewModel.openOnboardingSystemSettings()
-        await viewModel.chooseAndEnableProject()
-        await viewModel.disableConfiguredProject("/tmp/blabee-pet-configured")
-    }
-    #expect(adapter.registerCalls == 0)
+    adapter.state = .notFound
+    adapter.stateAfterRegister = .notRegistered
+    await viewModel.refreshOnboarding()
+    await viewModel.registerOnboardingService()
+    #expect(adapter.registerCalls == 1)
+
+    adapter.state = .unknown
+    await viewModel.refreshOnboarding()
+    await viewModel.registerOnboardingService()
+    await viewModel.unregisterOnboardingService()
+    await viewModel.openOnboardingSystemSettings()
+    await viewModel.chooseAndEnableProject()
+    await viewModel.disableConfiguredProject("/tmp/blabee-pet-configured")
+
     #expect(adapter.unregisterCalls == 1)
     #expect(adapter.openSystemSettingsCalls == 1)
     #expect(chooser.calls == 0)

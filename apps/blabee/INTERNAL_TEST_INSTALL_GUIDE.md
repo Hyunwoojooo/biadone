@@ -1,14 +1,15 @@
 # Blabee 내부 테스트 설치·설정 가이드
 
-- 작성일: 2026-09-04
+- 작성일: 2026-09-05
 - 대상: Blabee 개발팀과 지정된 내부 테스터
 - 대상 빌드: `Blabee 0.1.0-internal`
 - 공개 배포 상태: 미승인
 
 ## 먼저 알아둘 점
 
-현재 내부 DMG는 앱 설치부터 Codex Plugin 연결까지 한 화면에서 시험할 수 있는
-설치본이다. 소스 코드를 내려받거나 dogfood 명령을 복사할 필요가 없다.
+새 fresh-build 절차로 생성하고 검증한 내부 DMG는 앱 설치부터 Codex Plugin 연결까지
+한 화면에서 시험할 수 있는 설치본이다. 소스 코드를 내려받거나 dogfood 명령을 복사할
+필요가 없다.
 
 가장 짧은 설치 순서는 다음과 같다.
 
@@ -34,38 +35,45 @@ Codex는 설치 전과 같은 방법으로 실행한다.
 
 ## 1. 설치 전에 확인할 것
 
-현재 내부 DMG의 기본 조건은 다음과 같다.
+다음 내부 DMG의 기본 조건은 다음과 같다.
 
 - macOS 13 이상
 - 현재 제공 파일은 Apple Silicon(`arm64`)용
 - 공식 Codex CLI는 Blabee와 별도로 설치·로그인되어 있어야 함
-- 이 내부 빌드에서 Plugin 연결을 검증한 공식 서명 버전은 `0.151.0`, `0.152.0`,
-  `0.152.1`이며 다른 버전은 Codex를 실행하거나 바꾸지 않고 지원 필요 상태로 중단
+- 현재 소스에서 Plugin 연결을 검증한 버전은 `0.151.0`, `0.152.0`, `0.152.1`,
+  `0.153.2`이다. `0.153.2` Apple Silicon 공식 배포본은 고정된 전체 파일 hash까지
+  일치할 때만 허용하며, 다른 버전은 Codex를 실행하거나 바꾸지 않고 지원 필요 상태로 중단
 - DMG와 같은 이름의 `.sha256` 파일을 함께 전달받아야 함
 - 전체 설치 smoke test는 기존 Blabee 앱, 백그라운드 서비스, 개발용 dogfood,
   Blabee Plugin이 없는 깨끗한 환경에서 수행
 
-예시 파일:
+2026-09-05 현재 검증된 내부 테스트 후보는 다음 두 파일이다.
 
 ```text
-Blabee-0.1.0-internal-arm64-20260904-r2.dmg
-Blabee-0.1.0-internal-arm64-20260904-r2.dmg.sha256
+Blabee-0.1.0-internal-arm64-20260905-r8.dmg
+Blabee-0.1.0-internal-arm64-20260905-r8.dmg.sha256
 ```
 
-이번 전달본의 DMG SHA-256은 다음과 같다.
-
-```text
-4928ea8ac1cec3aaaa3b3f0bc955370e6d4321f25816ae72f5c3be11e44df397
-```
+두 파일에서 확인해야 할 SHA-256은
+`e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`다.
+앱 버전은 `0.1.0`, 내부 build number는 `8`, 아키텍처는 정확히 `arm64`다.
+파일명이 다르거나 sidecar의 값이 다르면 사용하지 않는다. r8은 ad-hoc 서명 앱을 담은
+미서명·미공증 DMG이며 `public_distribution_ready = false`다. r7과 그 이전 파일은
+현재 후보로 대체된 로컬 산출물이므로 테스터에게 배포하지 않는다.
 
 Intel Mac 또는 조직 정책상 미공증 앱을 실행할 수 없는 Mac에서는 테스트를
 진행하지 않는다. 현재 빌드는 Universal Binary, Developer ID 서명, Apple 공증을
 제공하지 않는다.
 
 기존 개발용 dogfood 또는 다른 Blabee Plugin이 설치된 Mac에서는 **Codex 연결하기**가
-충돌을 알리고 중단할 수 있다. Blabee는 기존 환경을 자동 삭제하거나 덮어쓰지 않는다.
-해당 dogfood의 `dogfood-summary.json`에 기록된 guarded cleanup 절차를 개발 담당자와
-확인하거나, 별도의 테스트 Mac 또는 사용자 계정에서 진행한다.
+충돌을 알리고 중단할 수 있다. 현재 빌드가 정확히 식별할 수 있는 단일 구형 Blabee
+dogfood 연결이면 사용자가 별도 확인 화면에서 **이전 연결 정리 후 새로 연결**을 선택할
+수 있다. 이 동작은 화면에 표시된 구형 Blabee Plugin과 그 marketplace만 제거한 뒤 현재
+앱의 Plugin을 설치한다. 일반 Codex, 다른 Plugin, 프로젝트 파일은 변경하지 않는다.
+
+이름·경로·활성 상태가 예상 계약과 다르거나 구형 연결이 둘 이상이면 자동 마이그레이션하지
+않고 중단한다. 이 경우 해당 dogfood의 `dogfood-summary.json`에 기록된 guarded cleanup
+절차를 개발 담당자와 확인하거나, 별도의 테스트 Mac 또는 사용자 계정에서 진행한다.
 
 ## 2. 받은 파일이 온전한지 확인하기
 
@@ -73,7 +81,8 @@ DMG를 열기 전에 두 파일을 같은 폴더에 둔다. 터미널에서 그 
 명령을 실행한다.
 
 ```sh
-shasum -a 256 -c Blabee-0.1.0-internal-arm64-20260904-r2.dmg.sha256
+CHECKSUM_FILE='실제로 전달받은 .sha256 파일명'
+shasum -a 256 -c "$CHECKSUM_FILE"
 ```
 
 출력 끝에 `OK`가 표시될 때만 설치한다. 실패하면 DMG를 열지 말고 두 파일을 다시
@@ -81,7 +90,7 @@ shasum -a 256 -c Blabee-0.1.0-internal-arm64-20260904-r2.dmg.sha256
 
 ## 3. Blabee 앱 설치하기
 
-1. `Blabee-0.1.0-internal-arm64-20260904-r2.dmg`를 연다.
+1. 검증을 통과한 전달받은 `.dmg` 파일을 연다.
 2. DMG 창의 `Blabee.app`을 같은 창에 있는 `Applications`로 끌어 놓는다.
 3. 복사가 끝나면 Finder의 **응용 프로그램**에서 `Blabee`를 찾는다.
 4. 처음 한 번은 앱을 Control-클릭 또는 우클릭하고 **열기**를 선택한다.
@@ -147,6 +156,12 @@ Blabee는 Dock 아이콘 대신 macOS 메뉴바 아이콘으로 실행된다. �
 - `Stop`
 - `PermissionRequest`
 
+정확히 식별된 구형 Blabee dogfood가 발견되면 일반 연결 버튼 대신
+**이전 연결 정리 후 새로 연결**이 표시된다. 첫 클릭은 변경 대상을 설명하는 확인 단계만
+열고, 두 번째 확인을 해야 실제 마이그레이션이 시작된다. 경고에 표시된 marketplace 이름이
+예상한 구형 Blabee 연결인지 확인한다. 알 수 없는 이름이거나 다른 Plugin을 함께 바꾸겠다는
+내용이면 진행하지 않는다.
+
 Plugin 설치와 Hook 신뢰는 서로 다른 단계다. **Codex 연결하기**가 성공해도 Hook을
 신뢰하기 전에는 Pet 카드가 나타나지 않을 수 있다. 반대로 Blabee는 `/hooks`의 신뢰
 버튼을 대신 누르거나 신뢰 검사를 우회하지 않는다.
@@ -163,7 +178,8 @@ marketplace와 Plugin 상태를 다시 조회한다. 단순히 명령이 종료�
 
 다음 상황에서는 자동으로 정리하지 않고 중단한다.
 
-- 다른 marketplace 또는 개발용 dogfood에서 설치한 Blabee Plugin이 발견됨
+- 정확히 한 개의 알려진 구형 local dogfood 계약에 맞지 않는 Blabee Plugin 또는
+  marketplace가 발견됨
 - 공식 Codex CLI를 찾지 못함
 - 공식 서명 또는 지원 버전을 확인할 수 없음
 - 앱이 `/Applications/Blabee.app`이 아닌 위치에서 실행됨
@@ -187,6 +203,12 @@ Marketplace 등록 뒤 Plugin 설치가 끝나지 않은 경우에는 **Codex �
 
 **등록됨**은 서비스가 실행될 자격이 있다는 뜻이며 실제 daemon이 건강하다는 증거는
 아니다. 프로젝트가 **현재 서비스에서 활성**로 바뀌는 것까지 별도로 확인한다.
+
+ad-hoc 내부 앱을 업데이트한 직후 상태가 **실행 확인 필요**로 보이면 설정의 명시적
+서비스 재시작을 한 번만 실행하고 상태 갱신을 기다린다. 이 동작은 기존 등록을 해제한
+뒤 현재 앱으로 다시 등록한다. 버튼을 반복해서 누르거나 `launchctl`·BTM 초기화 명령을
+섞지 않는다. 한 번의 재시작 뒤에도 활성 상태가 되지 않으면 화면과 시각을 기록하고
+테스트를 중단한다.
 
 현재 내부 빌드는 legacy login Keychain을 사용할 수 있어 macOS가 암호를 요구할 수
 있다. 바로 입력하지 말고 표시된 항목이
@@ -267,6 +289,11 @@ Pet에 전달 완료가 표시된 것과 Codex 작업이 실제로 성공한 것
 포함된 payload 구조를 확인할 뿐, Plugin이 Codex에 설치·활성화됐거나 Hook이 신뢰된
 사실을 증명하지 않는다. 실제 설치 상태는 `codex plugin list --json`, Hook 신뢰는
 새 Codex 세션의 `/hooks`에서 따로 확인한다.
+
+현재 r8에서 일반 Codex `0.153.2` Plugin CLI 연결은 지원하지만 관리형 App Server
+runtime과 일회 승인 경로는 별도 allowlist다. Doctor의 managed runtime identity,
+version 또는 code-mode 항목이 실패해도 일반 Plugin 설치 실패와 같은 뜻이 아니다.
+이 상태에서 관리형 권한 승인 지원을 성공으로 기록하지 않는다.
 
 ## 6. 선택 사항: 소스 기반 dogfood 검증(개발팀용)
 
@@ -381,7 +408,8 @@ Plugin 설치 뒤 이미 열려 있던 Codex 세션에는 새 Plugin이 소급 �
   확인한다.
 - 앱을 DMG 안에서 직접 실행하지 말고 `/Applications/Blabee.app`으로 복사했는지
   확인한다.
-- 충돌 안내가 보이면 기존 dogfood나 다른 Blabee Plugin을 자동 삭제하지 않는다.
+- 알려진 단일 구형 dogfood 안내라면 **이전 연결 정리 후 새로 연결**의 변경 대상을 먼저
+  확인한다. 그 밖의 충돌은 기존 dogfood나 다른 Blabee Plugin을 자동 삭제하지 않는다.
 - 같은 버튼을 반복해서 누르지 말고 표시된 상태와 오류 문구를 기록한다.
 
 Blabee는 설치 실패를 해결하기 위해 `~/.codex`, `.zshrc`, `PATH` 또는 공식 Codex
@@ -398,20 +426,52 @@ Blabee 때문에 일반 `codex`, `codex resume` 또는 공식 Codex 파일을 �
 현재 자동 업데이트는 없다. 새 DMG를 받으면 다음 순서로 수동 교체한다.
 
 1. 새 DMG와 `.sha256`을 먼저 검증한다.
-2. Blabee 설정에서 백그라운드 서비스를 등록 해제한다.
-3. 패널의 X는 창만 닫으므로, **활성 상태 보기**에서 Blabee를 선택해 **종료**한다.
-4. 새 DMG의 `Blabee.app`을 Applications로 끌어 기존 앱을 교체한다.
-5. 새 앱을 처음 실행할 때와 같은 방식으로 연다.
-6. 프로젝트와 후속 제안 모드를 확인한다.
-7. Codex 연결 상태를 새로고침하고, 앱이 Plugin 업데이트를 안내하면 설정 화면의
+2. **구버전 Blabee.app이 아직 설치된 상태에서** Blabee 설정의 백그라운드 서비스를
+   등록 해제한다. 화면이 `등록되지 않음`으로 바뀔 때까지 앱을 교체하지 않는다.
+3. 패널의 X는 창만 닫으므로, 메뉴바 아이콘을 우클릭해 **Blabee 종료**를 선택한다.
+4. 아래 명령으로 기존 앱과 새 DMG 앱의 `CFBundleVersion`을 각각 확인한다. 새 번호가
+   더 크지 않으면 교체하지 않고 개발 담당자에게 알린다.
+
+   ```sh
+   /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+     /Applications/Blabee.app/Contents/Info.plist
+   ```
+
+5. 새 DMG의 `Blabee.app`을 Applications로 끌어 기존 **앱 번들 전체**를 교체한다.
+   기존 앱 내부의 실행 파일만 덮어쓰지 않는다.
+6. 새 앱을 처음 실행할 때와 같은 방식으로 연다. 같은 명령으로 설치된 build number가
+   전달받은 파일명의 마지막 `rN`과 같은지 확인한다.
+7. 프로젝트와 후속 제안 모드를 확인한다.
+8. Codex 연결 상태를 새로고침하고, 앱이 Plugin 업데이트를 안내하면 설정 화면의
    연결 동작으로 새 내장 버전을 설치한다.
-8. 새 Codex 세션의 `/hooks`에서 변경된 Hook을 다시 검토한다.
-9. 백그라운드 서비스를 다시 등록한다.
+9. 새 Codex 세션의 `/hooks`에서 변경된 Hook을 다시 검토한다.
+10. 백그라운드 서비스를 한 번 등록한다. `등록됨`만 보지 말고, 프로젝트가
+    **현재 서비스에서 활성**로 바뀌어 실제 service 응답까지 확인한다.
+
+ad-hoc 교체 뒤 **실행 확인 필요**가 나타나면 위 등록 버튼을 반복하지 말고 설정의
+명시적 서비스 재시작을 정확히 한 번 사용한 뒤 상태 갱신을 기다린다. 이 내부 제약을
+없앤 공개 업데이트 경험을 제공하려면 안정적인 Developer ID 서명과 공증된 빌드,
+지원 macOS별 업데이트 자격 시험이 필요하다.
+
+서비스 등록을 해제하지 않은 채 ad-hoc 앱을 교체하면 macOS가 이전 코드에 저장한
+launch constraint와 새 앱을 다르게 판단해 `OS_REASON_CODESIGNING` 또는
+`needs LWCR update`로 실행을 거부할 수 있다. build number 증가는 필요한 구분자이지만
+이 등록 경계를 대신하지 않는다. 정상 업데이트에 `launchctl`이나 BTM 전체 초기화
+명령을 사용하지 않는다.
 
 현재 업데이트·다운그레이드와 설정 보존은 깨끗한 Mac에서 최종 자격을 통과하지
 않았다. 이상이 있으면 이전 앱을 임의로 섞어 복구하지 말고 빌드 버전과 증상을
 기록한다. 개발용 dogfood Plugin은 해당 산출물의 `dogfood-summary.json`에 기록된
 guarded cleanup 절차를 먼저 완료한 뒤 새 산출물을 설치한다.
+
+현재 r8은 개발 Mac의 `/Applications/Blabee.app`에 설치해 앱 `0.1.0` build `8`, 최소
+macOS 13, exact `arm64`, deep/strict ad-hoc 서명과 실제 service 실행까지 확인했다.
+교체 직후 첫 service 실행은 ad-hoc LWCR 갱신 문제로 실패했지만, 설정의 명시적 서비스
+재시작이 unregister/re-register를 수행한 뒤 새 BTM 등록으로 정상 실행됐다. 설정에는
+transport 오류가 사라지고 **Plugin 설치됨 · Hook 상태 확인** 안내가 표시됐다.
+
+이는 한 개발 Mac의 복구 경로 증거다. 깨끗한 Mac 최초 설치, 다른 macOS 버전,
+Hook 신뢰와 실제 Pet 선택 왕복, 관리형 Codex 승인은 아직 별도 확인 대상이다.
 
 ## 9. 제거하기
 
@@ -440,7 +500,7 @@ guarded rotation 명령을 사용한다. 실행 중 Codex, Pet 또는 service가
 
 다음 항목을 함께 보낸다.
 
-- 사용한 DMG 파일명: `Blabee-0.1.0-internal-arm64-20260904-r2.dmg`
+- 사용한 DMG의 실제 파일명
 - 함께 받은 `.sha256` 파일의 검사 성공 여부와 확인된 SHA-256 값
 - Mac 모델/아키텍처와 macOS 버전
 - Codex 연동을 시험했다면 `codex --version`

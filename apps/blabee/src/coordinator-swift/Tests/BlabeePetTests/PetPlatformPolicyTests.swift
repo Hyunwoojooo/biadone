@@ -165,6 +165,30 @@ func blabeePetQuitMenuMetadata() {
     #expect(PetMenuBarInteractionPolicy.quitMenuTitle == "Blabee 종료")
 }
 
+@Test("BlabeePet updates its status item only on initial render and attention transitions")
+func blabeePetStatusItemUpdatePolicy() {
+    #expect(PetStatusItemUpdatePolicy.shouldApply(
+        previousAttention: nil,
+        newAttention: false
+    ))
+    #expect(!PetStatusItemUpdatePolicy.shouldApply(
+        previousAttention: false,
+        newAttention: false
+    ))
+    #expect(PetStatusItemUpdatePolicy.shouldApply(
+        previousAttention: false,
+        newAttention: true
+    ))
+    #expect(!PetStatusItemUpdatePolicy.shouldApply(
+        previousAttention: true,
+        newAttention: true
+    ))
+    #expect(PetStatusItemUpdatePolicy.shouldApply(
+        previousAttention: true,
+        newAttention: false
+    ))
+}
+
 @Test("BlabeePet auto-presentation is owned by the exact approval head")
 func blabeePetExactApprovalPresentationPolicy() {
     let first = PetApprovalHeadIdentity.permission(requestID: "permission_first")

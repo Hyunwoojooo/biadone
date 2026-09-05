@@ -168,6 +168,7 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
     @Published private(set) var onboardingError: String?
+    @Published private(set) var coordinatorTransportError: String?
     @Published private(set) var suggestionMode: BlabeeSuggestionMode = .smart
     @Published private(set) var suggestionModeDiagnostic: String? {
         didSet {
@@ -179,6 +180,15 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var isOnboardingServiceOperationInFlight = false
     @Published private(set) var isCodexPluginOperationInFlight = false
     @Published private(set) var isOnboardingProjectOperationInFlight = false
+    @Published private(set) var isConfirmingLegacyCodexPluginMigration = false {
+        didSet {
+            if oldValue != isConfirmingLegacyCodexPluginMigration {
+                onPanelLayoutChanged?()
+            }
+        }
+    }
+    private var legacyCodexPluginMigrationConfirmation:
+        CodexPluginSetupLegacyMigrationConfirmation?
 
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
@@ -388,7 +398,8 @@ final class PetViewModel: ObservableObject {
     }
 
     var canRegisterOnboardingService: Bool {
-        onboardingServiceState == .notRegistered
+        (onboardingServiceState == .notRegistered
+            || onboardingServiceState == .notFound)
             && !isOnboardingConfigurationOperationInFlight
     }
 
@@ -401,6 +412,10 @@ final class PetViewModel: ObservableObject {
     var canOpenOnboardingSystemSettings: Bool {
         onboardingServiceState == .requiresApproval
             && !isOnboardingConfigurationOperationInFlight
+    }
+
+    var onboardingServiceNeedsRuntimeAttention: Bool {
+        onboardingServiceState == .enabled && coordinatorTransportError != nil
     }
 
     var canMutateOnboardingProjects: Bool {
@@ -417,7 +432,7 @@ final class PetViewModel: ObservableObject {
         guard !isCodexPluginOperationInFlight else { return false }
         return switch codexPluginSetupState {
         case .unchecked, .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable: true
-        case .unavailable, .installedNeedsHookReview, .conflict, .error: false
+        case .unavailable, .installedNeedsHookReview, .legacyInstallationDetected, .conflict, .error: false
         }
     }
 
@@ -425,7 +440,16 @@ final class PetViewModel: ObservableObject {
         guard !isCodexPluginOperationInFlight else { return false }
         return switch codexPluginSetupState {
         case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: true
-        case .unchecked, .unavailable, .notInstalled, .conflict, .error: false
+        case .unchecked, .unavailable, .notInstalled, .legacyInstallationDetected, .conflict, .error: false
+        }
+    }
+
+    var canMigrateLegacyCodexPlugin: Bool {
+        guard !isCodexPluginOperationInFlight else { return false }
+        return switch codexPluginSetupState {
+        case .legacyInstallationDetected: true
+        case .unchecked, .unavailable, .notInstalled, .marketplaceInstalledNeedsPlugin,
+             .installedNeedsHookReview, .updateAvailable, .conflict, .error: false
         }
     }
 
@@ -450,6 +474,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func beginShortcutSettings() {
+        clearLegacyCodexPluginMigrationConfirmation()
         isShowingOnboarding = false
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
@@ -465,7 +490,7 @@ final class PetViewModel: ObservableObject {
 
     func toggleOnboarding() async {
         if isShowingOnboarding {
-            isShowingOnboarding = false
+            closeOnboarding()
         } else {
             await beginOnboarding()
         }
@@ -473,12 +498,14 @@ final class PetViewModel: ObservableObject {
 
     func beginOnboarding() async {
         cancelShortcutSettings()
+        clearLegacyCodexPluginMigrationConfirmation()
         isShowingOnboarding = true
         setExpanded(true)
         await refreshOnboarding()
     }
 
     func closeOnboarding() {
+        clearLegacyCodexPluginMigrationConfirmation()
         isShowingOnboarding = false
     }
 
@@ -510,6 +537,7 @@ final class PetViewModel: ObservableObject {
         }
         await performOnboardingOperation(.codexPlugin) {
             codexPluginSetupState = await codexPluginSetupManager.inspect()
+            clearLegacyCodexPluginMigrationConfirmation()
         }
     }
 
@@ -517,6 +545,7 @@ final class PetViewModel: ObservableObject {
         guard canConnectCodexPlugin else { return }
         await performOnboardingOperation(.codexPlugin) {
             codexPluginSetupState = await codexPluginSetupManager.connect()
+            clearLegacyCodexPluginMigrationConfirmation()
         }
     }
 
@@ -524,7 +553,39 @@ final class PetViewModel: ObservableObject {
         guard canDisconnectCodexPlugin else { return }
         await performOnboardingOperation(.codexPlugin) {
             codexPluginSetupState = await codexPluginSetupManager.disconnect()
+            clearLegacyCodexPluginMigrationConfirmation()
         }
+    }
+
+    func beginLegacyCodexPluginMigrationConfirmation() {
+        guard canMigrateLegacyCodexPlugin,
+              case let .legacyInstallationDetected(_, confirmation) = codexPluginSetupState
+        else { return }
+        legacyCodexPluginMigrationConfirmation = confirmation
+        isConfirmingLegacyCodexPluginMigration = true
+    }
+
+    func cancelLegacyCodexPluginMigrationConfirmation() {
+        clearLegacyCodexPluginMigrationConfirmation()
+    }
+
+    func migrateLegacyCodexPlugin() async {
+        guard canMigrateLegacyCodexPlugin,
+              isConfirmingLegacyCodexPluginMigration,
+              let confirmation = legacyCodexPluginMigrationConfirmation,
+              case let .legacyInstallationDetected(_, currentConfirmation) = codexPluginSetupState,
+              currentConfirmation == confirmation
+        else { return }
+        clearLegacyCodexPluginMigrationConfirmation()
+        await performOnboardingOperation(.codexPlugin) {
+            codexPluginSetupState = await codexPluginSetupManager
+                .migrateLegacyInstallation(confirmation: confirmation)
+        }
+    }
+
+    private func clearLegacyCodexPluginMigrationConfirmation() {
+        legacyCodexPluginMigrationConfirmation = nil
+        isConfirmingLegacyCodexPluginMigration = false
     }
 
     func registerOnboardingService() async {
@@ -1040,17 +1101,24 @@ final class PetViewModel: ObservableObject {
             guard requestNumber >= lastAppliedSnapshotRequest else { return }
             lastAppliedSnapshotRequest = requestNumber
             apply(parsed)
-            lastError = persistentApprovalResolutionError
+            if coordinatorTransportError != nil { coordinatorTransportError = nil }
+            if lastError != persistentApprovalResolutionError {
+                lastError = persistentApprovalResolutionError
+            }
             await focusFIFOHeadIfNeeded()
         } catch {
             guard requestNumber >= lastAppliedSnapshotRequest else { return }
             lastAppliedSnapshotRequest = requestNumber
             let priorApprovalHeadIdentity = approvalHead?.identity
-            snapshot = nil
-            localForegroundIdentity = nil
-            pendingFocusIdentity = nil
-            riskConfirmation = nil
-            lastError = String(describing: error)
+            if snapshot != nil { snapshot = nil }
+            if localForegroundIdentity != nil { localForegroundIdentity = nil }
+            if pendingFocusIdentity != nil { pendingFocusIdentity = nil }
+            if riskConfirmation != nil { riskConfirmation = nil }
+            let message = String(describing: error)
+            if coordinatorTransportError != message {
+                coordinatorTransportError = message
+            }
+            if lastError != message { lastError = message }
             updateHotKeyEligibility()
             onAttentionChanged?(hasAttention)
             if priorApprovalHeadIdentity != nil {
@@ -1070,10 +1138,16 @@ final class PetViewModel: ObservableObject {
             && priorHead?.reminderDue == true
             ? priorHead?.identity
             : nil
-        snapshot = newSnapshot
-        permissionNoticeCount = newSnapshot.permissionNoticeCount
-        managedCommandApprovalNoticeCount = newSnapshot
-            .managedCommandApprovalNoticeCount
+        if snapshot != newSnapshot { snapshot = newSnapshot }
+        if permissionNoticeCount != newSnapshot.permissionNoticeCount {
+            permissionNoticeCount = newSnapshot.permissionNoticeCount
+        }
+        if managedCommandApprovalNoticeCount
+            != newSnapshot.managedCommandApprovalNoticeCount
+        {
+            managedCommandApprovalNoticeCount = newSnapshot
+                .managedCommandApprovalNoticeCount
+        }
         let activePermissionRequestIDs = Set(
             newSnapshot.permissionRequests.map(\.requestID)
         )
@@ -1118,11 +1192,13 @@ final class PetViewModel: ObservableObject {
                   newSnapshot.interactions.first?.identity == pendingFocusIdentity,
                   newSnapshot.interaction(identity: pendingFocusIdentity) != nil
         {
-            localForegroundIdentity = pendingFocusIdentity
+            if localForegroundIdentity != pendingFocusIdentity {
+                localForegroundIdentity = pendingFocusIdentity
+            }
             self.pendingFocusIdentity = nil
-            lastTerminalPresentation = nil
+            if lastTerminalPresentation != nil { lastTerminalPresentation = nil }
         } else {
-            localForegroundIdentity = nil
+            if localForegroundIdentity != nil { localForegroundIdentity = nil }
             if let pendingFocusIdentity,
                newSnapshot.interaction(identity: pendingFocusIdentity) == nil
             {
@@ -1143,7 +1219,9 @@ final class PetViewModel: ObservableObject {
             // Expiry removes the interaction from the authoritative snapshot,
             // so retain a local terminal signal instead of silently falling
             // back to the generic working state.
-            lastTerminalPresentation = .expired
+            if lastTerminalPresentation != .expired {
+                lastTerminalPresentation = .expired
+            }
         }
         if let autoFocusAttemptedIdentity,
            newSnapshot.interaction(identity: autoFocusAttemptedIdentity) == nil
@@ -1312,7 +1390,7 @@ final class PetViewModel: ObservableObject {
 
     private func refreshShortcutDiagnostic() {
         guard let statuses = hotKeyRegistry?.statuses else {
-            shortcutDiagnostic = nil
+            setShortcutDiagnosticIfChanged(nil)
             return
         }
         let internalCollisions = statuses.compactMap { intent, status in
@@ -1327,13 +1405,25 @@ final class PetViewModel: ObservableObject {
             return intent.displayName
         }.sorted()
         if !internalCollisions.isEmpty {
-            shortcutDiagnostic = "단축키 설정 충돌: " + internalCollisions.joined(separator: ", ")
+            setShortcutDiagnosticIfChanged(
+                "단축키 설정 충돌: " + internalCollisions.joined(separator: ", ")
+            )
         } else if !systemCollisions.isEmpty {
-            shortcutDiagnostic = "macOS 단축키 등록 충돌: " + systemCollisions.joined(separator: ", ")
+            setShortcutDiagnosticIfChanged(
+                "macOS 단축키 등록 충돌: " + systemCollisions.joined(separator: ", ")
+            )
         } else if !registrationFailures.isEmpty {
-            shortcutDiagnostic = "단축키 등록 실패: " + registrationFailures.joined(separator: ", ")
+            setShortcutDiagnosticIfChanged(
+                "단축키 등록 실패: " + registrationFailures.joined(separator: ", ")
+            )
         } else {
-            shortcutDiagnostic = nil
+            setShortcutDiagnosticIfChanged(nil)
+        }
+    }
+
+    private func setShortcutDiagnosticIfChanged(_ diagnostic: String?) {
+        if shortcutDiagnostic != diagnostic {
+            shortcutDiagnostic = diagnostic
         }
     }
 
@@ -1401,6 +1491,7 @@ final class PetViewModel: ObservableObject {
         while codexPluginRefreshRequested {
             codexPluginRefreshRequested = false
             codexPluginSetupState = await codexPluginSetupManager.inspect()
+            clearLegacyCodexPluginMigrationConfirmation()
         }
     }
 

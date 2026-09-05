@@ -1,13 +1,47 @@
 import CoordinatorSwift
+import CryptoKit
 import Darwin
 import Foundation
 import Security
+
+enum CodexPluginSetupLegacyPathIdentity: Sendable, Equatable {
+    case missing
+    case present(CodexRuntimeFileIdentity)
+}
+
+struct CodexPluginSetupLegacyFilesystemIdentity: Sendable, Equatable {
+    let marketplaceRoot: CodexPluginSetupLegacyPathIdentity
+    let marketplaceManifest: CodexPluginSetupLegacyPathIdentity
+    let pluginRoot: CodexPluginSetupLegacyPathIdentity
+    let pluginManifest: CodexPluginSetupLegacyPathIdentity
+
+    static let allMissing = CodexPluginSetupLegacyFilesystemIdentity(
+        marketplaceRoot: .missing,
+        marketplaceManifest: .missing,
+        pluginRoot: .missing,
+        pluginManifest: .missing
+    )
+}
+
+struct CodexPluginSetupLegacyMigrationConfirmation: Sendable, Equatable {
+    let marketplaceName: String
+    let marketplaceRootPath: String
+    let pluginSelector: String
+    let pluginRootPath: String
+    let pluginIsInstalled: Bool
+    let pluginVersion: String?
+    let filesystemIdentity: CodexPluginSetupLegacyFilesystemIdentity
+}
 
 enum CodexPluginSetupState: Sendable, Equatable {
     case unchecked
     case unavailable(reason: String)
     case notInstalled
     case marketplaceInstalledNeedsPlugin
+    case legacyInstallationDetected(
+        marketplaceName: String,
+        confirmation: CodexPluginSetupLegacyMigrationConfirmation
+    )
     case installedNeedsHookReview(version: String)
     case updateAvailable(installedVersion: String, bundledVersion: String)
     case conflict(reason: String)
@@ -23,6 +57,8 @@ enum CodexPluginSetupState: Sendable, Equatable {
             return "Codex Plugin 미설치"
         case .marketplaceInstalledNeedsPlugin:
             return "Codex 연결 마무리 필요"
+        case .legacyInstallationDetected:
+            return "이전 Blabee 연결 발견"
         case .installedNeedsHookReview:
             return "Plugin 설치됨 · Hook 상태 확인"
         case .updateAvailable:
@@ -44,6 +80,8 @@ enum CodexPluginSetupState: Sendable, Equatable {
             return "연결 후 새 Codex 세션을 열고 /hooks에서 Blabee Hook을 검토해야 합니다."
         case .marketplaceInstalledNeedsPlugin:
             return "Blabee Marketplace만 연결되어 있습니다. 연결을 다시 시도하거나 안전하게 정리하세요."
+        case let .legacyInstallationDetected(marketplaceName, _):
+            return "이전 테스트 연결(\(marketplaceName))이 발견되었습니다. 사용자가 이전 연결 마이그레이션을 명시적으로 선택해야만 변경합니다."
         case .installedNeedsHookReview:
             return "Blabee는 Hook 신뢰 완료 여부를 자동 확인할 수 없습니다. 새 Codex 세션 또는 다시 연 세션에서 /hooks로 현재 상태를 확인하세요."
         case .updateAvailable:
@@ -60,6 +98,9 @@ protocol CodexPluginSetupManaging: Sendable {
     func inspect() async -> CodexPluginSetupState
     func connect() async -> CodexPluginSetupState
     func disconnect() async -> CodexPluginSetupState
+    func migrateLegacyInstallation(
+        confirmation: CodexPluginSetupLegacyMigrationConfirmation
+    ) async -> CodexPluginSetupState
 }
 
 actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
@@ -72,6 +113,11 @@ actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
     func inspect() async -> CodexPluginSetupState { .unavailable(reason: reason) }
     func connect() async -> CodexPluginSetupState { .unavailable(reason: reason) }
     func disconnect() async -> CodexPluginSetupState { .unavailable(reason: reason) }
+    func migrateLegacyInstallation(
+        confirmation _: CodexPluginSetupLegacyMigrationConfirmation
+    ) async -> CodexPluginSetupState {
+        .unavailable(reason: reason)
+    }
 }
 
 struct CodexPluginSetupProcessResult: Sendable, Equatable {
@@ -91,6 +137,7 @@ struct CodexPluginSetupQualifiedExecutable: Sendable, Equatable {
     let canonicalURL: URL
     let version: String
     fileprivate let trustSnapshot: CodexRuntimeTrustSnapshot?
+    fileprivate let pinnedTrustEvidence: CodexPluginSetupPinnedTrustEvidence?
 
     static func testOnly(url: URL, version: String = "0.152.1")
         -> CodexPluginSetupQualifiedExecutable
@@ -99,17 +146,30 @@ struct CodexPluginSetupQualifiedExecutable: Sendable, Equatable {
             sourceURL: url,
             canonicalURL: url,
             version: version,
-            trustSnapshot: nil
+            trustSnapshot: nil,
+            pinnedTrustEvidence: nil
         )
     }
 }
 
-typealias CodexPluginSetupExecutableQualifying = @Sendable () throws
+typealias CodexPluginSetupExecutableQualifying = @Sendable (
+    _ timeoutMilliseconds: Int
+) throws
     -> CodexPluginSetupQualifiedExecutable
 typealias CodexPluginSetupExecutableRevalidating = @Sendable (
     _ selection: CodexPluginSetupQualifiedExecutable
 ) throws -> URL
 typealias CodexPluginSetupBundleRevalidating = @Sendable () throws -> Void
+typealias CodexPluginSetupMonotonicNow = @Sendable () -> UInt64
+typealias CodexPluginSetupTrustInspecting = @Sendable (
+    _ executable: URL
+) throws -> CodexRuntimeTrustSnapshot
+typealias CodexPluginSetupSignatureValidating = @Sendable (URL) throws -> Void
+typealias CodexPluginSetupPinnedExecutableValidating = @Sendable (
+    _ executable: URL,
+    _ expectedIdentity: CodexRuntimeFileIdentity,
+    _ expectedVersion: String?
+) throws -> CodexPluginSetupPinnedArtifact
 
 enum CodexPluginSetupExecutableResolver {
     private static let maximumNVMDirectoryEntries = 256
@@ -166,6 +226,10 @@ enum CodexPluginSetupExecutableResolver {
             guard lstat(candidate.path, &info) == 0 else { continue }
             do {
                 return try qualifier(candidate)
+            } catch let error as CoordinatorError
+                where error.code == "codex_plugin_setup_operation_timed_out"
+            {
+                throw error
             } catch {
                 // Candidate order is preferred, not authoritative. An unsafe or
                 // unsupported install must never prevent a later safe install.
@@ -251,6 +315,225 @@ enum CodexPluginSetupExecutableResolver {
     }
 }
 
+struct CodexPluginSetupPinnedArtifact: Equatable, Sendable {
+    let version: String
+    let architecture: UInt32
+    let executableBytes: Int64
+    let executableSHA256: String
+}
+
+fileprivate struct CodexPluginSetupPinnedTrustEvidence: Equatable, Sendable {
+    let trustSnapshot: CodexRuntimeTrustSnapshot
+    let artifact: CodexPluginSetupPinnedArtifact
+}
+
+enum CodexPluginSetupPinnedExecutableTrust {
+    static let arm64CPUType: UInt32 = 0x0100_000C
+    // OpenAI rust-v0.153.2 aarch64 package:
+    // https://github.com/openai/codex/releases/download/rust-v0.153.2/codex-package-aarch64-apple-darwin.tar.gz
+    // Archive SHA-256: 287e2dd0a9bbfb58581b0a9150399458b4f094ea42caf02860f1e8cb5a202a0b.
+    // Its codex binary currently fails strict macOS signature validation, so
+    // only this exact executable hash receives the narrow Plugin CLI fallback.
+    static let officialArtifacts = [
+        CodexPluginSetupPinnedArtifact(
+            version: "0.153.2",
+            architecture: arm64CPUType,
+            executableBytes: 220_551_344,
+            executableSHA256: "195ace4100a634a9df39147f493e730e666b5bd87795f3c9f3251d8542400424"
+        ),
+    ]
+
+    static func matchingArtifact(
+        version: String?,
+        architecture: UInt32,
+        executableBytes: Int64,
+        executableSHA256: String,
+        artifacts: [CodexPluginSetupPinnedArtifact] = officialArtifacts
+    ) -> CodexPluginSetupPinnedArtifact? {
+        artifacts.first { artifact in
+            (version == nil || artifact.version == version)
+                && artifact.architecture == architecture
+                && artifact.executableBytes == executableBytes
+                && artifact.executableSHA256 == executableSHA256
+        }
+    }
+
+    static func validate(
+        executable: URL,
+        expectedIdentity: CodexRuntimeFileIdentity,
+        expectedVersion: String?,
+        artifacts: [CodexPluginSetupPinnedArtifact] = officialArtifacts,
+        beforeExactEOFCheck: () throws -> Void = {},
+        deadlineNanoseconds: UInt64? = nil,
+        monotonicNow: () -> UInt64 = {
+            DispatchTime.now().uptimeNanoseconds
+        }
+    ) throws -> CodexPluginSetupPinnedArtifact {
+        let failure = CoordinatorError("codex_plugin_setup_signature_invalid")
+        guard executable.isFileURL,
+              executable.path.hasPrefix("/"),
+              !executable.path.utf8.contains(0)
+        else { throw failure }
+
+        let descriptor = open(
+            executable.path,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else { throw failure }
+        defer { close(descriptor) }
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
+
+        var before = stat()
+        guard fstat(descriptor, &before) == 0,
+              before.st_mode & S_IFMT == S_IFREG,
+              before.st_nlink == 1,
+              fileIdentity(before) == expectedIdentity,
+              before.st_size >= 8
+        else { throw failure }
+
+        let architecture = try machOArchitecture(
+            descriptor: descriptor,
+            failure: failure
+        )
+        let candidates = artifacts.filter { artifact in
+            (expectedVersion == nil || artifact.version == expectedVersion)
+                && artifact.architecture == architecture
+                && artifact.executableBytes == Int64(before.st_size)
+        }
+        guard !candidates.isEmpty else { throw failure }
+
+        let digest = try sha256(
+            descriptor: descriptor,
+            executableBytes: Int64(before.st_size),
+            failure: failure,
+            beforeExactEOFCheck: beforeExactEOFCheck,
+            deadlineNanoseconds: deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
+        var after = stat()
+        var pathAfter = stat()
+        // The existing process runner is URL-based rather than fd-bound. These
+        // checks detect changes through the end of hashing, but deliberately do
+        // not claim to eliminate a later path replacement by the same UID or
+        // another authorized writer of a monitored ancestor.
+        guard fstat(descriptor, &after) == 0,
+              lstat(executable.path, &pathAfter) == 0,
+              after.st_nlink == 1,
+              pathAfter.st_nlink == 1,
+              fileIdentity(after) == expectedIdentity,
+              fileIdentity(pathAfter) == expectedIdentity,
+              let artifact = matchingArtifact(
+                version: expectedVersion,
+                architecture: architecture,
+                executableBytes: Int64(after.st_size),
+                executableSHA256: digest,
+                artifacts: candidates
+              )
+        else { throw failure }
+        return artifact
+    }
+
+    private static func machOArchitecture(
+        descriptor: Int32,
+        failure: CoordinatorError
+    ) throws -> UInt32 {
+        var bytes = [UInt8](repeating: 0, count: 8)
+        let count = bytes.withUnsafeMutableBytes { buffer -> Int in
+            var result: Int
+            repeat {
+                result = pread(descriptor, buffer.baseAddress, buffer.count, 0)
+            } while result < 0 && errno == EINTR
+            return result
+        }
+        guard count == bytes.count,
+              bytes[0] == 0xCF,
+              bytes[1] == 0xFA,
+              bytes[2] == 0xED,
+              bytes[3] == 0xFE
+        else { throw failure }
+        return UInt32(bytes[4])
+            | UInt32(bytes[5]) << 8
+            | UInt32(bytes[6]) << 16
+            | UInt32(bytes[7]) << 24
+    }
+
+    private static func sha256(
+        descriptor: Int32,
+        executableBytes: Int64,
+        failure: CoordinatorError,
+        beforeExactEOFCheck: () throws -> Void,
+        deadlineNanoseconds: UInt64?,
+        monotonicNow: () -> UInt64
+    ) throws -> String {
+        var hasher = SHA256()
+        let capacity = 1024 * 1024
+        let buffer = UnsafeMutableRawPointer.allocate(
+            byteCount: capacity,
+            alignment: MemoryLayout<UInt64>.alignment
+        )
+        defer { buffer.deallocate() }
+
+        var offset: Int64 = 0
+        while offset < executableBytes {
+            try requireBeforeDeadline(
+                deadlineNanoseconds,
+                monotonicNow: monotonicNow
+            )
+            let requested = min(capacity, Int(executableBytes - offset))
+            var count: Int
+            repeat {
+                count = pread(descriptor, buffer, requested, off_t(offset))
+            } while count < 0 && errno == EINTR
+            guard count > 0 else { throw failure }
+            hasher.update(bufferPointer: UnsafeRawBufferPointer(
+                start: buffer,
+                count: count
+            ))
+            offset += Int64(count)
+        }
+        try beforeExactEOFCheck()
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
+        var extra: UInt8 = 0
+        var extraCount: Int
+        repeat {
+            extraCount = pread(descriptor, &extra, 1, off_t(executableBytes))
+        } while extraCount < 0 && errno == EINTR
+        guard extraCount == 0 else { throw failure }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func requireBeforeDeadline(
+        _ deadlineNanoseconds: UInt64?,
+        monotonicNow: () -> UInt64
+    ) throws {
+        guard let deadlineNanoseconds else { return }
+        guard monotonicNow() < deadlineNanoseconds else {
+            throw CoordinatorError("codex_plugin_setup_operation_timed_out")
+        }
+    }
+
+    private static func fileIdentity(_ info: stat) -> CodexRuntimeFileIdentity {
+        CodexRuntimeFileIdentity(
+            device: UInt64(bitPattern: Int64(info.st_dev)),
+            inode: UInt64(info.st_ino),
+            mode: UInt32(info.st_mode),
+            owner: UInt32(info.st_uid),
+            group: UInt32(info.st_gid),
+            size: Int64(info.st_size),
+            modificationSeconds: Int64(info.st_mtimespec.tv_sec),
+            modificationNanoseconds: Int64(info.st_mtimespec.tv_nsec),
+            changeSeconds: Int64(info.st_ctimespec.tv_sec),
+            changeNanoseconds: Int64(info.st_ctimespec.tv_nsec)
+        )
+    }
+}
+
 enum CodexPluginSetupProductionTrust {
     static let supportedPluginCLIVersions =
         CodexCompatibility.pluginCLISupportedVersions
@@ -260,27 +543,138 @@ enum CodexPluginSetupProductionTrust {
 
     static func qualify(
         sourceURL: URL,
-        processRunner: CodexPluginSetupProcessRunning
+        processRunner: CodexPluginSetupProcessRunning,
+        deadlineNanoseconds: UInt64? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        }
     ) throws -> CodexPluginSetupQualifiedExecutable {
         let gate = CodexRuntimeTrustGate()
-        let before = try gate.inspect(sourceURL: sourceURL)
+        return try qualify(
+            sourceURL: sourceURL,
+            processRunner: processRunner,
+            trustInspector: gate.inspect,
+            signatureValidator: validateOfficialSignature,
+            pinnedExecutableValidator: {
+                try CodexPluginSetupPinnedExecutableTrust.validate(
+                    executable: $0,
+                    expectedIdentity: $1,
+                    expectedVersion: $2,
+                    deadlineNanoseconds: deadlineNanoseconds,
+                    monotonicNow: monotonicNow
+                )
+            },
+            deadlineNanoseconds: deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
+    }
+
+    static func qualify(
+        sourceURL: URL,
+        processRunner: CodexPluginSetupProcessRunning,
+        trustInspector: CodexPluginSetupTrustInspecting,
+        signatureValidator: CodexPluginSetupSignatureValidating,
+        pinnedExecutableValidator: CodexPluginSetupPinnedExecutableValidating,
+        deadlineNanoseconds: UInt64? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        }
+    ) throws -> CodexPluginSetupQualifiedExecutable {
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
+        let before = try trustInspector(sourceURL)
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
         let canonicalURL = URL(fileURLWithPath: before.canonicalPath)
-        try validateOfficialSignature(canonicalURL)
+        let pinnedArtifact = try validateExecutableTrust(
+            canonicalURL,
+            expectedIdentity: before.targetIdentity,
+            expectedVersion: nil,
+            signatureValidator: signatureValidator,
+            pinnedExecutableValidator: pinnedExecutableValidator
+        )
 
-        let result = try processRunner(canonicalURL, ["--version"], 5_000)
+        let result = try processRunner(
+            canonicalURL,
+            ["--version"],
+            try remainingTimeout(
+                maximumMilliseconds: 5_000,
+                deadlineNanoseconds: deadlineNanoseconds,
+                monotonicNow: monotonicNow
+            )
+        )
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
         let version = try supportedVersion(from: result)
+        guard pinnedArtifact == nil || pinnedArtifact?.version == version
+        else { throw CoordinatorError("codex_plugin_setup_signature_invalid") }
 
-        let after = try gate.inspect(sourceURL: sourceURL)
+        let after = try trustInspector(sourceURL)
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
         guard before == after else {
             throw CodexRuntimeTrustError.changedDuringQualification
         }
-        try validateOfficialSignature(URL(fileURLWithPath: after.canonicalPath))
+        let pinnedTrustEvidence: CodexPluginSetupPinnedTrustEvidence?
+        if let pinnedArtifact {
+            pinnedTrustEvidence = CodexPluginSetupPinnedTrustEvidence(
+                trustSnapshot: after,
+                artifact: pinnedArtifact
+            )
+        } else {
+            _ = try validateExecutableTrust(
+                URL(fileURLWithPath: after.canonicalPath),
+                expectedIdentity: after.targetIdentity,
+                expectedVersion: version,
+                signatureValidator: signatureValidator,
+                pinnedExecutableValidator: pinnedExecutableValidator
+            )
+            pinnedTrustEvidence = nil
+        }
+        try requireBeforeDeadline(
+            deadlineNanoseconds,
+            monotonicNow: monotonicNow
+        )
         return CodexPluginSetupQualifiedExecutable(
             sourceURL: URL(fileURLWithPath: after.stableSourcePath),
             canonicalURL: URL(fileURLWithPath: after.canonicalPath),
             version: version,
-            trustSnapshot: after
+            trustSnapshot: after,
+            pinnedTrustEvidence: pinnedTrustEvidence
         )
+    }
+
+    private static func remainingTimeout(
+        maximumMilliseconds: Int,
+        deadlineNanoseconds: UInt64?,
+        monotonicNow: CodexPluginSetupMonotonicNow
+    ) throws -> Int {
+        guard let deadlineNanoseconds else { return maximumMilliseconds }
+        let current = monotonicNow()
+        guard current < deadlineNanoseconds else {
+            throw CoordinatorError("codex_plugin_setup_operation_timed_out")
+        }
+        let remaining = deadlineNanoseconds - current
+        let milliseconds = Int((remaining - 1) / 1_000_000 + 1)
+        return min(maximumMilliseconds, max(1, milliseconds))
+    }
+
+    private static func requireBeforeDeadline(
+        _ deadlineNanoseconds: UInt64?,
+        monotonicNow: CodexPluginSetupMonotonicNow
+    ) throws {
+        guard let deadlineNanoseconds else { return }
+        guard monotonicNow() < deadlineNanoseconds else {
+            throw CoordinatorError("codex_plugin_setup_operation_timed_out")
+        }
     }
 
     static func supportedVersion(
@@ -299,16 +693,74 @@ enum CodexPluginSetupProductionTrust {
     static func revalidate(
         _ selection: CodexPluginSetupQualifiedExecutable
     ) throws -> URL {
+        let gate = CodexRuntimeTrustGate()
+        return try revalidate(
+            selection,
+            trustInspector: gate.inspect,
+            signatureValidator: validateOfficialSignature,
+            pinnedExecutableValidator: {
+                try CodexPluginSetupPinnedExecutableTrust.validate(
+                    executable: $0,
+                    expectedIdentity: $1,
+                    expectedVersion: $2
+                )
+            }
+        )
+    }
+
+    static func revalidate(
+        _ selection: CodexPluginSetupQualifiedExecutable,
+        trustInspector: CodexPluginSetupTrustInspecting,
+        signatureValidator: CodexPluginSetupSignatureValidating,
+        pinnedExecutableValidator: CodexPluginSetupPinnedExecutableValidating
+    ) throws -> URL {
         guard let expected = selection.trustSnapshot,
               expected.stableSourcePath == selection.sourceURL.path,
               expected.canonicalPath == selection.canonicalURL.path,
               supportedPluginCLIVersions.contains(selection.version)
         else { throw CodexRuntimeTrustError.approvalDrift }
-        let current = try CodexRuntimeTrustGate().inspect(sourceURL: selection.sourceURL)
+        let current = try trustInspector(selection.sourceURL)
         guard current == expected else { throw CodexRuntimeTrustError.approvalDrift }
         let executable = URL(fileURLWithPath: current.canonicalPath)
-        try validateOfficialSignature(executable)
+        if let pinned = selection.pinnedTrustEvidence {
+            guard pinned.trustSnapshot == current,
+                  pinned.artifact.version == selection.version
+            else { throw CodexRuntimeTrustError.approvalDrift }
+            // The runner still launches by canonical URL. This structural
+            // snapshot revalidation intentionally preserves the documented
+            // same-UID post-check/pre-spawn replacement residual; eliminating
+            // it requires an fd-bound launcher rather than another full hash.
+            return executable
+        }
+        _ = try validateExecutableTrust(
+            executable,
+            expectedIdentity: current.targetIdentity,
+            expectedVersion: selection.version,
+            signatureValidator: signatureValidator,
+            pinnedExecutableValidator: pinnedExecutableValidator
+        )
         return executable
+    }
+
+    private static func validateExecutableTrust(
+        _ executable: URL,
+        expectedIdentity: CodexRuntimeFileIdentity,
+        expectedVersion: String?,
+        signatureValidator: CodexPluginSetupSignatureValidating,
+        pinnedExecutableValidator: CodexPluginSetupPinnedExecutableValidating
+    ) throws -> CodexPluginSetupPinnedArtifact? {
+        do {
+            try signatureValidator(executable)
+            return nil
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_signature_invalid"
+        {
+            return try pinnedExecutableValidator(
+                executable,
+                expectedIdentity,
+                expectedVersion
+            )
+        }
     }
 
     private static func validateOfficialSignature(_ executable: URL) throws {
@@ -608,6 +1060,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private static let maximumCollectionCount = 256
     private static let inspectionTimeoutMilliseconds = 5_000
     private static let mutationTimeoutMilliseconds = 15_000
+    private static let maximumOperationTimeoutMilliseconds = 45_000
 
     private let marketplaceRoot: URL?
     private let requireStandardApplicationRoot: Bool
@@ -617,6 +1070,8 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private let bundleRevalidator: CodexPluginSetupBundleRevalidating
     private let mutationLock: CodexPluginSetupMutationLock?
     private let requiresMutationLock: Bool
+    private let monotonicNow: CodexPluginSetupMonotonicNow
+    private let operationTimeoutMilliseconds: Int
 
     private(set) var state: CodexPluginSetupState = .unchecked
 
@@ -626,11 +1081,15 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         executableResolver: @escaping CodexPluginSetupExecutableResolving,
         processRunner: @escaping CodexPluginSetupProcessRunning,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
-        mutationLock: CodexPluginSetupMutationLock? = nil
+        mutationLock: CodexPluginSetupMutationLock? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        operationTimeoutMilliseconds: Int = maximumOperationTimeoutMilliseconds
     ) {
         self.marketplaceRoot = marketplaceRoot
         self.requireStandardApplicationRoot = requireStandardApplicationRoot
-        executableQualifier = {
+        executableQualifier = { _ in
             .testOnly(url: try executableResolver())
         }
         executableRevalidator = { $0.canonicalURL }
@@ -638,6 +1097,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         requiresMutationLock = false
+        self.monotonicNow = monotonicNow
+        self.operationTimeoutMilliseconds = max(
+            1,
+            min(operationTimeoutMilliseconds, Self.maximumOperationTimeoutMilliseconds)
+        )
     }
 
     init(
@@ -647,7 +1111,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         executableRevalidator: @escaping CodexPluginSetupExecutableRevalidating,
         processRunner: @escaping CodexPluginSetupProcessRunning,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
-        mutationLock: CodexPluginSetupMutationLock? = nil
+        mutationLock: CodexPluginSetupMutationLock? = nil,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
+            DispatchTime.now().uptimeNanoseconds
+        },
+        operationTimeoutMilliseconds: Int = maximumOperationTimeoutMilliseconds
     ) {
         self.marketplaceRoot = marketplaceRoot
         self.requireStandardApplicationRoot = requireStandardApplicationRoot
@@ -657,6 +1125,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         requiresMutationLock = false
+        self.monotonicNow = monotonicNow
+        self.operationTimeoutMilliseconds = max(
+            1,
+            min(operationTimeoutMilliseconds, Self.maximumOperationTimeoutMilliseconds)
+        )
     }
 
     private init(
@@ -667,7 +1140,9 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         processRunner: @escaping CodexPluginSetupProcessRunning,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating,
         mutationLock: CodexPluginSetupMutationLock?,
-        requiresMutationLock: Bool
+        requiresMutationLock: Bool,
+        monotonicNow: @escaping CodexPluginSetupMonotonicNow,
+        operationTimeoutMilliseconds: Int
     ) {
         marketplaceRoot = optionalMarketplaceRoot
         self.requireStandardApplicationRoot = requireStandardApplicationRoot
@@ -677,6 +1152,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         self.requiresMutationLock = requiresMutationLock
+        self.monotonicNow = monotonicNow
+        self.operationTimeoutMilliseconds = max(
+            1,
+            min(operationTimeoutMilliseconds, Self.maximumOperationTimeoutMilliseconds)
+        )
     }
 
     static func live(
@@ -713,7 +1193,12 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         return CodexPluginSetupManager(
             optionalMarketplaceRoot: bundle.resourceURL,
             requireStandardApplicationRoot: true,
-            executableQualifier: {
+            executableQualifier: { timeoutMilliseconds in
+                let startedAt = DispatchTime.now().uptimeNanoseconds
+                let budget = UInt64(timeoutMilliseconds) * 1_000_000
+                let deadline = startedAt > UInt64.max - budget
+                    ? UInt64.max
+                    : startedAt + budget
                 let candidates = CodexPluginSetupExecutableResolver.candidateURLs(
                     environment: environment
                 )
@@ -722,7 +1207,8 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                     qualifier: { sourceURL in
                         try CodexPluginSetupProductionTrust.qualify(
                             sourceURL: sourceURL,
-                            processRunner: processRunner
+                            processRunner: processRunner,
+                            deadlineNanoseconds: deadline
                         )
                     }
                 )
@@ -739,53 +1225,66 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 }
             },
             mutationLock: mutationLock,
-            requiresMutationLock: true
+            requiresMutationLock: true,
+            monotonicNow: { DispatchTime.now().uptimeNanoseconds },
+            operationTimeoutMilliseconds: Self.maximumOperationTimeoutMilliseconds
         )
     }
 
     func inspect() async -> CodexPluginSetupState {
-        let inspection = performInspection()
+        var operation = makeOperationContext()
+        let inspection = performInspection(operation: &operation)
         state = inspection.state
         return state
     }
 
     func connect() async -> CodexPluginSetupState {
-        withMutationLock { connectWhileLocked() }
+        withMutationLock {
+            var operation = makeOperationContext()
+            return connectWhileLocked(operation: &operation)
+        }
     }
 
-    private func connectWhileLocked() -> CodexPluginSetupState {
-        let initial = performInspection()
+    private func connectWhileLocked(
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
+        let initial = performInspection(operation: &operation)
         state = initial.state
 
         switch initial.state {
         case .installedNeedsHookReview:
             return state
         case .notInstalled, .marketplaceInstalledNeedsPlugin:
-            return connectNotInstalled(initial)
+            return connectNotInstalled(initial, operation: &operation)
         case .updateAvailable:
-            return updateOwnedPlugin(initial)
-        case .unchecked, .unavailable, .conflict, .error:
+            return updateOwnedPlugin(initial, operation: &operation)
+        case .unchecked, .unavailable, .legacyInstallationDetected, .conflict, .error:
             return state
         }
     }
 
     func disconnect() async -> CodexPluginSetupState {
-        withMutationLock { disconnectWhileLocked() }
+        withMutationLock {
+            var operation = makeOperationContext()
+            return disconnectWhileLocked(operation: &operation)
+        }
     }
 
-    private func disconnectWhileLocked() -> CodexPluginSetupState {
-        let initial = performInspection()
+    private func disconnectWhileLocked(
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
+        let initial = performInspection(operation: &operation)
         state = initial.state
 
         switch initial.state {
         case .notInstalled:
             return state
         case .marketplaceInstalledNeedsPlugin:
-            return removeOwnedMarketplace()
+            return removeOwnedMarketplace(operation: &operation)
         case .installedNeedsHookReview, .updateAvailable:
             // Re-read ownership immediately before the first destructive call.
             // Another `codex plugin` process does not share Blabee's lock.
-            let destructive = performInspection()
+            let destructive = performInspection(operation: &operation)
             let remainsOwnedInstallation: Bool
             switch destructive.state {
             case .installedNeedsHookReview, .updateAvailable:
@@ -804,13 +1303,15 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             let removal = runMutation(
                 executable: context.executable,
                 arguments: ["plugin", "remove", Self.pluginSelector, "--json"],
-                expectation: .pluginRemoved
+                expectation: .pluginRemoved(selector: Self.pluginSelector),
+                operation: &operation
             )
             guard removal.succeeded else {
-                state = .error(code: "plugin_remove_unverified")
+                state = .error(code: removal.errorCode
+                    ?? "plugin_remove_unverified")
                 return state
             }
-            let afterPluginRemoval = performInspection()
+            let afterPluginRemoval = performInspection(operation: &operation)
             if afterPluginRemoval.context?.ownedPlugin != nil {
                 state = .error(code: "plugin_remove_not_applied")
                 return state
@@ -821,10 +1322,309 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 state = afterPluginRemoval.state
                 return state
             }
-            return removeOwnedMarketplace()
-        case .unchecked, .unavailable, .conflict, .error:
+            return removeOwnedMarketplace(operation: &operation)
+        case .unchecked, .unavailable, .legacyInstallationDetected, .conflict, .error:
             return state
         }
+    }
+
+    func migrateLegacyInstallation(
+        confirmation: CodexPluginSetupLegacyMigrationConfirmation
+    ) async -> CodexPluginSetupState {
+        withMutationLock {
+            var operation = makeOperationContext()
+            return migrateLegacyInstallationWhileLocked(
+                confirmation: confirmation,
+                operation: &operation
+            )
+        }
+    }
+
+    private func migrateLegacyInstallationWhileLocked(
+        confirmation: CodexPluginSetupLegacyMigrationConfirmation,
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
+        let initial = performInspection(operation: &operation)
+        state = initial.state
+        guard case let .legacyInstallationDetected(_, inspectedConfirmation) = initial.state,
+              inspectedConfirmation == confirmation,
+              let legacy = initial.context?.legacyInstallation,
+              legacy.migrationConfirmation == confirmation,
+              let confirmedExecutable = initial.context?.executable
+        else { return state }
+
+        // `codex plugin remove` has no compare-and-remove token. Complete the
+        // bundle/executable trust preflight first, then make the legacy
+        // ownership and descriptor identities the final checked precondition
+        // before each destructive process call. This narrows, but cannot make
+        // atomic, the final interval before the external CLI consumes paths.
+        // A retry after a partial removal resumes at the Marketplace step and
+        // never repeats Plugin removal.
+        if legacy.pluginIsInstalled {
+            let preparedPluginRemoval: PreparedMutation
+            do {
+                preparedPluginRemoval = try prepareMutation(
+                    executable: confirmedExecutable,
+                    operation: operation
+                )
+            } catch let error as CoordinatorError
+                where error.code == "codex_plugin_setup_operation_timed_out"
+            {
+                state = .error(code: error.code)
+                return state
+            } catch {
+                state = .error(code: "legacy_plugin_remove_unverified")
+                return state
+            }
+
+            switch verifyLegacyOwnership(legacy, operation: &operation) {
+            case let .installation(executable)
+                where executable == preparedPluginRemoval.selection:
+                break
+            case .installation:
+                state = .error(code: "legacy_installation_executable_changed")
+                return state
+            case .marketplaceOnly:
+                state = .conflict(
+                    reason: "이전 Blabee Plugin이 마이그레이션 전에 변경되었습니다."
+                )
+                return state
+            case .absent:
+                state = .conflict(
+                    reason: "이전 Blabee Marketplace가 마이그레이션 전에 변경되었습니다."
+                )
+                return state
+            case let .conflict(reason):
+                state = .conflict(reason: reason)
+                return state
+            case let .error(code):
+                state = .error(code: code)
+                return state
+            }
+
+            let pluginRemoval = runPreparedMutation(
+                preparedPluginRemoval,
+                arguments: ["plugin", "remove", legacy.pluginSelector, "--json"],
+                expectation: .pluginRemoved(selector: legacy.pluginSelector),
+                operation: &operation
+            )
+            guard pluginRemoval.succeeded else {
+                state = .error(code: pluginRemoval.errorCode
+                    ?? "legacy_plugin_remove_unverified")
+                return state
+            }
+        }
+
+        let preparedMarketplaceRemoval: PreparedMutation
+        do {
+            preparedMarketplaceRemoval = try prepareMutation(
+                executable: confirmedExecutable,
+                operation: operation
+            )
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_operation_timed_out"
+        {
+            state = .error(code: error.code)
+            return state
+        } catch {
+            state = .error(code: "legacy_marketplace_remove_unverified")
+            return state
+        }
+
+        switch verifyLegacyOwnership(legacy, operation: &operation) {
+        case let .marketplaceOnly(executable)
+            where executable == preparedMarketplaceRemoval.selection:
+            break
+        case .marketplaceOnly:
+            state = .error(code: "legacy_installation_executable_changed")
+            return state
+        case .installation:
+            state = legacy.pluginIsInstalled
+                ? .error(code: "legacy_plugin_remove_not_applied")
+                : .conflict(
+                    reason: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다."
+                )
+            return state
+        case .absent:
+            state = .conflict(
+                reason: "이전 Blabee Marketplace가 마이그레이션 중 외부에서 변경되었습니다."
+            )
+            return state
+        case let .conflict(reason):
+            state = .conflict(reason: reason)
+            return state
+        case let .error(code):
+            state = .error(code: code)
+            return state
+        }
+
+        let marketplaceRemoval = runPreparedMutation(
+            preparedMarketplaceRemoval,
+            arguments: [
+                "plugin", "marketplace", "remove",
+                legacy.marketplaceName, "--json",
+            ],
+            expectation: .marketplaceRemoved(name: legacy.marketplaceName),
+            operation: &operation
+        )
+        guard marketplaceRemoval.succeeded else {
+            state = .error(code: marketplaceRemoval.errorCode
+                ?? "legacy_marketplace_remove_unverified")
+            return state
+        }
+
+        switch verifyLegacyOwnership(legacy, operation: &operation) {
+        case .absent:
+            break
+        case .marketplaceOnly:
+            state = .error(code: "legacy_marketplace_remove_not_applied")
+            return state
+        case .installation:
+            state = .conflict(
+                reason: "제거한 이전 Blabee Plugin이 마이그레이션 중 다시 나타났습니다."
+            )
+            return state
+        case let .conflict(reason):
+            state = .conflict(reason: reason)
+            return state
+        case let .error(code):
+            state = .error(code: code)
+            return state
+        }
+
+        let current = performInspection(operation: &operation)
+        switch current.state {
+        case .notInstalled, .marketplaceInstalledNeedsPlugin:
+            return connectNotInstalled(current, operation: &operation)
+        case .installedNeedsHookReview, .updateAvailable:
+            state = current.state
+            return state
+        case .unchecked, .unavailable, .legacyInstallationDetected, .conflict, .error:
+            state = current.state
+            return state
+        }
+    }
+
+    private func verifyLegacyOwnership(
+        _ expected: LegacyInstallation,
+        operation: inout OperationContext
+    ) -> LegacyOwnershipVerification {
+        let executable: CodexPluginSetupQualifiedExecutable
+        let marketplaces: [MarketplaceRecord]
+        let plugins: [PluginRecord]
+        do {
+            executable = try qualifiedExecutable(operation: &operation)
+            marketplaces = try queryMarketplaces(
+                executable: executable,
+                operation: &operation
+            )
+            plugins = try queryInstalledPlugins(
+                executable: executable,
+                operation: &operation
+            )
+        } catch let error as CoordinatorError {
+            return .error(code: error.code)
+        } catch {
+            return .error(code: "legacy_installation_reinspection_failed")
+        }
+
+        let namedMarketplaces = marketplaces.filter {
+            $0.name == expected.marketplaceName
+        }
+        let legacyMarketplaceCandidates = marketplaces.filter {
+            isLegacyMarketplaceName($0.name)
+        }
+        let legacyMarketplaces = legacyMarketplaceCandidates.filter {
+            isExactLegacyMarketplace($0)
+        }
+        guard legacyMarketplaces.count == legacyMarketplaceCandidates.count else {
+            return .conflict(
+                reason: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다."
+            )
+        }
+        let currentMarketplaces = marketplaces.filter {
+            $0.name == Self.marketplaceName
+        }
+        let marketplacePlugins = plugins.filter {
+            $0.marketplaceName == expected.marketplaceName
+                || $0.pluginID == expected.pluginSelector
+        }
+        let blabeePlugins = plugins.filter {
+            $0.name == Self.pluginName
+                || $0.pluginID == Self.pluginSelector
+                || $0.pluginID.hasPrefix("\(Self.pluginName)@")
+        }
+        if namedMarketplaces.isEmpty, marketplacePlugins.isEmpty {
+            guard legacyMarketplaces.isEmpty,
+                  currentMarketplaces.isEmpty,
+                  blabeePlugins.isEmpty
+            else {
+                return .conflict(
+                    reason: "이전 Blabee Marketplace 제거 후 다른 Blabee 연결이 나타났습니다."
+                )
+            }
+            return .absent
+        }
+        guard blabeePlugins.allSatisfy({ plugin in
+            plugin.marketplaceName == expected.marketplaceName
+                && plugin.pluginID == expected.pluginSelector
+        }) else {
+            return .conflict(
+                reason: "이전 Blabee Marketplace 제거 전에 다른 Blabee Plugin이 나타났습니다."
+            )
+        }
+        guard legacyMarketplaces.count == 1,
+              legacyMarketplaces.first?.name == expected.marketplaceName,
+              currentMarketplaces.isEmpty,
+              namedMarketplaces.count == 1,
+              let marketplace = namedMarketplaces.first,
+              normalizedPath(marketplace.root)
+                == normalizedPath(expected.marketplaceRoot)
+        else {
+            return .conflict(
+                reason: "이전 Blabee Marketplace의 경로 또는 개수가 변경되었습니다."
+            )
+        }
+        guard marketplacePlugins.count <= 1 else {
+            return .conflict(
+                reason: "이전 Blabee Marketplace에 여러 Plugin이 연결되어 있어 변경하지 않습니다."
+            )
+        }
+        if let plugin = marketplacePlugins.first {
+            guard isExactLegacyPlugin(plugin, marketplace: marketplace),
+                  plugin.pluginID == expected.pluginSelector,
+                  plugin.version == expected.pluginVersion,
+                  normalizedPath(legacyPluginRoot(for: marketplace.root))
+                    == normalizedPath(expected.pluginRoot)
+            else {
+                return .conflict(
+                    reason: "이전 Blabee Plugin의 소유권 정보가 변경되었습니다."
+                )
+            }
+        }
+
+        // Keep descriptor-derived filesystem identity as the final target
+        // precondition. Callers that remove legacy content invoke the prepared
+        // subprocess immediately after this verification returns.
+        let currentFilesystemIdentity: CodexPluginSetupLegacyFilesystemIdentity
+        do {
+            currentFilesystemIdentity = try stableLegacyFilesystemIdentity(
+                marketplaceRoot: expected.marketplaceRoot,
+                pluginRoot: expected.pluginRoot
+            )
+        } catch let error as CoordinatorError {
+            return .error(code: error.code)
+        } catch {
+            return .error(code: "legacy_installation_identity_unavailable")
+        }
+        guard currentFilesystemIdentity == expected.filesystemIdentity else {
+            return .conflict(
+                reason: "이전 Blabee Marketplace 또는 Plugin 파일이 변경되었습니다."
+            )
+        }
+        return marketplacePlugins.isEmpty
+            ? .marketplaceOnly(executable: executable)
+            : .installation(executable: executable)
     }
 
     private func withMutationLock(
@@ -845,7 +1645,54 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         }
     }
 
-    private func connectNotInstalled(_ initial: Inspection) -> CodexPluginSetupState {
+    private func makeOperationContext() -> OperationContext {
+        let startedAt = monotonicNow()
+        let budget = UInt64(operationTimeoutMilliseconds) * 1_000_000
+        let deadline = startedAt > UInt64.max - budget
+            ? UInt64.max
+            : startedAt + budget
+        return OperationContext(deadlineNanoseconds: deadline)
+    }
+
+    private func qualifiedExecutable(
+        operation: inout OperationContext
+    ) throws -> CodexPluginSetupQualifiedExecutable {
+        let timeout = try remainingTimeout(
+            maximumMilliseconds: operationTimeoutMilliseconds,
+            operation: operation
+        )
+        if let executable = operation.executable {
+            return executable
+        }
+        let executable = try executableQualifier(timeout)
+        _ = try remainingTimeout(
+            maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
+            operation: operation
+        )
+        operation.executable = executable
+        return executable
+    }
+
+    private func remainingTimeout(
+        maximumMilliseconds: Int,
+        operation: OperationContext
+    ) throws -> Int {
+        let current = monotonicNow()
+        guard current < operation.deadlineNanoseconds else {
+            throw CoordinatorError("codex_plugin_setup_operation_timed_out")
+        }
+        let remainingNanoseconds = operation.deadlineNanoseconds - current
+        let remainingMilliseconds = max(
+            1,
+            Int((remainingNanoseconds - 1) / 1_000_000 + 1)
+        )
+        return min(maximumMilliseconds, remainingMilliseconds)
+    }
+
+    private func connectNotInstalled(
+        _ initial: Inspection,
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
         guard let context = initial.context else {
             state = .error(code: "inspection_context_missing")
             return state
@@ -860,9 +1707,10 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 arguments: [
                     "plugin", "marketplace", "add", context.marketplaceRoot.path, "--json",
                 ],
-                expectation: .marketplaceAdded(root: context.marketplaceRoot)
+                expectation: .marketplaceAdded(root: context.marketplaceRoot),
+                operation: &operation
             )
-            let afterMarketplaceAdd = performInspection()
+            let afterMarketplaceAdd = performInspection(operation: &operation)
             if case .installedNeedsHookReview = afterMarketplaceAdd.state {
                 state = afterMarketplaceAdd.state
                 return state
@@ -871,16 +1719,19 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                   afterMarketplaceAdd.context?.marketplaceIsExact == true
             else {
                 if case .notInstalled = afterMarketplaceAdd.state {
-                    state = .error(code: addResult.succeeded
-                        ? "marketplace_add_not_applied"
-                        : "marketplace_add_failed")
+                    state = .error(code: addResult.errorCode ?? (
+                        addResult.succeeded
+                            ? "marketplace_add_not_applied"
+                            : "marketplace_add_failed"
+                    ))
                 } else {
                     state = afterMarketplaceAdd.state
                 }
                 return state
             }
             guard addResult.succeeded else {
-                state = .error(code: "marketplace_add_unverified")
+                state = .error(code: addResult.errorCode
+                    ?? "marketplace_add_unverified")
                 return state
             }
             // Only the strict Codex receipt's `alreadyAdded: false`, combined
@@ -888,7 +1739,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             addedMarketplace = addResult.createdMarketplace
         }
 
-        let refreshed = performInspection()
+        let refreshed = performInspection(operation: &operation)
         guard case .marketplaceInstalledNeedsPlugin = refreshed.state,
               refreshed.context?.marketplaceIsExact == true,
               let executable = refreshed.context?.executable,
@@ -901,13 +1752,18 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let addResult = runMutation(
             executable: executable,
             arguments: ["plugin", "add", Self.pluginSelector, "--json"],
-            expectation: .pluginAdded(version: bundledVersion)
+            expectation: .pluginAdded(
+                selector: Self.pluginSelector,
+                version: bundledVersion
+            ),
+            operation: &operation
         )
-        let final = performInspection()
+        let final = performInspection(operation: &operation)
         if case .installedNeedsHookReview = final.state {
             state = addResult.succeeded
                 ? final.state
-                : .error(code: "plugin_add_unverified")
+                : .error(code: addResult.errorCode
+                    ?? "plugin_add_unverified")
             return state
         }
 
@@ -916,25 +1772,33 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 state = final.state
                 return state
             }
-            let cleanupState = cleanupNewMarketplaceIfUnambiguous(final)
+            let cleanupState = cleanupNewMarketplaceIfUnambiguous(
+                final,
+                operation: &operation
+            )
             if case .notInstalled = cleanupState {
-                state = .error(code: addResult.succeeded
-                    ? "plugin_add_not_applied"
-                    : "plugin_add_failed")
+                state = .error(code: addResult.errorCode ?? (
+                    addResult.succeeded
+                        ? "plugin_add_not_applied"
+                        : "plugin_add_failed"
+                ))
             } else {
                 state = cleanupState
             }
             return state
         }
         if !addResult.succeeded, case .notInstalled = final.state {
-            state = .error(code: "plugin_add_failed")
+            state = .error(code: addResult.errorCode ?? "plugin_add_failed")
         } else {
             state = final.state
         }
         return state
     }
 
-    private func updateOwnedPlugin(_ initial: Inspection) -> CodexPluginSetupState {
+    private func updateOwnedPlugin(
+        _ initial: Inspection,
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
         guard let context = initial.context,
               context.marketplaceIsExact,
               context.ownedPlugin != nil
@@ -946,23 +1810,30 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let addResult = runMutation(
             executable: context.executable,
             arguments: ["plugin", "add", Self.pluginSelector, "--json"],
-            expectation: .pluginAdded(version: context.bundledVersion)
+            expectation: .pluginAdded(
+                selector: Self.pluginSelector,
+                version: context.bundledVersion
+            ),
+            operation: &operation
         )
-        let final = performInspection()
+        let final = performInspection(operation: &operation)
         if case .installedNeedsHookReview = final.state {
             state = addResult.succeeded
                 ? final.state
-                : .error(code: "plugin_update_add_unverified")
+                : .error(code: addResult.errorCode
+                    ?? "plugin_update_add_unverified")
         } else {
             state = addResult.succeeded
                 ? final.state
-                : .error(code: "plugin_update_add_failed")
+                : .error(code: addResult.errorCode
+                    ?? "plugin_update_add_failed")
         }
         return state
     }
 
     private func cleanupNewMarketplaceIfUnambiguous(
-        _ inspection: Inspection
+        _ inspection: Inspection,
+        operation: inout OperationContext
     ) -> CodexPluginSetupState {
         guard case .marketplaceInstalledNeedsPlugin = inspection.state,
               let context = inspection.context,
@@ -970,7 +1841,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
               context.ownedPlugin == nil
         else { return inspection.state }
 
-        let destructive = performInspection()
+        let destructive = performInspection(operation: &operation)
         guard case .marketplaceInstalledNeedsPlugin = destructive.state,
               let destructiveContext = destructive.context,
               destructiveContext.marketplaceIsExact,
@@ -981,16 +1852,20 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let removal = runMutation(
             executable: destructiveContext.executable,
             arguments: ["plugin", "marketplace", "remove", Self.marketplaceName, "--json"],
-            expectation: .marketplaceRemoved
+            expectation: .marketplaceRemoved(name: Self.marketplaceName),
+            operation: &operation
         )
-        let final = performInspection()
+        let final = performInspection(operation: &operation)
         return removal.succeeded
             ? final.state
-            : .error(code: "marketplace_cleanup_unverified")
+            : .error(code: removal.errorCode
+                ?? "marketplace_cleanup_unverified")
     }
 
-    private func removeOwnedMarketplace() -> CodexPluginSetupState {
-        let destructive = performInspection()
+    private func removeOwnedMarketplace(
+        operation: inout OperationContext
+    ) -> CodexPluginSetupState {
+        let destructive = performInspection(operation: &operation)
         guard case .marketplaceInstalledNeedsPlugin = destructive.state,
               let context = destructive.context,
               context.marketplaceIsExact,
@@ -1002,11 +1877,13 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let removal = runMutation(
             executable: context.executable,
             arguments: ["plugin", "marketplace", "remove", Self.marketplaceName, "--json"],
-            expectation: .marketplaceRemoved
+            expectation: .marketplaceRemoved(name: Self.marketplaceName),
+            operation: &operation
         )
-        let final = performInspection()
+        let final = performInspection(operation: &operation)
         guard removal.succeeded else {
-            state = .error(code: "marketplace_remove_unverified")
+            state = .error(code: removal.errorCode
+                ?? "marketplace_remove_unverified")
             return state
         }
         if case .notInstalled = final.state,
@@ -1024,23 +1901,73 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private func runMutation(
         executable: CodexPluginSetupQualifiedExecutable,
         arguments: [String],
-        expectation: MutationExpectation
+        expectation: MutationExpectation,
+        operation: inout OperationContext
+    ) -> MutationResult {
+        let prepared: PreparedMutation
+        do {
+            prepared = try prepareMutation(
+                executable: executable,
+                operation: operation
+            )
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_operation_timed_out"
+        {
+            return .failed(code: error.code)
+        } catch {
+            return .failed
+        }
+        return runPreparedMutation(
+            prepared,
+            arguments: arguments,
+            expectation: expectation,
+            operation: &operation
+        )
+    }
+
+    private func prepareMutation(
+        executable: CodexPluginSetupQualifiedExecutable,
+        operation: OperationContext
+    ) throws -> PreparedMutation {
+        _ = try remainingTimeout(
+            maximumMilliseconds: Self.mutationTimeoutMilliseconds,
+            operation: operation
+        )
+        try bundleRevalidator()
+        let revalidated = try revalidatedExecutable(executable)
+        // The executable check may be comparatively expensive. Re-check the
+        // app payload after it, before any final target-specific precondition.
+        try bundleRevalidator()
+        return PreparedMutation(selection: executable, executable: revalidated)
+    }
+
+    private func runPreparedMutation(
+        _ prepared: PreparedMutation,
+        arguments: [String],
+        expectation: MutationExpectation,
+        operation: inout OperationContext
     ) -> MutationResult {
         let result: CodexPluginSetupProcessResult
         do {
-            try bundleRevalidator()
-            let revalidated = try revalidatedExecutable(executable)
-            // The executable check may be comparatively expensive. Re-check
-            // the app payload immediately before Codex consumes its local
-            // Marketplace path, then verify both subjects again afterwards.
-            try bundleRevalidator()
-            result = try processRunner(
-                revalidated,
-                arguments,
-                Self.mutationTimeoutMilliseconds
+            let timeout = try remainingTimeout(
+                maximumMilliseconds: Self.mutationTimeoutMilliseconds,
+                operation: operation
             )
-            _ = try revalidatedExecutable(executable)
+            result = try processRunner(
+                prepared.executable,
+                arguments,
+                timeout
+            )
+            _ = try remainingTimeout(
+                maximumMilliseconds: Self.mutationTimeoutMilliseconds,
+                operation: operation
+            )
+            _ = try revalidatedExecutable(prepared.selection)
             try bundleRevalidator()
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_operation_timed_out"
+        {
+            return .failed(code: error.code)
         } catch {
             return .failed
         }
@@ -1068,26 +1995,33 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 succeeded: true,
                 // Codex 0.152.1 reports whether add was idempotent. Only an
                 // exact `alreadyAdded: false` receipt can authorize rollback.
-                createdMarketplace: !alreadyAdded
+                createdMarketplace: !alreadyAdded,
+                errorCode: nil
             )
-        case let .pluginAdded(version):
+        case let .pluginAdded(selector, version):
             guard boundedString(object["pluginId"], maximumBytes: 512)
-                    == Self.pluginSelector,
+                    == selector,
                   boundedString(object["version"], maximumBytes: 128) == version
             else { return .failed }
-        case .pluginRemoved:
+        case let .pluginRemoved(selector):
             guard boundedString(object["pluginId"], maximumBytes: 512)
-                    == Self.pluginSelector
+                    == selector
             else { return .failed }
-        case .marketplaceRemoved:
+        case let .marketplaceRemoved(name):
             guard boundedString(object["marketplaceName"], maximumBytes: 256)
-                    == Self.marketplaceName
+                    == name
             else { return .failed }
         }
-        return MutationResult(succeeded: true, createdMarketplace: false)
+        return MutationResult(
+            succeeded: true,
+            createdMarketplace: false,
+            errorCode: nil
+        )
     }
 
-    private func performInspection() -> Inspection {
+    private func performInspection(
+        operation: inout OperationContext
+    ) -> Inspection {
         let configuration: BundledConfiguration
         do {
             configuration = try bundledConfiguration()
@@ -1102,7 +2036,11 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
 
         let executable: CodexPluginSetupQualifiedExecutable
         do {
-            executable = try executableQualifier()
+            executable = try qualifiedExecutable(operation: &operation)
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_operation_timed_out"
+        {
+            return Inspection(state: .error(code: error.code), context: nil)
         } catch {
             return Inspection(
                 state: .unavailable(reason: "안전하고 지원되는 Codex CLI를 찾을 수 없습니다."),
@@ -1112,7 +2050,10 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
 
         let marketplaces: [MarketplaceRecord]
         do {
-            marketplaces = try queryMarketplaces(executable: executable)
+            marketplaces = try queryMarketplaces(
+                executable: executable,
+                operation: &operation
+            )
         } catch let error as CoordinatorError {
             return Inspection(state: .error(code: error.code), context: nil)
         } catch {
@@ -1121,7 +2062,10 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
 
         let plugins: [PluginRecord]
         do {
-            plugins = try queryInstalledPlugins(executable: executable)
+            plugins = try queryInstalledPlugins(
+                executable: executable,
+                operation: &operation
+            )
         } catch let error as CoordinatorError {
             return Inspection(state: .error(code: error.code), context: nil)
         } catch {
@@ -1153,6 +2097,20 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 || $0.pluginID == Self.pluginSelector
                 || $0.pluginID.hasPrefix("\(Self.pluginName)@")
         }
+        let legacyMarketplaceCandidates = marketplaces.filter {
+            isLegacyMarketplaceName($0.name)
+        }
+        let legacyMarketplaces = legacyMarketplaceCandidates.filter {
+            isExactLegacyMarketplace($0)
+        }
+        guard legacyMarketplaces.count == legacyMarketplaceCandidates.count else {
+            return Inspection(
+                state: .conflict(
+                    reason: "이전 Blabee Marketplace 이름과 경로의 결합을 확인할 수 없습니다."
+                ),
+                context: nil
+            )
+        }
 
         let foreignMarketplacePlugins = plugins.filter { plugin in
             plugin.marketplaceName == Self.marketplaceName
@@ -1178,19 +2136,112 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         }
 
         var ownedPlugin: PluginRecord?
+        var legacyInstallation: LegacyInstallation?
         if let plugin = blabeePlugins.first {
-            guard isExactOwnedPlugin(
+            if isExactOwnedPlugin(
                 plugin,
                 marketplaceIsExact: marketplaceIsExact,
                 pluginRoot: configuration.pluginRoot
-            )
-            else {
+            ) {
+                guard legacyMarketplaces.isEmpty else {
+                    return Inspection(
+                        state: .conflict(
+                            reason: "현재 연결과 이전 Blabee 테스트 Marketplace가 함께 있어 자동 변경하지 않습니다."
+                        ),
+                        context: nil
+                    )
+                }
+                ownedPlugin = plugin
+            } else if isLegacyMarketplaceName(plugin.marketplaceName) {
+                let matchingMarketplaces = marketplaces.filter {
+                    $0.name == plugin.marketplaceName
+                }
+                let marketplacePlugins = plugins.filter {
+                    $0.marketplaceName == plugin.marketplaceName
+                }
+                guard legacyMarketplaces.count == 1,
+                      matchingMarketplaces.count == 1,
+                      marketplacePlugins.count == 1,
+                      let marketplace = matchingMarketplaces.first,
+                      isExactLegacyPlugin(plugin, marketplace: marketplace)
+                else {
+                    return Inspection(
+                        state: .conflict(
+                            reason: "이전 Blabee 테스트 연결의 소유권을 정확히 확인할 수 없습니다."
+                        ),
+                        context: nil
+                    )
+                }
+                let pluginRoot = legacyPluginRoot(for: marketplace.root)
+                do {
+                    legacyInstallation = LegacyInstallation(
+                        marketplaceName: plugin.marketplaceName,
+                        marketplaceRoot: marketplace.root,
+                        pluginSelector: plugin.pluginID,
+                        pluginRoot: pluginRoot,
+                        pluginIsInstalled: true,
+                        pluginVersion: plugin.version,
+                        filesystemIdentity: try stableLegacyFilesystemIdentity(
+                            marketplaceRoot: marketplace.root,
+                            pluginRoot: pluginRoot
+                        )
+                    )
+                } catch let error as CoordinatorError {
+                    return Inspection(state: .error(code: error.code), context: nil)
+                } catch {
+                    return Inspection(
+                        state: .error(code: "legacy_installation_identity_unavailable"),
+                        context: nil
+                    )
+                }
+            } else {
                 return Inspection(
                     state: .conflict(reason: "기존 Blabee Plugin이 다른 Marketplace 또는 경로를 사용합니다."),
                     context: nil
                 )
             }
-            ownedPlugin = plugin
+        }
+        if blabeePlugins.isEmpty, !legacyMarketplaces.isEmpty {
+            let legacyMarketplacePlugins = plugins.filter { plugin in
+                legacyMarketplaces.contains { marketplace in
+                    plugin.marketplaceName == marketplace.name
+                        || plugin.pluginID == "\(Self.pluginName)@\(marketplace.name)"
+                }
+            }
+            guard legacyMarketplaces.count == 1,
+                  !marketplaceIsExact,
+                  legacyMarketplacePlugins.isEmpty,
+                  let marketplace = legacyMarketplaces.first
+            else {
+                return Inspection(
+                    state: .conflict(
+                        reason: "Plugin 없이 남은 이전 Blabee 테스트 Marketplace의 소유권을 정확히 확인할 수 없습니다."
+                    ),
+                    context: nil
+                )
+            }
+            let pluginRoot = legacyPluginRoot(for: marketplace.root)
+            do {
+                legacyInstallation = LegacyInstallation(
+                    marketplaceName: marketplace.name,
+                    marketplaceRoot: marketplace.root,
+                    pluginSelector: "\(Self.pluginName)@\(marketplace.name)",
+                    pluginRoot: pluginRoot,
+                    pluginIsInstalled: false,
+                    pluginVersion: nil,
+                    filesystemIdentity: try stableLegacyFilesystemIdentity(
+                        marketplaceRoot: marketplace.root,
+                        pluginRoot: pluginRoot
+                    )
+                )
+            } catch let error as CoordinatorError {
+                return Inspection(state: .error(code: error.code), context: nil)
+            } catch {
+                return Inspection(
+                    state: .error(code: "legacy_installation_identity_unavailable"),
+                    context: nil
+                )
+            }
         }
 
         let context = InspectionContext(
@@ -1198,8 +2249,18 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             marketplaceRoot: configuration.marketplaceRoot,
             bundledVersion: configuration.pluginVersion,
             marketplaceIsExact: marketplaceIsExact,
-            ownedPlugin: ownedPlugin
+            ownedPlugin: ownedPlugin,
+            legacyInstallation: legacyInstallation
         )
+        if let legacyInstallation {
+            return Inspection(
+                state: .legacyInstallationDetected(
+                    marketplaceName: legacyInstallation.marketplaceName,
+                    confirmation: legacyInstallation.migrationConfirmation
+                ),
+                context: context
+            )
+        }
         guard let ownedPlugin else {
             return Inspection(
                 state: marketplaceIsExact
@@ -1230,13 +2291,62 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         marketplaceIsExact: Bool,
         pluginRoot: URL
     ) -> Bool {
-        marketplaceIsExact
-            && plugin.pluginID == Self.pluginSelector
-            && plugin.name == Self.pluginName
-            && plugin.marketplaceName == Self.marketplaceName
-            && plugin.installed
-            && plugin.sourceKind == "local"
-            && normalizedPath(plugin.sourcePath) == normalizedPath(pluginRoot)
+        guard marketplaceIsExact,
+              plugin.pluginID == Self.pluginSelector,
+              plugin.name == Self.pluginName,
+              plugin.marketplaceName == Self.marketplaceName,
+              plugin.installed,
+              plugin.sourceKind == "local",
+              let sourcePath = plugin.sourcePath
+        else { return false }
+        return normalizedPath(sourcePath) == normalizedPath(pluginRoot)
+    }
+
+    private func isLegacyMarketplaceName(_ name: String) -> Bool {
+        let prefix = "blabee-local-dogfood-"
+        guard name.hasPrefix(prefix) else { return false }
+        let suffix = name.dropFirst(prefix.count)
+        return suffix.utf8.count == 12 && suffix.utf8.allSatisfy {
+            (48 ... 57).contains($0) || (97 ... 102).contains($0)
+        }
+    }
+
+    private func isExactLegacyMarketplace(_ marketplace: MarketplaceRecord) -> Bool {
+        guard isLegacyMarketplaceName(marketplace.name) else { return false }
+        let marketplaceRoot = marketplace.root.standardizedFileURL
+        guard marketplaceRoot.isFileURL,
+              marketplaceRoot.lastPathComponent == "marketplace"
+        else { return false }
+        let outputRoot = marketplaceRoot.deletingLastPathComponent().standardizedFileURL
+        let suffix = SHA256.hash(data: Data(outputRoot.path.utf8))
+            .prefix(6)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return marketplace.name == "blabee-local-dogfood-\(suffix)"
+    }
+
+    private func legacyPluginRoot(for marketplaceRoot: URL) -> URL {
+        marketplaceRoot.standardizedFileURL
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent(Self.pluginName, isDirectory: true)
+            .standardizedFileURL
+    }
+
+    private func isExactLegacyPlugin(
+        _ plugin: PluginRecord,
+        marketplace: MarketplaceRecord
+    ) -> Bool {
+        guard plugin.pluginID == "\(Self.pluginName)@\(marketplace.name)",
+              plugin.name == Self.pluginName,
+              plugin.marketplaceName == marketplace.name,
+              plugin.installed,
+              plugin.enabled,
+              plugin.sourceKind == "local",
+              let sourcePath = plugin.sourcePath,
+              sourcePath.isFileURL
+        else { return false }
+        let expectedRoot = legacyPluginRoot(for: marketplace.root)
+        return normalizedPath(sourcePath) == normalizedPath(expectedRoot)
     }
 
     private func bundledConfiguration() throws -> BundledConfiguration {
@@ -1303,12 +2413,14 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     }
 
     private func queryMarketplaces(
-        executable: CodexPluginSetupQualifiedExecutable
+        executable: CodexPluginSetupQualifiedExecutable,
+        operation: inout OperationContext
     ) throws -> [MarketplaceRecord] {
         let object = try queryObject(
             executable: executable,
             arguments: ["plugin", "marketplace", "list", "--json"],
-            failureCode: "marketplace_list_failed"
+            failureCode: "marketplace_list_failed",
+            operation: &operation
         )
         guard let entries = object["marketplaces"] as? [Any],
               entries.count <= Self.maximumCollectionCount
@@ -1323,12 +2435,14 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     }
 
     private func queryInstalledPlugins(
-        executable: CodexPluginSetupQualifiedExecutable
+        executable: CodexPluginSetupQualifiedExecutable,
+        operation: inout OperationContext
     ) throws -> [PluginRecord] {
         let object = try queryObject(
             executable: executable,
             arguments: ["plugin", "list", "--json"],
-            failureCode: "plugin_list_failed"
+            failureCode: "plugin_list_failed",
+            operation: &operation
         )
         guard let entries = object["installed"] as? [Any],
               entries.count <= Self.maximumCollectionCount
@@ -1344,9 +2458,16 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                   let installed = strictBoolean(entry["installed"]),
                   let enabled = strictBoolean(entry["enabled"]),
                   let source = entry["source"] as? [String: Any],
-                  let sourceKind = boundedString(source["source"], maximumBytes: 64),
-                  let sourcePath = boundedAbsoluteURL(source["path"])
+                  let sourceKind = boundedString(source["source"], maximumBytes: 64)
             else { throw CoordinatorError("plugin_list_malformed") }
+            let sourcePath: URL?
+            if sourceKind == "local" {
+                guard let localPath = boundedAbsoluteURL(source["path"])
+                else { throw CoordinatorError("plugin_list_malformed") }
+                sourcePath = localPath
+            } else {
+                sourcePath = nil
+            }
             return PluginRecord(
                 pluginID: pluginID,
                 name: name,
@@ -1363,17 +2484,30 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private func queryObject(
         executable: CodexPluginSetupQualifiedExecutable,
         arguments: [String],
-        failureCode: String
+        failureCode: String,
+        operation: inout OperationContext
     ) throws -> [String: Any] {
         let result: CodexPluginSetupProcessResult
         do {
             let revalidated = try revalidatedExecutable(executable)
+            let timeout = try remainingTimeout(
+                maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
+                operation: operation
+            )
             result = try processRunner(
                 revalidated,
                 arguments,
-                Self.inspectionTimeoutMilliseconds
+                timeout
+            )
+            _ = try remainingTimeout(
+                maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
+                operation: operation
             )
             _ = try revalidatedExecutable(executable)
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_operation_timed_out"
+        {
+            throw error
         } catch {
             throw CoordinatorError(failureCode)
         }
@@ -1496,6 +2630,110 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         url.standardizedFileURL.path
     }
 
+    private func stableLegacyFilesystemIdentity(
+        marketplaceRoot: URL,
+        pluginRoot: URL
+    ) throws -> CodexPluginSetupLegacyFilesystemIdentity {
+        func readIdentity() throws -> CodexPluginSetupLegacyFilesystemIdentity {
+            try CodexPluginSetupLegacyFilesystemIdentity(
+                marketplaceRoot: legacyPathIdentity(
+                    marketplaceRoot,
+                    expectedType: mode_t(S_IFDIR)
+                ),
+                marketplaceManifest: legacyPathIdentity(
+                    marketplaceRoot.appendingPathComponent(
+                        ".agents/plugins/marketplace.json",
+                        isDirectory: false
+                    ),
+                    expectedType: mode_t(S_IFREG)
+                ),
+                pluginRoot: legacyPathIdentity(
+                    pluginRoot,
+                    expectedType: mode_t(S_IFDIR)
+                ),
+                pluginManifest: legacyPathIdentity(
+                    pluginRoot.appendingPathComponent(
+                        ".codex-plugin/plugin.json",
+                        isDirectory: false
+                    ),
+                    expectedType: mode_t(S_IFREG)
+                )
+            )
+        }
+
+        let before = try readIdentity()
+        let after = try readIdentity()
+        guard before == after else {
+            throw CoordinatorError("legacy_installation_identity_changed")
+        }
+        return after
+    }
+
+    private func legacyPathIdentity(
+        _ url: URL,
+        expectedType: mode_t
+    ) throws -> CodexPluginSetupLegacyPathIdentity {
+        let path = url.standardizedFileURL.path
+        guard url.isFileURL,
+              path.hasPrefix("/"),
+              !path.utf8.contains(0)
+        else {
+            throw CoordinatorError("legacy_installation_identity_unavailable")
+        }
+
+        var namedBefore = stat()
+        guard lstat(path, &namedBefore) == 0 else {
+            guard errno == ENOENT else {
+                throw CoordinatorError("legacy_installation_identity_unavailable")
+            }
+            return .missing
+        }
+        guard namedBefore.st_mode & mode_t(S_IFMT) == expectedType else {
+            throw CoordinatorError("legacy_installation_identity_unavailable")
+        }
+
+        let descriptor = open(
+            path,
+            O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw CoordinatorError("legacy_installation_identity_unavailable")
+        }
+        defer { close(descriptor) }
+
+        var descriptorInfo = stat()
+        var namedAfter = stat()
+        guard fstat(descriptor, &descriptorInfo) == 0,
+              lstat(path, &namedAfter) == 0,
+              descriptorInfo.st_mode & mode_t(S_IFMT) == expectedType,
+              namedAfter.st_mode & mode_t(S_IFMT) == expectedType
+        else {
+            throw CoordinatorError("legacy_installation_identity_unavailable")
+        }
+        let descriptorIdentity = legacyFileIdentity(descriptorInfo)
+        guard descriptorIdentity == legacyFileIdentity(namedBefore),
+              descriptorIdentity == legacyFileIdentity(namedAfter)
+        else {
+            throw CoordinatorError("legacy_installation_identity_changed")
+        }
+        return .present(descriptorIdentity)
+    }
+
+    private func legacyFileIdentity(_ info: stat) -> CodexRuntimeFileIdentity {
+        CodexRuntimeFileIdentity(
+            device: UInt64(bitPattern: Int64(info.st_dev)),
+            inode: UInt64(info.st_ino),
+            mode: UInt32(info.st_mode),
+            owner: UInt32(info.st_uid),
+            group: UInt32(info.st_gid),
+            size: Int64(info.st_size),
+            modificationSeconds: Int64(info.st_mtimespec.tv_sec),
+            modificationNanoseconds: Int64(info.st_mtimespec.tv_nsec),
+            changeSeconds: Int64(info.st_ctimespec.tv_sec),
+            changeNanoseconds: Int64(info.st_ctimespec.tv_nsec)
+        )
+    }
+
     private struct BundledConfiguration {
         let marketplaceRoot: URL
         let pluginRoot: URL
@@ -1504,19 +2742,34 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
 
     private enum MutationExpectation {
         case marketplaceAdded(root: URL)
-        case pluginAdded(version: String)
-        case pluginRemoved
-        case marketplaceRemoved
+        case pluginAdded(selector: String, version: String)
+        case pluginRemoved(selector: String)
+        case marketplaceRemoved(name: String)
     }
 
     private struct MutationResult {
         static let failed = MutationResult(
             succeeded: false,
-            createdMarketplace: false
+            createdMarketplace: false,
+            errorCode: nil
         )
+
+        static func failed(code: String) -> MutationResult {
+            MutationResult(
+                succeeded: false,
+                createdMarketplace: false,
+                errorCode: code
+            )
+        }
 
         let succeeded: Bool
         let createdMarketplace: Bool
+        let errorCode: String?
+    }
+
+    private struct PreparedMutation {
+        let selection: CodexPluginSetupQualifiedExecutable
+        let executable: URL
     }
 
     private struct MarketplaceRecord {
@@ -1532,7 +2785,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let installed: Bool
         let enabled: Bool
         let sourceKind: String
-        let sourcePath: URL
+        let sourcePath: URL?
     }
 
     private struct InspectionContext {
@@ -1541,10 +2794,51 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         let bundledVersion: String
         let marketplaceIsExact: Bool
         let ownedPlugin: PluginRecord?
+        let legacyInstallation: LegacyInstallation?
     }
 
     private struct Inspection {
         let state: CodexPluginSetupState
         let context: InspectionContext?
+    }
+
+    private struct LegacyInstallation: Equatable {
+        let marketplaceName: String
+        let marketplaceRoot: URL
+        let pluginSelector: String
+        let pluginRoot: URL
+        let pluginIsInstalled: Bool
+        let pluginVersion: String?
+        let filesystemIdentity: CodexPluginSetupLegacyFilesystemIdentity
+
+        var migrationConfirmation: CodexPluginSetupLegacyMigrationConfirmation {
+            CodexPluginSetupLegacyMigrationConfirmation(
+                marketplaceName: marketplaceName,
+                marketplaceRootPath: marketplaceRoot.standardizedFileURL.path,
+                pluginSelector: pluginSelector,
+                pluginRootPath: pluginRoot.standardizedFileURL.path,
+                pluginIsInstalled: pluginIsInstalled,
+                pluginVersion: pluginVersion,
+                filesystemIdentity: filesystemIdentity
+            )
+        }
+    }
+
+    private enum LegacyOwnershipVerification {
+        case installation(executable: CodexPluginSetupQualifiedExecutable)
+        case marketplaceOnly(executable: CodexPluginSetupQualifiedExecutable)
+        case absent
+        case conflict(reason: String)
+        case error(code: String)
+    }
+
+    private struct OperationContext {
+        let deadlineNanoseconds: UInt64
+        var executable: CodexPluginSetupQualifiedExecutable?
+
+        init(deadlineNanoseconds: UInt64) {
+            self.deadlineNanoseconds = deadlineNanoseconds
+            executable = nil
+        }
     }
 }

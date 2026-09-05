@@ -14,9 +14,18 @@ macOS 제품 런타임이다. T-005 spike를 참조하지 않는 독립 Swift Pa
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  swift test --package-path src/coordinator-swift \
-  --scratch-path /tmp/blabee-coordinator-swift-build
+  /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock \
+  /usr/bin/xcrun swift test --package-path src/coordinator-swift \
+  --scratch-path /tmp/blabee-coordinator-swift-build \
+  --experimental-maximum-parallelization-width 1
 ```
+
+저장된 Codex 런타임 검사는 실제 path ABA 공격을 놓치지 않도록 디렉터리 조상의
+전체 metadata 변경을 fail closed로 처리한다. 따라서 전체 테스트도 서로 다른 suite의
+임시 fixture 변경이 공격처럼 보이지 않도록 위 명령 또는 `npm run test:swift`로 한
+process씩 실행한다. 공통 `lockf`가 이미 실행 중인 전체 Swift 테스트가 있으면 두 번째
+실행을 즉시 거부하므로, 같은 socket·Keychain·임시 경로를 쓰는 두 process가 섞이지 않는다.
+Xcode/toolchain을 바꿀 때는 experimental flag 지원 여부와 전체 suite를 다시 검증한다.
 
 실행:
 
@@ -114,8 +123,9 @@ T-012b-3b Pet 온보딩:
 - 앱 시작·poll·snapshot·설정 화면 열기는 읽기 전용이다. 등록·해제·System Settings
   열기와 프로젝트 추가·제거는 각 명시적 버튼에서만 수행한다.
 - 변경은 single-flight이며 성공·실패 뒤 실제 상태와 설정을 다시 읽는다. 설정 읽기
-  실패에서는 프로젝트 추가·제거를, `notFound`/unknown 상태에서는 모든 mutation을
-  fail-closed한다.
+  실패에서는 프로젝트 추가·제거를 차단한다. `notFound`는 macOS가 아직 번들 서비스를
+  발견하지 못한 최초 설치 상태일 수 있으므로 사용자의 명시적 등록 시도만 허용하고,
+  unknown 상태에서는 모든 service mutation을 fail-closed한다.
 - configured project와 현재 daemon의 active snapshot을 분리한다. 설정 변경은
   service를 자동 재시작하지 않으며 다음 재시작부터 적용된다.
 - raw `pet --socket`에는 변경 불가 adapter를 사용해 기존 개발 Pet 시작을 보존한다.
@@ -145,6 +155,15 @@ TERM grace 뒤 KILL하고 무한히 기다리지 않는다. MCP는 이 fail-open
 사용하지 않고 coordinator 오류나 부재를 JSON-RPC 오류와 nonzero 상태로 반환하는
 fail-closed 경로다. Plugin 설치, 제품 바이너리 PATH 등록, 자동 시작과 진단은
 T-012가 소유한다.
+
+이전 dogfood Plugin 마이그레이션의 삭제 경로는 앱 bundle과 Codex 실행 파일의
+신뢰 재검증을 먼저 끝낸다. 그 뒤 exact Marketplace/Plugin 소유권과 descriptor 기반
+파일 identity를 마지막 조건으로 다시 확인하고 별도 사전 검사 없이 삭제 subprocess를
+호출한다. 다만 Codex Plugin CLI에는 확인한 identity를 조건으로 삭제하는
+compare-and-remove API가 없다. 따라서 최종 identity 확인과 외부 CLI의 실제 경로 사용
+사이에서 같은 사용자가 대상을 바꾸는 경쟁을 원자적으로 제거할 수는 없다. Blabee는 이
+구간을 최소화하고 실행 후 상태를 다시 검증하지만, 이미 실행된 잘못된 삭제를 되돌렸다는
+의미는 아니다. 완전한 해결은 Codex가 조건부 remove token/API를 제공해야 가능하다.
 
 ## T-011 운영 경계
 

@@ -1,7 +1,7 @@
 # Blabee 알려진 오류 및 안정성 이슈
 
 - 최초 작성: 2026-09-02 (KST)
-- 마지막 갱신: 2026-09-03 (KST)
+- 마지막 갱신: 2026-09-05 (KST)
 - 문서 상태: 활성
 - 검토 기준: `a85d34be66f57304014fdf83d21044c6c2827f38` 위 현재 미커밋 작업 트리
 - 범위: 아직 해결되지 않았거나 배포 전 재검증이 필요한 Blabee 제품 오류와 안정성 위험
@@ -51,9 +51,64 @@
 | `BLB-CLEANUP-001` | 2026-09-01 | 중간 | 조사 중 | 구형 영구 runtime 경로의 소유권을 증명할 수 없어 자동 정리가 위험함 |
 | `BLB-ROTATION-001` | 2026-09-02 | 높음 | 검증 중 | 열린 Codex 세션 중 Plugin·service 교체 시 Hook과 prompt authority가 끊김 |
 | `BLB-PLUGIN-001` | 2026-09-03 | 중간 | 검증 중 | Plugin 검사와 공식 Codex CLI 변경 사이의 짧은 same-user 경쟁 구간 |
+| `BLB-PLUGIN-002` | 2026-09-04 | 중간 | 검증 중 | 구형 Plugin만 제거된 부분 마이그레이션이 재시도 불가능한 충돌로 고정됨 |
+| `BLB-PLUGIN-003` | 2026-09-04 | 중간 | 검증 중 | 한 연결 작업에서 Codex 전체 hash와 자격 검사를 반복해 과도한 I/O가 발생함 |
 | `BLB-PACKAGE-001` | 2026-09-03 | 낮음 | 검증 중 | 실패 staging 격리 후 경로 기반 재귀 정리의 짧은 same-user 경쟁 구간 |
+| `BLB-PACKAGE-002` | 2026-09-04 | 중간 | 검증 중 | 오래된 바이너리·혼합 시점 소스 포장과 특수 파일 교체로 빌드가 멈출 수 있음 |
+| `BLB-SERVICE-001` | 2026-09-05 | 높음 | 검증 중 | ad-hoc 앱 교체 뒤 기존 launch constraint가 새 service 실행을 거부할 수 있음 |
 | `BLB-PET-001` | 2026-09-03 | 중간 | 해결됨 | 설정 상태 새로고침과 변경 작업이 겹치면 오래된 상태·오류가 UI를 덮을 수 있었음 |
 | `BLB-QA-001` | 2026-09-03 | 중간 | 해결됨 | 반복 테스트에서 전역 Hook·SQLite·bridge 자원의 수명주기가 다른 테스트에 영향을 줄 수 있었음 |
+
+---
+
+## BLB-SERVICE-001 — ad-hoc 앱 업데이트 뒤 background service 실행 거부
+
+- 최초 확인: 2026-09-05
+- 기록일: 2026-09-05
+- 심각도: 높음
+- 상태: 검증 중
+- 근거 수준: 설치된 r5/r6, `launchctl print`, unified log, 코드서명과 Apple 문서를 대조함
+
+### 증상
+
+`CFBundleIdentifier`와 `CFBundleVersion=1`이 같은 r5 ad-hoc 앱을 r6로 교체한 뒤
+`SMAppService.status`는 enabled였지만 service socket이 생성되지 않았다. launchd는
+`OS_REASON_CODESIGNING`, `Launch Constraint Violation`, `needs LWCR update`를
+보고했고 job은 실행되지 않았다. 같은 r6 실행 파일을 foreground에서 시작하면 service
+자체는 정상 기동했으므로, 제품 설정보다 등록된 코드 제약과 새 ad-hoc code identity의
+불일치가 가장 강한 원인이다.
+
+### 원인과 경계
+
+ad-hoc 서명의 designated requirement는 안정적인 인증서 identity가 아니라 특정 코드
+내용에 묶일 수 있다. 내용이 바뀐 r6의 CDHash는 r5와 다르다. 수동
+`launchctl bootout`은 `SMAppService.unregister()` 완료와 같은 등록 제거 증거가 아니며,
+`.enabled`도 실제 실행 중이 아니라 실행 자격만 뜻한다.
+
+`CFBundleVersion`을 증가시키는 것은 필수 빌드 위생이지만, 그것만으로 LWCR 갱신을
+보장한다는 Apple 근거는 없다.
+
+### 수정과 완료 기준
+
+- fresh 내부 DMG에 명시적 전역 증가 build number를 필수화하고 파일명 `rN`, staging
+  `CFBundleVersion`, 조립·mount 검증 결과를 exact 일치시킨다.
+- ad-hoc 업데이트 가이드를 구버전 앱의 `SMAppService.unregister()` 완료 → 앱 종료 →
+  새 번들 전체 교체 → 더 큰 build 확인 → 새 앱에서 register → 실제 socket 확인 순서로
+  고정한다.
+- 정상 업데이트 흐름에서 raw `launchctl`과 `sfltool resetbtm`을 사용하지 않는다.
+- 현재 Mac에서 새 산출물이 clean registration 뒤 실제 service request에 응답해야 한다.
+- 공개 배포 전에는 stable Apple-issued signing identity와 지원 macOS별 업데이트 시험을
+  별도로 통과해야 하며, ad-hoc 결과를 seamless upgrade 승인으로 쓰지 않는다.
+
+2026-09-05 소스에서는 서비스 transport 오류와 `SMAppService` 등록 상태를 UI에서
+분리했다. transport가 끊겼다는 이유만으로 등록 상태를 추정하거나 자동 재등록하지 않고,
+등록됐지만 응답이 없으면 `실행 확인 필요`로 안내한다. build number `8`과 exact `arm64`를
+봉인한 r8 내부 후보도 생성·검증했다. r8을 `/Applications`에 설치한 첫 service 시작은
+`OS_REASON_CODESIGNING` 뒤 `Unable to get updated LWCR... Invalid argument`로 실패했다.
+앱의 명시적 서비스 재시작은 unregister/re-register를 수행해 새 BTM UUID를 만들었고,
+이후 launchctl running과 실제 service 응답을 확인했다. 설정에는
+`operational_socket_unavailable`이 남지 않았다. 이는 ad-hoc 내부 업데이트의 로컬 복구
+증거이며 근본적인 공개 업데이트 identity 해결은 아니다.
 
 ---
 
@@ -420,6 +475,14 @@ fingerprint와 다르면 실패한다. catalog가 일치해도 실제 binary 버
 `blabee_build_identity`를 통과시키지 않고 별도 `action_required`로 보고한다.
 Doctor 집중 테스트 30/30이 통과했다.
 
+2026-09-05 설치된 r8 Doctor는 `coordinator_runtime`, `app_bundle`,
+`embedded_coordinator`, `mcp_runtime`, `daemon_status`, `reconciliation_status`,
+`project_scope`를 통과했다. 전체 결과가 실패한 이유는 Codex `0.153.2`의 managed
+runtime identity/version/code-mode allowlist가 아직 승인되지 않았기 때문이다. 일반
+`0.153.2` Plugin CLI 호환성은 별도 자격이며, 이 Doctor 실패를 일반 Codex 또는 Plugin
+연결 실패로 해석하지 않는다. 동시에 관리형 App Server 승인을 지원한다고 주장하지도
+않는다.
+
 ---
 
 ## BLB-DIST-001 — 다른 사용자용 설치·업데이트 자격 미완료
@@ -464,6 +527,14 @@ npm, asdf, Volta 또는 manifest 없는 설치 방식은 명시적으로 자격�
 - 미지원 환경에서는 관리형 기능만 안전하게 비활성화된다.
 - 사용자가 현재 사용 가능한 기능과 필요한 조치를 UI에서 이해할 수 있다.
 - Git checkout이나 개발자 캐시에 의존하지 않는다.
+
+2026-09-05 r8은 앱 `0.1.0` build `8`, exact `arm64`, ad-hoc app,
+미서명·미공증 DMG의 패키지 검증을 통과했다. SHA-256은
+`e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`이다. r7과
+그 이전 로컬 산출물은 배포하지 않는다. 이 결과의
+`public_distribution_ready`는 `false`다. 한 개발 Mac의 설치·명시적 service 재시작과
+Plugin 설치 상태 표시는 확인했지만 clean Mac 설치·Hook 신뢰·Pet 왕복은 계속 별도
+완료 기준으로 남는다.
 
 ---
 
@@ -539,6 +610,48 @@ NVM·Volta의 script/shim 형태 Codex는 공식 Mach-O 서명 검사를 통과�
 
 ---
 
+## BLB-PLUGIN-002 — 구형 연결 부분 마이그레이션 재시도 불가
+
+- 최초 확인: 2026-09-04
+- 기록일: 2026-09-04
+- 심각도: 중간
+- 상태: 검증 중
+- 근거 수준: 소스·전용 회귀·독립 QA로 확인됨
+
+구형 dogfood Plugin 제거는 성공했지만 Marketplace 제거가 실패하면, 다음 조회에서
+Marketplace만 남은 상태를 알 수 없는 충돌로 분류해 사용자가 앱에서 마이그레이션을
+재개할 수 없었다.
+
+현재는 exact 이름·경로를 가진 알려진 구형 Marketplace가 하나이고 연결된 Plugin이
+0개인 상태도 명시적인 이전 연결로 인식한다. 사용자가 두 단계 확인을 다시 수행하면
+이미 끝난 Plugin 제거를 반복하지 않고 Marketplace 제거부터 이어서 현재
+`blabee@blabee-app`을 설치한다. 중복 Marketplace, 추가 Plugin, 현재 Marketplace 공존,
+실행 중 소유권 변경은 계속 실패 폐쇄한다. 전용 Plugin setup 테스트 76/76과 독립 QA가
+이 복구 경계를 통과했으며, 설치본의 실제 구형 연결 마이그레이션을 마지막 gate로 남긴다.
+
+---
+
+## BLB-PLUGIN-003 — Plugin 자격 확인의 반복 전체 hash
+
+- 최초 확인: 2026-09-04
+- 기록일: 2026-09-04
+- 심각도: 중간
+- 상태: 검증 중
+- 근거 수준: 소스·전용 회귀·전체 Swift 테스트로 확인됨
+
+Codex `0.153.2`의 좁은 공식 바이너리 보완 경로는 약 220MB 실행 파일 전체 hash를
+계산한다. 이전 구현은 한 번의 연결 동작에서 상태 조회마다 이 검사를 다시 수행할 수
+있어 지연, disk read와 발열을 키웠다.
+
+현재 `connect`, `disconnect`, 구형 연결 마이그레이션은 각자 하나의 최대 45초 operation
+context를 사용한다. 선택된 실행 파일의 자격과 hash는 operation당 한 번만 계산하고,
+각 subprocess 직전에는 저렴한 전체 identity snapshot을 재확인한다. timeout은 후보 탐색,
+hash, 버전 확인과 Plugin 명령 전체가 공유하며 실패 뒤 자동 재시도하지 않는다. 깨끗한
+Mac 설치본에서 실제 operation당 전체 hash 1회와 지연·CPU·disk read를 계측하는 검증은
+남아 있다.
+
+---
+
 ## BLB-PACKAGE-001 — 실패 staging 경로 기반 정리 경쟁 구간
 
 - 최초 확인: 2026-09-03
@@ -565,6 +678,41 @@ Mac DMG 반복 조립·실패 주입에서 사용자 파일이 보존되는지 �
 
 ---
 
+## BLB-PACKAGE-002 — 오래되거나 혼합된 입력 포장과 무제한 파일 읽기
+
+- 최초 확인: 2026-09-04
+- 기록일: 2026-09-04
+- 심각도: 중간
+- 상태: 검증 중
+- 근거 수준: 소스·전용 회귀·독립 QA로 확인됨
+
+과거 저수준 DMG 명령은 미리 빌드한 `--binary`를 받아 현재 소스와 다른 실행 파일을
+실수로 포장할 수 있었다. 첫 fresh wrapper도 live source를 직접 읽어, 빌드 중 파일이
+잠깐 바뀌었다가 원상복구되면 Swift와 번들 리소스가 서로 다른 시점을 읽을 수 있었다.
+또한 `lstat` 뒤 입력이 FIFO나 symlink로 교체되거나 읽는 동안 계속 커지면 빌드가
+멈추거나 선언한 파일 크기 상한을 넘을 수 있었다.
+
+현재 사용자용 명령은 fresh source builder 하나뿐이며 저수준 `--binary` CLI는 실행을
+거부한다. Swift package, Contracts, Plugin과 macOS packaging 입력을 파일 수·바이트가
+제한된 하나의 private source snapshot으로 복사하고, Swift 빌드와 앱 조립이 모두 그
+snapshot만 사용한다. 입력 open은 `O_NOFOLLOW | O_NONBLOCK`을 사용하고 최초 크기까지만
+읽은 뒤 조기 EOF, 최초 EOF 뒤 추가 byte, descriptor와 경로 identity를 확인한다. release
+바이너리의 로컬 사용자 경로 검사도 bounded streaming으로 수행한다. FIFO·symlink 교체,
+읽기 중 append, 소스 시점 혼합과 stale CLI 회귀가 통과했고, 독립 QA의 열린 P0~P2는 없다.
+
+2026-09-05에는 게시 transaction schema를 v2로 올려 `build_number`와
+`expected_architecture = arm64`를 산출물 identity에 함께 봉인했다. legacy v1 marker나
+build·architecture가 다른 복구 요청은 자동 복구하지 않고 실패 폐쇄한다. 빌드·조립·mount
+결과도 exact `arm64`만 허용해 x86 또는 Universal 입력을 거부한다. r8 fresh DMG의 구조,
+checksum, mount, 아키텍처와 ad-hoc app 서명을 확인했고 전체 Node 346/346과 Swift
+Testing 568/568+XCTest 5/5가 통과했다.
+
+한 개발 Mac에서 r8 설치와 service 복구는 확인했다. 남은 gate는 clean Mac 설치와
+Plugin·Hook·Pet 제품 왕복이다. 경로 조상과 output parent의 완전한 원자성은
+`BLB-PACKAGE-001`의 낮은 잔여 위험으로 별도 유지한다.
+
+---
+
 ## BLB-PET-001 — 설정 상태 새로고침과 변경 작업의 UI 경쟁
 
 - 최초 확인: 2026-09-03
@@ -578,6 +726,13 @@ Plugin과 서비스·프로젝트 변경을 서로 다른 작업 영역으로 �
 single-flight로 직렬화했다. 변경 중 들어온 새로고침은 합쳐서 마지막 상태만 반영하며, 작업 상태를
 먼저 적용한 뒤 메서드가 반환되도록 했다. 설정 창을 여는 것만으로 Codex subprocess를 실행하지
 않는 수동 확인 원칙도 유지한다.
+
+후속 유휴 최적화에서는 상태 아이콘을 최초 표시와 attention 전이에만 다시 만들고,
+동일 snapshot은 UI publish를 생략하되 완료 callback은 보존한다. 전역 단축키 등록 실패
+계획도 입력이 바뀔 때까지 재사용해 불필요한 반복 등록을 줄였다. 이는 자동 회귀로
+검증했다. r8 설치본의 6-sample idle `top`에서 UI와 service는 각각 0.0~0.1% CPU,
+메모리 약 65 MiB와 151 MiB였고 최근 2분 freshness-key 로그에는 실제 access entry가
+없었다. 짧은 단일 Mac 표본이므로 장시간 유휴 CPU·발열 개선의 일반 증거는 아니다.
 
 ---
 
@@ -604,6 +759,12 @@ Codex 도구의 외부 sandbox 안에서 실행되어 TCP·UDS bind와 Keychain�
 전체 Node에서 한 차례 발생한 1초 Hook 응답성 실패도 제품 동작 오류가 아니라 wall-clock
 스케줄링 outlier였다. 실제 경로 80회가 모두 정상 동작했고 최소 5초 native deadline과의 분리는
 유지된다. 테스트 전용 상한을 2.5초로 보정한 뒤 집중 반복과 전체 304/304가 통과했다.
+
+2026-09-05 후속에서는 관리형 Codex 보조 프로세스 정리에서 남아 있던 무제한
+`Process.waitUntilExit()`를 제거했다. 이미 종료한 자식은 즉시 상태를 보존하고, 실행 중이면
+TERM 후 최대 750ms, 그 exact child에만 SIGKILL 후 최대 750ms를 기다린 뒤 반환한다. 전용
+종료 회귀와 기존 보조 연결 회귀를 통과했고 독립 QA에서 열린 Medium 이상 finding은 없다.
+최종 전체 Swift Testing 568/568+XCTest 5/5와 Node 346/346이 통과했다.
 
 ## 권장 수정 순서
 

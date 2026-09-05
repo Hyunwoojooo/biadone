@@ -200,6 +200,12 @@ enum PetMenuBarInteractionPolicy {
     }
 }
 
+enum PetStatusItemUpdatePolicy {
+    static func shouldApply(previousAttention: Bool?, newAttention: Bool) -> Bool {
+        previousAttention != newAttention
+    }
+}
+
 enum PetAutomaticPresentationOwner: Sendable, Equatable {
     case genericAttention
     case approval(PetApprovalHeadIdentity)
@@ -551,6 +557,7 @@ final class PetMenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let baseStatusImage: NSImage?
     private var automaticPresentationOwner: PetAutomaticPresentationOwner?
+    private var renderedAttention: Bool?
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
@@ -685,6 +692,11 @@ final class PetMenuBarController: NSObject {
 
     private func updateStatusItem(attention: Bool) {
         guard let button = statusItem.button else { return }
+        guard PetStatusItemUpdatePolicy.shouldApply(
+            previousAttention: renderedAttention,
+            newAttention: attention
+        ) else { return }
+        renderedAttention = attention
         button.image = PetStatusItemIcon.render(
             baseImage: baseStatusImage,
             attention: attention

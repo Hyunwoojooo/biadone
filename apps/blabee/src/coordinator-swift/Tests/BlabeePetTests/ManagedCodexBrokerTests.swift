@@ -39,6 +39,24 @@ private final class ManagedCodexDiagnosticCapture: @unchecked Sendable {
     }
 }
 
+private final class ManagedCodexTerminationCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [ObjectIdentifier] = []
+
+    func append(_ process: Process) -> Bool {
+        lock.lock()
+        stored.append(ObjectIdentifier(process))
+        lock.unlock()
+        return true
+    }
+
+    var processIdentifiers: [ObjectIdentifier] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
 private final class ManagedCodexExecutableSequence<Failure: Error & Sendable>:
     @unchecked Sendable
 {
@@ -737,6 +755,100 @@ func managedCodexLauncherMapsSignalExitStatus() {
         appServerReason: .uncaughtSignal,
         appServerTerminatedByBroker: false
     ) == 143)
+}
+
+@Test("Managed child cleanup returns immediately after an observed exit")
+func managedCodexCleanupPreservesAlreadyExitedStatus() throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/false")
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+
+    let exitDeadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+    while process.isRunning,
+          DispatchTime.now().uptimeNanoseconds < exitDeadline
+    {
+        usleep(10_000)
+    }
+    try #require(!process.isRunning)
+    let status = process.terminationStatus
+
+    let startedAt = DispatchTime.now().uptimeNanoseconds
+    #expect(managedCodexTerminateProcess(process) == false)
+    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+
+    #expect(elapsed < 250_000_000)
+    #expect(process.terminationStatus == status)
+    #expect(status == 1)
+}
+
+@Test("Managed child cleanup bounds a TERM-resistant exact child")
+func managedCodexCleanupBoundsTermResistantChild() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+            "blabee-managed-termination-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: false
+    )
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let readyFile = directory.appendingPathComponent("ready")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = [
+        "-c",
+        "trap '' TERM; printf ready > \"$1\"; exec /usr/bin/tail -f /dev/null",
+        "blabee-managed-termination",
+        readyFile.path,
+    ]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let pid = process.processIdentifier
+    defer {
+        if process.isRunning { _ = kill(pid, SIGKILL) }
+    }
+
+    let readyDeadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+    while !FileManager.default.fileExists(atPath: readyFile.path),
+          DispatchTime.now().uptimeNanoseconds < readyDeadline
+    {
+        usleep(10_000)
+    }
+    try #require(FileManager.default.fileExists(atPath: readyFile.path))
+
+    let startedAt = DispatchTime.now().uptimeNanoseconds
+    #expect(managedCodexTerminateProcess(process))
+    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+
+    #expect(elapsed < 3_000_000_000)
+    #expect(!process.isRunning)
+    let killResult = kill(pid, 0)
+    let killError = errno
+    #expect(killResult == -1)
+    #expect(killError == ESRCH)
+}
+
+@Test("Managed child finish cleans App Server before unobservable TUI fallback")
+func managedCodexFinishCleansBothChildrenBeforeFallback() {
+    let tui = Process()
+    let appServer = Process()
+    let capture = ManagedCodexTerminationCapture()
+    let children = ManagedCodexChildProcesses(
+        appServer: appServer,
+        tui: tui,
+        processIsRunning: { process in process === tui },
+        terminateProcess: capture.append
+    )
+
+    #expect(children.finish(graceMilliseconds: 0) == 128 + SIGKILL)
+    #expect(capture.processIdentifiers == [
+        ObjectIdentifier(tui),
+        ObjectIdentifier(appServer),
+    ])
 }
 
 @Test("Managed approval router synthesizes only one-time accept")

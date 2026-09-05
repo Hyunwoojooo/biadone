@@ -251,6 +251,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
 
   assert.equal(result.output, join(await realpath(fixture.root), "Blabee.app"));
   assert.equal(result.signed, false);
+  assert.equal(result.bundleVersion, "1");
   const contents = join(fixture.output, "Contents");
   const executable = join(contents, "MacOS", "blabee-coordinator");
   const infoPlist = join(contents, "Info.plist");
@@ -452,6 +453,29 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     fixtureEntries.filter((entry) => entry.includes(".cleanup-")),
     [],
   );
+});
+
+test("assembler changes only the staged Info.plist for an explicit bundle version", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const sourceInfoPlist = join(repositoryRoot, "Packaging", "macos", "Info.plist");
+  const sourceBefore = await readFile(sourceInfoPlist);
+  const result = await assembleMacOSApp({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+    bundleVersion: "42",
+  });
+  const stagedInfoPlist = join(fixture.output, "Contents", "Info.plist");
+  const { stdout } = await execFile(
+    "/usr/bin/plutil",
+    ["-convert", "json", "-o", "-", stagedInfoPlist],
+  );
+  assert.equal(JSON.parse(stdout).CFBundleVersion, "42");
+  assert.equal(result.bundleVersion, "42");
+  assert.deepEqual(await readFile(sourceInfoPlist), sourceBefore);
+  const infoEntry = result.manifest.files.find(
+    (entry) => entry.path === "Contents/Info.plist",
+  );
+  assert.equal(infoEntry.sha256, await digest(stagedInfoPlist));
 });
 
 test("assembler embeds only directly inspected previous runtime identities in sorted v2 policy", async (t) => {
@@ -719,6 +743,7 @@ test("assembler CLI accepts one or two previous apps and rejects a third or raw 
   const help = await execFile(process.execPath, [assemblyScript, "--help"]);
   assert.match(help.stdout, /may be repeated at most twice/);
   assert.match(help.stdout, /raw runtime identity values are not accepted/);
+  assert.match(help.stdout, /--bundle-version 1/u);
   const previousApps = await Promise.all(["b", "c", "d"].map(
     (character, index) => makePreviousApp(
       fixture.root,
@@ -735,6 +760,8 @@ test("assembler CLI accepts one or two previous apps and rejects a third or raw 
       fixture.binary,
       "--output",
       output,
+      "--bundle-version",
+      String(count + 1),
     ];
     for (const app of previousApps.slice(0, count)) {
       argumentsList.push("--compatible-previous-app", app);
@@ -749,6 +776,11 @@ test("assembler CLI accepts one or two previous apps and rejects a third or raw 
       "utf8",
     ));
     assert.equal(manifest.compatible_previous_runtimes.length, count);
+    const { stdout: plistJSON } = await execFile(
+      "/usr/bin/plutil",
+      ["-convert", "json", "-o", "-", join(output, "Contents", "Info.plist")],
+    );
+    assert.equal(JSON.parse(plistJSON).CFBundleVersion, String(count + 1));
   }
 
   const rejectedOutput = join(fixture.root, "cli-rejected", "Blabee.app");
@@ -1018,6 +1050,16 @@ test("assembler bounds and strictly decodes Codex marketplace JSON", async (t) =
 
 test("assembler rejects implicit destinations, unsafe output, existing output, and invalid binaries", async (t) => {
   const fixture = await makeWorkspace(t);
+  for (const bundleVersion of ["0", "01", "10000", "1.5"]) {
+    await assert.rejects(
+      assembleMacOSApp({
+        binaryPath: fixture.binary,
+        outputPath: fixture.output,
+        bundleVersion,
+      }),
+      /bundle version must be a canonical integer from 1 through 9999/u,
+    );
+  }
   await assert.rejects(
     assembleMacOSApp({ binaryPath: "relative-binary", outputPath: fixture.output }),
     /--binary must be an explicit absolute path/,

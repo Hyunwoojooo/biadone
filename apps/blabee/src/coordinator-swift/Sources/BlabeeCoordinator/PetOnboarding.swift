@@ -30,7 +30,7 @@ enum PetServiceRegistrationState: Sendable, Equatable {
         case .requiresApproval:
             "macOS 시스템 설정에서 백그라운드 실행을 승인해야 합니다."
         case .notFound:
-            "앱 번들에서 등록할 서비스를 확인할 수 없습니다."
+            "macOS가 아직 이 서비스를 본 적이 없을 수 있습니다. 등록을 시도해 상태를 확인하세요."
         case .unknown:
             "알 수 없는 상태에서는 안전을 위해 등록 상태를 변경하지 않습니다."
         }

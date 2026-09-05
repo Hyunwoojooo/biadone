@@ -6,6 +6,7 @@
   "description": "Blabee contracts, Codex integration, and the macOS coordinator.",
   "scripts": {
     "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
+    "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path src/coordinator-swift --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
     "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
     "test:t005": "node --test --test-concurrency=1 Tests/RuntimeQualification/*.test.mjs",
     "test:t007a": "node --test --test-concurrency=1 Tests/CoordinatorCore/*.test.mjs",
@@ -14,7 +15,7 @@
     "test:t012": "node --test --test-concurrency=1 Tests/AppPackaging/*.test.mjs",
     "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs",
-    "build:internal-dmg": "node scripts/build-internal-dmg.mjs",
+    "build:internal-dmg": "node scripts/build-fresh-internal-dmg.mjs",
     "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
     "m1:qualify": "node spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
   },

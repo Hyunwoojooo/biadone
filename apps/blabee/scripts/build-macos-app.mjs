@@ -29,6 +29,8 @@ import {
 import { TextDecoder, promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { requireInternalBuildNumber } from "./internal-build-number.mjs";
+
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = resolve(dirname(scriptPath), "..");
@@ -432,7 +434,10 @@ async function copyFileWithMode(
   }
 }
 
-async function validateInfoPlist(path) {
+async function validateInfoPlist(
+  path,
+  bundleVersion = requiredInfoPlistValues.CFBundleVersion,
+) {
   await execFile("/usr/bin/plutil", ["-lint", path], { maxBuffer: 1024 * 1024 });
   const { stdout } = await execFile(
     "/usr/bin/plutil",
@@ -448,7 +453,8 @@ async function validateInfoPlist(path) {
   if (values === null || Array.isArray(values) || typeof values !== "object") {
     fail("Info.plist must contain a property list dictionary");
   }
-  for (const [key, expected] of Object.entries(requiredInfoPlistValues)) {
+  for (const [key, defaultExpected] of Object.entries(requiredInfoPlistValues)) {
+    const expected = key === "CFBundleVersion" ? bundleVersion : defaultExpected;
     if (typeof values[key] !== typeof expected || values[key] !== expected) {
       fail(`Info.plist ${key} must be ${JSON.stringify(expected)} (${typeof expected})`);
     }
@@ -1234,7 +1240,12 @@ export async function assembleMacOSApp({
   adhocSign = false,
   cleanupOnFailure = true,
   compatiblePreviousApps = [],
+  bundleVersion = requiredInfoPlistValues.CFBundleVersion,
 } = {}) {
+  const normalizedBundleVersion = requireInternalBuildNumber(
+    bundleVersion,
+    "bundle version",
+  );
   const compatiblePreviousAppsSnapshot = snapshotCompatiblePreviousApps(
     compatiblePreviousApps,
   );
@@ -1377,16 +1388,32 @@ export async function assembleMacOSApp({
       compatiblePreviousAppsSnapshot,
     );
 
+    const stagedInfoPlist = join(contents, "Info.plist");
     await copyFileWithMode(
       sourceInfoPlist,
-      join(contents, "Info.plist"),
+      stagedInfoPlist,
       0o644,
       maximumPackagedFileBytes,
       copiedPayloadBudget,
       false,
       canonicalSourceRoot,
     );
-    await validateInfoPlist(join(contents, "Info.plist"));
+    await validateInfoPlist(stagedInfoPlist);
+    if (normalizedBundleVersion !== requiredInfoPlistValues.CFBundleVersion) {
+      await execFile(
+        "/usr/bin/plutil",
+        [
+          "-replace",
+          "CFBundleVersion",
+          "-string",
+          normalizedBundleVersion,
+          stagedInfoPlist,
+        ],
+        { maxBuffer: 1024 * 1024 },
+      );
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion);
     await copyFileWithMode(
       sourceLaunchAgent,
       join(staging, launchAgentRelativePath),
@@ -1480,6 +1507,7 @@ export async function assembleMacOSApp({
     return {
       output,
       signed: adhocSign,
+      bundleVersion: normalizedBundleVersion,
       manifest,
       compatiblePreviousApps: compatiblePrevious.apps,
     };
@@ -1522,6 +1550,8 @@ export async function assembleMacOSApp({
 function parseCLIArguments(values) {
   let binaryPath;
   let outputPath;
+  let bundleVersion = requiredInfoPlistValues.CFBundleVersion;
+  let bundleVersionProvided = false;
   const compatiblePreviousApps = [];
   let adhocSign = false;
   let help = false;
@@ -1539,6 +1569,7 @@ function parseCLIArguments(values) {
     if (
       value !== "--binary"
       && value !== "--output"
+      && value !== "--bundle-version"
       && value !== "--compatible-previous-app"
     ) {
       fail(`unsupported argument: ${value}`);
@@ -1554,6 +1585,10 @@ function parseCLIArguments(values) {
     } else if (value === "--output") {
       if (outputPath !== undefined) fail("--output may be provided only once");
       outputPath = argument;
+    } else if (value === "--bundle-version") {
+      if (bundleVersionProvided) fail("--bundle-version may be provided only once");
+      bundleVersion = requireInternalBuildNumber(argument, "--bundle-version");
+      bundleVersionProvided = true;
     } else {
       compatiblePreviousApps.push(argument);
       if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
@@ -1565,6 +1600,7 @@ function parseCLIArguments(values) {
     binaryPath,
     outputPath,
     adhocSign,
+    bundleVersion,
     help,
     compatiblePreviousApps,
   };
@@ -1573,8 +1609,9 @@ function parseCLIArguments(values) {
 function usage() {
   return [
     "Usage:",
-    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--compatible-previous-app /absolute/path/to/Blabee.app] [--adhoc-sign]",
+    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--bundle-version 1] [--compatible-previous-app /absolute/path/to/Blabee.app] [--adhoc-sign]",
     "",
+    "--bundle-version must be a canonical integer from 1 through 9999 and defaults to 1.",
     "--compatible-previous-app may be repeated at most twice; raw runtime identity values are not accepted.",
     "The output parent must already exist. The script never writes to /Applications.",
   ].join("\n");

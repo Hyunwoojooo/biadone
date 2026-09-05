@@ -2,7 +2,7 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants as fileSystemConstants } from "node:fs";
 import {
   chmod,
   link,
@@ -10,7 +10,6 @@ import {
   mkdir,
   mkdtemp,
   open,
-  readFile,
   readdir,
   readlink,
   realpath,
@@ -33,6 +32,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { assembleMacOSApp } from "./build-macos-app.mjs";
+import {
+  requireInternalBuildNumber,
+  requireInternalDMGOutputBuildSuffix,
+} from "./internal-build-number.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -42,7 +45,17 @@ const checksumSuffix = ".sha256";
 const volumeName = "Blabee Internal Test";
 const internalNoticeName = "INTERNAL_TESTING.txt";
 const schemaVersion = "blabee.internal-dmg.v1";
+const publishTransactionSchemaVersion = "blabee.internal-dmg-publish.v2";
+const requiredArchitecture = "arm64";
+const requiredArchitectures = Object.freeze([requiredArchitecture]);
 const maximumCompatiblePreviousApps = 2;
+const maximumCoordinatorBytes = 512 * 1024 * 1024;
+const maximumDMGBytes = 1024 * 1024 * 1024;
+const maximumBufferedStableReadBytes = 64 * 1024;
+const maximumLockBytes = maximumBufferedStableReadBytes;
+const maximumTransactionBytes = 64 * 1024;
+const maximumChecksumBytes = 4 * 1024;
+const stableReadBufferBytes = 64 * 1024;
 const requiredPlistValues = Object.freeze({
   CFBundleExecutable: "blabee-coordinator",
   CFBundleIdentifier: "com.biadone.blabee",
@@ -61,6 +74,7 @@ const internalNotice = [
   "Do not redistribute this disk image as a public release.",
   "",
 ].join("\n");
+const maximumInternalNoticeBytes = Buffer.byteLength(internalNotice, "utf8");
 
 function fail(message) {
   throw new Error(message);
@@ -160,7 +174,91 @@ function sameStableFileMetadata(left, right) {
     && left.ctimeMs === right.ctimeMs;
 }
 
+function stableReadOnlyFlags() {
+  const noFollow = Number.isInteger(fileSystemConstants.O_NOFOLLOW)
+    ? fileSystemConstants.O_NOFOLLOW
+    : 0;
+  const nonBlocking = Number.isInteger(fileSystemConstants.O_NONBLOCK)
+    ? fileSystemConstants.O_NONBLOCK
+    : 0;
+  return fileSystemConstants.O_RDONLY | noFollow | nonBlocking;
+}
+
+async function readStableRegularFile(path, label, {
+  maximumBytes,
+  afterLstat = null,
+  afterReadChunk = null,
+} = {}) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
+    fail(`${label} requires a safe byte limit`);
+  }
+  if (maximumBytes > maximumBufferedStableReadBytes) {
+    fail(`${label} exceeds the buffered stable-read safety limit`);
+  }
+  const pathMetadata = await lstat(path);
+  if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
+    fail(`${label} must be a regular file, not a symlink or special file`);
+  }
+  if (pathMetadata.size > maximumBytes) {
+    fail(`${label} exceeds the ${maximumBytes}-byte limit`);
+  }
+  if (afterLstat !== null) await afterLstat();
+  const handle = await open(path, stableReadOnlyFlags());
+  try {
+    const openedBefore = await handle.stat();
+    if (!openedBefore.isFile() || !sameStableFileMetadata(pathMetadata, openedBefore)) {
+      fail(`${label} changed while it was being opened`);
+    }
+    const bytes = Buffer.allocUnsafe(openedBefore.size);
+    let position = 0;
+    let chunkIndex = 0;
+    while (position < openedBefore.size) {
+      const requestedBytes = Math.min(
+        stableReadBufferBytes,
+        openedBefore.size - position,
+      );
+      const { bytesRead } = await handle.read(
+        bytes,
+        position,
+        requestedBytes,
+        position,
+      );
+      if (bytesRead === 0) fail(`${label} ended before its initial size was read`);
+      position += bytesRead;
+      if (afterReadChunk !== null) {
+        await afterReadChunk({ bytesRead, chunkIndex, position });
+      }
+      chunkIndex += 1;
+    }
+    const appendProbe = Buffer.allocUnsafe(1);
+    const { bytesRead: appendedBytes } = await handle.read(
+      appendProbe,
+      0,
+      1,
+      openedBefore.size,
+    );
+    if (appendedBytes !== 0) {
+      fail(`${label} grew beyond its initial size while it was being read`);
+    }
+    const openedAfter = await handle.stat();
+    const pathAfter = await lstat(path);
+    if (
+      !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || !sameStableFileMetadata(openedBefore, openedAfter)
+      || !sameStableFileMetadata(openedAfter, pathAfter)
+      || position !== openedBefore.size
+    ) {
+      fail(`${label} changed while it was being read`);
+    }
+    return Object.freeze({ bytes, metadata: openedBefore });
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function snapshotExecutable(binaryPath, workRoot, {
+  afterBinaryLstat = null,
   afterSnapshotChunk = null,
 } = {}) {
   const binary = requireAbsolutePath(binaryPath, "--binary");
@@ -171,23 +269,32 @@ export async function snapshotExecutable(binaryPath, workRoot, {
     fail("--binary must be a regular file, not a symlink or special file");
   }
   if ((pathMetadata.mode & 0o111) === 0) fail("--binary must already be executable");
+  if (pathMetadata.size > maximumCoordinatorBytes) {
+    fail(`--binary exceeds the ${maximumCoordinatorBytes}-byte coordinator limit`);
+  }
 
-  const source = await open(binary, "r");
+  if (afterBinaryLstat !== null) await afterBinaryLstat();
+  const source = await open(binary, stableReadOnlyFlags());
   const snapshotPath = join(requestedWorkRoot, "blabee-coordinator.pinned");
   let destination = null;
+  let destinationIdentity = null;
   try {
     const before = await source.stat();
-    if (!before.isFile() || !sameIdentity(before, pathMetadata)) {
+    if (!before.isFile() || !sameStableFileMetadata(before, pathMetadata)) {
       fail("--binary changed while it was being opened");
     }
     destination = await open(snapshotPath, "wx", 0o700);
+    destinationIdentity = statIdentity(await destination.stat());
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let position = 0;
     let chunkIndex = 0;
-    while (true) {
-      const { bytesRead } = await source.read(buffer, 0, buffer.length, position);
-      if (bytesRead === 0) break;
+    while (position < before.size) {
+      const requestedBytes = Math.min(buffer.length, before.size - position);
+      const { bytesRead } = await source.read(buffer, 0, requestedBytes, position);
+      if (bytesRead === 0) {
+        fail("--binary ended before its initial size was snapshotted");
+      }
       const chunk = buffer.subarray(0, bytesRead);
       hash.update(chunk);
       let written = 0;
@@ -207,12 +314,26 @@ export async function snapshotExecutable(binaryPath, workRoot, {
       }
       chunkIndex += 1;
     }
+    const appendProbe = Buffer.allocUnsafe(1);
+    const { bytesRead: appendedBytes } = await source.read(
+      appendProbe,
+      0,
+      1,
+      before.size,
+    );
+    if (appendedBytes !== 0) {
+      fail("--binary grew beyond its initial size while its pinned snapshot was being created");
+    }
     const after = await source.stat();
     if (!sameStableFileMetadata(before, after) || position !== before.size) {
       fail("--binary changed while its pinned snapshot was being created");
     }
     const pathAfter = await lstat(binary);
-    if (pathAfter.isSymbolicLink() || !sameIdentity(pathAfter, before)) {
+    if (
+      pathAfter.isSymbolicLink()
+      || !pathAfter.isFile()
+      || !sameStableFileMetadata(pathAfter, before)
+    ) {
       fail("--binary path changed while its pinned snapshot was being created");
     }
     await destination.chmod(0o700);
@@ -227,7 +348,13 @@ export async function snapshotExecutable(binaryPath, workRoot, {
     }
     destination = null;
     try {
-      await unlink(snapshotPath);
+      if (destinationIdentity !== null) {
+        requireExactRemoval(
+          await removeIfSameLink(snapshotPath, destinationIdentity),
+          "pinned binary snapshot",
+          { allowMissing: true },
+        );
+      }
     } catch (cleanupError) {
       if (cleanupError?.code !== "ENOENT") {
         throw new AggregateError(
@@ -283,6 +410,16 @@ async function inspectArchitectures(executablePath) {
   return architectures;
 }
 
+function requireExactInternalArchitecture(architectures, label) {
+  if (
+    !Array.isArray(architectures)
+    || JSON.stringify(architectures) !== JSON.stringify(requiredArchitectures)
+  ) {
+    fail(`${label} must contain exactly the ${requiredArchitecture} architecture`);
+  }
+  return requiredArchitecture;
+}
+
 async function verifyAdHocSignature(appPath) {
   await execFile(
     "/usr/bin/codesign",
@@ -300,7 +437,13 @@ async function verifyAdHocSignature(appPath) {
   }
 }
 
-export async function verifyInternalAppBundle(appPath) {
+export async function verifyInternalAppBundle(appPath, {
+  expectedBuildNumber = requiredPlistValues.CFBundleVersion,
+} = {}) {
+  const normalizedBuildNumber = requireInternalBuildNumber(
+    expectedBuildNumber,
+    "expected app build number",
+  );
   const requestedApp = requireAbsolutePath(appPath, "Blabee.app");
   if (basename(requestedApp) !== bundleName) {
     fail(`app bundle must end with ${bundleName}`);
@@ -313,7 +456,10 @@ export async function verifyInternalAppBundle(appPath) {
   const infoPlist = join(canonicalApp, "Contents", "Info.plist");
   await requireRegularFile(infoPlist, "Info.plist");
   const plist = await decodePlist(infoPlist);
-  for (const [key, expected] of Object.entries(requiredPlistValues)) {
+  for (const [key, defaultExpected] of Object.entries(requiredPlistValues)) {
+    const expected = key === "CFBundleVersion"
+      ? normalizedBuildNumber
+      : defaultExpected;
     if (typeof plist[key] !== typeof expected || plist[key] !== expected) {
       fail(`Info.plist ${key} must be ${JSON.stringify(expected)}`);
     }
@@ -329,6 +475,7 @@ export async function verifyInternalAppBundle(appPath) {
     fail("main executable must be executable");
   }
   const architectures = await inspectArchitectures(executable);
+  requireExactInternalArchitecture(architectures, "main executable");
   await verifyAdHocSignature(canonicalApp);
   return {
     appPath: canonicalApp,
@@ -340,16 +487,68 @@ export async function verifyInternalAppBundle(appPath) {
   };
 }
 
-async function streamSHA256(path) {
-  await requireRegularFile(path, "DMG artifact");
-  const hash = createHash("sha256");
-  await new Promise((resolvePromise, rejectPromise) => {
-    const stream = createReadStream(path);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.once("error", rejectPromise);
-    stream.once("end", resolvePromise);
-  });
-  return hash.digest("hex");
+async function streamSHA256(path, {
+  afterLstat = null,
+  afterReadChunk = null,
+  expectedIdentity = null,
+} = {}) {
+  const pathMetadata = await requireRegularFile(path, "DMG artifact");
+  if (!Number.isSafeInteger(pathMetadata.size) || pathMetadata.size < 0) {
+    fail("DMG artifact has an unsafe initial size");
+  }
+  if (pathMetadata.size > maximumDMGBytes) {
+    fail(`DMG artifact exceeds the ${maximumDMGBytes}-byte limit`);
+  }
+  if (expectedIdentity !== null && !sameIdentity(pathMetadata, expectedIdentity)) {
+    throw preservationError("DMG artifact identity does not match the interrupted transaction");
+  }
+  if (afterLstat !== null) await afterLstat();
+  const handle = await open(path, stableReadOnlyFlags());
+  try {
+    const openedBefore = await handle.stat();
+    if (!openedBefore.isFile() || !sameStableFileMetadata(pathMetadata, openedBefore)) {
+      fail("DMG artifact changed while it was being opened for hashing");
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(stableReadBufferBytes);
+    let position = 0;
+    let chunkIndex = 0;
+    while (position < openedBefore.size) {
+      const requestedBytes = Math.min(buffer.length, openedBefore.size - position);
+      const { bytesRead } = await handle.read(buffer, 0, requestedBytes, position);
+      if (bytesRead === 0) fail("DMG artifact ended before its initial size was hashed");
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+      if (afterReadChunk !== null) {
+        await afterReadChunk({ bytesRead, chunkIndex, position });
+      }
+      chunkIndex += 1;
+    }
+    const appendProbe = Buffer.allocUnsafe(1);
+    const { bytesRead: appendedBytes } = await handle.read(
+      appendProbe,
+      0,
+      1,
+      openedBefore.size,
+    );
+    if (appendedBytes !== 0) {
+      fail("DMG artifact grew beyond its initial size while it was being hashed");
+    }
+    const openedAfter = await handle.stat();
+    const pathAfter = await lstat(path);
+    if (
+      pathAfter.isSymbolicLink()
+      || !pathAfter.isFile()
+      || !sameStableFileMetadata(openedBefore, openedAfter)
+      || !sameStableFileMetadata(openedAfter, pathAfter)
+      || position !== openedBefore.size
+    ) {
+      fail("DMG artifact changed while it was being hashed");
+    }
+    return hash.digest("hex");
+  } finally {
+    await handle.close();
+  }
 }
 
 async function inspectLinkIdentity(path) {
@@ -358,15 +557,25 @@ async function inspectLinkIdentity(path) {
 }
 
 async function removeIfSameLink(path, identity) {
-  if (identity === null) return;
+  if (identity === null) return "identityMissing";
   try {
     const metadata = await lstat(path);
     if (metadata.dev === identity.dev && metadata.ino === identity.ino) {
       await unlink(path);
+      return "removed";
     }
+    return "identityMismatch";
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    if (error?.code === "ENOENT") return "missing";
+    throw error;
   }
+}
+
+function requireExactRemoval(status, label, { allowMissing = false } = {}) {
+  if (status === "removed" || (allowMissing && status === "missing")) return;
+  throw preservationError(
+    `${label} changed before cleanup (${status}); refusing removal`,
+  );
 }
 
 async function publishExclusive(source, destination, label) {
@@ -393,9 +602,18 @@ async function verifyMountedVolume(mountPoint, expectedApp) {
   if (await readlink(applications) !== "/Applications") {
     fail("Applications link must target /Applications");
   }
-  const notice = await readFile(join(mountPoint, internalNoticeName), "utf8");
-  if (notice !== internalNotice) fail(`${internalNoticeName} content changed`);
-  const mountedApp = await verifyInternalAppBundle(join(mountPoint, bundleName));
+  const notice = await readStableRegularFile(
+    join(mountPoint, internalNoticeName),
+    "mounted internal-testing notice",
+    { maximumBytes: maximumInternalNoticeBytes },
+  );
+  if (notice.bytes.toString("utf8") !== internalNotice) {
+    fail(`${internalNoticeName} content changed`);
+  }
+  const mountedApp = await verifyInternalAppBundle(
+    join(mountPoint, bundleName),
+    { expectedBuildNumber: expectedApp.build },
+  );
   if (
     mountedApp.bundleIdentifier !== expectedApp.bundleIdentifier
     || mountedApp.version !== expectedApp.version
@@ -416,7 +634,9 @@ async function attachedDeviceEntriesForImage(dmgPath, workRoot, phase, execute =
   );
   const plistPath = join(workRoot, `.hdiutil-info-${phase}-${randomUUID()}.plist`);
   const handle = await open(plistPath, "wx", 0o600);
+  let plistIdentity;
   try {
+    plistIdentity = statIdentity(await handle.stat());
     await handle.writeFile(stdout, "utf8");
     await handle.sync();
   } finally {
@@ -436,7 +656,10 @@ async function attachedDeviceEntriesForImage(dmgPath, workRoot, phase, execute =
   }
   let cleanupError = null;
   try {
-    await unlink(plistPath);
+    requireExactRemoval(
+      await removeIfSameLink(plistPath, plistIdentity),
+      "hdiutil info snapshot",
+    );
   } catch (error) {
     cleanupError = error;
   }
@@ -642,6 +865,37 @@ async function resolveOutput(outputPath) {
   };
 }
 
+export async function preflightInternalDMGOutput(outputPath, {
+  buildNumber,
+  processKill = process.kill.bind(process),
+} = {}) {
+  const normalizedBuildNumber = requireInternalBuildNumber(
+    buildNumber,
+    "build number",
+  );
+  const destination = await resolveOutput(outputPath);
+  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
+  if (await pathExistsWithoutFollowing(destination.lock)) {
+    const lock = await readOutputLock(destination);
+    if (ownerIsAlive(lock.payload.pid, processKill)) {
+      fail(`internal DMG output is locked by active process ${lock.payload.pid}`);
+    }
+  }
+  if (await pathExistsWithoutFollowing(destination.transaction)) {
+    await readTransactionPayload(destination, normalizedBuildNumber);
+    return destination;
+  }
+  for (const [path, label] of [
+    [destination.output, "DMG output"],
+    [destination.checksum, "checksum output"],
+  ]) {
+    if (await pathExistsWithoutFollowing(path)) {
+      fail(`${label} already exists: ${path}`);
+    }
+  }
+  return destination;
+}
+
 function validateLockPayload(payload, destination) {
   const expectedKeys = [
     "lock_identity",
@@ -670,31 +924,20 @@ function validateLockPayload(payload, destination) {
   };
 }
 
-async function readOutputLock(destination) {
-  const pathMetadata = await lstat(destination.lock);
-  if (pathMetadata.isSymbolicLink() || !pathMetadata.isFile()) {
-    fail("internal DMG output lock must be a regular file; refusing automatic removal");
-  }
-  const handle = await open(destination.lock, "r");
-  let payload;
-  let handleMetadata;
-  try {
-    handleMetadata = await handle.stat();
-    if (!sameIdentity(pathMetadata, handleMetadata)) {
-      fail("internal DMG output lock changed while it was opened");
-    }
-    payload = validateLockPayload(JSON.parse(await handle.readFile("utf8")), destination);
-    const after = await handle.stat();
-    if (!sameStableFileMetadata(handleMetadata, after)) {
-      fail("internal DMG output lock changed while it was read");
-    }
-  } finally {
-    await handle.close();
-  }
-  if (!sameIdentity(payload.lock_identity, handleMetadata)) {
+async function readOutputLock(destination, options = {}) {
+  const record = await readStableRegularFile(
+    destination.lock,
+    "internal DMG output lock",
+    { ...options, maximumBytes: maximumLockBytes },
+  );
+  const payload = validateLockPayload(
+    JSON.parse(record.bytes.toString("utf8")),
+    destination,
+  );
+  if (!sameIdentity(payload.lock_identity, record.metadata)) {
     fail("internal DMG output lock identity does not match its payload");
   }
-  return { payload, identity: statIdentity(handleMetadata) };
+  return { payload, identity: statIdentity(record.metadata) };
 }
 
 async function createOutputLock(destination, ownerPID, nonce) {
@@ -721,7 +964,13 @@ async function createOutputLock(destination, ownerPID, nonce) {
         { cause: error },
       );
     }
-    await removeIfSameLink(destination.lock, identity ?? null);
+    if (identity !== undefined) {
+      requireExactRemoval(
+        await removeIfSameLink(destination.lock, identity),
+        "internal DMG output lock",
+        { allowMissing: true },
+      );
+    }
     throw error;
   }
   await handle.close();
@@ -743,6 +992,7 @@ export async function acquireOutputLock(destination, {
   ownerPID = process.pid,
   nonce = randomUUID(),
   processKill = process.kill.bind(process),
+  beforeStaleLockRemoval = null,
 } = {}) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -766,7 +1016,11 @@ export async function acquireOutputLock(destination, {
       fail("internal DMG output lock changed during stale-lock recovery");
     }
     await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
-    await removeIfSameLink(destination.lock, existing.identity);
+    if (beforeStaleLockRemoval !== null) await beforeStaleLockRemoval();
+    requireExactRemoval(
+      await removeIfSameLink(destination.lock, existing.identity),
+      "stale internal DMG output lock",
+    );
   }
   fail("internal DMG output lock could not be acquired");
 }
@@ -791,9 +1045,15 @@ async function assertOutputLockOwnership(destination, ownership) {
   }
 }
 
-export async function releaseOutputLock(destination, ownership) {
+export async function releaseOutputLock(destination, ownership, {
+  beforeRemoval = null,
+} = {}) {
   await assertOutputLockOwnership(destination, ownership);
-  await removeIfSameLink(destination.lock, ownership.identity);
+  if (beforeRemoval !== null) await beforeRemoval();
+  requireExactRemoval(
+    await removeIfSameLink(destination.lock, ownership.identity),
+    "internal DMG output lock",
+  );
 }
 
 function requireRecordedIdentity(value, label) {
@@ -826,15 +1086,23 @@ async function requirePathIdentity(path, expected, label, type) {
   return metadata;
 }
 
-function validateTransactionPayload(payload, destination) {
+function validateTransactionPayload(payload, destination, buildNumber) {
   if (payload === null || Array.isArray(payload) || typeof payload !== "object") {
     fail("interrupted publish transaction must contain a JSON object");
   }
+  if (payload.schema_version !== publishTransactionSchemaVersion) {
+    if (payload.schema_version === "blabee.internal-dmg-publish.v1") {
+      fail("legacy interrupted publish transactions cannot be recovered without current build and architecture evidence");
+    }
+    fail("interrupted publish transaction has an unsupported schema");
+  }
   const expectedKeys = [
+    "build_number",
     "checksum",
     "checksum_identity",
     "detached_verified",
     "dmg_identity",
+    "expected_architecture",
     "output",
     "parent_identity",
     "schema_version",
@@ -846,14 +1114,17 @@ function validateTransactionPayload(payload, destination) {
   if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(expectedKeys)) {
     fail("interrupted publish transaction contains unexpected fields");
   }
-  if (payload.schema_version !== "blabee.internal-dmg-publish.v1") {
-    fail("interrupted publish transaction has an unsupported schema");
-  }
   if (
     payload.output !== basename(destination.output)
     || payload.checksum !== basename(destination.checksum)
   ) {
     fail("interrupted publish transaction targets different output paths");
+  }
+  if (payload.build_number !== buildNumber) {
+    fail("interrupted publish transaction build number differs from the requested build");
+  }
+  if (payload.expected_architecture !== requiredArchitecture) {
+    fail("interrupted publish transaction architecture differs from the internal DMG target");
   }
   if (
     typeof payload.work_root !== "string"
@@ -874,32 +1145,61 @@ function validateTransactionPayload(payload, destination) {
   };
 }
 
-async function readTransactionPayload(destination) {
-  const markerMetadata = await requireRegularFile(
-    destination.transaction,
-    "interrupted publish transaction",
-  );
+async function readTransactionPayload(destination, buildNumber) {
+  let record;
   let payload;
   try {
-    payload = JSON.parse(await readFile(destination.transaction, "utf8"));
+    record = await readStableRegularFile(
+      destination.transaction,
+      "interrupted publish transaction",
+      { maximumBytes: maximumTransactionBytes },
+    );
+    payload = JSON.parse(record.bytes.toString("utf8"));
   } catch (error) {
     throw preservationError(`interrupted publish transaction is unreadable: ${error.message}`);
   }
   return {
-    payload: validateTransactionPayload(payload, destination),
-    markerIdentity: statIdentity(markerMetadata),
+    payload: validateTransactionPayload(payload, destination, buildNumber),
+    markerIdentity: statIdentity(record.metadata),
   };
 }
 
-export async function recoverInterruptedPublish(destination, lockOwnership) {
+async function readInterruptedChecksum(path, label, expectedIdentity) {
+  let record;
+  try {
+    record = await readStableRegularFile(path, label, {
+      maximumBytes: maximumChecksumBytes,
+    });
+  } catch (error) {
+    throw preservationError(`${label} could not be read safely: ${error.message}`);
+  }
+  if (!sameIdentity(record.metadata, expectedIdentity)) {
+    throw preservationError(`${label} identity does not match the interrupted transaction`);
+  }
+  return record.bytes.toString("utf8");
+}
+
+export async function recoverInterruptedPublish(destination, lockOwnership, {
+  buildNumber,
+  beforeChecksumOnlyCleanup = null,
+  beforeTransactionMarkerCleanup = null,
+} = {}) {
   await assertOutputLockOwnership(destination, lockOwnership);
   await assertDirectoryIdentity(
     destination.parent,
     destination.parentIdentity,
     "--output parent",
   );
+  const normalizedBuildNumber = requireInternalBuildNumber(
+    buildNumber,
+    "recovery build number",
+  );
+  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
   if (!await pathExistsWithoutFollowing(destination.transaction)) return { recovered: false };
-  const { payload, markerIdentity } = await readTransactionPayload(destination);
+  const { payload, markerIdentity } = await readTransactionPayload(
+    destination,
+    normalizedBuildNumber,
+  );
   if (!sameIdentity(markerIdentity, payload.transaction_identity)) {
     throw preservationError("interrupted publish transaction marker identity changed");
   }
@@ -931,11 +1231,18 @@ export async function recoverInterruptedPublish(destination, lockOwnership) {
       "staged checksum",
       "file",
     );
-    if (await streamSHA256(stagedDMG) !== payload.sha256) {
+    if (
+      await streamSHA256(stagedDMG, { expectedIdentity: payload.dmg_identity })
+      !== payload.sha256
+    ) {
       throw preservationError("staged DMG checksum differs from the interrupted transaction");
     }
     if (
-      await readFile(stagedChecksum, "utf8")
+      await readInterruptedChecksum(
+        stagedChecksum,
+        "staged checksum",
+        payload.checksum_identity,
+      )
       !== `${payload.sha256}  ${basename(destination.output)}\n`
     ) {
       throw preservationError("staged checksum content differs from the interrupted transaction");
@@ -946,7 +1253,10 @@ export async function recoverInterruptedPublish(destination, lockOwnership) {
   const checksumExists = await pathExistsWithoutFollowing(destination.checksum);
   if (dmgExists) {
     await requirePathIdentity(destination.output, payload.dmg_identity, "published DMG", "file");
-    if (await streamSHA256(destination.output) !== payload.sha256) {
+    if (
+      await streamSHA256(destination.output, { expectedIdentity: payload.dmg_identity })
+      !== payload.sha256
+    ) {
       throw preservationError("published DMG checksum differs from the interrupted transaction");
     }
   }
@@ -958,7 +1268,11 @@ export async function recoverInterruptedPublish(destination, lockOwnership) {
       "file",
     );
     if (
-      await readFile(destination.checksum, "utf8")
+      await readInterruptedChecksum(
+        destination.checksum,
+        "published checksum",
+        payload.checksum_identity,
+      )
       !== `${payload.sha256}  ${basename(destination.output)}\n`
     ) {
       throw preservationError("published checksum content differs from the interrupted transaction");
@@ -968,14 +1282,30 @@ export async function recoverInterruptedPublish(destination, lockOwnership) {
     throw preservationError("interrupted transaction contains a DMG without its checksum; manual inspection is required");
   }
   if (checksumExists && !dmgExists) {
-    await unlink(destination.checksum);
+    await assertDirectoryIdentity(
+      destination.parent,
+      destination.parentIdentity,
+      "--output parent",
+    );
+    if (beforeChecksumOnlyCleanup !== null) await beforeChecksumOnlyCleanup();
+    const cleanupStatus = await removeIfSameLink(
+      destination.checksum,
+      payload.checksum_identity,
+    );
+    requireExactRemoval(cleanupStatus, "published checksum");
   }
   await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
+  if (beforeTransactionMarkerCleanup !== null) {
+    await beforeTransactionMarkerCleanup();
+  }
+  requireExactRemoval(
+    await removeIfSameLink(destination.transaction, markerIdentity),
+    "interrupted publish transaction marker",
+  );
   if (workRootExists) {
     await assertDirectoryIdentity(workRoot, payload.work_root_identity, "transaction work root");
     await rm(workRoot, { recursive: true, force: false });
   }
-  await removeIfSameLink(destination.transaction, markerIdentity);
   return { recovered: true, committed: dmgExists && checksumExists };
 }
 
@@ -989,6 +1319,7 @@ async function assertOutputsAbsent(destination) {
 }
 
 async function createPublishTransaction({
+  buildNumber,
   destination,
   workRoot,
   workRootIdentity,
@@ -996,6 +1327,11 @@ async function createPublishTransaction({
   stagedChecksum,
   sha256,
 }) {
+  const normalizedBuildNumber = requireInternalBuildNumber(
+    buildNumber,
+    "transaction build number",
+  );
+  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
   await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
   await assertDirectoryIdentity(workRoot, workRootIdentity, "packaging work root");
   const dmgIdentity = statIdentity(await requireRegularFile(stagedDMG, "staged DMG"));
@@ -1004,21 +1340,25 @@ async function createPublishTransaction({
   );
   const transactionSource = join(workRoot, "publish-transaction.json");
   const handle = await open(transactionSource, "wx", 0o600);
-  const transactionIdentity = statIdentity(await handle.stat());
-  const payload = {
-    schema_version: "blabee.internal-dmg-publish.v1",
-    output: basename(destination.output),
-    checksum: basename(destination.checksum),
-    work_root: basename(workRoot),
-    parent_identity: { ...destination.parentIdentity },
-    work_root_identity: { ...workRootIdentity },
-    transaction_identity: transactionIdentity,
-    dmg_identity: dmgIdentity,
-    checksum_identity: checksumIdentity,
-    sha256,
-    detached_verified: true,
-  };
+  let transactionIdentity;
+  let payload;
   try {
+    transactionIdentity = statIdentity(await handle.stat());
+    payload = {
+      schema_version: publishTransactionSchemaVersion,
+      build_number: normalizedBuildNumber,
+      expected_architecture: requiredArchitecture,
+      output: basename(destination.output),
+      checksum: basename(destination.checksum),
+      work_root: basename(workRoot),
+      parent_identity: { ...destination.parentIdentity },
+      work_root_identity: { ...workRootIdentity },
+      transaction_identity: transactionIdentity,
+      dmg_identity: dmgIdentity,
+      checksum_identity: checksumIdentity,
+      sha256,
+      detached_verified: true,
+    };
     await handle.writeFile(`${JSON.stringify(payload)}\n`, "utf8");
     await handle.sync();
   } finally {
@@ -1033,7 +1373,11 @@ async function createPublishTransaction({
     );
   } catch (error) {
     try {
-      await unlink(transactionSource);
+      requireExactRemoval(
+        await removeIfSameLink(transactionSource, transactionIdentity),
+        "publish transaction source",
+        { allowMissing: true },
+      );
     } catch (cleanupError) {
       if (cleanupError?.code !== "ENOENT") {
         throw new AggregateError(
@@ -1066,10 +1410,20 @@ function errorWithCleanup(primaryError, cleanupErrors) {
 export async function buildInternalDMG({
   binaryPath,
   outputPath,
+  buildNumber,
   compatiblePreviousApps = [],
   platform = process.platform,
+  prePublishValidation = null,
+  sourceRoot = repositoryRoot,
 } = {}) {
   requireDarwin(platform);
+  const normalizedBuildNumber = requireInternalBuildNumber(
+    buildNumber,
+    "build number",
+  );
+  if (prePublishValidation !== null && typeof prePublishValidation !== "function") {
+    fail("pre-publish validation must be a function or null");
+  }
   const binary = requireAbsolutePath(binaryPath, "--binary");
   if (!Array.isArray(compatiblePreviousApps)) {
     fail("compatible previous apps must be an array");
@@ -1078,7 +1432,14 @@ export async function buildInternalDMG({
   if (previousApps.length > maximumCompatiblePreviousApps) {
     fail(`at most ${maximumCompatiblePreviousApps} compatible previous apps are supported`);
   }
+  const requestedSourceRoot = requireAbsolutePath(sourceRoot, "source root");
+  await requireDirectory(requestedSourceRoot, "source root");
+  const canonicalSourceRoot = await realpath(requestedSourceRoot);
   const destination = await resolveOutput(outputPath);
+  requireInternalDMGOutputBuildSuffix(
+    destination.output,
+    normalizedBuildNumber,
+  );
   const outputLock = await acquireOutputLock(destination);
   const token = `${process.pid}-${randomUUID()}`;
   let workRoot = null;
@@ -1093,7 +1454,9 @@ export async function buildInternalDMG({
   let primaryError = null;
   let result = null;
   try {
-    const recovery = await recoverInterruptedPublish(destination, outputLock);
+    const recovery = await recoverInterruptedPublish(destination, outputLock, {
+      buildNumber: normalizedBuildNumber,
+    });
     if (recovery.committed === true) {
       fail(`a previous internal DMG transaction completed successfully: ${destination.output}`);
     }
@@ -1113,10 +1476,14 @@ export async function buildInternalDMG({
     const appResult = await assembleMacOSApp({
       binaryPath: pinnedBinary.path,
       outputPath: join(volumeRoot, bundleName),
+      sourceRoot: canonicalSourceRoot,
       adhocSign: true,
+      bundleVersion: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
     });
-    const assembledApp = await verifyInternalAppBundle(appResult.output);
+    const assembledApp = await verifyInternalAppBundle(appResult.output, {
+      expectedBuildNumber: normalizedBuildNumber,
+    });
     await symlink("/Applications", join(volumeRoot, "Applications"));
     const noticeHandle = await open(
       join(volumeRoot, internalNoticeName),
@@ -1167,9 +1534,15 @@ export async function buildInternalDMG({
     }
     await chmod(stagedChecksum, 0o644);
 
+    requireExactInternalArchitecture(
+      mountedApp.architectures,
+      "published result app",
+    );
+    if (prePublishValidation !== null) await prePublishValidation();
     await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
     await assertDirectoryIdentity(workRoot, workRootIdentity, "packaging work root");
     const transaction = await createPublishTransaction({
+      buildNumber: normalizedBuildNumber,
       destination,
       workRoot,
       workRootIdentity,
@@ -1230,37 +1603,45 @@ export async function buildInternalDMG({
       [destination.checksum, checksumPublishedIdentity, "checksum rollback failed"],
     ]) {
       try {
-        await removeIfSameLink(path, identity);
+        if (identity !== null) {
+          requireExactRemoval(
+            await removeIfSameLink(path, identity),
+            label.replace(" failed", ""),
+          );
+        }
       } catch (error) {
         cleanupErrors.push(cleanupDiagnostic(label, error));
         preserveWorkRoot = true;
       }
     }
   }
-  let workRootRemoved = workRoot === null;
+  if (!preserveWorkRoot && transactionMarkerIdentity !== null) {
+    try {
+      await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
+      requireExactRemoval(
+        await removeIfSameLink(destination.transaction, transactionMarkerIdentity),
+        "publish transaction marker",
+      );
+      transactionMarkerIdentity = null;
+    } catch (error) {
+      cleanupErrors.push(cleanupDiagnostic(
+        `publish transaction cleanup failed; recoverable marker: ${destination.transaction}`,
+        error,
+      ));
+      preserveWorkRoot = true;
+    }
+  }
   if (workRoot !== null && !preserveWorkRoot) {
     try {
       await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
       await assertDirectoryIdentity(workRoot, workRootIdentity, "packaging work root");
       await rm(workRoot, { recursive: true, force: false });
-      workRootRemoved = true;
     } catch (error) {
       cleanupErrors.push(cleanupDiagnostic(
         `packaging work-root cleanup failed; preserved path: ${workRoot}`,
         error,
       ));
       preserveWorkRoot = true;
-    }
-  }
-  if (workRootRemoved && transactionMarkerIdentity !== null) {
-    try {
-      await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
-      await removeIfSameLink(destination.transaction, transactionMarkerIdentity);
-    } catch (error) {
-      cleanupErrors.push(cleanupDiagnostic(
-        `publish transaction cleanup failed; recoverable marker: ${destination.transaction}`,
-        error,
-      ));
     }
   }
   try {
@@ -1286,69 +1667,34 @@ export const internalDMGTesting = Object.freeze({
   acquireOutputLock,
   errorWithCleanup,
   publishExclusive,
+  readOutputLock,
+  readStableRegularFile,
   releaseOutputLock,
   resolveOutput,
+  streamSHA256,
 });
-
-function parseCLIArguments(values) {
-  let binaryPath;
-  let outputPath;
-  let help = false;
-  const compatiblePreviousApps = [];
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value === "--help" || value === "-h") {
-      help = true;
-      continue;
-    }
-    if (
-      value !== "--binary"
-      && value !== "--output"
-      && value !== "--compatible-previous-app"
-    ) {
-      fail(`unsupported argument: ${value}`);
-    }
-    if (index + 1 >= values.length || values[index + 1].startsWith("--")) {
-      fail(`${value} requires a value`);
-    }
-    const argument = values[index + 1];
-    index += 1;
-    if (value === "--binary") {
-      if (binaryPath !== undefined) fail("--binary may be provided only once");
-      binaryPath = argument;
-    } else if (value === "--output") {
-      if (outputPath !== undefined) fail("--output may be provided only once");
-      outputPath = argument;
-    } else {
-      compatiblePreviousApps.push(argument);
-      if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
-        fail(`--compatible-previous-app may be provided at most ${maximumCompatiblePreviousApps} times`);
-      }
-    }
-  }
-  return { binaryPath, outputPath, compatiblePreviousApps, help };
-}
 
 function usage() {
   return [
-    "Usage:",
-    "  node scripts/build-internal-dmg.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee-internal.dmg [--compatible-previous-app /absolute/path/to/Blabee.app]",
+    "Direct build-internal-dmg.mjs CLI packaging is disabled.",
     "",
-    "Creates an ad-hoc signed, non-notarized DMG for approved internal testing only.",
-    "--compatible-previous-app may be repeated at most twice.",
-    "The output parent must already exist; the script never writes to /Applications.",
-    "Both the .dmg and matching .dmg.sha256 path must not already exist.",
+    "Use the source-building entry point instead:",
+    "  npm run build:internal-dmg -- --build-number 2 --output /absolute/path/to/Blabee-internal-r2.dmg",
+    "",
+    "This prevents a stale prebuilt --binary from being packaged accidentally.",
   ].join("\n");
 }
 
 async function main() {
-  const options = parseCLIArguments(process.argv.slice(2));
-  if (options.help) {
+  const values = process.argv.slice(2);
+  if (values.length === 1 && (values[0] === "--help" || values[0] === "-h")) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  const result = await buildInternalDMG(options);
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  fail([
+    "direct prebuilt-binary DMG packaging is disabled",
+    "run npm run build:internal-dmg -- --build-number 2 --output /absolute/path/to/Blabee-internal-r2.dmg",
+  ].join("; "));
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;

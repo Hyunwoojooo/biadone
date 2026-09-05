@@ -2,8 +2,90 @@
 
 상태: M0 타당성 범위 조건부 승인, T-005·T-006·T-007 완료, T-007b-A/A2/B1/B2/C 범위 조건부 승인, T-010 실제 macOS 1차 qualification 조건부 승인, T-011 코드·Keychain 없는 제품 결합 범위 조건부 승인, T-012b-3b Pet 온보딩 UI·서비스 수명주기 adapter 코드 계약 조건부 승인, T-015 소스·계약·자동·실제 두 세션 dogfood 완료
 최초 검토일: 2026-08-23
-최종 업데이트: 2026-09-03
-대상: 당시 `spikes/m0/`, 현재 `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0`, 설계·상태 문서. M0 실행 소스는 역사적 결과를 이 문서와 Git 기록에 보존한 뒤 2026-08-31 활성 트리에서 제거했다.
+최종 업데이트: 2026-09-05
+대상: 당시 `spikes/m0/`, 현재 `spikes/m1/runtime-qualification/`, `Contracts/v1/`, `Fixtures/v1/`, `src/coordinator-core/`, `src/coordinator-swift/`, `Plugin/blabee/`, 관련 테스트, Codex CLI `0.148.0`·`0.149.0` 및 `0.153.2` Plugin CLI, 설계·상태 문서. M0 실행 소스는 역사적 결과를 이 문서와 Git 기록에 보존한 뒤 2026-08-31 활성 트리에서 제거했다.
+
+## 2026-09-05 r8 내부 후보·종료 경계·Pet 유휴 후속 QA
+
+- 현재 판정: **r8 패키지·로컬 설치·service 복구·Doctor 부분 자격 통과, clean Mac·Hook/Pet
+  왕복·관리형 Codex 미승인, 공개 배포 미승인**
+- final internal candidate는
+  `/Users/joo/BiaDone/apps/blabee/build/internal-dmg-20260905-r8/Blabee-0.1.0-internal-arm64-20260905-r8.dmg`다.
+  앱은 `0.1.0` build `8`, exact `arm64`, ad-hoc 서명이며 DMG 자체는 미서명·미공증이다.
+  SHA-256은 `e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`,
+  `public_distribution_ready = false`다. r7과 그 이전 파일은 superseded local artifact로
+  분류하고 내부 테스터에게 전달하지 않는다.
+- 게시 transaction schema v2는 `build_number`와 `expected_architecture = arm64`를
+  복구 identity에 함께 봉인한다. legacy v1 transaction과 build·architecture가 다른
+  복구는 fail-closed하며, 조립된 앱·읽기 전용 mount·최종 결과가 모두 build 8과 exact
+  arm64인지 확인한다.
+- 관리형 Codex child cleanup에서 무제한 `waitUntilExit()`를 제거했다. 이미 종료한
+  자식의 상태는 보존하고, 실행 중인 exact child만 TERM 750ms → 필요 시 SIGKILL 750ms의
+  제한된 순서로 회수한다. 전용 종료 회귀와 보조 연결 회귀가 통과했고 독립 QA에서 열린
+  Medium 이상 finding은 없다.
+- 서비스 설정 UI는 coordinator transport 상태와 `SMAppService` 등록 상태를 분리한다.
+  transport 실패를 등록 해제로 오인하거나 자동 재등록하지 않으며, 등록됐지만 응답이
+  없으면 `실행 확인 필요`로 표시한다. r8 설치 직후 첫 service 시작은
+  `OS_REASON_CODESIGNING`과 `Unable to get updated LWCR... Invalid argument`로 실패했다.
+  앱의 명시적 서비스 재시작이 unregister/re-register를 수행해 새 BTM UUID를 만들었고,
+  이후 launchctl running과 실제 service 응답을 확인했다. Pet 설정에는
+  `operational_socket_unavailable`이 남지 않고 **Plugin 설치됨 · Hook 상태 확인**이
+  표시됐다. 이 ad-hoc 업데이트 복구 절차를 없애려면 Developer ID 서명·공증 빌드와
+  지원 macOS별 업데이트 자격이 필요하다.
+- Pet 유휴 경로는 status icon을 최초/attention 전이에만 갱신하고, 동일 snapshot의
+  publish는 생략하되 callback은 보존한다. 단축키 등록 실패 계획도 입력이 바뀔 때까지
+  캐시한다. r8 설치본의 6-sample idle `top`은 UI와 service 각각 0.0~0.1% CPU,
+  메모리 약 65 MiB와 151 MiB였고, 최근 2분 freshness-key 로그에는 실제 access entry가
+  없었다. 짧은 단일 Mac 표본이므로 장시간 발열·전력 개선의 일반 증거로 확대하지 않는다.
+- 설치된 metadata는 앱 `0.1.0`, build `8`, 최소 macOS 13, exact `arm64`였고
+  deep/strict ad-hoc 서명을 통과했다. Doctor는 `coordinator_runtime`, `app_bundle`,
+  `embedded_coordinator`, `mcp_runtime`, `daemon_status`, `reconciliation_status`,
+  `project_scope`를 통과했다. Codex `0.153.2` managed runtime identity/version/code-mode
+  allowlist는 실패한다. 이는 일반 `0.153.2` Plugin CLI 자격과 별개이며 관리형 승인
+  지원을 뜻하지 않는다.
+- 전체 Node 346/346, Swift Testing 568/568+XCTest 5/5가 통과했다. clean Mac 최초
+  설치, Hook 신뢰와 실제 Pet 선택 왕복, 다른 macOS 업데이트, Developer ID·공증은 후속
+  live gate다.
+
+## 2026-09-04 Codex 0.153.2 Plugin CLI 호환성 자격
+
+- 현재 판정: **로컬 명령 계약·집중 lifecycle 2/2 및 자동 회귀 통과, 깨끗한 Mac·live Plugin 연결 미승인**
+- 이 자격은 native Codex `0.153.2`의 **Plugin CLI에만** 적용한다. 관리형 App Server의
+  protocol semantic allowlist나 private runtime bundle catalog를 확대하지 않는다. 공식
+  changelog에서 `0.153.2`의 변경은 Fast tier 설명뿐이며, remote marketplace는 `0.153.0`에서
+  도입됐다. 로컬 `0.153.2`의 명령/help/list 계약을 별도로 확인했다.
+- remote marketplace에서 설치한 Plugin record는 `source.path`가 없을 수 있으므로 parser는
+  path가 없는 non-local record를 허용한다. Blabee 소유 Plugin은 예외 없이 기대한 local
+  marketplace와 exact local path가 일치해야 한다.
+- 공식 arm64 archive SHA-256은
+  `287e2dd0a9bbfb58581b0a9150399458b4f094ea42caf02860f1e8cb5a202a0b`, 그 안의 실행 파일
+  SHA-256은 `195ace4100a634a9df39147f493e730e666b5bd87795f3c9f3251d8542400424`다. 해당 공식
+  bytes가 기존 strict Apple signature 검사를 통과하지 않아, arm64 `0.153.2`의 이 exact
+  executable hash에만 좁은 예외를 적용했다. 구조·identity·owner·mode·ACL 검사는 그대로
+  유지하고, 그 밖의 binary는 기존 서명 경로를 계속 사용한다. 각 독립 상태 확인은 전체
+  executable hash를 새로 계산한다. 같은 상태 확인 안의 하위 명령 전후에는 동일한 전체
+  identity snapshot을 재검증해 220MB 파일의 불필요한 반복 해시는 피한다.
+- `Tests/CoordinatorOperational/plugin-lifecycle.test.mjs` 격리 실행은 2/2 통과했다.
+  2026-09-04 최종 소스에서 전체 Node 337/337을 통과했다. Swift Testing은 서로 다른
+  suite의 임시 fixture 변경이 production의 path ABA 방어에 걸리지 않도록 전체 실행의
+  동시성 폭을 1로 고정한 `npm run test:swift`를 표준 gate로 추가했다. 이 명령과 같은
+  raw 명령은 최종 trait 없는 소스에서 세 차례 연속 Swift Testing 555/555+XCTest 5/5를
+  통과했다. production의 full-stat/ctime 검사는 완화하지 않았다. Plugin·호환성 집중
+  Swift는 78/78, AppPackaging은 73/73, `git diff --check`도 통과했다.
+- 한 번의 `connect()`·`disconnect()`·구형 연결 마이그레이션은 하나의 operation context에서
+  검증된 executable과 전체 hash 근거를 재사용한다. 최종적으로 선택·고정된 약 220MB Codex
+  실행 파일의 전체 해시는 operation당 한 번만 계산한다. 탐색 중 거부된 다른 후보까지 합친
+  해시 횟수와는 구분한다. 깨끗한 Mac DMG에서는 이 상한이 실제 지연·CPU·disk
+  read에서도 유지되는지 성능 gate로 측정한다. 검증 뒤 URL 기반 process spawn 직전 같은 UID
+  또는 허용된 Homebrew 상위 경로
+  작성자가 파일을 바꾸는 기존 TOCTOU도 이번 범위에서는 제거하지 않았다.
+- 최종 소스로 만든 `20260904-r4` DMG와 sidecar는 SHA-256
+  `7dbf73b206709c95b89e76c06967371dd3f4f00d8c5b29eff94a3ae57f2213bf`로 일치했고,
+  `hdiutil verify`·읽기 전용 mount·deep/strict codesign·정확한 세 payload 항목을 통과했다.
+  아직 `/Applications`의 설치본은 교체하지 않았다. 깨끗한 Mac의 DMG 설치와 실제 Plugin
+  install/update/remove/list 및 Hook/Pet 연결은 별도 live gate로 남는다.
+  이 r4 기록은 당시 자격 근거로만 보존하며, 2026-09-05 r8이 현재 내부 후보이므로 r4를
+  포함한 r7 이전 산출물은 배포하지 않는다.
 
 ## 2026-09-03 설치·패키징·Pet 안정성 후속 QA
 
