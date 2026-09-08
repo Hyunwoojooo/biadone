@@ -116,11 +116,27 @@ current-user `0700` directory와 `0600` single-link file, process mutex+`flock`,
 strict locked read-modify-write, same-directory temporary file의 full write와 file
 `fsync`, atomic `renameat`, directory `fsync` 순서로 갱신한다.
 
-T-012b-3b Pet 온보딩:
+2026-09-07 앱 실행형 서비스 (내부 테스트, 설치본 검증 별도):
+
+- 설정에서 `앱 실행형 서비스 켜기`를 명시적으로 선택한 뒤에만 같은 앱 번들의
+  `app-service` 자식을 시작한다. 다음 앱 실행에서도 선택을 유지하며 패널 닫기는
+  숨김만, `Blabee 종료`는 소유한 서비스 종료까지 수행한다. `앱 실행형 끄기`는 다음
+  실행의 자동 시작도 비활성화한다. 기본값은 꺼짐이다.
+- 기존 SMAppService가 등록/승인 대기 중이면 사용자에게 등록 해제를 안내하며 자동으로
+  등록을 변경하지 않는다. 아래 기존 등록 방식과 동시에 서비스 소유권을 잡지 않는다.
+- 부모 lifetime pipe EOF, 소유 PID의 waitpid/종료 직렬화, 독립 종료 watchdog으로
+  앱 crash/종료를 처리한다. 등록·spawn만으로 ready라 하지 않고 자식 READY 신호와
+  검증된 snapshot을 모두 확인한다. 12초 시작/재연결 제한 뒤에는 수동 복구만 제공한다.
+- 실패 polling은 기본 0.5초에서 1/2/4초로 늘리고 정상 응답 시 복귀한다. 같은 ready
+  상태를 반복 publish하지 않으며, 새 generation에서 이전 snapshot/timeout을 무시한다.
+- 이 모드는 기존 ad-hoc SMAppService 서명 오류의 근본 해결 또는 공개 배포 자격이
+  아니다. 자세한 범위와 검증 기준은 `../../APP_OWNED_SERVICE_PLAN_KO.md`를 따른다.
+
+T-012b-3b Pet 온보딩 (기존 macOS 등록 방식):
 
 - exact 제품 앱의 Pet 설정 화면에서 `notRegistered`, `enabled`,
   `requiresApproval`, `notFound`, unknown 서비스 상태를 표시한다.
-- 앱 시작·poll·snapshot·설정 화면 열기는 읽기 전용이다. 등록·해제·System Settings
+- 앱 실행형 모드를 선택하지 않은 앱 시작·poll·snapshot·설정 화면 열기는 읽기 전용이다. 등록·해제·System Settings
   열기와 프로젝트 추가·제거는 각 명시적 버튼에서만 수행한다.
 - 변경은 single-flight이며 성공·실패 뒤 실제 상태와 설정을 다시 읽는다. 설정 읽기
   실패에서는 프로젝트 추가·제거를 차단한다. `notFound`는 macOS가 아직 번들 서비스를

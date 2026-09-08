@@ -1,7 +1,24 @@
 # Blabee MVP 구현 계획
 
 상태: M0·T-005·T-006·T-007·T-015 완료, T-007b-A/A2/B1/B2/C 범위 조건부 완료, T-010 네이티브 Pet 실제 macOS 1차 qualification 통과 및 환경 QA 진행 중, T-011 운영 어댑터 구현·검증 진행 중
-업데이트: 2026-09-02
+업데이트: 2026-09-08
+
+## 2026-09-08 내부 DMG r14 갱신
+
+사용자의 별도 DMG·커밋·푸시 승인으로 현재 소스를 fresh release 패키징했다.
+Node 360개, Swift Testing 668개 + XCTest 5개가 재통과했고 앱/DMG 무결성과 checksum을 확인했다.
+실행 중인 build 13은 유지했다. [r14 릴리스 기록](INTERNAL_DMG_R14_RELEASE_KO.md)에
+산출물·테스터 안내·미해결 Keychain/메모리 및 다른 Mac 검증 경계를 구분한다.
+
+## 2026-09-07~08 앱 실행형 내부 서비스
+
+현재 사용자가 승인한 범위는 [앱 실행형 서비스 안정화](APP_OWNED_SERVICE_PLAN_KO.md)의
+시작·종료와 상태/복구 두 항목이다. opt-in 앱 소유 프로세스와 기존 SMAppService
+등록 경로를 분리하며 Codex 실행·resume 또는 보안 설정을 변경하지 않는다.
+2026-09-08 사용자 승인 후 build 13 설치, 실제 연결·정상 종료·재실행과 단일 native Codex
+선택 왕복을 확인했다. 첫 Keychain 승인 대기 UX와 관찰된 RSS 증가를 후속 진단 대상으로
+남긴다. DMG 패키징은 위 r14 항목을 따르며 실제 설치·다른 Mac 자격은 아직 별도다.
+최신 진행 상태는 TASK_STATUS.md를 따른다.
 
 ## 2026-09-02 관리형 Codex runtime bundle 복구
 

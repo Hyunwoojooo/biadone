@@ -6,14 +6,20 @@ protocol PetCoordinatorTransport: Sendable {
 }
 
 enum PetTransportTimeoutPolicy {
+    // Let a selection finish native qualification + delivery without extending
+    // permission arbitration or ordinary snapshot polling deadlines.
+    static let selectionResponseTimeoutMilliseconds: Int32 = 60_000
+
     static func responseTimeoutMilliseconds(
         for requestType: String,
         defaultTimeoutMilliseconds: Int32,
-        userDecisionTimeoutMilliseconds: Int32
+        userDecisionTimeoutMilliseconds: Int32,
+        selectionTimeoutMilliseconds: Int32 = selectionResponseTimeoutMilliseconds
     ) -> Int32 {
         switch requestType {
-        case "select", "resolve_permission_request",
-             "resolve_managed_command_approval":
+        case "select":
+            selectionTimeoutMilliseconds
+        case "resolve_permission_request", "resolve_managed_command_approval":
             userDecisionTimeoutMilliseconds
         default:
             defaultTimeoutMilliseconds
@@ -40,18 +46,22 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
     private let connectTimeoutMilliseconds: Int32
     private let responseTimeoutMilliseconds: Int32
     private let userDecisionResponseTimeoutMilliseconds: Int32
+    private let selectionResponseTimeoutMilliseconds: Int32
 
     init(
         socketPath: String,
         connectTimeoutMilliseconds: Int32 = 2_000,
         responseTimeoutMilliseconds: Int32 = 2_000,
-        userDecisionResponseTimeoutMilliseconds: Int32 = 12_000
+        userDecisionResponseTimeoutMilliseconds: Int32 = 12_000,
+        selectionResponseTimeoutMilliseconds: Int32 =
+            PetTransportTimeoutPolicy.selectionResponseTimeoutMilliseconds
     ) throws {
         let resolvedSocketPath = try OperationalSocketPath.resolve(explicitPath: socketPath)
         client = try UnixDomainSocketClient(socketPath: resolvedSocketPath)
         self.connectTimeoutMilliseconds = connectTimeoutMilliseconds
         self.responseTimeoutMilliseconds = responseTimeoutMilliseconds
         self.userDecisionResponseTimeoutMilliseconds = userDecisionResponseTimeoutMilliseconds
+        self.selectionResponseTimeoutMilliseconds = selectionResponseTimeoutMilliseconds
     }
 
     func request(type: String, payload: Data) async throws -> Data {
@@ -62,7 +72,8 @@ actor PetUnixDomainSocketTransport: PetCoordinatorTransport {
                 for: type,
                 defaultTimeoutMilliseconds: responseTimeoutMilliseconds,
                 userDecisionTimeoutMilliseconds:
-                    userDecisionResponseTimeoutMilliseconds
+                    userDecisionResponseTimeoutMilliseconds,
+                selectionTimeoutMilliseconds: selectionResponseTimeoutMilliseconds
             )
         // UnixDomainSocketClient is deliberately synchronous. Run that bounded
         // I/O away from this actor so a long selection response cannot starve

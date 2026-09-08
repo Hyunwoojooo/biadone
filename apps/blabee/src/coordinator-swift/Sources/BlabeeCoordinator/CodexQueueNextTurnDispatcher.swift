@@ -14,6 +14,10 @@ typealias CodexQueueProcessRunning = @Sendable (
     _ arguments: [String],
     _ timeoutMilliseconds: Int
 ) throws -> CodexQueueProcessResult
+typealias CodexQueueCommandRunning = @Sendable (
+    _ arguments: [String],
+    _ timeoutMilliseconds: Int
+) throws -> CodexQueueProcessResult
 
 enum CodexQueueExecutableResolver {
     static func resolve(
@@ -172,16 +176,37 @@ enum CodexQueueProcessRunner {
         guard !output.exceededLimit, !errors.exceededLimit else {
             throw CoordinatorError("codex_queue_process_output_too_large")
         }
+        let exitCode: Int32
+        switch process.terminationReason {
+        case .exit:
+            exitCode = process.terminationStatus
+        case .uncaughtSignal:
+            exitCode = 128 + process.terminationStatus
+        @unknown default:
+            exitCode = process.terminationStatus
+        }
         return CodexQueueProcessResult(
-            exitCode: process.terminationStatus,
+            exitCode: exitCode,
             stdout: output.data
         )
     }
 }
 
 struct CodexQueueNextTurnDispatcher: Sendable {
-    private let executableResolver: CodexQueueExecutableResolving
-    private let processRunner: CodexQueueProcessRunning
+    // Trust checks can involve synchronous Security.framework and notarization
+    // work. Keep their overall budget separate from the queue child itself.
+    static let nativeOperationTimeoutMilliseconds = 45_000
+    static let queueCommandTimeoutMilliseconds = 10_000
+
+    private enum Execution: Sendable {
+        case legacy(
+            executableResolver: CodexQueueExecutableResolving,
+            processRunner: CodexQueueProcessRunning
+        )
+        case command(CodexQueueCommandRunning)
+    }
+
+    private let execution: Execution
     private let timeoutMilliseconds: Int
 
     init(
@@ -189,24 +214,50 @@ struct CodexQueueNextTurnDispatcher: Sendable {
         processRunner: @escaping CodexQueueProcessRunning,
         timeoutMilliseconds: Int = 10_000
     ) {
-        self.executableResolver = executableResolver
-        self.processRunner = processRunner
+        execution = .legacy(
+            executableResolver: executableResolver,
+            processRunner: processRunner
+        )
+        self.timeoutMilliseconds = timeoutMilliseconds
+    }
+
+    init(
+        commandRunner: @escaping CodexQueueCommandRunning,
+        timeoutMilliseconds: Int = 10_000
+    ) {
+        execution = .command(commandRunner)
         self.timeoutMilliseconds = timeoutMilliseconds
     }
 
     static func live(
         explicitExecutableURL: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        timeoutMilliseconds: Int = 10_000
+        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds
     ) -> CodexQueueNextTurnDispatcher {
         CodexQueueNextTurnDispatcher(
-            executableResolver: {
-                try CodexQueueExecutableResolver.resolve(
-                    explicitURL: explicitExecutableURL,
-                    environment: environment
+            nativeRuntime: .live(
+                explicitExecutableURL: explicitExecutableURL, environment: environment
+            ),
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+    }
+
+    init(
+        nativeRuntime: CodexNativeRuntime,
+        timeoutMilliseconds: Int = nativeOperationTimeoutMilliseconds
+    ) {
+        self.init(
+            commandRunner: { arguments, timeoutMilliseconds in
+                let result = try nativeRuntime.perform(
+                    arguments: arguments,
+                    timeoutMilliseconds: timeoutMilliseconds,
+                    commandTimeoutMilliseconds: Self.queueCommandTimeoutMilliseconds
+                )
+                return CodexQueueProcessResult(
+                    exitCode: result.exitCode,
+                    stdout: result.stdout
                 )
             },
-            processRunner: CodexQueueProcessRunner.run,
             timeoutMilliseconds: timeoutMilliseconds
         )
     }
@@ -218,26 +269,38 @@ struct CodexQueueNextTurnDispatcher: Sendable {
     func dispatch(
         _ request: CoordinatorNextTurnDispatchRequest
     ) async throws -> CoordinatorNextTurnDispatchReceipt {
-        let executable: URL
-        do {
-            executable = try executableResolver()
-        } catch {
-            throw stableError(error, fallbackCode: "codex_queue_executable_unavailable")
-        }
-
         let arguments = [
             "queue", "--thread", request.sessionID,
             "--message", request.message,
         ]
-        let runner = processRunner
         let timeout = timeoutMilliseconds
         let result: CodexQueueProcessResult
-        do {
-            result = try await Task.detached(priority: .utility) {
-                try runner(executable, arguments, timeout)
-            }.value
-        } catch {
-            throw stableError(error, fallbackCode: "codex_queue_process_unavailable")
+        switch execution {
+        case let .command(commandRunner):
+            do {
+                result = try await Task.detached(priority: .utility) {
+                    try commandRunner(arguments, timeout)
+                }.value
+            } catch {
+                throw stableError(error, fallbackCode: "codex_queue_process_unavailable")
+            }
+        case let .legacy(executableResolver, processRunner):
+            let executable: URL
+            do {
+                executable = try executableResolver()
+            } catch {
+                throw stableError(
+                    error,
+                    fallbackCode: "codex_queue_executable_unavailable"
+                )
+            }
+            do {
+                result = try await Task.detached(priority: .utility) {
+                    try processRunner(executable, arguments, timeout)
+                }.value
+            } catch {
+                throw stableError(error, fallbackCode: "codex_queue_process_unavailable")
+            }
         }
         guard result.exitCode == 0 else {
             throw CoordinatorError("codex_queue_process_failed")
@@ -253,7 +316,9 @@ struct CodexQueueNextTurnDispatcher: Sendable {
 
     private func stableError(_ error: Error, fallbackCode: String) -> CoordinatorError {
         let coordinatorError = error.coordinatorError
-        guard coordinatorError.code.hasPrefix("codex_queue_") else {
+        guard coordinatorError.code.hasPrefix("codex_queue_")
+                || coordinatorError.code.hasPrefix("codex_native_")
+        else {
             return CoordinatorError(fallbackCode)
         }
         return CoordinatorError(coordinatorError.code)

@@ -298,7 +298,7 @@ struct PetRootView: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
-                Text(viewModel.presentationState.displayTitle)
+                Text(viewModel.presentationTitle)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.secondary)
                 if viewModel.isRecoveryCapable {
@@ -1001,6 +1001,10 @@ struct PetRootView: View {
                 }
             }
 
+            if viewModel.isAppOwnedServiceAvailable {
+                appOwnedServiceSettings
+            }
+
             VStack(alignment: .leading, spacing: 13) {
                 HStack(spacing: 12) {
                     Image(systemName: onboardingServiceSymbol)
@@ -1010,7 +1014,7 @@ struct PetRootView: View {
                         .background(onboardingServiceColor.opacity(0.13), in: Circle())
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("백그라운드 서비스")
+                        Text("macOS 자동 시작 서비스")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Text(viewModel.onboardingServiceState.displayTitle)
@@ -1293,13 +1297,14 @@ struct PetRootView: View {
             }
             Spacer()
             Button {
-                Task { await viewModel.refreshCodexPluginSetup() }
+                Task { await viewModel.recheckCodexNativeExecutable() }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Label("Codex 실행 다시 검사", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.bordered)
-            .petCircleButtonBorder()
-            .accessibilityLabel("Codex Plugin 상태 새로고침")
+            .petCapsuleButtonBorder()
+            .help("이전에 차단된 Codex 파일도 이번 검사에서 다시 실행합니다.")
+            .accessibilityLabel("Codex 실행 다시 검사")
             .disabled(viewModel.isCodexPluginOperationInFlight)
         }
     }
@@ -1440,6 +1445,60 @@ struct PetRootView: View {
             .petCircleButtonBorder()
             .accessibilityLabel("모든 Blabee 설정 새로고침")
         }
+    }
+
+    private var appOwnedServiceSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("앱 실행형 서비스 · 내부 테스트")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.appOwnedServiceState.title)
+                        .font(.body.weight(.semibold))
+                }
+                Spacer()
+                if viewModel.appOwnedServiceState == .starting
+                    || viewModel.appOwnedServiceState == .stopping
+                    || viewModel.appOwnedServiceState == .reconnecting
+                {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel(viewModel.appOwnedServiceState.title)
+                }
+            }
+            Text(viewModel.appOwnedServiceState.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                if viewModel.isAppOwnedServiceEnabled {
+                    Button {
+                        Task { await viewModel.restartAppOwnedService() }
+                    } label: {
+                        Label("서비스 다시 시작", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .petCapsuleButtonBorder()
+                    Button("앱 실행형 끄기") {
+                        Task { await viewModel.disableAppOwnedService() }
+                    }
+                    .buttonStyle(.bordered)
+                    .petCapsuleButtonBorder()
+                } else {
+                    Button {
+                        Task { await viewModel.enableAppOwnedService() }
+                    } label: {
+                        Label("앱 실행형 서비스 켜기", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .petCapsuleButtonBorder()
+                }
+            }
+            .disabled(!viewModel.canChangeAppOwnedService)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface(emphasized: true)
     }
 
     private func configuredProjectRow(_ path: String) -> some View {
@@ -1646,11 +1705,19 @@ struct PetRootView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Text(viewModel.presentationState.displayTitle)
+            if viewModel.isAppOwnedServiceEnabled,
+               viewModel.appOwnedServiceState == .starting
+                || viewModel.appOwnedServiceState == .reconnecting
+            {
+                ProgressView().controlSize(.small)
+            }
+            Text(viewModel.presentationTitle)
                 .font(.title2.weight(.semibold))
-            Text("유효한 결정 카드가 생기면 여기에 표시됩니다.")
+            Text(viewModel.emptyStateDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 36)

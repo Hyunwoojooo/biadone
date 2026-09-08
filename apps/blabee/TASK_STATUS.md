@@ -1,6 +1,41 @@
 # Blabee 작업 현황
 
-업데이트: 2026-09-05
+업데이트: 2026-09-08
+
+## 현재 작업 — DMG r14 갱신과 게시 (2026-09-08)
+
+- 사용자 승인: 최신 Blabee 변경을 포함한 내부 DMG 갱신 및 관련 파일 커밋·푸시.
+- r14 fresh release, 앱 ad-hoc 서명, 미서명 DMG 생성·readonly mount·정상 detach·checksum 검증 완료.
+  산출물: `build/internal-dmg-20260908-r14/Blabee-0.1.0-internal-arm64-20260908-r14.dmg`와 `.sha256`.
+- 이번 턴 전체 재검증: Node **360개**, Swift Testing **668개** + XCTest **5개** 통과.
+  실행 중인 `/Applications/Blabee.app` build 13은 교체하거나 재시작하지 않았다.
+- 테스터 설정 안내를 앱 실행형 서비스로 갱신했고, DMG 내부 안내에도 Keychain 승인 지연과
+  메모리 증가 조사 상태를 포함했다. 별도 CI 초안·형제 프로젝트·demo/docs·구 PDF는 게시 범위 밖이다.
+- 새 DMG 실제 설치/업데이트·다른 Mac·장시간 안정성은 미검증이며 공개 배포도 미승인이다.
+  상세 식별자·전달 파일·검증 경계: [r14 릴리스 기록](INTERNAL_DMG_R14_RELEASE_KO.md).
+
+## 직전 작업 — 앱 실행형 서비스와 설치본 왕복 (2026-09-08)
+
+- 사용자 승인 범위: 내부 테스트용 앱 소유 서비스 시작·종료와 상태 표시/복구를 함께 구현한다.
+- 구현 완료: 명시적 opt-in, 다음 앱 실행 시 자동 시작, 소유한 자식만 종료, 부모 종료 감지,
+  기존 macOS 등록과 충돌 방지, 시작 완료 신호와 검증된 snapshot으로만 ready 판정,
+  실패 polling backoff와 수동 재시도, stale generation 응답 차단 및 회귀 테스트.
+- 자동 검증: Swift Testing 668개 + XCTest 5개, Node 360개 통과. 신규 service 테스트 40개 포함.
+  독립 process/lifecycle QA 지적 수정 완료. arm64 릴리스 빌드와 `git diff --check`도 통과했으며
+  이 자동 검증은 2026-09-07의 결과다. 2026-09-08에는 release 빌드 재확인과 아래 설치본 검증을 수행했다.
+  설계·검증 경계: [앱 실행형 서비스 계획](APP_OWNED_SERVICE_PLAN_KO.md).
+- 범위 밖: 일반 Codex 실행·resume/공식 설치본/PATH, Gatekeeper·Keychain 보안 정책,
+  macOS 등록 자동 변경, 새 DMG 제작, 커밋·푸시.
+- 사용자의 새 빌드 적용 승인 후 build 12의 등록을 UI에서 명시적으로 해제하고 전체 번들을 백업했다.
+  `/Applications/Blabee.app`은 build 13이며 서명·runtime identity가 일치한다.
+- 설치본 통과: opt-in 실제 연결, 패널 X 뒤 서비스 유지, 정상 앱 종료 시 자식/소켓 정리,
+  재실행 자동 연결, 공식 Codex 0.153.4 새 세션의 카드 → rank 1 선택 → 새 턴 → claim 1개 →
+  `BLABEE_R13_RETURN_OK` 실제 실행 1회/exit 0. 검증 Codex 세션만 정상 종료했다.
+- 새 주의점: 첫 Keychain 승인 대기는 12초 기한 초과로 표시됐으며 사용자 승인 후 복구됐다.
+  자식 서비스의 RSS 증가도 관찰해 추가 진단 대상으로 기록했다. 장시간 성능 안정화,
+  부모 crash/다중 세션/권한 카드/다른 Mac 및 새 DMG는 이번 통과에 포함하지 않는다.
+- 아래 r8 설치 성공은 역사적 증거다. 현재 app-owned 경로의 로컬 성공은 기존 SMAppService
+  서명 장애의 근본 해결 또는 공개 배포 자격을 의미하지 않는다.
 
 ## 현재 단계
 
@@ -8,14 +43,15 @@ M0 연동 계약과 T-006 런타임 독립 v1 계약을 확정한 뒤 T-005 런�
 
 활성 프로젝트의 `UserPromptSubmit`이 `SessionStart`보다 먼저 도착해도 세션을 지연 등록한다. 새 세션은 시작 시, 기존·유휴 세션은 다음 사람 프롬프트에서 자동 연결된다. 단 Plugin 교체 전부터 실행 중이던 Codex 프로세스는 새 Hook/MCP 구성을 읽도록 세션을 한 번 재개해야 한다.
 
-2026-09-05 final internal candidate는
+2026-09-05의 이전 내부 후보는
 `build/internal-dmg-20260905-r8/Blabee-0.1.0-internal-arm64-20260905-r8.dmg`다.
 앱 `0.1.0`, build `8`, exact `arm64`, ad-hoc app이며 DMG는 미서명·미공증이다.
 SHA-256은 `e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`,
 `public_distribution_ready = false`다. r7과 이전 산출물은 superseded local artifact로
 배포하지 않는다. r8은 개발 Mac의 `/Applications` 설치, deep/strict ad-hoc 서명,
 명시적 unregister/re-register 뒤 service 실행과 Doctor의 앱·daemon·프로젝트 범위를
-통과했다. clean Mac 설치, Hook/Pet 왕복과 공개 배포 자격은 아직 통과로 기록하지 않는다.
+통과했다. 당시 clean Mac 설치, Hook/Pet 왕복과 공개 배포 자격은 통과로 기록하지 않았다.
+현재 DMG 후보는 위 r14이며 r8은 새 테스터에게 전달하지 않는다.
 
 ## M0 및 M1 검증 결과
 

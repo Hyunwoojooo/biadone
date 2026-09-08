@@ -47,6 +47,20 @@ const expectedNotice = [
   "Drag Blabee.app to Applications, then follow the team's test instructions.",
   "Do not redistribute this disk image as a public release.",
   "",
+  "내부 테스트 설정:",
+  "1. 설정에서 관찰할 프로젝트를 추가합니다.",
+  "2. 기존 macOS 자동 시작 서비스가 등록되어 있으면 먼저 등록 해제합니다.",
+  "3. 앱 실행형 서비스 켜기를 선택하고 서비스 연결됨을 확인합니다.",
+  "4. Codex 연결하기를 누른 뒤 새 Codex 세션의 /hooks에서 직접 검토하고 신뢰합니다.",
+  "패널 X는 화면만 닫습니다. 메뉴바 우클릭의 Blabee 종료는 앱과 소유 서비스를 종료합니다.",
+  "",
+  "알려진 제한: 첫 Keychain 승인 대기로 시작 기한을 넘을 수 있습니다.",
+  "예상된 Blabee 요청인지 확인하고, 실패 시 상태를 기록한 뒤 서비스 다시 시작을 사용합니다.",
+  "암호 요청이 반복되면 중단하며 Keychain 항목 삭제나 보안 우회를 하지 않습니다.",
+  "서비스 메모리 증가가 관찰되어 조사 중입니다. 장시간 안정성 및 다른 Mac 설치 검증은 미완료입니다.",
+  "macOS 자동 시작 서비스의 서명 문제를 해결한 빌드가 아니며 앱 실행형 모드는 명시적 opt-in입니다.",
+  "상세 절차와 검증 경계는 함께 전달된 INTERNAL_TEST_INSTALL_GUIDE.md를 확인하세요.",
+  "",
 ].join("\n");
 
 async function makeWorkspace(t, prefix = "blabee-internal-dmg-") {

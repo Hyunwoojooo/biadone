@@ -89,6 +89,9 @@ enum CodexPluginSetupState: Sendable, Equatable {
         case let .conflict(reason):
             return reason
         case let .error(code):
+            if let diagnostic = CodexNativeDiagnostic(rawValue: code) {
+                return "\(diagnostic.detail) (\(code))"
+            }
             return "Codex Plugin 상태를 안전하게 확인하지 못했습니다. (\(code))"
         }
     }
@@ -96,11 +99,16 @@ enum CodexPluginSetupState: Sendable, Equatable {
 
 protocol CodexPluginSetupManaging: Sendable {
     func inspect() async -> CodexPluginSetupState
+    func recheckNativeExecutable() async -> CodexPluginSetupState
     func connect() async -> CodexPluginSetupState
     func disconnect() async -> CodexPluginSetupState
     func migrateLegacyInstallation(
         confirmation: CodexPluginSetupLegacyMigrationConfirmation
     ) async -> CodexPluginSetupState
+}
+
+extension CodexPluginSetupManaging {
+    func recheckNativeExecutable() async -> CodexPluginSetupState { await inspect() }
 }
 
 actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
@@ -123,6 +131,7 @@ actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
 struct CodexPluginSetupProcessResult: Sendable, Equatable {
     let exitCode: Int32
     let stdout: Data
+    var terminationSignal: Int32? = nil
 }
 
 typealias CodexPluginSetupExecutableResolving = @Sendable () throws -> URL
@@ -221,21 +230,32 @@ enum CodexPluginSetupExecutableResolver {
         candidates: [URL],
         qualifier: (URL) throws -> CodexPluginSetupQualifiedExecutable
     ) throws -> CodexPluginSetupQualifiedExecutable {
+        var firstFailure: Error?
+        var seen: Set<String> = []
         for candidate in candidates.prefix(256) {
             var info = stat()
-            guard lstat(candidate.path, &info) == 0 else { continue }
+            guard stat(candidate.path, &info) == 0,
+                  info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
+            else { continue }
+            // Source ancestors are part of trust: an unsafe alias must not
+            // exclude a later safe launcher resolving to the same target.
+            guard seen.insert(candidate.standardizedFileURL.path).inserted else { continue }
             do {
                 return try qualifier(candidate)
             } catch let error as CoordinatorError
                 where error.code == "codex_plugin_setup_operation_timed_out"
+                    || error.code == "codex_native_probe_timeout"
+                    || error.code == "codex_native_guard_unavailable"
+                    || error.code == "codex_native_execution_in_progress"
             {
                 throw error
             } catch {
                 // Candidate order is preferred, not authoritative. An unsafe or
                 // unsupported install must never prevent a later safe install.
-                continue
+                firstFailure = firstFailure ?? error
             }
         }
+        if let firstFailure { throw firstFailure }
         throw CoordinatorError("codex_plugin_setup_executable_unavailable")
     }
 
@@ -544,6 +564,7 @@ enum CodexPluginSetupProductionTrust {
     static func qualify(
         sourceURL: URL,
         processRunner: CodexPluginSetupProcessRunning,
+        beforeVersionProbe: CodexNativePreflight = { _, _ in },
         deadlineNanoseconds: UInt64? = nil,
         monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
             DispatchTime.now().uptimeNanoseconds
@@ -564,6 +585,7 @@ enum CodexPluginSetupProductionTrust {
                     monotonicNow: monotonicNow
                 )
             },
+            beforeVersionProbe: beforeVersionProbe,
             deadlineNanoseconds: deadlineNanoseconds,
             monotonicNow: monotonicNow
         )
@@ -575,6 +597,7 @@ enum CodexPluginSetupProductionTrust {
         trustInspector: CodexPluginSetupTrustInspecting,
         signatureValidator: CodexPluginSetupSignatureValidating,
         pinnedExecutableValidator: CodexPluginSetupPinnedExecutableValidating,
+        beforeVersionProbe: CodexNativePreflight = { _, _ in },
         deadlineNanoseconds: UInt64? = nil,
         monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
             DispatchTime.now().uptimeNanoseconds
@@ -598,6 +621,18 @@ enum CodexPluginSetupProductionTrust {
             pinnedExecutableValidator: pinnedExecutableValidator
         )
 
+        try beforeVersionProbe(
+            canonicalURL,
+            try remainingTimeout(
+                maximumMilliseconds: 5_000,
+                deadlineNanoseconds: deadlineNanoseconds,
+                monotonicNow: monotonicNow
+            )
+        )
+        // Online assessment may be slow. Reject replacements before launch.
+        guard try trustInspector(sourceURL) == before else {
+            throw CodexRuntimeTrustError.changedDuringQualification
+        }
         let result = try processRunner(
             canonicalURL,
             ["--version"],
@@ -683,9 +718,13 @@ enum CodexPluginSetupProductionTrust {
         let parsed = result.stdout.count <= maximumVersionOutputBytes
             ? CodexCompatibility.parseVersionOutput(result.stdout)
             : nil
-        guard result.exitCode == 0,
-              let parsed,
-              supportedPluginCLIVersions.contains(parsed)
+        guard result.exitCode == 0 else {
+            throw (result.terminationSignal != nil
+                ? CodexNativeDiagnostic.executionTerminated
+                : CodexNativeDiagnostic.launchUnavailable).error
+        }
+        guard let parsed else { throw CodexNativeDiagnostic.probeOutputInvalid.error }
+        guard supportedPluginCLIVersions.contains(parsed)
         else { throw CodexRuntimeTrustError.unsupportedVersion(parsed) }
         return parsed
     }
@@ -839,7 +878,8 @@ enum CodexPluginSetupProcessRunner {
         )
         return CodexPluginSetupProcessResult(
             exitCode: result.exitCode,
-            stdout: result.stdout
+            stdout: result.stdout,
+            terminationSignal: result.terminationSignal
         )
     }
 
@@ -1067,6 +1107,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private let executableQualifier: CodexPluginSetupExecutableQualifying
     private let executableRevalidator: CodexPluginSetupExecutableRevalidating
     private let processRunner: CodexPluginSetupProcessRunning
+    private let nativeRuntime: CodexNativeRuntime?
     private let bundleRevalidator: CodexPluginSetupBundleRevalidating
     private let mutationLock: CodexPluginSetupMutationLock?
     private let requiresMutationLock: Bool
@@ -1094,6 +1135,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         }
         executableRevalidator = { $0.canonicalURL }
         self.processRunner = processRunner
+        self.nativeRuntime = nil
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         requiresMutationLock = false
@@ -1110,6 +1152,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         executableQualifier: @escaping CodexPluginSetupExecutableQualifying,
         executableRevalidator: @escaping CodexPluginSetupExecutableRevalidating,
         processRunner: @escaping CodexPluginSetupProcessRunning,
+        nativeRuntime: CodexNativeRuntime? = nil,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
         mutationLock: CodexPluginSetupMutationLock? = nil,
         monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
@@ -1122,6 +1165,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         self.executableQualifier = executableQualifier
         self.executableRevalidator = executableRevalidator
         self.processRunner = processRunner
+        self.nativeRuntime = nativeRuntime
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         requiresMutationLock = false
@@ -1138,6 +1182,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         executableQualifier: @escaping CodexPluginSetupExecutableQualifying,
         executableRevalidator: @escaping CodexPluginSetupExecutableRevalidating,
         processRunner: @escaping CodexPluginSetupProcessRunning,
+        nativeRuntime: CodexNativeRuntime,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating,
         mutationLock: CodexPluginSetupMutationLock?,
         requiresMutationLock: Bool,
@@ -1149,6 +1194,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         self.executableQualifier = executableQualifier
         self.executableRevalidator = executableRevalidator
         self.processRunner = processRunner
+        self.nativeRuntime = nativeRuntime
         self.bundleRevalidator = bundleRevalidator
         self.mutationLock = mutationLock
         self.requiresMutationLock = requiresMutationLock
@@ -1171,6 +1217,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 environment: environment
             )
         }
+        let nativeRuntime = CodexNativeRuntime.live(environment: environment)
         let coordinatorExecutable = bundle.executableURL ?? bundle.bundleURL
             .appendingPathComponent("Contents/MacOS/blabee-coordinator", isDirectory: false)
         // Bind later disk checks to the signed identity of this running app,
@@ -1193,28 +1240,10 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         return CodexPluginSetupManager(
             optionalMarketplaceRoot: bundle.resourceURL,
             requireStandardApplicationRoot: true,
-            executableQualifier: { timeoutMilliseconds in
-                let startedAt = DispatchTime.now().uptimeNanoseconds
-                let budget = UInt64(timeoutMilliseconds) * 1_000_000
-                let deadline = startedAt > UInt64.max - budget
-                    ? UInt64.max
-                    : startedAt + budget
-                let candidates = CodexPluginSetupExecutableResolver.candidateURLs(
-                    environment: environment
-                )
-                return try CodexPluginSetupExecutableResolver.qualifyFirst(
-                    candidates: candidates,
-                    qualifier: { sourceURL in
-                        try CodexPluginSetupProductionTrust.qualify(
-                            sourceURL: sourceURL,
-                            processRunner: processRunner,
-                            deadlineNanoseconds: deadline
-                        )
-                    }
-                )
-            },
+            executableQualifier: { try nativeRuntime.qualify(timeoutMilliseconds: $0) },
             executableRevalidator: CodexPluginSetupProductionTrust.revalidate,
             processRunner: processRunner,
+            nativeRuntime: nativeRuntime,
             bundleRevalidator: {
                 guard let expectedBundleIdentity,
                       OperationalRuntimeIdentity.installedIdentity(
@@ -1229,6 +1258,15 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             monotonicNow: { DispatchTime.now().uptimeNanoseconds },
             operationTimeoutMilliseconds: Self.maximumOperationTimeoutMilliseconds
         )
+    }
+
+    func recheckNativeExecutable() async -> CodexPluginSetupState {
+        do { try nativeRuntime?.prepareExplicitRetry() }
+        catch {
+            state = .error(code: CodexNativeDiagnostic.normalize(error).code)
+            return state
+        }
+        return await inspect()
     }
 
     func inspect() async -> CodexPluginSetupState {
@@ -1423,6 +1461,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             )
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
+                || CodexNativeDiagnostic(rawValue: error.code) != nil
         {
             state = .error(code: error.code)
             return state
@@ -1912,6 +1951,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             )
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
+                || CodexNativeDiagnostic(rawValue: error.code) != nil
         {
             return .failed(code: error.code)
         } catch {
@@ -1953,10 +1993,9 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 maximumMilliseconds: Self.mutationTimeoutMilliseconds,
                 operation: operation
             )
-            result = try processRunner(
-                prepared.executable,
-                arguments,
-                timeout
+            result = try runSelectedProcess(
+                selection: prepared.selection, executable: prepared.executable,
+                arguments: arguments, timeout: timeout
             )
             _ = try remainingTimeout(
                 maximumMilliseconds: Self.mutationTimeoutMilliseconds,
@@ -1966,6 +2005,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             try bundleRevalidator()
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
+                || CodexNativeDiagnostic(rawValue: error.code) != nil
         {
             return .failed(code: error.code)
         } catch {
@@ -2039,6 +2079,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             executable = try qualifiedExecutable(operation: &operation)
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
+                || CodexNativeDiagnostic(rawValue: error.code) != nil
         {
             return Inspection(state: .error(code: error.code), context: nil)
         } catch {
@@ -2494,10 +2535,9 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
                 maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
                 operation: operation
             )
-            result = try processRunner(
-                revalidated,
-                arguments,
-                timeout
+            result = try runSelectedProcess(
+                selection: executable, executable: revalidated,
+                arguments: arguments, timeout: timeout
             )
             _ = try remainingTimeout(
                 maximumMilliseconds: Self.inspectionTimeoutMilliseconds,
@@ -2506,6 +2546,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             _ = try revalidatedExecutable(executable)
         } catch let error as CoordinatorError
             where error.code == "codex_plugin_setup_operation_timed_out"
+                || CodexNativeDiagnostic(rawValue: error.code) != nil
         {
             throw error
         } catch {
@@ -2526,6 +2567,18 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         } catch {
             throw CoordinatorError("\(failureCode.replacingOccurrences(of: "_failed", with: ""))_malformed")
         }
+    }
+
+    private func runSelectedProcess(
+        selection: CodexPluginSetupQualifiedExecutable, executable: URL,
+        arguments: [String], timeout: Int
+    ) throws -> CodexPluginSetupProcessResult {
+        if let nativeRuntime {
+            return try nativeRuntime.run(
+                selection: selection, arguments: arguments, timeoutMilliseconds: timeout
+            )
+        }
+        return try processRunner(executable, arguments, timeout)
     }
 
     private func revalidatedExecutable(

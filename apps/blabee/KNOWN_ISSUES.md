@@ -1,7 +1,7 @@
 # Blabee 알려진 오류 및 안정성 이슈
 
 - 최초 작성: 2026-09-02 (KST)
-- 마지막 갱신: 2026-09-05 (KST)
+- 마지막 갱신: 2026-09-08 (KST)
 - 문서 상태: 활성
 - 검토 기준: `a85d34be66f57304014fdf83d21044c6c2827f38` 위 현재 미커밋 작업 트리
 - 범위: 아직 해결되지 않았거나 배포 전 재검증이 필요한 Blabee 제품 오류와 안정성 위험
@@ -42,6 +42,10 @@
 
 | ID | 최초 확인일 | 심각도 | 상태 | 요약 |
 |---|---|---:|---|---|
+| `BLB-APP-SERVICE-001` | 2026-09-08 | 중간 | 열림 | 첫 Keychain 승인 대기가 일반 서비스 연결 시간 초과로 표시됨 |
+| `BLB-APP-SERVICE-002` | 2026-09-08 | 중간 | 조사 중 | build 13 실사용 서비스의 RSS 증가 관찰, 누수 여부 미확정 |
+| `BLB-CODEX-UPDATE-001` | 2026-09-06 | 높음 | 검증 중 | Codex 업데이트 후 검사·전달의 서로 다른 검증과 오류 오분류, 차단 파일 반복 실행 |
+| `BLB-CODEX-UPDATE-002` | 2026-09-06 | 높음 | 해결됨 | 깨진 Homebrew 0.153.4 전체 재설치 후 공식 번들·CLI·격리 Plugin 검증 통과 |
 | `BLB-RUNTIME-001` | 2026-09-01 | 높음 | 검증 중 | 관리형 Codex가 본체 한 파일만 고정해 `codex-code-mode-host`가 누락됨 |
 | `BLB-RUNTIME-002` | 2026-09-01 | 높음 | 검증 중 | 다른 버전 또는 빌드의 host 혼입으로 IPC 스키마 불일치 발생 |
 | `BLB-RUNTIME-003` | 2026-09-02 | 중간 | 검증 중 | 비정상 종료 staging 회수의 원자성·경계·starvation 위험 |
@@ -826,3 +830,272 @@ TERM 후 최대 750ms, 그 exact child에만 SIGKILL 후 최대 750ms를 기다�
 
 ### 관련 파일·커밋·로그
 ```
+
+## BLB-CODEX-UPDATE-001 — 네이티브 실행 오류 분리와 반복 실행 억제
+
+- 확인일·수정일: 2026-09-06
+- 상태: 소스 수정 및 회귀 검증 중. 설치본 교체·새 Mac 실사용은 별도.
+- 증상: Plugin 설정이 미지원·서명·실행 실패를 같은 미설치 안내로 표시하고,
+  다음 작업 전달은 다른 resolver를 사용해 검사된 경로와 전송 경로가 달라질 수 있었다.
+  OS가 차단한 파일에 대한 반복 호출도 공통으로 억제하지 않았다.
+- 수정: `CodexNativeRuntime`을 Plugin 조회·설치·제거 및 `codex queue`에 공통 적용한다.
+  버전 자격, 공식 서명/기존 exact-hash 증거, 별도 CLI 공증 검사, 실행 직전 identity를
+  확인하며, 미설치·미검증 버전·서명·공증 미확인·실제 signal 종료·실행 실패·timeout을
+  구분한다. exit 137이라는 숫자만으로 SIGKILL이라고 판정하지 않는다.
+- 실패 기억: 계정 소유의 bounded 32-slot 저장소에 경로·파일 identity·정책의 해시와
+  진단 코드만 기록한다. 프로세스 재시작 후에도 차단을 유지한다. argv, prompt, session,
+  stdout, token은 저장하지 않는다. 실행 전에 불확실 상태를 동기화하고, 성공 후 정리
+  실패를 실행 실패로 뒤집지 않는다. 파일시스템 자체가 복구 기록도 쓰지 못하면
+  프로세스 메모리 보호만 남을 수 있어 완전한 장애 영속성을 주장하지 않는다.
+- 사용자 복구: 설정의 **Codex 실행 다시 검사**만 오래된 실패 기록을 잠금 아래 초기화한다.
+  자동 조회·전체 설정 새로고침·queue는 초기화하지 않는다. 이 버튼은 과거 작업을
+  재전송하거나 파일 실행을 승인하지 않는다. 파일 교체와 정책 변경도 별도 자격 검사가 필요하다.
+- 안전한 후보 탐색: source 경로별 검사 권한을 유지해 unsafe alias가 같은 파일의 안전한
+  설치 경로를 가리지 않게 한다. dangling link·디렉터리를 건너뛰되, 전체 timeout/경합은
+  후속 후보를 무한 실행하지 않고 종료한다.
+- 정책 경계: 버전 목록은 CLI 계약 자격이며 macOS 실행 허가가 아니다. 과거 0.153.2
+  exact-hash 예외도 새 native 경로의 공증 요구사항을 건너뛰지 못한다. 2026-09-07의
+  `smoke_passed` 실제 런타임 증거를 확인한 뒤 0.153.4를 Plugin CLI 지원 목록에 추가했다.
+  일반 Codex·PATH·셸·resume·quarantine은 변경하지 않았다.
+- 자동화: [새 버전 자격 검사 문서](CODEX_COMPATIBILITY_QUALIFICATION.md)의 전체 패키지
+  검증 CLI를 추가했다. fixture 결과는 `fixture_passed`, 실제 검사 성공은
+  `smoke_passed`로 구분한다. 어느 경우에도 운영 allowlist를 자동 확대하지 않는다.
+  CI 템플릿 초안은 별도 로컬 작업으로 이번 게시에 포함하지 않으며 원격 스케줄도 활성화하지 않았다.
+- 완료 기준: 설치된 Blabee에서 실패 안내·자동 재시도 중단·명시적 재검사 확인,
+  정상 공식 Codex의 격리 Plugin lifecycle과 실제 Hook/Pet/queue 왕복을 각각 검증한다.
+  상세 실행 기록은 [업데이트 장애 대응 계획](CODEX_UPDATE_RESILIENCE_PLAN_KO.md)을 따른다.
+
+## BLB-CODEX-UPDATE-002 — 공식 설치본의 OS 차단과 현재 파일 누락
+
+- 확인일: 2026-09-06
+- 해결일: 2026-09-07
+- 상태: 해결됨. Blabee 소스 수정과 별도로 로컬 공식 설치본 전체를 복구했다.
+- 앞선 관찰: 공식 0.153.4의 서명·공증 검사 성공과 실제 버전 실행의 강제 종료가
+  함께 관찰됐다. 공증 조회 실패 로그만으로 파일 변조나 Apple 서버 장애를 확정하지 않는다.
+- 복구 전 마지막 읽기 전용 관찰: `/opt/homebrew/bin/codex`는
+  `/opt/homebrew/Caskroom/codex/0.153.4/bin/codex`를 가리키지만 본체 파일이 없다.
+  host·rg·zsh는 남아 있다. 이번 구현에서 이 파일을 삭제하지 않았으며 제거 경위는 미확인이다.
+- 영향: 실제 Codex가 필요한 Node 통합 검사는 `spawn codex ENOENT`로 실행 전 중단됐다.
+  이는 새 fixture 회귀 성공이나 Hook 감지 성공으로 해소됐다고 볼 수 없다.
+- 안전한 후속 조치: 공식 설치 도구로 동일 배포본 전체를 복구하고, macOS 신뢰와 실제
+  로컬 도구 호출을 확인한 다음 Blabee 설치본을 교체해 왕복 검증한다. 본체만 임의 복사,
+  재서명, 보안 정책 해제, quarantine 일괄 삭제로 통과시키지 않는다.
+
+### 2026-09-07 복구 결과
+
+- `brew reinstall --cask codex`로 깨진 단일 파일을 복사하지 않고 0.153.4 배포본 전체를
+  다시 설치했다. `codex`, `codex-code-mode-host`, `rg`, `zsh`, manifest가 같은 번들에
+  존재한다.
+- 본체와 host의 Apple Developer ID 팀은 `2DC432GLL2`이며 strict signature와
+  notarization 검사가 모두 통과했다.
+- `/opt/homebrew/bin/codex --version`과 기존 Blabee stable launcher가 모두
+  `codex-cli 0.153.4`를 반환했고, 실제 TUI 시작 화면 진입까지 확인했다.
+- 이전에 `spawn codex ENOENT`였던 세 시나리오를 포함한 관련 Node 통합 테스트
+  10/10이 통과했다.
+- 새 호환성 검사 CLI가 실제 런타임 증거 `smoke_passed`를 생성했다. 전체 패키지 구성,
+  서명·공증, 정확한 버전, 읽기 전용 Plugin 조회, queue 도움말, 격리된 Plugin
+  설치·조회·제거와 Hook 계약 검사가 모두 성공했다.
+- 이번 복구는 셸 설정, PATH, Codex 원본 재서명, quarantine 또는 macOS 보안 정책을
+  변경하지 않았다. Blabee Pet의 실제 Hook/queue 왕복과 설치본 교체는 별도 제품 검증이다.
+
+## BLB-CODEX-UPDATE-003 — Pet 선택 전달의 신뢰 검사와 큐 실행 시간 예산 충돌
+
+- 확인일·수정일: 2026-09-07
+- 상태: build 11에 적용. 실제 큐 접수·같은 세션 새 턴 도달 확인. 후속 Hook 응답 지연은
+  `BLB-CODEX-UPDATE-004`로 분리하며, 전체 작업 성공으로 보고하지 않는다.
+- 확인된 현상: 살아 있는 공식 0.153.4 TUI에서 직접 `codex queue`를 실행하면 같은
+  세션의 새 턴이 시작되지만, Pet 선택은 `continuation_consumed` 이후
+  `codex_native_probe_timeout`으로 실패했다. 명시적 재검사 후 새 카드에서도 재현됐다.
+  `continuation_consumed`는 큐 접수나 실제 작업 성공의 증거가 아니다.
+- 원인 범위: 새 공통 native 경로는 기존 큐 명령의 10초 안에 자격·서명·공증·identity
+  재검사까지 수행했다. 설치본을 대상으로 같은 utility 우선순위에서 측정한 `--version`
+  검증은 약 6.7초였고 대부분이 신뢰 검사였다. 이 격리 시험은 10초에서도 통과했으므로,
+  서비스에서 제한에 걸린 정확한 단계와 부하 원인은 아직 단정하지 않는다.
+- 수정: 전체 native 작업 예산을 45초, 마지막 큐 child를 최대 10초로 분리한다. 큐 child는
+  전체 남은 시간도 넘을 수 없다. 공증·버전 child의 기존 최대 5초 제한과 모든 신뢰 검사를
+  유지한다. Pet의 `select` 응답만 60초로 분리하고 권한 응답 12초·일반 조회 2초는 유지한다.
+- 안전 경계: 동기 Security API는 반환 뒤 deadline을 검사하므로 45초는 강제 중단 보장이
+  아니다. 신뢰 검사 제한 초과·파일 교체·불확실한 실행에서는 자동 재전송하지 않는다.
+  재검사 버튼은 과거 선택을 재실행하지 않으며 새 카드에서 사용자가 다시 선택해야 한다.
+- 검증: 전체/child 예산, 제한 초과 시 미전송, 파일 변경 거부, 불확실한 command의 단일
+  실행, Pet heartbeat 비차단 회귀를 추가했다. 실제 설치본 교체 뒤 새 카드 클릭 → 큐 접수
+  → 같은 TUI의 새 턴 → 작업 결과를 각각 확인해야 제품 왕복을 통과로 기록한다.
+- 재현 도구: `CodexNativeLiveVerificationTests`는 `BLABEE_NATIVE_LIVE_VERIFY=1`과
+  명시적 `BLABEE_NATIVE_LIVE_EXECUTABLE`을 지정해야 실행된다. 임시 실패 저장소에서
+  `--version`만 실행하고 단계별 시간을 출력한다. 큐나 사용자 설정을 변경하지 않는다.
+
+### 2026-09-07 build 11 검증 결과
+
+- 전체 Swift 회귀 suite가 통과했다(Swift Testing 보고 619개, XCTest 5개).
+  설치본 `--version`의 opt-in 시간 측정은 별도로 수행했다. 관련 26개 회귀와 마지막
+  Pet 정책·heartbeat 2개 검사도 통과했다. 독립 코드 QA는 이 시간 제한 변경의 추가
+  결함을 찾지 못했다. `git diff --check`, release build, 앱 strict 서명 검사도 통과했다.
+- `/Applications/Blabee.app`을 내부 build 11로 교체했다. 기존 build 10은
+  `/private/tmp/blabee-before-native-queue.0QPIr7/`에 보존했다. DMG는 다시 만들지 않았다.
+- 실제 테스트 세션에서 `BLABEE_R11_READY_20260907`을 출력한 뒤 1순위 선택이 접수됐다.
+  저널 1233–1238은 선택, dispatch, consume, transport 완료, boundary 닫힘, context claim을
+  각각 기록했다. 같은 TUI에 새 queued-ref 턴이 도달했고 실패 보호 기록은 다시 생기지 않았다.
+- consume 기록 시각부터 transport 완료 기록 시각까지는 약 14.2초다. 기록 시각은 해당
+  저널 쓰기 전에 생성되므로 이 차이를 native 실행 단독 소요 시간으로 해석하지 않는다.
+- 후속 Hook은 안전한 실행 거부 안내를 반환했다. `BLABEE_R11_NEXT_OK_20260907` 작업은
+  실행되지 않았다. 이 결과는 **전송 성공 / 검증된 action 전달 실패 / 실제 작업 미실행**이다.
+- 검증용 Codex는 `/exit`로 정상 종료했다. 임시 `com.biadone.blabee.coordinator.probe`
+  서비스와 검증용 Pet도 종료했다. 자동 시작은 아래 서비스 이슈가 남아 있어 복구 완료가
+  아니며, 현재 설치된 build 11은 실행 중으로 보고하지 않는다.
+- 서비스 교체 뒤 기존 주 세션의 Hook 문맥으로 최종 제안을 한 번 제출했으나 거절됐다.
+  식별자를 새로 만들거나 다른 세션의 문맥으로 재제출하지 않았다.
+
+## BLB-CODEX-UPDATE-004 — 큐 접수 후 Hook 응답 예산 안에 durable claim을 반환하지 못함
+
+- 확인일: 2026-09-07
+- 상태: 열림. 2026-09-07 receipt-first 저장 최적화와 자동 검증 완료. 설치본 실사용 검증 대기.
+- 재현: build 11의 실제 새 queued-ref 턴이 시작됐지만 Hook은
+  `Blabee could not verify the selected action in time`을 반환했다. Codex가 해당 작업을
+  거부한 것은 안전 정책대로다. 일반 Codex 명령이나 native queue 자체의 실패는 아니다.
+- 관측: 새 턴 시작은 07:03:59.508Z, claim 이벤트의 occurred_at은 07:04:04.647Z,
+  거부 context 수신은 07:04:05.563Z였다. claim 발생 시각은 commit/freshness 완료 시각이
+  아니므로, DB에 claim이 있다는 이유만으로 응답 시간 안에 반환됐다고 판단할 수 없다.
+- 현재 제한: 정확한 queued prompt의 첫 소켓 응답은 3.9초, 같은 delivery turn의
+  응답 손실 복구 시도는 1.9초다. 각 연결은 400ms이며 launcher 7초·Codex Hook 8초 안에
+  끝나도록 되어 있다. 이 복구 시도는 `codex queue` 재전송과 다르다.
+- 조사 근거: 동기 저널 처리 중 첫 요청이 timeout되어도 서버 처리는 계속될 수 있다.
+  뒤따르는 동일 턴 요청은 actor에서 대기할 수 있다. 정상 claim 경로에도 authority load와
+  append 전·후 무결성 검증 및 freshness 확정이 있다. in-flight complete/close/claim의
+  묶음 저장과 claim 후 불필요한 재조회 제거는 이미 구현되어 있어 새 수정으로 중복 제안하지 않는다.
+- 이번 수정: 정상 receipt 경로의 `complete_transport`와 `close_boundary`를 기존 이벤트 형식
+  그대로 하나의 atomic append에 저장한다. 만료 작업이 없는 정상 경로의 공개 journal load는
+  5회에서 1회, append는 2회에서 1회로 줄인다. 첫 authority projection을 로컬 상태 정리에도
+  재사용하며 SQLite 내부의 append 전·후 MAC/무결성·freshness 검사는 생략하지 않는다.
+- 복구 정책: 이미 완료만 저장된 구형 이력은 close만 추가하고, 둘 다 저장된 응답 유실은
+  재저장하지 않는다. CAS 충돌 시 최신 상태로 재판단한다. 기한 만료나 시계 역행으로
+  `timed_out_unknown`이 된 전송은 completed로 바꾸지 않는다. 저장 결과를 확인할 수 없으면
+  재조정 표식을 유지하며 큐 자체는 다시 보내지 않는다. 다음 카드 승격도 완료 후에만 수행한다.
+- 변경하지 않은 것: Codex 실행·resume, shell/PATH, 공식 설치본, Hook/launcher 제한 시간,
+  저널 이벤트 계약, 서명/Keychain 보안 정책. 이번 계측의 합성 freshness store는 메모리 구현이므로
+  실제 Keychain 지연과 설치된 Pet의 왕복 성공을 대신하는 증거가 아니다.
+- 검증: 전체 Swift Testing 628개 테스트 보고 통과(설치된 Codex를 실행하는 선택형 검사 1개
+  제외), XCTest 5개 통과. 저장 전 실패, 저장 후 응답 손실과 복구 조회 실패, 구형 부분 완료,
+  CAS 경쟁, 늦은 receipt·시계 역행, 같은 턴 복구·다른 턴 거절, 중복 claim 없음과 다음 카드의
+  단일 승격을 확인했다. 독립 QA에서 발견한 시계 최대값 보존 누락은 실패 재현 → 수정 → 통과로
+  검증했다. 해당 범위의 잔여 QA 지적은 없다. 릴리스 `blabee-coordinator` 빌드와
+  `git diff --check`도 통과했다.
+- 관련 파일: `CoordinatorOperationalApplication.swift`, `CoordinatorRoutingApplication.swift`,
+  `CoordinatorSemanticApplication.swift` 및 `OperationalApplicationTests.swift`,
+  `SemanticApplicationTests.swift`, `SQLiteQueuedActionClaimTests.swift`.
+- 1,200개 합성 이력을 넣은 임시 SQLite 비교(2026-09-07, 단일 측정):
+
+  | 측정 구간 | 기존 분리 저장 | 묶음 저장 |
+  | --- | ---: | ---: |
+  | 완료 정리 시간 | 4,745.996ms | 1,774.558ms |
+  | 완료 정리의 공개 load / append | 5 / 2 | 1 / 1 |
+  | 완료 정리의 freshness 조회 / CAS | 9 / 4 | 3 / 2 |
+  | 뒤이은 claim 시간 | 1,649.616ms | 1,645.864ms |
+
+  이는 SQLite/MAC/재생 검증 비용 비교이며 실제 Keychain, IPC 대기열, Codex Hook의 시간 보장은
+  아니다. claim 자체의 작업량은 유지했다. 벤치마크는
+  `BLABEE_SQLITE_RECEIPT_BENCHMARK=1`로 선택 실행하며 속도를 고정 합격 기준으로 사용하지 않는다.
+- 남은 확인: 새 설치본으로 카드 1회 선택 → 같은 세션 새 턴 → action context → 실제 결과를
+  확인한다. 위 소스 검증 단계에서는 설치된 build 11, DMG, 실행 중인 사용자 세션을 교체하지
+  않았다. 이후 build 12 설치 결과는 아래 `BLB-MACOS-SERVICE-001`의 추가 기록을 따른다.
+  자동 시작의 서명 제약은 `BLB-MACOS-SERVICE-001`에 별도로 남겨 둔다.
+- 완료 기준: 새 카드 한 번 선택 → 같은 세션 새 턴 → 검증된 action context 수신 → 실제
+  읽기 전용 작업 결과를 확인한다. claim 이벤트는 정확히 하나이며 이전 ref는 재전송하지 않는다.
+
+## BLB-MACOS-SERVICE-001 — ad-hoc 설치본의 SMAppService 실행 제약 위반
+
+- 확인일: 2026-09-07
+- 상태: 열림. Codex 복구 및 큐 전달 수정과 별도인 백그라운드 시작 문제.
+- 확인된 사실: 설정 UI에서 서비스 등록 해제 → 등록을 수행해 등록 버전이 build 8에서
+  build 10으로 갱신됐지만, 공식 job은 계속 `OS_REASON_CODESIGNING` / `spawn failed`였다.
+  build 10의 crash report는 `CODESIGNING`, `Launch Constraint Violation`을 기록했다.
+  같은 `/Applications/Blabee.app` 실행 파일의 직접 실행과 임시 진단 job은 동작했다.
+- 서명 상태: 이 내부 테스트 앱은 ad-hoc 서명이며 현재 Mac에 유효한 Developer ID
+  서명 identity가 없다. 번들 strict 검증 통과만으로 SMAppService 시작을 보장하지 않는다.
+- 미확인 사항: 갱신된 서명 identity와 macOS 등록 상태의 정확한 불일치 원인은 미확정이다.
+  등록 API 성공 또는 임시 job의 소켓 응답을 자동 시작 복구로 보고하지 않는다.
+- 하지 않은 조치: BTM 데이터베이스 전체 초기화, Gatekeeper 해제, Codex 재서명,
+  quarantine 일괄 제거, 다른 프로그램의 등록 변경.
+- 후속 검증: 안정적인 Developer ID 서명·공증 빌드의 최초 등록과 업데이트/재로그인 후
+  자동 시작을 검증한다. 현재 Mac의 등록 잔존 문제는 별도 재시동 관찰 및 Apple 진단 대상이다.
+
+### 2026-09-07 — 완료 receipt 최적화 빌드 12 설치
+
+- 산출물: `build/receipt-completion-20260907-r12/Blabee.app`. 현재 소스의 release 빌드를
+  다시 실행한 뒤 `CFBundleVersion=12`로 조립했고, build 11의 검증된 runtime identity만
+  기존 Hook/MCP 요청 호환 정책에 추가했다.
+- 교체: 구 앱의 설정에서 서비스 등록 해제를 실행하고 `등록되지 않음` 및 launchctl의
+  해당 job 부재를 확인했다. 이번에 연 구 Pet만 종료하고 앱 번들 전체를 교체했다.
+  build 11은 `/private/tmp/blabee-before-receipt-r12.F9XrMe/Blabee.app`에 보존했다.
+- 설치 검증: `/Applications/Blabee.app`의 build number는 12이며 패키지와 설치본의
+  실행 파일 SHA-256이 모두 `39f1c10fce13d037c0bd36420c31d303832eaa89e4bef840aca201c9e477ad67`이다.
+  양쪽 번들의 deep/strict 서명 검사와 runtime identity 검사가 통과했다.
+  runtime identity는 `sha256:16117bddb012013df6e2660a907413f24b86032c7d6a3751128718b4cdacf73c`,
+  assembly manifest는 `sha256:5e2ee7c1d428367d91a7f92de7355134d241b961fbf37dc80a89cc79fdfa276f`이다.
+- 실행 결과: 새 Pet PID 76815의 패널 실행은 확인했다. 새 앱의 서비스 등록 뒤에도 연결이
+  되지 않아 설정에서 명시적 등록 해제 → 등록을 한 번 더 수행했다. 등록 해제 중 job 부재,
+  재등록 뒤 parent bundle version 12를 확인했지만 최종 상태는 `not running`,
+  `OS_REASON_CODESIGNING`, `spawn failed`, `needs LWCR update`였다. 서비스 프로세스와
+  `runtime/blabee.sock`도 없었다. 따라서 **설치·Pet 재실행은 완료, 서비스 재시작과 실제
+  카드 왕복은 미완료**로 구분한다.
+- 보존 범위: 기존 Codex 세션/MCP 프로세스, 공식 Codex 실행 파일, shell/PATH, Hook 신뢰와
+  보안 설정을 변경하지 않았다. 소스·앱·설치된 Plugin의 Hook 파일 및 launcher가 일치해
+  Plugin cache도 교체하지 않았다. DMG 재생성, 별도 우회 서비스, 커밋·푸시는 하지 않았다.
+- 다음 작업: 서비스 등록/서명 제약을 별도로 해결한 뒤 실제 socket 응답과 새 카드 1회
+  선택의 완료 receipt·claim·작업 결과를 검증한다. 설치 식별자 일치만으로 이 검증을 대체하지 않는다.
+
+### 2026-09-07 — 앱 실행형 서비스 대안 구현 (설치 전)
+
+- 승인 범위 1·2에 따라 내부 테스트용 명시적 opt-in 모드를 추가했다.
+  [`APP_OWNED_SERVICE_PLAN_KO.md`](APP_OWNED_SERVICE_PLAN_KO.md)에 동작과 검증 경계를 기록했다.
+  Blabee 앱이 현재 검증된 자기 번들의 서비스를 시작하고, 앱 종료 시 소유한 자식만 정리한다.
+  패널을 닫는 동작은 서비스 종료가 아니며 선택한 모드는 다음 앱 실행까지 기억한다.
+- 기존 macOS 서비스 등록이 남아 있으면 먼저 수동 해제를 안내한다. 자동 unregister/register,
+  다른 프로세스 인수·종료, Codex·셸·Gatekeeper·Keychain 정책 변경은 하지 않는다.
+- child READY 신호와 검증된 snapshot을 모두 받아야 연결됨으로 표시한다. 실패 원인을
+  제한된 진단 코드와 한국어 복구 안내로 구분하며, 반복 실패 시 조회 간격을 늘린다.
+  시작/재연결 기한 후에는 수동 재시도만 허용하고 선택한 Codex 작업은 자동 재전송하지 않는다.
+- 실행 파일 교체는 부모/자식 runtime identity 일치 검사로 차단한다. 부모 소실 감시,
+  취소와 동시 종료의 단일 정리, 소유 PID의 회수·신호 직렬화, 이전 세대 응답 차단을 추가했다.
+- 자동 검증: 전체 Swift Testing 668개, XCTest 5개, Node 360개와 arm64 릴리스 빌드 통과.
+  별도 process/lifecycle 코드 검토의
+  지적을 수정했으며 최종 검토에 미해결 high/medium finding은 없다. 실제 설치본·Keychain
+  초기화 중 부모 강제 종료·다른 Mac 검증은 이 증거에 포함되지 않는다.
+- 상태는 계속 **열림**이다. 이번 소스 구현은 설치된 build 12나 기존 r8 DMG를 교체하지 않았고,
+  SMAppService 서명 장애의 근본 해결 또는 공개 배포 자격을 의미하지 않는다.
+
+### 2026-09-08 — build 13 앱 실행형 경로의 설치본 왕복 통과
+
+- 기존 macOS 등록을 명시적으로 해제한 뒤 build 13을 설치했다. 백업·서명·identity와
+  자세한 증거는 [설치본 검증 기록](APP_OWNED_SERVICE_PLAN_KO.md)을 따른다.
+- opt-in 연결, 패널 X와 정상 앱 종료의 차이, 재실행 자동 연결, 공식 Codex 0.153.4의
+  실제 권장 작업 선택 → 같은 세션 새 턴 → durable claim 1개 → 명령 1회/exit 0을 확인했다.
+- 원래 SMAppService 경로를 다시 등록해 성공한 것이 아니다. 이 이슈의 상태는 **열림**으로 유지한다.
+  새 DMG·다른 Mac 배포 준비 완료도 의미하지 않는다.
+
+## BLB-APP-SERVICE-001 — 첫 Keychain 승인 대기와 시작 기한 충돌
+
+- 확인일: 2026-09-08. 심각도: 중간. 상태: 열림.
+- build 13의 첫 앱 실행형 시작은 `app_service_connection_timeout`으로 종료됐다.
+  명시적 재시도에서 자식 PID 78361의 2초 스택은
+  `SQLiteJournal.preflightFreshnessStorage` → `KeychainFreshnessAnchorStore.load` →
+  `SecItemCopyMatching` → securityd 응답 대기를 보였다.
+- securityd는 11:49:16(KST) 요청 표시와 11:49:21 사용자 승인(`always allow`/`allow`)을
+  기록했다. 이후 같은 자식에서 소켓 게시·identity-bound 응답과 준비됨 UI가 확인됐다.
+- 확인된 경계: 승인 대기 중 시작 기한을 넘으면 실패 상태가 되며 자식은 정리된다.
+  이후 수동 재시작과 사용자 승인으로 복구된다. 재실행 시에는 다시 승인받지 않고 연결됐다.
+  모든 업그레이드에서 승인 없이 동작한다고 보장하지 않는다.
+- 후속: 첫 승인 대기와 일반 연결 실패의 안내를 구분하고, 지연/거절/잠긴 Keychain의
+  안전한 복구를 검증한다. 시간 상한 제거, 자동 무한 재시도, 항목 삭제나 ACL/보안 우회는 해법으로 쓰지 않는다.
+
+## BLB-APP-SERVICE-002 — 설치본 서비스 RSS 증가 관찰
+
+- 확인일: 2026-09-08. 심각도: 중간. 상태: 조사 중.
+- 같은 자식 PID 80868의 RSS가 elapsed 1:40에 174,992 KiB, 7:34에 528,336 KiB,
+  11:28에 680,624 KiB였다. 해당 CPU 표본은 0.1%였다.
+- 독립 QA가 수집한 elapsed 11:13~13:05의 약 112초 표본은 RSS 680,640 KiB로 동일했고
+  CPU는 0.1~0.2%였다. 초기 증가 이후 짧은 안정 구간도 함께 기록한다.
+- 이 사이 실제 QA 카드 처리와 세션 이벤트가 있었으므로 순수 유휴 누수로 단정하지 않는다.
+  그러나 약 171 MiB에서 665 MiB로 증가한 관찰은 유지보수/성능 후속 점검 대상으로 남긴다.
+- 후속: 프로젝트·세션·저널 크기를 통제한 유휴/단일 카드 반복 표본, 할당 수명 및 회수,
+  반복 snapshot/journal 검증 경로를 비교한다. 짧은 낮은 CPU나 왕복 성공을 메모리·발열
+  안정화 완료의 근거로 사용하지 않는다.

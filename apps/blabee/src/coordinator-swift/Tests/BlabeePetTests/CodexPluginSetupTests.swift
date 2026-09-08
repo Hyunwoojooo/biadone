@@ -295,6 +295,7 @@ private final class CodexPluginSetupFixture {
         qualifier: @escaping CodexPluginSetupExecutableQualifying,
         revalidator: @escaping CodexPluginSetupExecutableRevalidating,
         processRunner: CodexPluginSetupProcessRunning? = nil,
+        nativeRuntime: CodexNativeRuntime? = nil,
         bundleRevalidator: @escaping CodexPluginSetupBundleRevalidating = {},
         mutationLock: CodexPluginSetupMutationLock? = nil,
         monotonicNow: @escaping CodexPluginSetupMonotonicNow = {
@@ -308,6 +309,7 @@ private final class CodexPluginSetupFixture {
             executableQualifier: qualifier,
             executableRevalidator: revalidator,
             processRunner: selectedRunner,
+            nativeRuntime: nativeRuntime,
             bundleRevalidator: bundleRevalidator,
             mutationLock: mutationLock,
             monotonicNow: monotonicNow,
@@ -2276,7 +2278,7 @@ func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
 @Test("Production Plugin CLI allowlist is explicit")
 func codexPluginSetupProductionAllowlistIsExplicit() {
     #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
-        "0.151.0", "0.152.0", "0.152.1", "0.153.2",
+        "0.151.0", "0.152.0", "0.152.1", "0.153.2", "0.153.4",
     ])
 }
 
@@ -2363,7 +2365,9 @@ func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
         pinnedExecutableValidator: probe.acceptPinned
     )
 
-    #expect(probe.snapshot().inspectedPaths == [executable.path, executable.path])
+    #expect(probe.snapshot().inspectedPaths == [
+        executable.path, executable.path, executable.path,
+    ])
 
     #expect(qualified.version == "0.153.2")
     #expect(qualified.sourceURL.path == executable.path)
@@ -2376,6 +2380,7 @@ func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
 
     let snapshot = probe.snapshot()
     #expect(snapshot.inspectedPaths == [
+        executable.path,
         executable.path,
         executable.path,
         executable.path,
@@ -2601,7 +2606,7 @@ func codexPluginSetupProductionTrustRejectsPinnedVersionMismatch() throws {
     }
 
     let snapshot = probe.snapshot()
-    #expect(snapshot.inspectedPaths == [executable.path])
+    #expect(snapshot.inspectedPaths == [executable.path, executable.path])
     #expect(snapshot.signaturePaths.count == 1)
     #expect(snapshot.pinnedCalls.map(\.expectedVersion) == [nil])
     #expect(snapshot.processInvocations.map(\.arguments) == [["--version"]])
@@ -2942,4 +2947,221 @@ func codexPluginSetupRejectsOversizedNVMDirectory() throws {
         "PATH": "/does/not/exist",
     ], fixedCandidates: [])
     #expect(candidates.filter { $0.path.contains("/.nvm/versions/node/") }.isEmpty)
+}
+
+@Test("Native qualification diagnostics remain typed Plugin errors")
+func codexPluginSetupNativeQualificationPreservesDiagnostic() async throws {
+    for diagnostic in CodexNativeDiagnostic.allCases {
+        let fixture = try CodexPluginSetupFixture()
+        let manager = fixture.manager(
+            qualifier: { _ in throw diagnostic.error },
+            revalidator: { $0.canonicalURL }
+        )
+
+        #expect(await manager.inspect() == .error(code: diagnostic.rawValue))
+        #expect(fixture.fake.snapshotInvocations().isEmpty)
+    }
+}
+
+@Test("Plugin inspection preserves native preflight failure memory until explicit recheck")
+func codexPluginSetupNativePreflightRecheckOnlyResetsFailureMemory() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("native-codex-fixture")
+    let config = fixture.root.appendingPathComponent("user-codex-config-fixture")
+    let executableBytes = Data("inert Codex fixture, never executed".utf8)
+    let configBytes = Data("existing user configuration must stay unchanged".utf8)
+    try executableBytes.write(to: executable)
+    try configBytes.write(to: config)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let memory = CodexNativeFailureGuard(
+        directoryURL: fixture.root.appendingPathComponent("native-failures")
+    )
+    let preflightProbe = CodexPluginSetupProcessProbe()
+    let fake = fixture.fake
+    let runtime = CodexNativeRuntime(
+        candidates: { [executable] },
+        qualifier: { url, _, _, _ in .testOnly(url: url) },
+        revalidator: { $0.canonicalURL },
+        processRunner: fake.run,
+        preflight: { _, _ in
+            preflightProbe.record()
+            if preflightProbe.snapshot() == 1 {
+                throw CodexNativeDiagnostic.notarizationUnavailable.error
+            }
+        },
+        failureGuard: memory
+    )
+    let manager = fixture.manager(
+        qualifier: { _ in .testOnly(url: executable) },
+        revalidator: { $0.canonicalURL },
+        nativeRuntime: runtime
+    )
+
+    #expect(await manager.inspect() == .error(
+        code: CodexNativeDiagnostic.notarizationUnavailable.rawValue
+    ))
+    #expect(await manager.inspect() == .error(
+        code: CodexNativeDiagnostic.notarizationUnavailable.rawValue
+    ))
+    #expect(preflightProbe.snapshot() == 1)
+    #expect(fake.snapshotInvocations().isEmpty)
+
+    #expect(await manager.recheckNativeExecutable() == .notInstalled)
+    #expect(preflightProbe.snapshot() == 3)
+    #expect(fake.snapshotInvocations().map(\.arguments) == [
+        ["plugin", "marketplace", "list", "--json"],
+        ["plugin", "list", "--json"],
+    ])
+    #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    #expect(try Data(contentsOf: executable) == executableBytes)
+    #expect(try Data(contentsOf: config) == configBytes)
+
+    // Clearing negative memory never becomes a positive trust receipt: later
+    // ordinary inspection still performs both native preflight checks.
+    #expect(await manager.inspect() == .notInstalled)
+    #expect(preflightProbe.snapshot() == 5)
+}
+
+@Test("Prepared Plugin mutation keeps native errors instead of generic add failure")
+func codexPluginSetupNativeMutationPreservesDiagnostic() async throws {
+    for diagnostic in [
+        CodexNativeDiagnostic.executionTerminated,
+        .notarizationUnavailable,
+        .binaryChanged,
+        .guardUnavailable,
+    ] {
+        let fixture = try CodexPluginSetupFixture()
+        let fake = fixture.fake
+        let mutationProbe = CodexPluginSetupProcessProbe()
+        let manager = fixture.manager(processRunner: { executable, arguments, timeout in
+            if arguments.starts(with: ["plugin", "marketplace", "add"]) {
+                mutationProbe.record()
+                throw diagnostic.error
+            }
+            return try fake.run(
+                executable: executable,
+                arguments: arguments,
+                timeoutMilliseconds: timeout
+            )
+        })
+
+        #expect(await manager.connect() == .error(code: diagnostic.rawValue))
+        #expect(mutationProbe.snapshot() == 1)
+        #expect(pluginSetupMutationArguments(fixture).isEmpty)
+    }
+}
+
+@Test("Production version preflight rejects changed executable before the version process starts")
+func codexPluginSetupProductionPreflightRejectsChangedIdentityBeforeVersion() throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("changing-native-codex-fixture")
+    try Data("inert before".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let processProbe = CodexPluginSetupProcessProbe()
+    let preflightProbe = CodexPluginSetupProcessProbe()
+
+    #expect(throws: CodexRuntimeTrustError.changedDuringQualification) {
+        try CodexPluginSetupProductionTrust.qualify(
+            sourceURL: executable,
+            processRunner: { _, _, _ in
+                processProbe.record()
+                return CodexPluginSetupProcessResult(
+                    exitCode: 0,
+                    stdout: Data("codex-cli 0.153.2\n".utf8)
+                )
+            },
+            trustInspector: { try codexPluginSetupTrustSnapshot(at: $0) },
+            signatureValidator: { _ in },
+            pinnedExecutableValidator: { _, _, _ in
+                throw CoordinatorError("unexpected_pinned_fallback")
+            },
+            beforeVersionProbe: { url, _ in
+                preflightProbe.record()
+                try Data("inert changed during native preflight".utf8).write(to: url)
+            }
+        )
+    }
+    #expect(preflightProbe.snapshot() == 1)
+    #expect(processProbe.snapshot() == 0)
+}
+
+@Test("Production version gate separates signal termination, ordinary exit 137 and malformed output")
+func codexPluginSetupProductionVersionGatePreservesNativeFailureType() throws {
+    let validVersion = Data("codex-cli 0.153.2\n".utf8)
+    let killed = CodexPluginSetupProcessResult(
+        exitCode: 137,
+        stdout: validVersion,
+        terminationSignal: SIGKILL
+    )
+    #expect(throws: CodexNativeDiagnostic.executionTerminated.error) {
+        try CodexPluginSetupProductionTrust.supportedVersion(from: killed)
+    }
+
+    let ordinary137 = CodexPluginSetupProcessResult(exitCode: 137, stdout: validVersion)
+    #expect(throws: CodexNativeDiagnostic.launchUnavailable.error) {
+        try CodexPluginSetupProductionTrust.supportedVersion(from: ordinary137)
+    }
+
+    let malformed = CodexPluginSetupProcessResult(exitCode: 0, stdout: Data("not a version".utf8))
+    #expect(throws: CodexNativeDiagnostic.probeOutputInvalid.error) {
+        try CodexPluginSetupProductionTrust.supportedVersion(from: malformed)
+    }
+}
+
+@Test("Unsafe alias does not exclude a safe candidate for the same canonical Codex file")
+func codexPluginSetupResolverKeepsSafeSourceAfterUnsafeAlias() throws {
+    let fixture = try CodexPluginSetupFixture()
+    let safe = fixture.root.appendingPathComponent("safe-fixed-codex")
+    let unsafeDirectory = fixture.root.appendingPathComponent("unsafe-alias-parent")
+    let alias = unsafeDirectory.appendingPathComponent("codex")
+    try Data("inert candidate fixture, never executed".utf8).write(to: safe)
+    try FileManager.default.createDirectory(
+        at: unsafeDirectory,
+        withIntermediateDirectories: true
+    )
+    #expect(chmod(unsafeDirectory.path, mode_t(0o777)) == 0)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: safe)
+    #expect(alias.resolvingSymlinksInPath() == safe.resolvingSymlinksInPath())
+
+    var attempted: [String] = []
+    let selected = try CodexPluginSetupExecutableResolver.qualifyFirst(
+        candidates: [alias, alias, safe],
+        qualifier: { candidate in
+            attempted.append(candidate.path)
+            if candidate == alias {
+                throw CodexNativeDiagnostic.pathUnsafe.error
+            }
+            return .testOnly(url: candidate, version: "0.153.2")
+        }
+    )
+
+    #expect(attempted == [alias.path, safe.path])
+    #expect(selected.sourceURL == safe)
+    #expect(selected.version == "0.153.2")
+}
+
+@Test("Dangling and nonregular preferred Codex candidates do not hide a valid file")
+func codexPluginSetupSkipsDanglingAndNonregularCandidates() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("blabee-plugin-dangling-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dangling = root.appendingPathComponent("dangling")
+    let directory = root.appendingPathComponent("directory", isDirectory: true)
+    let safe = root.appendingPathComponent("safe")
+    try FileManager.default.createSymbolicLink(
+        at: dangling, withDestinationURL: root.appendingPathComponent("absent")
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+    try Data("fixture only".utf8).write(to: safe)
+    var attempted: [URL] = []
+    let result = try CodexPluginSetupExecutableResolver.qualifyFirst(
+        candidates: [dangling, directory, safe],
+        qualifier: {
+            attempted.append($0)
+            return .testOnly(url: $0)
+        }
+    )
+    #expect(attempted == [safe])
+    #expect(result.sourceURL == safe)
 }

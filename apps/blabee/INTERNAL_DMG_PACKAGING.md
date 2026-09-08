@@ -1,6 +1,7 @@
 # Blabee 내부 테스트용 DMG 패키징
 
 - 작성일: 2026-09-05
+- 갱신일: 2026-09-08 (내부 build 14)
 - 대상: 개발팀과 지정된 내부 테스터
 - 상태: 내부 테스트 패키징 구현 범위
 - 공개 배포: 미승인
@@ -149,7 +150,7 @@ codex plugin add blabee@blabee-app --json
 목록을 다시 조회해 이름, source, selector, 활성 상태가 방금 설치한 앱 리소스와
 정확히 맞는지 확인한 뒤에만 설치됨으로 표시한다.
 
-현재 내부 빌드는 Codex `0.151.0`, `0.152.0`, `0.152.1`, `0.153.2`를 Plugin 연결
+현재 내부 빌드는 Codex `0.151.0`, `0.152.0`, `0.152.1`, `0.153.2`, `0.153.4`를 Plugin 연결
 대상으로 허용한다. `0.153.2` Apple Silicon 공식 배포본은 고정된 전체 파일 hash까지
 일치해야 한다. PATH의 이름만 같은 파일은 실행하지 않는다. 후보의 소유권·쓰기 권한·
 상위 경로·서명·버전을 확인하고, 모든 조회·설치·제거 프로세스 직전에 같은
@@ -208,7 +209,26 @@ fail-closed, x86/Universal 거부를 포함한다. 샌드박스에서 `hdiutil`�
 실행 환경과 실제 산출물 hash는 `T012_APP_BUNDLE_REPORT.md`와 `TASK_STATUS.md`에
 기록한다.
 
-현재 내부 후보는
+### 2026-09-08 현재 후보 — r14
+
+현재 후보는 `build/internal-dmg-20260908-r14/Blabee-0.1.0-internal-arm64-20260908-r14.dmg`다.
+현재 소스의 private fresh release 빌드에서 생성했다. 앱 `0.1.0`, build `14`, exact `arm64`,
+DMG SHA-256 `1318370593222d207435c55544260d08bf808cfb43d9155b0d772215ab48db51`을 확인했다.
+Node 360개, Swift Testing 668개 및 XCTest 5개가 모두 통과했다. 내장 한국어 내부 테스트
+안내도 mount 검증 테스트에 포함된다. 자세한 식별자와 결과는
+[r14 릴리스 기록](INTERNAL_DMG_R14_RELEASE_KO.md)에 있다.
+
+새 DMG는 앱 실행형 서비스 모드를 포함한다. 기본 꺼짐이며 설정에서 사용자가 직접 켠다.
+기존 macOS 자동 시작 등록은 먼저 명시적으로 해제한다. 정상 연결·종료·재실행과 단일
+Codex 선택 왕복은 build 13의 개발 Mac 설치본에서 통과했고, r14 DMG 설치 검증을 대신하지 않는다.
+첫 Keychain 승인 지연과 서비스 메모리 증가 조사는 계속 열려 있다. DMG 검증만으로
+SMAppService 서명 장애 해결·장시간 안정성·다른 Mac 배포 자격을 주장하지 않는다.
+앱은 ad-hoc 서명, DMG는 미서명·미공증이며 `public_distribution_ready = false`다.
+r8 등 이전 DMG는 superseded local artifact로 보존하며 새 테스터에게 전달하지 않는다.
+
+### 역사적 검증 — 2026-09-05 r8
+
+당시 내부 후보는
 `build/internal-dmg-20260905-r8/Blabee-0.1.0-internal-arm64-20260905-r8.dmg`다.
 앱 버전 `0.1.0`, build `8`, exact `arm64`, DMG SHA-256
 `e0dbe4ff31713a76df9b38dd3e94f799d53f1bbfec86350cc28d35afd2bffa31`을 확인했다.
@@ -243,7 +263,7 @@ identity/version/code-mode allowlist는 계속 실패한다. 이는 일반 `0.15
 DMG와 `.sha256` 파일을 반드시 함께 전달한다. 받은 팀원은 두 파일이 있는 폴더에서
 먼저 checksum을 확인한다.
 
-앱 설치, Pet 설정, 서비스 등록, Codex Plugin 연결과 제거 절차는
+앱 설치, Pet 설정, 앱 실행형 서비스, Codex Plugin 연결과 제거 절차는
 [`INTERNAL_TEST_INSTALL_GUIDE.md`](./INTERNAL_TEST_INSTALL_GUIDE.md)를 따른다.
 일반 테스터는 소스 기반 dogfood 절차를 사용하지 않는다. DMG를 설치한 뒤 Blabee
 설정의 **Codex 연결하기**를 사용하고, 새 Codex 세션의 `/hooks`에서 Hook 네 개를
@@ -279,7 +299,7 @@ DMG 검증 성공만으로 제품 설치가 완료된 것은 아니다. 소스 �
 - Plugin 설치 상태와 Hook 신뢰 필요 상태가 구분되어 표시되는지
 - 새 Codex 세션의 `/hooks`에서 `SessionStart`, `UserPromptSubmit`, `Stop`,
   `PermissionRequest`를 직접 검토하고 신뢰할 수 있는지
-- 프로젝트 활성화와 `SMAppService` 등록·해제 흐름이 정상인지
+- 기존 macOS 등록의 명시적 해제, 앱 실행형 opt-in 및 실제 프로젝트 활성화가 정상인지
 - Codex 답변 완료 → Pet 카드 → 선택 → 같은 세션 다음 턴 왕복이 정상인지
 - 앱 종료·재실행과 Mac 재로그인 뒤 상태가 일관적인지
 
@@ -313,11 +333,12 @@ Developer ID 인증서, Apple ID/App Store Connect credential, notary profile은
 동일 build `1` r5→r6 교체에서는 `SMAppService` 상태가 enabled여도 launchd가
 `OS_REASON_CODESIGNING`, `needs LWCR update`를 보고하며 service 실행을 거부했다.
 
-내부 ad-hoc 앱을 업데이트할 때는 반드시 **구버전 앱이 아직 설치된 상태에서**
-설정의 서비스 등록 해제를 누르고 `등록되지 않음`을 확인한 뒤 Blabee를 완전히
-종료한다. 그 다음 새 앱 번들 전체를 교체하고, 새 앱의 더 큰 `CFBundleVersion`을
-확인한 다음 서비스를 한 번 등록한다. 정상 업데이트 절차에 `launchctl bootout`,
-`bootstrap` 또는 `sfltool resetbtm`을 섞지 않는다.
+내부 ad-hoc 앱을 업데이트할 때 macOS 서비스 등록이 남아 있다면 **구버전 앱이 아직
+설치된 상태에서** 명시적으로 등록 해제하고 `등록되지 않음`을 확인한다. 앱 실행형만
+사용한다면 등록 해제는 필요 없지만 Blabee를 완전히 종료해 소유 자식이 종료되어야 한다.
+그 다음 새 앱 번들 전체를 교체하고 더 큰 `CFBundleVersion`을 확인한다. 새 앱에서는
+기억된 앱 실행형 모드의 자동 연결을 확인하거나 직접 켠다. `launchctl bootout`,
+`bootstrap` 또는 `sfltool resetbtm`을 정상 업데이트 절차에 섞지 않는다.
 
 이 절차도 seamless upgrade나 승인 연속성을 보장하는 공개 배포 해법은 아니다. 내부
 테스트에서는 특정 산출물이 clean registration 뒤 실제 service socket에 응답했다는

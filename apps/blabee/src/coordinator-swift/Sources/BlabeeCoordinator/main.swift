@@ -769,13 +769,37 @@ private func runDaemon(arguments rawArguments: [String]) throws {
     try runDaemon(configuration: DaemonRuntimeConfiguration(arguments))
 }
 
-private func runProductService(arguments: [String]) throws {
+private func runProductService(
+    arguments: [String],
+    appLifetime: AppOwnedServiceLifetime? = nil
+) throws {
     let environment = try ProductServiceEnvironment.live()
     let configuration = try ProductServiceBootstrap.resolve(
         arguments: arguments,
         environment: environment
     )
-    try runDaemon(configuration: DaemonRuntimeConfiguration(configuration))
+    try runDaemon(
+        configuration: DaemonRuntimeConfiguration(configuration),
+        appLifetime: appLifetime
+    )
+}
+
+private func runAppOwnedProductService(arguments: [String]) throws {
+    // The lifetime watch starts before bundle/storage/Keychain initialization.
+    // A direct terminal or /dev/null invocation is not an app-owned service.
+    let lifetime = try AppOwnedServiceLifetime.captureStandardIO(arguments: arguments)
+    lifetime.start()
+    defer { lifetime.cancel() }
+    do {
+        try AppOwnedServiceLaunchBinding.verify(
+            environment: ProcessInfo.processInfo.environment,
+            currentIdentity: OperationalRuntimeIdentity.requireCurrent()
+        )
+        try runProductService(arguments: [], appLifetime: lifetime)
+    } catch {
+        lifetime.publishStartupFailure(code: error.coordinatorError.code)
+        throw error
+    }
 }
 
 private func runProductProjectSettings(arguments: [String]) throws {
@@ -786,7 +810,10 @@ private func runProductProjectSettings(arguments: [String]) throws {
     try FileHandle.standardOutput.write(contentsOf: result.outputData())
 }
 
-private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) throws {
+private func runDaemon(
+    configuration arguments: DaemonRuntimeConfiguration,
+    appLifetime: AppOwnedServiceLifetime? = nil
+) throws {
     try ContractPin.verify(contractsDirectory: arguments.contracts)
     #if BLABEE_JOURNAL_TEST_HARNESS
     guard arguments.freshnessEnvironment[
@@ -802,6 +829,7 @@ private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) thro
     // Acquire the process-lifetime owner lease before storage initialization.
     // The socket itself is published only after the full application is ready.
     let server = try UnixDomainSocketServer(socketPath: arguments.socketPath)
+    appLifetime?.installShutdownHandler { server.stop() }
     let freshness = try FreshnessRuntimeConfiguration(
         environment: arguments.freshnessEnvironment
     )
@@ -823,6 +851,7 @@ private func runDaemon(configuration arguments: DaemonRuntimeConfiguration) thro
         nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher
     )
     try server.activate()
+    try appLifetime?.publishReady()
     try withExtendedLifetime(authorityLease) {
         try server.run(application: operational, secretCorpus: journal.secretCorpus)
     }
@@ -1436,6 +1465,8 @@ do {
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
     case "service":
         try runProductService(arguments: Array(commandLine.dropFirst(2)))
+    case "app-service":
+        try runAppOwnedProductService(arguments: Array(commandLine.dropFirst(2)))
     case "project-settings":
         try runProductProjectSettings(arguments: Array(commandLine.dropFirst(2)))
     case "pet":

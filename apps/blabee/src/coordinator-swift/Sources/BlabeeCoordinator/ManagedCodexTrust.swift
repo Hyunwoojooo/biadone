@@ -434,6 +434,7 @@ struct ManagedCodexVersionProbeResult: Sendable {
     let exitCode: Int32
     let stdout: Data
     let stderr: Data
+    var terminationSignal: Int32? = nil
 }
 
 /// Runs a bounded, shell-free Codex subprocess. The managed version probe and
@@ -703,7 +704,9 @@ enum ManagedCodexVersionProbeRunner {
         return ManagedCodexVersionProbeResult(
             exitCode: shellExitStatus(waitStatus),
             stdout: output.data,
-            stderr: errors.data
+            stderr: errors.data,
+            terminationSignal: (waitStatus & 0x7f) != 0 && (waitStatus & 0x7f) != 0x7f
+                ? waitStatus & 0x7f : nil
         )
     }
 

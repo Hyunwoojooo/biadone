@@ -164,6 +164,8 @@ final class PetViewModel: ObservableObject {
         }
     }
     @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
+    @Published private(set) var appOwnedServiceState: PetAppServiceState = .disabled
+    @Published private(set) var isAppOwnedServiceEnabled = false
     @Published private(set) var codexPluginSetupState: CodexPluginSetupState = .unchecked
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
@@ -193,6 +195,7 @@ final class PetViewModel: ObservableObject {
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
     private let onboardingAdapter: any PetOnboardingAdapting
+    private let appService: PetAppServiceController?
     private let codexPluginSetupManager: any CodexPluginSetupManaging
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
@@ -214,6 +217,8 @@ final class PetViewModel: ObservableObject {
     private var nextSnapshotRequest: UInt64 = 0
     private var lastAppliedSnapshotRequest: UInt64 = 0
     private var refreshInProgress = false
+    private var consecutiveSnapshotFailures = 0
+    private var isShuttingDown = false
     private var onboardingRefreshRequested = false
     private var codexPluginRefreshRequested = false
     private var autoFocusAttemptedIdentity: PetInteractionIdentity?
@@ -230,6 +235,7 @@ final class PetViewModel: ObservableObject {
         transport: any PetCoordinatorTransport,
         externalApplicationOpener: any PetExternalApplicationOpening,
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
+        appService: PetAppServiceController? = nil,
         codexPluginSetupManager: any CodexPluginSetupManaging = CodexUnavailablePluginSetupManager(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
@@ -247,6 +253,7 @@ final class PetViewModel: ObservableObject {
         self.transport = transport
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
+        self.appService = appService
         self.codexPluginSetupManager = codexPluginSetupManager
         self.suggestionModeStore = suggestionModeStore
         self.projectFolderChooser = projectFolderChooser
@@ -259,6 +266,8 @@ final class PetViewModel: ObservableObject {
                 excludingProcessIdentifier: processIdentifier
             )
         applySuggestionModeLoadResult(suggestionModeStore.load())
+        appService?.onChange = { [weak self] in self?.syncAppOwnedServiceState() }
+        syncAppOwnedServiceState()
     }
 
     deinit {
@@ -370,6 +379,47 @@ final class PetViewModel: ObservableObject {
         return .ready
     }
 
+    var presentationTitle: String {
+        if isAppOwnedServiceEnabled, appOwnedServiceState != .ready {
+            return appOwnedServiceState.title
+        }
+        return presentationState.displayTitle
+    }
+
+    var emptyStateDescription: String {
+        if isAppOwnedServiceEnabled, appOwnedServiceState != .ready {
+            return appOwnedServiceState.detail
+        }
+        return snapshot == nil
+            ? "설정에서 서비스 연결 상태를 확인해 주세요."
+            : "유효한 결정 카드가 생기면 여기에 표시됩니다."
+    }
+
+    var isAppOwnedServiceAvailable: Bool { appService != nil }
+
+    var canChangeAppOwnedService: Bool {
+        appService != nil && !isShuttingDown
+            && !isOnboardingConfigurationOperationInFlight
+            && appService?.isTransitioning != true
+    }
+
+    private func syncAppOwnedServiceState() {
+        guard let appService else { return }
+        if appOwnedServiceState != appService.state { appOwnedServiceState = appService.state }
+        if isAppOwnedServiceEnabled != appService.enabled { isAppOwnedServiceEnabled = appService.enabled }
+        if !appService.mayQueryCoordinator {
+            let previousApproval = approvalHead?.identity
+            snapshot = nil
+            localForegroundIdentity = nil
+            pendingFocusIdentity = nil
+            riskConfirmation = nil
+            lastTerminalPresentation = nil
+            updateHotKeyEligibility()
+            onAttentionChanged?(hasAttention)
+            if previousApproval != nil { onApprovalHeadChanged?(nil) }
+        }
+    }
+
     var isRecoveryCapable: Bool {
         guard let focusedInteraction else { return false }
         return focusedInteraction.checkpoint.isRecoveryCapable
@@ -401,12 +451,14 @@ final class PetViewModel: ObservableObject {
         (onboardingServiceState == .notRegistered
             || onboardingServiceState == .notFound)
             && !isOnboardingConfigurationOperationInFlight
+            && !isAppOwnedServiceEnabled && appService?.hasOwnedChild != true
     }
 
     var canUnregisterOnboardingService: Bool {
         (onboardingServiceState == .enabled
             || onboardingServiceState == .requiresApproval)
             && !isOnboardingConfigurationOperationInFlight
+            && appService?.hasOwnedChild != true
     }
 
     var canOpenOnboardingSystemSettings: Bool {
@@ -420,6 +472,9 @@ final class PetViewModel: ObservableObject {
 
     var canMutateOnboardingProjects: Bool {
         guard configuredProjectPathsAreAuthoritative else { return false }
+        if isAppOwnedServiceEnabled, onboardingServiceState == .notFound {
+            return !isOnboardingConfigurationOperationInFlight
+        }
         return switch onboardingServiceState {
         case .notRegistered, .enabled, .requiresApproval:
             !isOnboardingConfigurationOperationInFlight
@@ -541,6 +596,15 @@ final class PetViewModel: ObservableObject {
         }
     }
 
+    func recheckCodexNativeExecutable() async {
+        // Explicit retries are never queued behind another Plugin operation.
+        guard !isCodexPluginOperationInFlight else { return }
+        await performOnboardingOperation(.codexPlugin) {
+            codexPluginSetupState = await codexPluginSetupManager.recheckNativeExecutable()
+            clearLegacyCodexPluginMigrationConfirmation()
+        }
+    }
+
     func connectCodexPlugin() async {
         guard canConnectCodexPlugin else { return }
         await performOnboardingOperation(.codexPlugin) {
@@ -599,6 +663,30 @@ final class PetViewModel: ObservableObject {
                 operationError = String(describing: error)
             }
             reloadOnboardingState(operationError: operationError)
+        }
+    }
+
+    func enableAppOwnedService() async {
+        guard canChangeAppOwnedService, let appService else { return }
+        await performOnboardingOperation(.service) {
+            appService.enable()
+            reloadOnboardingState()
+        }
+    }
+
+    func restartAppOwnedService() async {
+        guard canChangeAppOwnedService, let appService else { return }
+        await performOnboardingOperation(.service) {
+            await appService.restart()
+            reloadOnboardingState()
+        }
+    }
+
+    func disableAppOwnedService() async {
+        guard canChangeAppOwnedService, let appService else { return }
+        await performOnboardingOperation(.service) {
+            await appService.disable()
+            reloadOnboardingState()
         }
     }
 
@@ -770,12 +858,17 @@ final class PetViewModel: ObservableObject {
     }
 
     func startPolling(intervalNanoseconds: UInt64 = 500_000_000) {
-        guard pollingTask == nil else { return }
+        guard pollingTask == nil, !isShuttingDown else { return }
+        appService?.startAtAppLaunch()
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
                 do {
-                    try await Task.sleep(nanoseconds: intervalNanoseconds)
+                    let delay = PetServicePollingPolicy.delayNanoseconds(
+                        base: intervalNanoseconds,
+                        consecutiveFailures: self?.consecutiveSnapshotFailures ?? 0
+                    )
+                    try await Task.sleep(nanoseconds: delay)
                 } catch {
                     return
                 }
@@ -786,6 +879,12 @@ final class PetViewModel: ObservableObject {
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+    }
+
+    func shutdownAppOwnedService() async {
+        isShuttingDown = true
+        stopPolling()
+        await appService?.shutdown()
     }
 
     func toggleExpanded() {
@@ -1090,6 +1189,10 @@ final class PetViewModel: ObservableObject {
     }
 
     private func fetchAndApplySnapshot() async {
+        guard !isShuttingDown else { return }
+        appService?.checkChildBeforePolling()
+        guard appService?.mayQueryCoordinator != false else { return }
+        let serviceGeneration = appService?.generation
         nextSnapshotRequest &+= 1
         let requestNumber = nextSnapshotRequest
         do {
@@ -1098,8 +1201,15 @@ final class PetViewModel: ObservableObject {
             let parsed = try await Task.detached(priority: .utility) {
                 try PetSnapshot.parse(data)
             }.value
-            guard requestNumber >= lastAppliedSnapshotRequest else { return }
+            guard !isShuttingDown,
+                  requestNumber >= lastAppliedSnapshotRequest,
+                  serviceGeneration.map({ appService?.acceptsSnapshot(generation: $0) == true }) ?? true
+            else { return }
             lastAppliedSnapshotRequest = requestNumber
+            consecutiveSnapshotFailures = 0
+            if let serviceGeneration {
+                appService?.receivedVerifiedSnapshot(generation: serviceGeneration)
+            }
             apply(parsed)
             if coordinatorTransportError != nil { coordinatorTransportError = nil }
             if lastError != persistentApprovalResolutionError {
@@ -1107,8 +1217,12 @@ final class PetViewModel: ObservableObject {
             }
             await focusFIFOHeadIfNeeded()
         } catch {
-            guard requestNumber >= lastAppliedSnapshotRequest else { return }
+            guard !isShuttingDown,
+                  requestNumber >= lastAppliedSnapshotRequest,
+                  serviceGeneration == appService?.generation else { return }
             lastAppliedSnapshotRequest = requestNumber
+            consecutiveSnapshotFailures = min(3, consecutiveSnapshotFailures + 1)
+            if let serviceGeneration { appService?.connectionFailed(generation: serviceGeneration) }
             let priorApprovalHeadIdentity = approvalHead?.identity
             if snapshot != nil { snapshot = nil }
             if localForegroundIdentity != nil { localForegroundIdentity = nil }

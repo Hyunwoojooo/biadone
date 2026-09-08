@@ -332,6 +332,67 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         )
     }
 
+    /// Receipt completion and boundary close share one verified projection and
+    /// one journal commit. The normal path does not reread durable state just
+    /// to remove the continuation that this very commit made terminal.
+    func completeTransportAndCloseBoundary(
+        _ completionData: Data,
+        close closeData: Data
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+        var completion = try StrictJSONTransport.object(from: completionData)
+        let close = try StrictJSONTransport.object(from: closeData)
+        let completionType = try requiredCommandType(completion)
+        let closeType = try requiredCommandType(close)
+        try require(
+            completionType == "complete_transport" && closeType == "close_boundary",
+            "transport_completion_commands_invalid"
+        )
+        let binding = try commandBinding(completion)
+        let closeBinding = try commandBinding(close)
+        try require(closeBinding == binding, "decision_boundary_binding_mismatch")
+        let continuationID = try requiredIdentifier(completion, "continuation_id")
+
+        // Preserve monotonic expiry/clock-regression handling. Reuse the next
+        // authority load for stale-map cleanup instead of scanning twice.
+        try processDueLocked(reconcileTerminalRuntime: false)
+        let authority = try semantic.authorityProjection()
+        removeTerminalRuntimeEntriesLocked(using: authority.state)
+        if authority.state.continuation(id: continuationID)?.transport == nil {
+            try prepareTransportCompletionLocked(&completion)
+        }
+        do {
+            _ = try semantic.executeTransportCompletion(
+                completion: StrictJSONTransport.data(forJSONObject: completion),
+                close: closeData, using: authority
+            )
+        } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
+            do {
+                let recovered = try authoritativeStateLocked()
+                guard let continuation = recovered.continuation(id: continuationID),
+                      continuation.binding == binding,
+                      continuation.transport != nil,
+                      let boundary = recovered.boundary(for: binding),
+                      boundary.dispatchedContinuationID == continuationID,
+                      boundary.closed
+                else { throw ambiguity.underlying }
+                // A completed OR timed-out transport is terminal, not proof
+                // that queued work succeeded. Claim validation still requires
+                // completed transport and its exact delivery-turn tuple.
+                removeTerminalRuntimeEntriesLocked(using: recovered)
+            } catch {
+                // Retain retry markers/local authority if recovery cannot
+                // prove durable terminal state. Never requeue the action.
+                throw ambiguity.underlying
+            }
+        }
+        inFlight.removeValue(forKey: continuationID)
+        let now = clock.nowNanoseconds()
+        lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
+    }
+
     /// Returns one verified projection for the operational adapter to match a
     /// short queued-action reference and resolve its selected action. The same
     /// projection must be passed back to the claim overload below.
@@ -375,6 +436,83 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
             using: authority,
             expectedActionJSON: expectedActionJSON
         )
+    }
+
+    /// Uses the exact queued prompt as transport authority while the original
+    /// `codex queue` call is still waiting for its receipt. The three existing
+    /// semantic transitions remain independently replayable events, but are
+    /// persisted in one atomic journal append so the UserPromptSubmit Hook is
+    /// not delayed by three full integrity scans.
+    func routeQueuedActionContextClaim(
+        _ commandData: Data,
+        completingTransportWith completionData: Data,
+        closingBoundaryWith closeData: Data,
+        using authority: CoordinatorSemanticAuthorityProjection,
+        expectedActionJSON: Data
+    ) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+
+        let command = try StrictJSONTransport.object(from: commandData)
+        let completion = try StrictJSONTransport.object(from: completionData)
+        let close = try StrictJSONTransport.object(from: closeData)
+        let completionType = try requiredCommandType(completion)
+        let closeType = try requiredCommandType(close)
+        let commandType = try requiredCommandType(command)
+        try require(
+            completionType == "complete_transport"
+                && closeType == "close_boundary"
+                && commandType == "claim_queued_action_context",
+            "route_queued_action_delivery_commands_invalid"
+        )
+        let continuationID = try requiredIdentifier(command, "continuation_id")
+        let completionContinuationID = try requiredIdentifier(
+            completion,
+            "continuation_id"
+        )
+        try require(
+            completionContinuationID == continuationID,
+            "continuation_binding_mismatch"
+        )
+        let binding = try commandBinding(command)
+        let completionBinding = try commandBinding(completion)
+        let closeBinding = try commandBinding(close)
+        try require(
+            completionBinding == binding && closeBinding == binding,
+            "decision_boundary_binding_mismatch"
+        )
+        let selectedActionJSON = try authority.state.selectedActionJSON(
+            for: continuationID
+        )
+        try require(
+            selectedActionJSON == expectedActionJSON,
+            "continuation_action_mismatch"
+        )
+
+        do {
+            _ = try semantic.executeQueuedActionDelivery(
+                commands: [completionData, closeData, commandData],
+                using: authority
+            )
+        } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
+            do {
+                let recovered = try claimedQueuedActionJSONLocked(
+                    command: command,
+                    continuationID: continuationID
+                )
+                try require(
+                    recovered == expectedActionJSON,
+                    "queued_action_context_claim_mismatch"
+                )
+                inFlight.removeValue(forKey: continuationID)
+                return recovered
+            } catch {
+                throw ambiguity.underlying
+            }
+        }
+        inFlight.removeValue(forKey: continuationID)
+        return expectedActionJSON
     }
 
     private func routeQueuedActionContextClaimLocked(
@@ -1526,6 +1664,10 @@ private extension CoordinatorRoutingApplication {
 
     func removeTerminalRuntimeEntriesLocked() throws {
         let state = try CoordinatorSemanticReplay.replay(journal.load())
+        removeTerminalRuntimeEntriesLocked(using: state)
+    }
+
+    func removeTerminalRuntimeEntriesLocked(using state: CoordinatorSemanticState) {
         let pendingRemovals = pending.compactMap { key, item -> (CoordinatorBindingKey, RoutingPendingInteraction)? in
             state.pendingInteractions.contains(where: {
             $0.binding.fullKey == key

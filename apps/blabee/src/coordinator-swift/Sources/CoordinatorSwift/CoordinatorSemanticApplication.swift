@@ -136,6 +136,178 @@ public final class CoordinatorSemanticApplication: @unchecked Sendable {
         )
     }
 
+    /// Commits the three existing queued-delivery lifecycle events as one
+    /// journal batch. A live `codex queue` submission invokes
+    /// UserPromptSubmit before the queue receipt returns; writing completion,
+    /// boundary close, and the durable action claim separately would verify
+    /// the entire journal three times while Codex is holding its Hook open.
+    func executeQueuedActionDelivery(
+        commands commandData: [Data],
+        using authority: CoordinatorSemanticAuthorityProjection
+    ) throws -> CoordinatorSemanticExecutionResult {
+        try require(authority.authorityID == authorityID, "authority_projection_mismatch")
+        try require(commandData.count == 3, "queued_action_delivery_commands_invalid")
+        let commands = try commandData.map { try SemanticJSON.command($0) }
+        let commandTypes = try commands.map { try SemanticJSON.commandType($0) }
+        try require(
+            commandTypes == [
+                "complete_transport",
+                "close_boundary",
+                "claim_queued_action_context",
+            ],
+            "queued_action_delivery_commands_invalid"
+        )
+
+        var candidate = authority.snapshot
+        var appendedEvents: [Data] = []
+        var appendedDocuments: [Data] = []
+        var appendedVerifications: [Data] = []
+        var effects: [Data] = []
+        for command in commands {
+            let state = try CoordinatorSemanticReplay.replay(candidate)
+            let change = try CoordinatorSemanticDecision.decide(
+                state: state,
+                commandObject: command,
+                tokenMaterial: nil,
+                tokenHMACKey: tokenHMACKey
+            )
+            appendedEvents.append(contentsOf: change.events)
+            appendedDocuments.append(contentsOf: change.documents)
+            appendedVerifications.append(contentsOf: change.verificationRecords)
+            effects.append(contentsOf: change.effects)
+            candidate = JournalSnapshot(
+                events: candidate.events + change.events,
+                documents: candidate.documents + change.documents,
+                verificationRecords: candidate.verificationRecords
+                    + change.verificationRecords,
+                journalSequence: state.eventSequence + Int64(change.events.count)
+            )
+        }
+        _ = try CoordinatorSemanticReplay.replay(candidate)
+        try require(
+            appendedEvents.count == 3
+                && appendedDocuments.isEmpty
+                && appendedVerifications.isEmpty,
+            "queued_action_delivery_change_invalid"
+        )
+
+        do {
+            let commit = try journal.append(
+                expectedSequence: authority.state.eventSequence,
+                events: appendedEvents,
+                documents: appendedDocuments,
+                verificationRecords: appendedVerifications
+            )
+            return CoordinatorSemanticExecutionResult(commit: commit, effects: effects)
+        } catch {
+            // The caller owns an exact authoritative recovery read. Do not
+            // expose action bytes until it proves that this whole batch was
+            // committed, including the durable claim tuple.
+            throw CoordinatorSemanticAppendOutcomeUnknown(underlying: error)
+        }
+    }
+
+    /// Receipt-first completion has no external effects. Keep the existing
+    /// completion/close events, but decide and persist them in one CAS batch.
+    /// Older journals can contain only completion, and an ambiguous prior
+    /// response can leave both events committed: replay decides the remaining
+    /// zero/one/two transitions without dispatching the queued work again.
+    func executeTransportCompletion(
+        completion completionData: Data,
+        close closeData: Data,
+        using initialAuthority: CoordinatorSemanticAuthorityProjection,
+        maxSequenceConflicts: Int = 2
+    ) throws -> CoordinatorSemanticExecutionResult {
+        try require(initialAuthority.authorityID == authorityID, "authority_projection_mismatch")
+        try require(maxSequenceConflicts >= 0, "retry_limit_invalid")
+        let completion = try SemanticJSON.command(completionData)
+        let close = try SemanticJSON.command(closeData)
+        let completionType = try SemanticJSON.commandType(completion)
+        let closeType = try SemanticJSON.commandType(close)
+        try require(
+            completionType == "complete_transport" && closeType == "close_boundary",
+            "transport_completion_commands_invalid"
+        )
+        let binding = try SemanticJSON.binding(completion, nestedAt: "binding")
+        let closeBinding = try SemanticJSON.binding(close, nestedAt: "binding")
+        try require(
+            closeBinding == binding,
+            "decision_boundary_binding_mismatch"
+        )
+        let continuationID = try SemanticJSON.identifier(completion, "continuation_id")
+        // Validate even the idempotent branch; a terminal boundary must not
+        // turn a malformed or cross-boundary command pair into a success.
+        let completionID = try SemanticJSON.identifier(completion, "event_id")
+        let closeID = try SemanticJSON.identifier(close, "event_id")
+        try require(completionID != closeID, "runtime_event_id_duplicate")
+        _ = try SemanticJSON.timestamp(completion, "occurred_at", code: "transport_completion_time_invalid")
+        _ = try SemanticJSON.timestamp(close, "occurred_at", code: "runtime_event_time_invalid")
+        let closeReason = try SemanticJSON.stableCode(close, "close_reason", code: "close_reason_invalid")
+        try require(
+            closeReason == "transport_terminal_observed",
+            "transport_completion_commands_invalid"
+        )
+
+        var authority = initialAuthority
+        var conflicts = 0
+        while true {
+            guard let continuation = authority.state.continuation(id: continuationID) else {
+                throw CoordinatorError("continuation_not_dispatched")
+            }
+            try require(continuation.binding == binding, "decision_boundary_binding_mismatch")
+            guard let boundary = authority.state.boundary(for: binding),
+                  boundary.dispatchedContinuationID == continuationID
+            else { throw CoordinatorError("continuation_binding_mismatch") }
+
+            var commands: [[String: Any]] = []
+            if continuation.transport == nil { commands.append(completion) }
+            if !boundary.closed { commands.append(close) }
+            var candidate = authority.snapshot
+            var state = authority.state
+            var events: [Data] = []
+            for command in commands {
+                let change = try CoordinatorSemanticDecision.decide(
+                    state: state, commandObject: command,
+                    tokenMaterial: nil, tokenHMACKey: tokenHMACKey
+                )
+                try require(
+                    change.events.count == 1 && change.documents.isEmpty
+                        && change.verificationRecords.isEmpty && change.effects.isEmpty,
+                    "transport_completion_change_invalid"
+                )
+                events.append(contentsOf: change.events)
+                candidate = JournalSnapshot(
+                    events: candidate.events + change.events,
+                    documents: candidate.documents,
+                    verificationRecords: candidate.verificationRecords,
+                    journalSequence: state.eventSequence + 1
+                )
+                state = try CoordinatorSemanticReplay.replay(candidate)
+            }
+            if events.isEmpty {
+                return CoordinatorSemanticExecutionResult(
+                    commit: JournalAppendResult(
+                        firstSequence: state.eventSequence,
+                        lastSequence: state.eventSequence, eventCount: 0
+                    ), effects: []
+                )
+            }
+            do {
+                let commit = try journal.append(
+                    expectedSequence: authority.state.eventSequence,
+                    events: events, documents: [], verificationRecords: []
+                )
+                return CoordinatorSemanticExecutionResult(commit: commit, effects: [])
+            } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
+                guard conflicts < maxSequenceConflicts else { throw error }
+                conflicts += 1
+                authority = try authorityProjection()
+            } catch {
+                throw CoordinatorSemanticAppendOutcomeUnknown(underlying: error)
+            }
+        }
+    }
+
     private func execute(
         command commandData: Data,
         initialAuthority: CoordinatorSemanticAuthorityProjection?,

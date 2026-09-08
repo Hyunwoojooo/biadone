@@ -248,10 +248,22 @@ func blabeePetPermissionContentCanScroll() {
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
 }
 
-@Test("BlabeePet gives every explicit user decision the long response timeout")
+@Test("BlabeePet separates selection qualification from approval and polling deadlines")
 func blabeePetUserDecisionTimeoutPolicy() {
+    #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+        for: "select",
+        defaultTimeoutMilliseconds: 2_000,
+        userDecisionTimeoutMilliseconds: 12_000
+    ) == 60_000)
+    #expect(PetTransportTimeoutPolicy.selectionResponseTimeoutMilliseconds
+        > CodexQueueNextTurnDispatcher.nativeOperationTimeoutMilliseconds)
+    #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+        for: "select",
+        defaultTimeoutMilliseconds: 2_000,
+        userDecisionTimeoutMilliseconds: 12_000,
+        selectionTimeoutMilliseconds: 7_000
+    ) == 7_000)
     for requestType in [
-        "select",
         "resolve_permission_request",
         "resolve_managed_command_approval",
     ] {
@@ -264,6 +276,7 @@ func blabeePetUserDecisionTimeoutPolicy() {
     for requestType in [
         "get_state",
         "focus_interaction",
+        "select_extra",
         "resolve_managed_command_approval_extra",
     ] {
         #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(

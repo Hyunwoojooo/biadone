@@ -8,6 +8,8 @@
     "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
     "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path src/coordinator-swift --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
     "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
+    "test:codex-compatibility": "node --test --test-concurrency=1 Tests/RuntimeQualification/codex-compatibility-qualification.test.mjs",
+    "qualify:codex-compatibility": "node scripts/qualify-codex-compatibility.mjs",
     "test:t005": "node --test --test-concurrency=1 Tests/RuntimeQualification/*.test.mjs",
     "test:t007a": "node --test --test-concurrency=1 Tests/CoordinatorCore/*.test.mjs",
     "test:t007b-a": "node --test --test-concurrency=1 Tests/CoordinatorPersistence/*.test.mjs",

@@ -355,6 +355,184 @@ private func semanticQueuedActionClaim(
     ])
 }
 
+private func semanticReceiptCommands(
+    suffix: String,
+    binding: [String: Any]
+) throws -> (completion: Data, close: Data) {
+    (
+        try semanticData([
+            "type": "complete_transport",
+            "event_id": "event_receipt_\(suffix)_complete",
+            "occurred_at": "2026-08-21T01:00:05Z",
+            "binding": binding,
+            "continuation_id": "continuation_semantic_\(suffix)",
+        ]),
+        try semanticData([
+            "type": "close_boundary",
+            "event_id": "event_receipt_\(suffix)_close",
+            "occurred_at": "2026-08-21T01:00:06Z",
+            "binding": binding,
+            "close_reason": "transport_terminal_observed",
+        ])
+    )
+}
+
+private func semanticReceiptFixture(
+    suffix: String, existingEvents: Int = 5
+) throws -> (journal: SemanticMemoryJournal, app: CoordinatorSemanticApplication, binding: [String: Any]) {
+    let seedJournal = SemanticMemoryJournal()
+    let seedApp = CoordinatorSemanticApplication(journal: seedJournal)
+    let (binding, _) = try semanticCompletedQueuedAction(
+        suffix: suffix, journal: seedJournal, app: seedApp
+    )
+    let seed = try seedJournal.load()
+    // The first five events end at consumed. Six retains the legacy
+    // completed/open state; seven models a previous committed response loss.
+    let journal = SemanticMemoryJournal(snapshot: JournalSnapshot(
+        events: Array(seed.events.prefix(existingEvents)),
+        documents: seed.documents,
+        verificationRecords: seed.verificationRecords,
+        journalSequence: Int64(existingEvents)
+    ))
+    return (journal, CoordinatorSemanticApplication(journal: journal), binding)
+}
+
+@Test("receipt lifecycle commits only the missing zero one or two events", arguments: [5, 6, 7])
+func semanticReceiptCompletionAtomicAndLegacy(existingEvents: Int) throws {
+    let suffix = "receipt_legacy"
+    let fixture = try semanticReceiptFixture(suffix: suffix, existingEvents: existingEvents)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    let authority = try fixture.app.authorityProjection()
+    let result = try fixture.app.executeTransportCompletion(
+        completion: commands.completion, close: commands.close, using: authority
+    )
+    #expect(result.commit.eventCount == 7 - existingEvents)
+    #expect(result.effects.isEmpty)
+    #expect(fixture.journal.appendAttempts == (existingEvents < 7 ? 1 : 0))
+    #expect(fixture.journal.loads == 1)
+    let snapshot = try fixture.journal.load()
+    let state = try CoordinatorSemanticReplay.replay(snapshot)
+    let types = try snapshot.events.suffix(2).map { try semanticObject($0)["event_type"] as? String }
+    #expect(types == ["continuation_transport_completed", "decision_boundary_closed"])
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.continuations.values.first?.workOutcome == nil)
+    let repeatResult = try fixture.app.executeTransportCompletion(
+        completion: commands.completion, close: commands.close,
+        using: fixture.app.authorityProjection()
+    )
+    #expect(repeatResult.commit.eventCount == 0)
+    #expect(repeatResult.effects.isEmpty)
+}
+
+@Test("receipt CAS refresh preserves competing terminal and closed states", arguments: ["completed", "closed", "timed_out"])
+func semanticReceiptCompletionCASRefresh(competingState: String) throws {
+    let suffix = "receipt_cas"
+    let fixture = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    let authority = try fixture.app.authorityProjection()
+    var competingCommand = try semanticObject(commands.completion)
+    competingCommand["event_id"] = "event_receipt_competing_terminal"
+    if competingState == "timed_out" {
+        competingCommand["type"] = "timeout_transport_unknown"
+        competingCommand["occurred_at"] = "2026-08-21T01:05:03Z"
+    }
+    let terminal = try CoordinatorSemanticDecision.decide(
+        state: authority.state, command: semanticData(competingCommand)
+    )
+    var competing = terminal
+    if competingState == "closed" {
+        let candidate = JournalSnapshot(
+            events: authority.snapshot.events + terminal.events,
+            documents: authority.snapshot.documents,
+            verificationRecords: authority.snapshot.verificationRecords,
+            journalSequence: 6
+        )
+        let close = try CoordinatorSemanticDecision.decide(
+            state: CoordinatorSemanticReplay.replay(candidate), command: commands.close
+        )
+        competing = CoordinatorSemanticChange(events: terminal.events + close.events)
+    }
+    fixture.journal.installCompetingChange(competing)
+    let result = try fixture.app.executeTransportCompletion(
+        completion: commands.completion, close: commands.close, using: authority
+    )
+    #expect(fixture.journal.loads == 2)
+    #expect(fixture.journal.appendAttempts == (competingState == "closed" ? 1 : 2))
+    #expect(result.commit.eventCount == (competingState == "closed" ? 0 : 1))
+    #expect(result.effects.isEmpty)
+    let state = try CoordinatorSemanticReplay.replay(fixture.journal.load())
+    #expect(state.eventSequence == 7)
+    #expect(state.boundaries.values.first?.closed == true)
+    #expect(state.continuations.values.first?.transport?.status == (
+        competingState == "timed_out" ? .timedOutUnknown : .completed
+    ))
+}
+
+@Test("receipt validates malformed and cross-binding pairs even after completion", arguments: [5, 7])
+func semanticReceiptCompletionRejectsMalformed(existingEvents: Int) throws {
+    let suffix = "receipt_invalid"
+    let fixture = try semanticReceiptFixture(suffix: suffix, existingEvents: existingEvents)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    let authority = try fixture.app.authorityProjection()
+    let invalidCloseFields: [(String, Any, String)] = [
+        ("type", "open_boundary", "transport_completion_commands_invalid"),
+        ("binding", semanticBinding(suffix: "wrong"), "decision_boundary_binding_mismatch"),
+        ("occurred_at", "not_a_time", "runtime_event_time_invalid"),
+        ("close_reason", "episode_paused", "transport_completion_commands_invalid"),
+    ]
+    for (field, value, code) in invalidCloseFields {
+        var close = try semanticObject(commands.close)
+        close[field] = value
+        semanticExpectCode(code) {
+            _ = try fixture.app.executeTransportCompletion(
+                completion: commands.completion, close: semanticData(close), using: authority
+            )
+        }
+    }
+    var completion = try semanticObject(commands.completion)
+    completion["continuation_id"] = "continuation_wrong"
+    semanticExpectCode("continuation_not_dispatched") {
+        _ = try fixture.app.executeTransportCompletion(
+            completion: semanticData(completion), close: commands.close, using: authority
+        )
+    }
+    var wrongBindingCompletion = try semanticObject(commands.completion)
+    var wrongBindingClose = try semanticObject(commands.close)
+    wrongBindingCompletion["binding"] = semanticBinding(suffix: "wrong")
+    wrongBindingClose["binding"] = semanticBinding(suffix: "wrong")
+    semanticExpectCode("decision_boundary_binding_mismatch") {
+        _ = try fixture.app.executeTransportCompletion(
+            completion: semanticData(wrongBindingCompletion),
+            close: semanticData(wrongBindingClose), using: authority
+        )
+    }
+    let other = CoordinatorSemanticApplication(journal: SemanticMemoryJournal())
+    semanticExpectCode("authority_projection_mismatch") {
+        _ = try other.executeTransportCompletion(
+            completion: commands.completion, close: commands.close, using: authority
+        )
+    }
+    #expect(fixture.journal.appendAttempts == 0)
+}
+
+@Test("receipt completion never hides an exhausted CAS conflict")
+func semanticReceiptCompletionCASExhausted() throws {
+    let suffix = "receipt_cas_limit"
+    let fixture = try semanticReceiptFixture(suffix: suffix)
+    let commands = try semanticReceiptCommands(suffix: suffix, binding: fixture.binding)
+    let authority = try fixture.app.authorityProjection()
+    fixture.journal.conflictOnNextAppend()
+    semanticExpectCode("journal_sequence_conflict") {
+        _ = try fixture.app.executeTransportCompletion(
+            completion: commands.completion, close: commands.close, using: authority,
+            maxSequenceConflicts: 0
+        )
+    }
+    #expect(fixture.journal.appendAttempts == 1)
+    #expect(fixture.journal.loads == 1)
+    #expect(try fixture.journal.load().journalSequence == 5)
+}
+
 @Test("initial activation commits open seal and packet in one semantic append")
 func semanticInitialActivationIsAtomic() throws {
     let suffix = "initial_atomic"

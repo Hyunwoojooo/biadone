@@ -67,7 +67,8 @@ func petTransportHeartbeatRemainsConcurrentWithSelection() async throws {
         socketPath: socketPath,
         connectTimeoutMilliseconds: 1_000,
         responseTimeoutMilliseconds: 1_000,
-        userDecisionResponseTimeoutMilliseconds: 5_000
+        userDecisionResponseTimeoutMilliseconds: 5_000,
+        selectionResponseTimeoutMilliseconds: 5_000
     )
     let selection = Task {
         try await transport.request(

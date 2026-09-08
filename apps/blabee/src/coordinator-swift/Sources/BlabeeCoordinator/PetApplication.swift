@@ -83,6 +83,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     private let stopApplicationAfterStartupFailure: @MainActor () -> Void
     private var viewModel: PetViewModel?
     private var menuBarController: PetMenuBarController?
+    private var terminationInProgress = false
     private(set) var startupError: Error?
 
     init(
@@ -133,6 +134,17 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         menuBarController?.stop()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let viewModel else { return .terminateNow }
+        guard !terminationInProgress else { return .terminateLater }
+        terminationInProgress = true
+        Task {
+            await viewModel.shutdownAppOwnedService()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -150,10 +162,22 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         let suggestionModeStore = BlabeeSuggestionModeStore()
         let codexPluginSetupManager = CodexPluginSetupManager.live()
+        let appService: PetAppServiceController?
+        if onboardingAdapter is PetLiveOnboardingAdapter {
+            appService = PetAppServiceController(
+                launcher: AppOwnedServiceProcessLauncher(socketPath: arguments.socketPath),
+                preference: PetAppServicePreferenceStore(),
+                registration: { onboardingAdapter.serviceRegistrationState() }
+            )
+        } else {
+            // Raw developer Pet invocations never start a product service.
+            appService = nil
+        }
         let viewModel = PetViewModel(
             transport: transport,
             externalApplicationOpener: opener,
             onboardingAdapter: onboardingAdapter,
+            appService: appService,
             codexPluginSetupManager: codexPluginSetupManager,
             suggestionModeStore: suggestionModeStore,
             projectFolderChooser: PetOpenPanelProjectFolderChooser()

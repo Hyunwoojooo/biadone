@@ -1209,18 +1209,25 @@ private extension CoordinatorOperationalApplication {
                         guard active.nextTurnDispatchPhase == .inFlight
                                 || active.nextTurnDispatchPhase == .accepted
                         else { throw CoordinatorError("session_decision_boundary_active") }
-                        try complete(boundaryKey: activeKey)
-                        try promoteStagedAfterRecoveredTerminal(
-                            turnKey: key,
-                            terminalKey: activeKey
-                        )
-                        pendingCompletionClosures.remove(activeKey)
-                        promptResolution = try queuedPromptResolution(
+                        let resolution = try queuedPromptResolution(
                             prompt: prompt,
                             sessionID: sessionID,
                             turnID: turnID,
-                            cwd: cwd
+                            cwd: cwd,
+                            completingInFlightBoundary: activeKey
                         )
+                        if case .verified = resolution {
+                            if var completed = boundaries[activeKey] {
+                                completed.phase = .closed
+                                boundaries[activeKey] = completed
+                            }
+                            try promoteStagedAfterRecoveredTerminal(
+                                turnKey: key,
+                                terminalKey: activeKey
+                            )
+                            pendingCompletionClosures.remove(activeKey)
+                        }
+                        promptResolution = resolution
                     } else {
                         let resolution = try queuedPromptResolution(
                             prompt: prompt,
@@ -3110,32 +3117,22 @@ private extension CoordinatorOperationalApplication {
         // staged successor, so every partial transition has a retry anchor.
         pendingCompletionClosures.insert(boundaryKey)
         let now = try wallInstantGenerator().rawValue
-        do {
-            _ = try routing.executeCommand(StrictJSONTransport.data(forJSONObject: [
+        try routing.completeTransportAndCloseBoundary(
+            StrictJSONTransport.data(forJSONObject: [
                 "type": "complete_transport",
                 "event_id": idGenerator("event_transport_completed"),
                 "occurred_at": now,
                 "binding": boundary.binding.jsonObject,
                 "continuation_id": continuationID,
-            ]))
-        } catch let error as CoordinatorError where [
-            "routing_continuation_not_in_flight",
-            "transport_already_terminal",
-        ].contains(error.code) {
-            // A previous attempt may have durably completed transport before
-            // its following boundary-close append failed. The close command
-            // below is the authority check: it succeeds only for a terminal
-            // transport and therefore does not infer completion here.
-        }
-        do {
-            try closeTerminalBoundaryIdempotently(
-                &boundary,
-                reason: "transport_terminal_observed"
-            )
-        } catch {
-            pendingCompletionClosures.insert(boundaryKey)
-            throw error
-        }
+            ]),
+            close: StrictJSONTransport.data(forJSONObject: [
+                "type": "close_boundary",
+                "event_id": idGenerator("event_boundary_closed"),
+                "occurred_at": now,
+                "binding": boundary.binding.jsonObject,
+                "close_reason": "transport_terminal_observed",
+            ])
+        )
         boundary.phase = .closed
         boundaries[boundaryKey] = boundary
     }
@@ -3543,7 +3540,8 @@ private extension CoordinatorOperationalApplication {
         prompt: String,
         sessionID: String,
         turnID: String,
-        cwd: String
+        cwd: String,
+        completingInFlightBoundary: CoordinatorBindingKey? = nil
     ) throws -> QueuedPromptResolution {
         // `codex queue` may canonically decompose non-ASCII command-line
         // message text before it reaches UserPromptSubmit. Normalize only for
@@ -3565,11 +3563,21 @@ private extension CoordinatorOperationalApplication {
 
         let authority = try routing.queuedActionAuthorityProjection()
         let state = authority.state
-        var matches: [(continuation: CoordinatorContinuationState, actionJSON: Data)] = []
+        var matches: [(
+            continuation: CoordinatorContinuationState,
+            actionJSON: Data,
+            needsCompletion: Bool
+        )] = []
         for continuation in state.continuations.values {
+            let isTerminalDelivery = continuation.transport?.status == .completed
+                && state.boundary(for: continuation.binding)?.closed == true
+            let isExpectedInFlightDelivery = completingInFlightBoundary
+                == continuation.binding.fullKey
+                && continuation.transport == nil
+                && state.boundary(for: continuation.binding)?.closed == false
             guard continuation.dispatchMode == "queued_next_turn",
                   continuation.consumedAt != nil,
-                  continuation.transport?.status == .completed,
+                  isTerminalDelivery || isExpectedInFlightDelivery,
                   Self.byteExact(continuation.binding.sessionID, sessionID),
                   Self.byteExact(
                       Self.queuedPromptReference(
@@ -3592,7 +3600,7 @@ private extension CoordinatorOperationalApplication {
                   let action = try? StrictJSONTransport.object(from: actionJSON),
                   (try? validateAction(action)) != nil
             else { continue }
-            matches.append((continuation, actionJSON))
+            matches.append((continuation, actionJSON, isExpectedInFlightDelivery))
         }
         guard matches.count == 1, let match = matches.first else {
             return .rejected
@@ -3602,22 +3610,52 @@ private extension CoordinatorOperationalApplication {
         let actionSHA256 = Self.sha256Fingerprint(match.actionJSON)
         let claimedActionJSON: Data
         do {
-            let command = try StrictJSONTransport.data(forJSONObject: [
+            let occurredAt = try wallInstantGenerator().rawValue
+            let commandObject: [String: Any] = [
                 "type": "claim_queued_action_context",
                 "event_id": idGenerator("event_queued_action_context_claimed"),
-                "occurred_at": try wallInstantGenerator().rawValue,
+                "occurred_at": occurredAt,
                 "binding": match.continuation.binding.jsonObject,
                 "continuation_id": match.continuation.continuationID,
                 "delivery_turn_id": turnID,
                 "queued_prompt_sha256": queuedPromptSHA256,
                 "cwd_sha256": cwdSHA256,
                 "action_sha256": actionSHA256,
-            ])
-            claimedActionJSON = try routing.routeQueuedActionContextClaim(
-                command,
-                using: authority,
-                expectedActionJSON: match.actionJSON
-            )
+            ]
+            let command = try StrictJSONTransport.data(forJSONObject: commandObject)
+            if let completingInFlightBoundary, match.needsCompletion {
+                try require(
+                    completingInFlightBoundary == match.continuation.binding.fullKey,
+                    "decision_boundary_binding_mismatch"
+                )
+                let completion = try StrictJSONTransport.data(forJSONObject: [
+                    "type": "complete_transport",
+                    "event_id": idGenerator("event_transport_completed"),
+                    "occurred_at": occurredAt,
+                    "binding": match.continuation.binding.jsonObject,
+                    "continuation_id": match.continuation.continuationID,
+                ])
+                let close = try StrictJSONTransport.data(forJSONObject: [
+                    "type": "close_boundary",
+                    "event_id": idGenerator("event_boundary_closed"),
+                    "occurred_at": occurredAt,
+                    "binding": match.continuation.binding.jsonObject,
+                    "close_reason": "transport_terminal_observed",
+                ])
+                claimedActionJSON = try routing.routeQueuedActionContextClaim(
+                    command,
+                    completingTransportWith: completion,
+                    closingBoundaryWith: close,
+                    using: authority,
+                    expectedActionJSON: match.actionJSON
+                )
+            } else {
+                claimedActionJSON = try routing.routeQueuedActionContextClaim(
+                    command,
+                    using: authority,
+                    expectedActionJSON: match.actionJSON
+                )
+            }
         } catch let error as CoordinatorError where [
             "queued_action_context_already_claimed",
             "queued_action_context_claim_mismatch",
