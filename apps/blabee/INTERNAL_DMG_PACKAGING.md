@@ -1,7 +1,7 @@
 # Blabee 내부 테스트용 DMG 패키징
 
 - 작성일: 2026-09-05
-- 갱신일: 2026-09-09 (내부 build 19)
+- 갱신일: 2026-09-10 (내부 build 21)
 - 대상: 개발팀과 지정된 내부 테스터
 - 상태: 내부 테스트 패키징 구현 범위
 - 공개 배포: 미승인
@@ -209,9 +209,29 @@ fail-closed, x86/Universal 거부를 포함한다. 샌드박스에서 `hdiutil`�
 실행 환경과 실제 산출물 hash는 `T012_APP_BUNDLE_REPORT.md`와 `TASK_STATUS.md`에
 기록한다.
 
-### 2026-09-09 현재 후보 — r19
+### 2026-09-10 현재 후보 — r21
 
-현재 DMG는 `build/internal-dmg-20260909-r19/Blabee-0.1.0-internal-arm64-20260909-r19.dmg`다.
+DMG: `build/internal-dmg-20260910-r21/Blabee-0.1.0-internal-arm64-20260910-r21.dmg`.
+build 21, arm64, SHA-256 `fffc4db01813ef6dc0d324cce248c00fc15110e398adce089d76f34517860bd7`.
+전달 ZIP: `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260910-r21-testers.zip`.
+ZIP SHA-256: `c1333eca9c5cdabf96b175a8acfb7a76075db93279ffc0c09b873f67f56a3314`.
+외부 `.zip.sha256`도 함께 전달한다.
+
+fresh source 빌드·DMG 이미지/마운트/서명 검사와 패키징 테스트 82개를 통과했다.
+최종 DMG 앱은 설치 안내를 실제 열어 본 로컬 r21 앱과 모든 파일 내용이 일치한다.
+ZIP에는 DMG·sidecar, r21 안내 4개와 CONTENTS.sha256의 일반 파일 7개만 포함한다.
+압축 검사·별도 폴더 추출·내부/외부 checksum·원본 문서 일치·상대 링크를 확인했다.
+구 PDF·개인 설정·로그·Codex 실행 파일은 포함하지 않고 이전 산출물은 보존했다.
+
+새 앱의 설치 안내 창은 확인했으나 설치·교체 버튼은 누르지 않았다. 현재 개발 Mac의
+설치본은 build 18 그대로다. 설치 후 서비스·선택 반환·일회성 승인과 다른 Mac 검증은
+아직 남아 있다. ad-hoc 서명·미공증 내부 테스트 후보이며 공개 배포 자격이 아니다.
+테스터 안내: [r21 릴리스 기록](INTERNAL_DMG_R21_RELEASE_KO.md).
+실행·패키징 증거: [r21 로컬 기록](R21_LOCAL_ACCEPTANCE_KO.md).
+
+### 역사적 검증 — 2026-09-09 r19
+
+당시 DMG는 `build/internal-dmg-20260909-r19/Blabee-0.1.0-internal-arm64-20260909-r19.dmg`다.
 build 19, arm64, SHA-256 `320b3fb7f53b33489b2d8ddd71b179865cde7bfaaff4d1b3be40e59bdaead396`.
 전달 ZIP은 `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r19-testers.zip`을 사용한다.
 DMG·sidecar, r19 안내 4개와 CONTENTS.sha256의 7개 파일만 묶는다. 구 PDF·사용자 설정·로그·
