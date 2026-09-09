@@ -205,6 +205,7 @@ public actor CoordinatorOperationalApplication {
         let toolName: String
         let description: String?
         let commandPreview: String?
+        let allowOnceAvailable: Bool
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
@@ -220,6 +221,7 @@ public actor CoordinatorOperationalApplication {
                 "tool_name": toolName,
                 "description": description as Any? ?? NSNull(),
                 "command_preview": commandPreview as Any? ?? NSNull(),
+                "allow_once_available": allowOnceAvailable,
                 "delivery_pending": deliveryToken != nil,
             ]
         }
@@ -1505,7 +1507,9 @@ private extension CoordinatorOperationalApplication {
             "session_id", "turn_id", "cwd", "hook_event_name",
             "permission_mode", "tool_name", "tool_input",
         ]
-        let allowedKeys = requiredKeys.union(["transcript_path", "model"])
+        let allowedKeys = requiredKeys.union([
+            "transcript_path", "model", HookPermissionPolicy.qualificationKey,
+        ])
         try require(
             requiredKeys.isSubset(of: Set(payload.keys))
                 && Set(payload.keys).isSubset(of: allowedKeys),
@@ -1547,6 +1551,11 @@ private extension CoordinatorOperationalApplication {
         )
         let commandPreview = try permissionCommandPreview(
             toolInput["command"]
+        )
+        // Attested by the Hook adapter's live caller check, not by PATH or a
+        // persisted version from a previously installed/resumed session.
+        let allowOnceAvailable = HookPermissionPolicy.allowsOnce(
+            qualification: payload[HookPermissionPolicy.qualificationKey] as? String
         )
         guard let session = sessions[sessionID],
               Self.byteExact(session.latestTurnID, turnID),
@@ -1613,6 +1622,7 @@ private extension CoordinatorOperationalApplication {
                     toolName: toolName,
                     description: description,
                     commandPreview: commandPreview,
+                    allowOnceAvailable: allowOnceAvailable,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
                     deliveryToken: nil
@@ -1649,7 +1659,7 @@ private extension CoordinatorOperationalApplication {
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
         let decision = try string(payload, "decision")
         try require(
-            ["deny", "defer_to_codex"].contains(decision),
+            ["allow_once", "deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
         if let resolved = resolvedPermissionRequests.first(where: {
@@ -1696,6 +1706,10 @@ private extension CoordinatorOperationalApplication {
         try byteExactRequire(head.projectID, projectID, "permission_request_binding_mismatch")
         try byteExactRequire(head.sessionID, sessionID, "permission_request_binding_mismatch")
         try byteExactRequire(head.turnID, turnID, "permission_request_binding_mismatch")
+        try require(
+            decision != "allow_once" || head.allowOnceAvailable,
+            "permission_allow_once_unqualified"
+        )
         guard let currentSession = sessions[head.sessionID],
               Self.byteExact(currentSession.projectID, head.projectID),
               Self.byteExact(currentSession.latestTurnID, head.turnID),
@@ -1725,7 +1739,9 @@ private extension CoordinatorOperationalApplication {
             requestID: requestID,
             sessionID: sessionID,
             turnID: turnID,
-            deliveryToken: deliveryToken
+            deliveryToken: deliveryToken,
+            approvedCommand: decision == "allow_once" ? head.commandPreview : nil,
+            approvedCWD: decision == "allow_once" ? head.cwd : nil
         )
         let deliveryTimeoutNanoseconds = permissionRequestDeliveryTimeoutNanoseconds
         return try await withTaskCancellationHandler {
@@ -1940,19 +1956,33 @@ private extension CoordinatorOperationalApplication {
         requestID: String,
         sessionID: String,
         turnID: String,
-        deliveryToken: String
+        deliveryToken: String,
+        approvedCommand: String? = nil,
+        approvedCWD: String? = nil
     ) throws -> Data {
         try require(
-            ["deny", "defer_to_codex"].contains(decision),
+            ["allow_once", "deny", "defer_to_codex"].contains(decision),
             "permission_resolution_invalid"
         )
-        return try publicData([
+        var response: [String: Any] = [
             "decision": decision,
             "delivery_token": deliveryToken,
             "request_id": requestID,
             "session_id": sessionID,
             "turn_id": turnID,
-        ])
+        ]
+        if decision == "allow_once" {
+            guard let approvedCommand, let approvedCWD else {
+                throw CoordinatorError("permission_allow_once_binding_missing")
+            }
+            // Only this suspended Hook gets this one response. The adapter
+            // checks the displayed authority again at the stdout boundary.
+            response["command_preview"] = approvedCommand
+            response["cwd"] = approvedCWD
+            response[HookPermissionPolicy.qualificationKey] =
+                HookPermissionPolicy.qualifiedRuntime
+        }
+        return try publicData(response)
     }
 
     func acknowledgePermissionRequestDelivery(_ data: Data) throws -> Data {

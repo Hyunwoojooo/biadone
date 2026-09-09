@@ -204,14 +204,30 @@ struct PetSession: Sendable, Equatable {
 }
 
 enum PetPermissionDecision: String, Sendable, Equatable, CaseIterable {
+    case allowOnce = "allow_once"
     case deny
     case deferToCodex = "defer_to_codex"
 
     var displayTitle: String {
         switch self {
+        case .allowOnce: "이번만 승인"
         case .deny: "거절"
-        case .deferToCodex: "Codex에서 직접 결정"
+        case .deferToCodex: "Codex에서 직접 선택"
         }
+    }
+
+    var choiceNumber: Int {
+        switch self {
+        case .allowOnce: 1
+        case .deny: 2
+        case .deferToCodex: 3
+        }
+    }
+
+    init?(choiceNumber: Int) {
+        guard let decision = Self.allCases.first(where: { $0.choiceNumber == choiceNumber })
+        else { return nil }
+        self = decision
     }
 }
 
@@ -227,9 +243,9 @@ enum PetManagedCommandApprovalDecision: String, Sendable, Equatable, CaseIterabl
 
     var displayTitle: String {
         switch self {
-        case .acceptOnce: "이번만 허용"
+        case .acceptOnce: "이번만 승인"
         case .decline: "거절"
-        case .decideInCodex: "Codex에서 직접 결정"
+        case .decideInCodex: "Codex에서 직접 선택"
         }
     }
 }
@@ -385,6 +401,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
     let toolName: String
     let requestDescription: String?
     let commandPreview: String
+    let allowOnceAvailable: Bool
     let deliveryPending: Bool
 
     var id: String { requestID }
@@ -394,7 +411,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             jsonObject,
             [
                 "arrival_sequence", "request_id", "project_id", "session_id", "turn_id", "cwd",
-                "tool_name", "description", "command_preview", "delivery_pending",
+                "tool_name", "description", "command_preview", "allow_once_available", "delivery_pending",
             ],
             "permission_request"
         )
@@ -416,6 +433,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             "description",
             maximum: 4_096
         )
+        allowOnceAvailable = try petBoolean(jsonObject, "allow_once_available")
         deliveryPending = try petBoolean(jsonObject, "delivery_pending")
         commandPreview = try petString(
             jsonObject,
@@ -438,6 +456,14 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
 
     var displaySummary: String {
         requestDescription ?? commandPreview
+    }
+
+    var displayedDecisions: [PetPermissionDecision] {
+        PetPermissionDecision.allCases
+    }
+
+    var availableDecisions: [PetPermissionDecision] {
+        allowOnceAvailable ? [.allowOnce, .deny, .deferToCodex] : [.deny, .deferToCodex]
     }
 }
 
@@ -1206,6 +1232,10 @@ struct PetPermissionResolutionRequest: Sendable, Equatable {
         decision: PetPermissionDecision
     ) throws {
         try petRequire(!responseID.isEmpty && responseID.count <= 512, "response_id")
+        try petRequire(
+            decision != .allowOnce || request.allowOnceAvailable,
+            "permission_request.allow_once_unavailable"
+        )
         self.request = request
         self.responseID = responseID
         self.decision = decision

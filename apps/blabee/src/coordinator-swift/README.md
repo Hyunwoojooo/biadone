@@ -196,9 +196,15 @@ daemon은 `CoordinatorOperationalApplication` 하나를 UDS owner에 연결하�
 `PermissionRequest` 중계는 동결된 `native-request` v1과 별개인 process-local
 운영 IPC다. 일반 Hook 경로는 최상위 필드와 `tool_input` 필드를 exact allowlist로
 검사하고, `permission_mode: default`의 `Bash` 요청 중 120 Unicode scalar 이하인
-NFC 안전 단일 행 command만 받는다. 이때 Pet은 `거절`, `Codex에서 직접 결정`만
-표시하고 Hook `allow`는 출력하지 않는다. `이번만 허용`은 명시적 관리형 App Server
-요청의 `accept`로만 제공한다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool, 긴·여러
+NFC 안전 단일 행 command만 받는다. 서명된 Codex `0.153.4` arm64의 고정 CDHash와
+live process ancestry가 입력/출력 시 모두 검증된 경우에만 `이번만 승인`을 활성화한다.
+카드는 항상 `1 이번만 승인`, `2 거절`, `3 Codex에서 직접 선택`을 표시하며, 검증 불가
+요청의 1번은 사유와 함께 비활성화한다. 번호 표시는 숫자 키 입력 처리와 별개다.
+Hook allow는 원본 세션·턴·명령·
+세션 위치를 바이트 단위로 대조한 뒤 해당 요청의 `behavior: allow`만 출력한다.
+입력에 실린 자격 표식은 폐기하고 로컬 검증 결과로 다시 만든다. cwd는 Codex Hook이
+제공하는 세션 위치이며 실제 command workdir/environment를 증명하지 않는다.
+명시적 관리형 App Server 요청은 별도의 `accept` 경로다. 숨은·알 수 없는 필드, MCP·`apply_patch`, 다른 tool, 긴·여러
 행·제어/방향성 문자를 포함한 command는 일부만 표시하지 않고 빈 stdout으로 끝내
 Codex 네이티브 승인 체계에 결정을 돌려준다.
 
@@ -231,10 +237,11 @@ daemon·transport 오류, 상한 초과, Hook peer disconnect, 같은 세션의 
 요청은 사용자 결정 120초, broker 130초, socket 135초의 별도 예산을 사용한다.
 
 Hook 카드를 선택하면 코디네이터는 선택된 요청을 전역 FIFO 선두로 유지한다. Hook
-CLI가 deny 공식 승인 JSON을 stdout에 성공적으로 쓰거나, `Codex에서 직접
-결정`의 빈 stdout EOF를 명시적으로 전달한 뒤 exact delivery ack를 보낸 경우에만
+CLI가 allow/deny 공식 승인 JSON을 stdout에 성공적으로 쓰거나, `Codex에서 직접
+결정`의 빈 stdout을 확정하고 EOF를 닫은 뒤 exact delivery ack를 보낸 경우에만
 Pet receipt를 반환한다. 이 receipt도 Codex가 stdout을 소비했거나 명령을 실행·완료했다는
-증거는 아니다. write·EOF·ack가 실패하거나 결과가 불명확하면 자동으로 재출력·재시도하지
+증거는 아니다. launcher가 자식 stdout을 종료까지 버퍼링하므로 ACK는 adapter 출력
+접수 증거에 한정된다. write·EOF·ack가 실패하거나 결과가 불명확하면 자동으로 재출력·재시도하지
 않는다.
 
 관리형 Codex 자식 프로세스에는 `BLABEE_MANAGED_APPROVALS=1`을 명시해 같은

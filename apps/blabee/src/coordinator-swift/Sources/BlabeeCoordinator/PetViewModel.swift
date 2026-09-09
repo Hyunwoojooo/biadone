@@ -91,6 +91,7 @@ final class PetViewModel: ObservableObject {
         case service
         case codexPlugin
         case project
+        case legacyShell
     }
 
     @Published private(set) var snapshot: PetSnapshot? {
@@ -167,10 +168,12 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var appOwnedServiceState: PetAppServiceState = .disabled
     @Published private(set) var isAppOwnedServiceEnabled = false
     @Published private(set) var codexPluginSetupState: CodexPluginSetupState = .unchecked
+    @Published private(set) var codexNativeRecheckReport: CodexPluginRecheckReport?
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
     @Published private(set) var onboardingError: String?
     @Published private(set) var coordinatorTransportError: String?
+    @Published private(set) var connectionReceivedCardProjectPaths: Set<String> = []
     @Published private(set) var suggestionMode: BlabeeSuggestionMode = .smart
     @Published private(set) var suggestionModeDiagnostic: String? {
         didSet {
@@ -192,11 +195,17 @@ final class PetViewModel: ObservableObject {
     private var legacyCodexPluginMigrationConfirmation:
         CodexPluginSetupLegacyMigrationConfirmation?
 
+    @Published private(set) var legacyShellCleanupInspection: LegacyCodexShellCleanupInspection?
+    @Published private(set) var legacyShellCleanupConfirmation: LegacyCodexShellCleanupConfirmation?
+    @Published private(set) var isLegacyShellCleanupOperationInFlight = false
+    private var legacyShellConfirmationGeneration = UUID()
+
     private let transport: any PetCoordinatorTransport
     private let externalApplicationOpener: any PetExternalApplicationOpening
     private let onboardingAdapter: any PetOnboardingAdapting
     private let appService: PetAppServiceController?
     private let codexPluginSetupManager: any CodexPluginSetupManaging
+    private let legacyShellCleanupManager: any LegacyCodexShellCleanupManaging
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
     private let selectionIDGenerator: @Sendable () -> String
@@ -237,6 +246,7 @@ final class PetViewModel: ObservableObject {
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
         appService: PetAppServiceController? = nil,
         codexPluginSetupManager: any CodexPluginSetupManaging = CodexUnavailablePluginSetupManager(),
+        legacyShellCleanupManager: any LegacyCodexShellCleanupManaging = LegacyUnavailableCodexShellCleanupManager(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -255,6 +265,7 @@ final class PetViewModel: ObservableObject {
         self.onboardingAdapter = onboardingAdapter
         self.appService = appService
         self.codexPluginSetupManager = codexPluginSetupManager
+        self.legacyShellCleanupManager = legacyShellCleanupManager
         self.suggestionModeStore = suggestionModeStore
         self.projectFolderChooser = projectFolderChooser
         self.processIdentifier = processIdentifier
@@ -408,6 +419,9 @@ final class PetViewModel: ObservableObject {
         if appOwnedServiceState != appService.state { appOwnedServiceState = appService.state }
         if isAppOwnedServiceEnabled != appService.enabled { isAppOwnedServiceEnabled = appService.enabled }
         if !appService.mayQueryCoordinator {
+            if !connectionReceivedCardProjectPaths.isEmpty {
+                connectionReceivedCardProjectPaths = []
+            }
             let previousApproval = approvalHead?.identity
             snapshot = nil
             localForegroundIdentity = nil
@@ -430,6 +444,56 @@ final class PetViewModel: ObservableObject {
         Set(snapshot?.projects.filter(\.enabled).map(\.cwd) ?? [])
     }
 
+    /// Installation, a responding service, and a received card are different
+    /// evidence. In particular, persisted sessions do not prove Hook trust or
+    /// the health of the user's currently focused terminal.
+    var connectionReadiness: PetConnectionReadiness {
+        let connected = hasVerifiedServiceConnection
+        let transitioning = isAppOwnedServiceEnabled && (
+            appOwnedServiceState == .starting || appOwnedServiceState == .reconnecting
+                || appOwnedServiceState == .stopping
+        )
+        let serviceIssue: String?
+        if isAppOwnedServiceEnabled,
+           case .failed = appOwnedServiceState {
+            serviceIssue = appOwnedServiceState.detail
+        } else if isAppOwnedServiceEnabled, appOwnedServiceState == .blocked {
+            serviceIssue = appOwnedServiceState.detail
+        } else if coordinatorTransportError != nil, !transitioning {
+            serviceIssue = "서비스 응답을 확인하지 못했습니다. 서비스 설정에서 다시 연결해 주세요."
+        } else {
+            serviceIssue = nil
+        }
+        return PetConnectionReadiness(
+            pluginState: codexPluginSetupState,
+            serviceConnected: connected,
+            serviceIsTransitioning: transitioning,
+            serviceIssue: serviceIssue,
+            configuredProjectPaths: configuredProjectPathsAreAuthoritative
+                ? configuredProjectPaths : nil,
+            activeProjectPaths: connected ? activeProjectPaths : nil,
+            receivedCardProjectPaths: connected ? connectionReceivedCardProjectPaths : []
+        )
+    }
+
+    var connectionNextStepTitle: String {
+        if connectionReadiness.nextStep == .restartService,
+           !isAppOwnedServiceEnabled || !canChangeAppOwnedService {
+            return "프로젝트 적용 방법"
+        }
+        return connectionReadiness.nextStepTitle
+    }
+
+    var hasVerifiedServiceConnection: Bool {
+        snapshot != nil && coordinatorTransportError == nil
+            && (!isAppOwnedServiceEnabled || appOwnedServiceState == .ready)
+    }
+
+    var projectSettingsNeedRestart: Bool {
+        hasVerifiedServiceConnection && configuredProjectPathsAreAuthoritative
+            && Set(configuredProjectPaths) != activeProjectPaths
+    }
+
     var activeOnlyProjectPaths: [String] {
         guard configuredProjectPathsAreAuthoritative else { return [] }
         return activeProjectPaths
@@ -441,6 +505,7 @@ final class PetViewModel: ObservableObject {
         isOnboardingServiceOperationInFlight
             || isCodexPluginOperationInFlight
             || isOnboardingProjectOperationInFlight
+            || isLegacyShellCleanupOperationInFlight
     }
 
     private var isOnboardingConfigurationOperationInFlight: Bool {
@@ -530,6 +595,7 @@ final class PetViewModel: ObservableObject {
 
     func beginShortcutSettings() {
         clearLegacyCodexPluginMigrationConfirmation()
+        cancelLegacyShellCleanup()
         isShowingOnboarding = false
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
@@ -554,6 +620,7 @@ final class PetViewModel: ObservableObject {
     func beginOnboarding() async {
         cancelShortcutSettings()
         clearLegacyCodexPluginMigrationConfirmation()
+        cancelLegacyShellCleanup()
         isShowingOnboarding = true
         setExpanded(true)
         await refreshOnboarding()
@@ -561,7 +628,50 @@ final class PetViewModel: ObservableObject {
 
     func closeOnboarding() {
         clearLegacyCodexPluginMigrationConfirmation()
+        cancelLegacyShellCleanup()
         isShowingOnboarding = false
+    }
+
+    // Shell inspection is explicit and independent of Codex execution/Plugin setup.
+    // Merely opening settings never reads or changes the user's shell integration.
+    func inspectLegacyShellCleanup() async {
+        guard !isLegacyShellCleanupOperationInFlight else { return }
+        cancelLegacyShellCleanup()
+        await performOnboardingOperation(.legacyShell) {
+            legacyShellCleanupInspection = await legacyShellCleanupManager.inspect()
+        }
+    }
+
+    func prepareLegacyShellCleanup() async {
+        guard isShowingOnboarding, !isLegacyShellCleanupOperationInFlight,
+              legacyShellCleanupInspection?.canPrepare == true
+        else { return }
+        cancelLegacyShellCleanup()
+        let generation = legacyShellConfirmationGeneration
+        await performOnboardingOperation(.legacyShell) {
+            let confirmation = await legacyShellCleanupManager.prepare()
+            guard generation == legacyShellConfirmationGeneration, isShowingOnboarding else { return }
+            legacyShellCleanupConfirmation = confirmation
+            if confirmation == nil {
+                legacyShellCleanupInspection = await legacyShellCleanupManager.inspect()
+            }
+        }
+    }
+
+    func cancelLegacyShellCleanup() {
+        legacyShellConfirmationGeneration = UUID()
+        legacyShellCleanupConfirmation = nil
+    }
+
+    func confirmLegacyShellCleanup() async {
+        guard isShowingOnboarding, !isLegacyShellCleanupOperationInFlight,
+              let confirmation = legacyShellCleanupConfirmation
+        else { return }
+        // Consume the UI confirmation before awaiting; a double click cannot replay it.
+        cancelLegacyShellCleanup()
+        await performOnboardingOperation(.legacyShell) {
+            legacyShellCleanupInspection = await legacyShellCleanupManager.cleanup(confirmation: confirmation)
+        }
     }
 
     func updateSuggestionMode(_ mode: BlabeeSuggestionMode) {
@@ -600,7 +710,16 @@ final class PetViewModel: ObservableObject {
         // Explicit retries are never queued behind another Plugin operation.
         guard !isCodexPluginOperationInFlight else { return }
         await performOnboardingOperation(.codexPlugin) {
-            codexPluginSetupState = await codexPluginSetupManager.recheckNativeExecutable()
+            var report = CodexPluginRecheckReport()
+            let startedUptime = DispatchTime.now().uptimeNanoseconds
+            codexNativeRecheckReport = report
+            let result = await codexPluginSetupManager.recheckNativeExecutableWithReport()
+            report.completedAt = Date()
+            let finishedUptime = DispatchTime.now().uptimeNanoseconds
+            report.elapsedSeconds = Double(finishedUptime - startedUptime) / 1_000_000_000
+            report.result = result
+            codexPluginSetupState = result.state
+            codexNativeRecheckReport = report
             clearLegacyCodexPluginMigrationConfirmation()
         }
     }
@@ -1091,6 +1210,7 @@ final class PetViewModel: ObservableObject {
         guard let request = pendingPermissionRequest,
               request == displayedRequest,
               request.requestID.utf8.elementsEqual(displayedRequest.requestID.utf8),
+              decision != .allowOnce || request.allowOnceAvailable,
               !request.deliveryPending,
               inFlightPermissionRequestID == nil
         else { return }
@@ -1224,6 +1344,9 @@ final class PetViewModel: ObservableObject {
             consecutiveSnapshotFailures = min(3, consecutiveSnapshotFailures + 1)
             if let serviceGeneration { appService?.connectionFailed(generation: serviceGeneration) }
             let priorApprovalHeadIdentity = approvalHead?.identity
+            if !connectionReceivedCardProjectPaths.isEmpty {
+                connectionReceivedCardProjectPaths = []
+            }
             if snapshot != nil { snapshot = nil }
             if localForegroundIdentity != nil { localForegroundIdentity = nil }
             if pendingFocusIdentity != nil { pendingFocusIdentity = nil }
@@ -1242,6 +1365,16 @@ final class PetViewModel: ObservableObject {
     }
 
     private func apply(_ newSnapshot: PetSnapshot) {
+        // Keep actual card reception visible after selection consumes the card.
+        // This is in-memory observation, not saved sessions or a return receipt.
+        // Connection loss/service transitions clear it; removed projects drop out.
+        let activePaths = Set(newSnapshot.projects.filter(\.enabled).map(\.cwd))
+        let receivedPaths = connectionReceivedCardProjectPaths.intersection(activePaths)
+            .union(newSnapshot.interactions.filter(\.isSelectionReady).map(\.cwd))
+            .intersection(activePaths)
+        if connectionReceivedCardProjectPaths != receivedPaths {
+            connectionReceivedCardProjectPaths = receivedPaths
+        }
         let priorApprovalHeadIdentity = approvalHead?.identity
         let priorLocalForeground = localForegroundIdentity
         let priorHead = fifoHeadInteraction
@@ -1566,6 +1699,8 @@ final class PetViewModel: ObservableObject {
             isOnboardingConfigurationOperationInFlight
         case .codexPlugin:
             isCodexPluginOperationInFlight
+        case .legacyShell:
+            isLegacyShellCleanupOperationInFlight
         }
     }
 
@@ -1580,6 +1715,8 @@ final class PetViewModel: ObservableObject {
             isCodexPluginOperationInFlight = inFlight
         case .project:
             isOnboardingProjectOperationInFlight = inFlight
+        case .legacyShell:
+            isLegacyShellCleanupOperationInFlight = inFlight
         }
     }
 
@@ -1587,7 +1724,7 @@ final class PetViewModel: ObservableObject {
         setOnboardingOperationInFlight(false, domain: domain)
 
         switch domain {
-        case .codexPlugin:
+        case .codexPlugin, .legacyShell:
             break
         case .service, .project:
             guard onboardingRefreshRequested,

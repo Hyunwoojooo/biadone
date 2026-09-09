@@ -1,8 +1,190 @@
 # Blabee 작업 현황
 
-업데이트: 2026-09-08
+업데이트: 2026-09-10
 
-## 현재 작업 — DMG r14 갱신과 게시 (2026-09-08)
+## 현재 작업 — r21 새 빌드·설치 준비·관련 소스 커밋 (2026-09-10)
+
+- fresh private snapshot에서 `build/local-approval-20260910-r21/Blabee.app`을 release 빌드했다.
+  build 21/arm64, 서명·앱 구조·입력 fingerprint 일치를 확인했다.
+- 설치본은 build 18이다. 현재 세션을 포함한 Codex 자식 MCP가 실제 실행 파일을 사용 중이어서
+  설치 보호를 우회하거나 프로세스를 종료하지 않았다. 설치·재시작·실제 승인 왕복은 남았다.
+- 새 앱과 일치하는 Blabee 제품·테스트·기존 설치/연결 개선 문서를 커밋 대상으로 묶는다.
+  다른 앱·CI·웹사이트·PDF·개인 임시 파일·빌드 산출물과 push는 제외한다.
+- 증거와 정상 종료 후 설치 절차: [r21 로컬 검증 기록](R21_LOCAL_ACCEPTANCE_KO.md).
+
+## 직전 작업 — Hook 승인 자격 조회 오류·세 버튼 고정 (2026-09-10)
+
+- 정상 공식 Codex에서도 Team ID가 누락되던 macOS 서명 정보 조회 플래그 오류를 수정했다.
+  허용된 코드 해시·서명자·부모 관계·요청별 바인딩 조건을 완화하지 않았다.
+- 일반 Hook 카드를 `1 이번만 승인 · 2 거절 · 3 Codex에서 직접 선택`으로 고정한다.
+  승인 불가 요청도 1번을 숨기지 않고 사유와 대체 경로를 표시하며, 승인 전송은 차단한다.
+- 실제 제품 qualifier를 직접 컴파일해 공식 Codex의 직접/셸 경유 자식에서 승인 자격
+  통과를 확인했다. 최종 Swift Testing 809개 + XCTest 5개, Node 360개와 diff 검사 통과.
+  독립 코드 QA 및 최종 UI delta 재검토에서 P1/P2 지적 없음.
+- 숫자는 버튼 번호이며 전역 키보드 기능을 추가하지 않았다. offscreen 접근성 트리 검사에서는
+  빈 트리만 반환돼 해당 검증은 완료하지 못했다. 실제 화면/클릭/승인 왕복은 별도로 남긴다.
+- 설치본·build 20·DMG/ZIP에는 아직 반영하지 않았다. Codex 실행 방식·설치·Hook 신뢰·
+  세션·서비스 설정·사용자 프로세스를 변경하거나 commit/push하지 않았다.
+- 원인과 검증/배포 경계: [권한 카드 승인 오류 수정](PERMISSION_CARD_APPROVAL_KO.md).
+
+## 직전 작업 — 설정 UI build 20 준비·교체 보류 (2026-09-09)
+
+- `build/local-readiness-20260909-r20/Blabee.app`을 현재 소스의 private snapshot에서 release 빌드했다.
+- 입력 136개 파일 fingerprint 일치, build 20/arm64, deep/strict 서명, 앱 구조와 Plugin 바이트 검사 통과.
+- 설치본은 build 18이며 Pet·소유 서비스·Codex 자식 MCP가 실제 파일을 사용 중이다.
+  설치 보호를 우회하지 않고 교체·재시작을 보류했다. 기존 앱·백업·프로젝트 설정은 유지했다.
+- 실제 UI 조회는 정확한 설치 경로 timeout 및 번들 ID 중복으로 실패했다.
+  새 UI 클릭·펼침·스크롤, Codex 선택 반환은 미검증이며 빌드 성공과 구분한다.
+- 앱 조립과 기록 외 제품 소스 변경·DMG/ZIP 갱신·프로세스 종료·commit/push 없음.
+- 증거와 다음 안전한 교체 절차: [r20 설정 화면 검증 기록](R20_SETTINGS_UI_ACCEPTANCE_KO.md).
+
+## 직전 작업 — 설정 연결 상태 요약 (2026-09-09)
+
+- 서비스·Plugin 설치·프로젝트 적용·카드 수신을 분리한 상단 요약과 단계별 행동 버튼을 추가했다.
+- 프로젝트 목록을 위로 올리고, 설치 진단·선택 사항인 자동 시작·이전 연결 정리는 접어 둔다.
+- 프로젝트 추가·제거의 미적용 상태와 서비스 재시작 방법을 안내한다. 카드 선택 뒤에도
+  수신 기록을 유지하지만 연결 실패·서비스 전환·프로젝트 비활성화 시 초기화한다.
+- Plugin 설치나 카드 수신을 전체 Hook 신뢰·선택 반환 성공으로 표시하지 않는다.
+- 전체 Swift Testing 805개 + XCTest 5개, Node 360개 통과. 반복 실패 시 중복 상태 발행 회귀를 찾아 수정했다.
+  독립 코드 재검토에서 추가 P1/P2 없음. offscreen 배치 검증은 실제 유리 효과·클릭·스크롤 검증과 구분한다.
+- Codex 실행 방식·Hook 신뢰·설치본·r19 DMG/ZIP·다른 세션은 변경하지 않았다. commit/push 없음.
+- 설계·판정 기준·배포 제한: [연결 상태 화면 개선](CONNECTION_STATUS_UI_KO.md).
+
+## 직전 작업 — r19 테스터 ZIP 제작 (2026-09-09)
+
+- 기존 검증된 r19 DMG를 재빌드 없이 최신 안내 4개·DMG sidecar·CONTENTS.sha256과 묶었다.
+- ZIP: `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r19-testers.zip`
+  (`2526650` bytes). SHA-256 `7ae2a1348ad9ea304b7107a48fc6cd942c74872785d62b7d720cb157f780c834`.
+- 새 폴더 압축 해제 후 정확한 일반 파일 7개, 내부 checksum 6개·DMG checksum,
+  원본 바이트 일치, 상대 링크/앵커 12개, 외부 ZIP checksum을 확인했다. 별도 QA 차단 이슈 없음.
+- r19 가이드에 설치 안내·백업 확인·실행 중 차단과 **연결하기는 설치 / 다시 검사는 검사**를
+  명시했다. 팀원의 `plugin_not_installed`는 설치 클릭 직후 결과와 구분해 수집하도록 했다.
+- 기존 r18 DMG/ZIP·설치본·실행 중 서비스/Codex는 변경하지 않았다. 구 PDF·개인 설정·로그·
+  Codex 바이너리는 넣지 않았고 commit/push·파일 전송은 하지 않았다.
+- 실제 r19 설치 완료·다른 Mac 연결·Hook/서비스/선택/권한 왕복은 여전히 미검증이다.
+- 안내: [r19 릴리스 기록](INTERNAL_DMG_R19_RELEASE_KO.md).
+  상세 증거: [r19 설치 검증 기록](R19_INSTALLATION_ACCEPTANCE_KO.md#후속-테스터-zip-제작--2026-09-09).
+
+## 직전 작업 — r19 DMG 제작·실제 설치 검증 (2026-09-09)
+
+- fresh private source snapshot으로 build 19 arm64 내부 DMG와 checksum을 제작했다.
+  DMG SHA-256 `320b3fb7f53b33489b2d8ddd71b179865cde7bfaaff4d1b3be40e59bdaead396`.
+- 독립 이미지 검사·checksum·읽기 전용 mount·deep/strict 서명·빌드·아키텍처 검사 통과.
+  패키징 집중 Node 81개와 설치/실행 집중 Swift 71개 통과.
+- 승인 후 r19 DMG 앱을 실제 실행해 설치 안내, build 19/기존 build 18 표시와 교체 확인 창을
+  관찰했다. 기존 Pet·서비스·MCP 사용 중 안내가 나타나 자동 교체가 차단됐고,
+  설치 버튼 비활성 및 다시 확인/닫기 사용 가능 상태를 확인했다.
+- 기존 build 18과 실행 파일 해시·서명은 유지됐다. Codex/MCP는 종료하지 않았고
+  검증용 설치 창만 닫은 뒤 DMG를 정상 해제했다. 설치 성공·새 앱 연결 왕복은 미검증이다.
+- 새 설치 안내 창의 Computer Use 조회는 성공했다. 이전 Pet 화면 timeout 원인은 별개다.
+- 현재 설치본·r18 DMG/ZIP은 유지했다. commit/push는 하지 않았다.
+- 새 파일·검사 증거·설치 절차: [r19 설치 검증 기록](R19_INSTALLATION_ACCEPTANCE_KO.md).
+
+## 직전 작업 — 앱 설치 위치 복구 UX (2026-09-09)
+
+- DMG/Downloads/이름이 바뀐 앱의 암시적 실행은 일반 Pet·서비스 시작 전에 설치 안내로 보낸다.
+  `응용 프로그램에 설치하고 시작`, 기존 앱 확인·백업·교체, 진행/오류·Finder 안내를 추가했다.
+- 기존 동일/신버전 앱은 열기를 우선한다. 전체 번들을 검증해 private staging에서 게시하며,
+  충돌 시 기존 앱과 복구 자료를 덮어쓰거나 삭제하지 않는다.
+- 설치본의 경로·디스크 identity·실행 PID identity를 함께 확인한다.
+  실행 확인 실패 후에는 설치본을 보존하고 열기만 다시 시도한다.
+- 최초 설치는 대상 부재 검사+EXCL로 보호한다. 기존 앱 교체는 실행 중인 관련 프로세스 또는
+  조회 불가능한 실행 경로가 있으면 자동 진행하지 않고 수동 안내로 전환한다.
+- 최종 Swift Testing 788개 + XCTest 5개, Node 360개 통과. 별도 QA에서 확인한
+  실행 PID identity 누락을 수정했고 재검토 범위의 High/Medium은 남지 않았다.
+- arm64 coordinator 릴리스 빌드와 `git diff --check`도 통과했다. 새 앱 번들/DMG는 만들지 않았다.
+- Codex 본체/실행 방식/shell 설정, 현재 설치본과 r18 DMG/ZIP은 변경하지 않았다.
+  실제 설치·macOS 권한 창·다른 Mac 검증과 새 패키징·commit/push는 후속 작업이다.
+- 설계·파일 경계·검증·제한: [앱 설치 위치 복구](INSTALLATION_RECOVERY_PLAN_KO.md).
+
+## 직전 작업 — r18 로컬 설치와 실제 권한 검증 (2026-09-09)
+
+- 사용자 선택 작업의 범위에 따라 기존 build 16 앱 전체를 고유 백업에 보존하고
+  `/Applications/Blabee.app`을 build 18로 교체·실행했다. 다른 Codex/MCP 세션은 종료하지 않았다.
+- Pet PID 7526 → 소유 서비스 PID 7530과 제품 소켓 소유, 설치본 identity에 바인딩된
+  `get_state` 응답(약 2ms)을 확인했다. 설치용 DMG를 정상 해제하고 빈 staging만 제거했다.
+- 일반 사용자 zsh에서 `codex: command`, `codex-cli 0.153.4`를 확인했다.
+  공식 Codex와 `.zshrc`의 설치 전후 해시가 같으며 실행 방식·설정·승인 정책을 바꾸지 않았다.
+- 권한 검증은 **미완료**다. 이번만 허용용 `whoami`, 반복 요청의 거절용 `whoami`,
+  Codex 직접 결정 후 거절용 `cksum`이 모두 exit 0으로 실행됐다. 실제 버튼 선택 경로는
+  확인되지 않아 거절 성공·일회성 보장·Pet 승인 왕복 통과로 기록하지 않는다.
+- Computer Use가 설치 앱 경로에서도 `-10005: timeoutReached`를 반환했다.
+  사용자 클릭/ACK/native 소비와 기존 대화의 실제 `/resume`은 미검증으로 구분한다.
+- 최종 후속 제안은 한 번 제출했으나 `decision_context_invalid_or_expired`로 거절됐다.
+  재시도하거나 성공으로 기록하지 않았으며 컨텍스트 유효성 진단도 남아 있다.
+- 설치 백업·식별자·요청별 결과·후속 검증: [r18 로컬 검증 기록](R18_LOCAL_ACCEPTANCE_KO.md).
+  기존 r18 DMG/ZIP·릴리스 기록은 수정하지 않았고 제품 소스 변경·commit/push도 하지 않았다.
+
+## 직전 작업 — 내부 테스터 r18 / Hook 요청 단위 허용 (2026-09-09)
+
+- 사용자 요청: 수정본으로 내부 테스터용 패키징. 설치본 교체·재시작·commit/push는 범위 밖.
+- 서명된 Codex 0.153.4 arm64의 입력/출력 시 live ancestry 자격에 한해 Hook
+  `이번만 허용`을 제공한다. 그 외에는 거절/native 직접 결정 경로를 유지한다.
+- 패키징 전 입력 자격 위조 차단, 응답의 exact schema·세션/턴·명령/세션 위치 바이트
+  대조와 출력 시 재검증을 추가했다. Hook cwd는 실제 실행 폴더가 아닌 세션 위치로 표시한다.
+- 전체 Swift Testing 722개 + XCTest 5개, Node 360개 통과. 동일 명령 재요청의 새 결정,
+  자격 불일치·stale turn·Pet lease 만료를 회귀 테스트로 확인했다.
+- 공식 rust-v0.153.4 소스의 Hook Allow → Approved와 ApprovedForSession 전용 캐시를
+  확인했다. 소스/자동 검사와 실제 Pet 클릭 → native 소비/실행은 별개이며 후자는 미검증.
+- fresh arm64 build 18·DMG 생성·deep/strict 서명·독립 readonly mount 검사·정상 detach 완료.
+  DMG SHA-256 `ae22851504d924b33dbce83acdf1790ae93e996c4c4eefbe8b1e585c85e213e2`.
+- ZIP: `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r18-testers.zip`
+  (2,409,242 bytes). SHA-256 `65f323725b26279ff59d9133eb5a6a5bafa7dba7f39651003cd67074d4fff227`.
+  새 폴더 압축 해제 후 정확한 7개 일반 파일, 모든 checksum, 최신 문서 일치와 상대 링크
+  10개를 확인했다. 외부 `.zip.sha256`도 검증했다. 기존 r17은 보존했다.
+- 설치 build 16·공식 Codex 본체·`.zshrc` 전후 hash 및 release 입력 fingerprint가 같다.
+  실행 중인 앱/서비스/Codex를 교체·재시작하지 않았고 commit/push도 하지 않았다.
+- 제한·검증·산출물 식별자: [r18 릴리스 기록](INTERNAL_DMG_R18_RELEASE_KO.md).
+
+## 직전 작업 — 내부 테스터 r17 재패키징 (2026-09-09)
+
+- 사용자 승인: 현재 수정 사항을 다른 내부 테스터에게 전달할 DMG/ZIP으로 다시 패키징.
+- fresh private snapshot에서 release build 17을 생성했다. Node 360개, Swift Testing 696개와
+  XCTest 5개 통과. Swift 최초 샌드박스 실행의 캐시 접근 실패는 승인된 재실행과 구분한다.
+- DMG 생성·deep/strict 서명·readonly mount·정상 detach·SHA-256 확인 통과.
+  산출물: `build/internal-dmg-20260909-r17/Blabee-0.1.0-internal-arm64-20260909-r17.dmg`.
+- 한국어 설치 가이드에 구형 셸/Plugin 복구 구분, 수정본 자동 정리 거부, 재검사/진단 복사 검증을 추가했다.
+  독립 문서 QA의 안내 누락도 보완했다. 구 PDF는 전달하지 않는다.
+- 전달 ZIP: `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r17-testers.zip`
+  (2,393,807 bytes). SHA-256 `0cf91d37678385d8c514b0df6128a35dccfb4fe8ce556ceb310d7379f3f9439f`.
+  ZIP 무결성, 새 임시 폴더 압축 해제 후 정확한 7개 일반 파일, 내부 모든 checksum·DMG checksum,
+  최신 문서 일치와 상대 링크 8개를 확인했다. `.zip.sha256`도 함께 생성·검증했다.
+- 사용자 제공 build 16 화면의 서비스 연결·Codex 0.153.4 검사 완료(2.9초/error_code=none)는
+  별도 부분 관찰로 기록했다. r17·다른 Mac·실제 카드 왕복 성공 근거로 합치지 않는다.
+- 실행 중인 앱/서비스/Codex를 교체하거나 재시작하지 않았고 commit/push도 하지 않았다.
+  설치본 build 16·공식 Codex 본체·`.zshrc`의 전후 SHA-256과 release source fingerprint가 일치한다.
+  검증용 r15/r17 DMG는 모두 정상 해제했다. 다른 Mac 최초 설치/업데이트와 r17 왕복은 미검증이다.
+- 식별자·전달 범위·잔여 위험: [r17 릴리스 기록](INTERNAL_DMG_R17_RELEASE_KO.md).
+
+## 직전 작업 — build 16 설치 적용과 설정 검증 (2026-09-09)
+
+- 사용자 승인: 다음 단계 1번인 새 빌드·백업·교체·재시작 및 설정 화면 확인.
+- fresh arm64 build 16을 `/Applications/Blabee.app`에 적용하고 deep/strict 서명 검증을 통과했다.
+  기존 build 13은 정상 종료 후 `/Applications/.blabee-before-r16.ufjlql/Blabee.app`에 전체 보존했다.
+- 새 Pet PID 98013과 소유 서비스 PID 98078의 실행 경로·부모/자식 관계·제품 소켓 소유를 확인했다.
+  설치본 identity로 `get_state` 요청/응답 바인딩을 검증했으며 약 3ms에 성공했다.
+- 현재 세션의 `emit_decision`도 접수됐다. 다른 세션 호환성과 Pet 실제 표시·선택 반환은 별도다.
+- Codex 본체·동반 host·`.zshrc` 해시는 기존과 같다. 기존 Codex/MCP 세션은 종료하지 않았다.
+- 설정 UI 실사용 검증은 **미완료**다. 기본 패널은 관찰했지만 기본 Computer Use가 설치본 경로에서도
+  `-10005: timeoutReached`를 반환해 재검사/진단 복사/구형 연결 검사 버튼을 실제로 확인하지 못했다.
+  이 외부 도구 오류를 Blabee 재검사 실패로 판정하지 않는다.
+- 01:38 KST 선택 작업의 전체 조건은 새 턴 Hook에 전달됐지만 화면 읽기는 다시 시간 초과했다.
+  클릭·클립보드 조회 없이 미검증으로 기록했다. 다음은 동일 재시도가 아닌 화면 제어 연결 진단 또는 수동 QA다.
+- 구형 래퍼의 실제 비활성화, 다른 Mac 복구, 전체 카드 왕복, DMG 갱신·커밋·푸시는 수행하지 않았다.
+- 설치 식별자·백업·검증 경계: [구형 연결 복구 기록](CODEX_LEGACY_RECOVERY_KO.md#2026-09-09-build-16-로컬-적용검증-기록).
+
+## 직전 작업 — 구형 셸 연결 정리와 재검사 피드백 (2026-09-08)
+
+- 사용자 승인: 권장 수정 1·2번 구현. 일반 Codex 래퍼는 다시 도입하지 않는다.
+- 구형 v4 래퍼를 명시적 확인 뒤 고유 백업으로 이동하는 경로와 검사 진행/완료/오류 표시를 구현했다.
+- 최종 Swift Testing 696개 + XCTest 5개 통과. 동시 잠금 생성 실패를 수정하고 320회 경합 검증도 통과했다.
+- Node 최종 전체 회귀 360/360 통과. 앞선 전체 실행의 Hook 시간 기준 초과 1건과 재검증 이력은 문서에 따로 기록했다.
+- `.zshrc`는 덮어쓰지 않는다. 수정본·불명확한 연결은 자동 정리하지 않으며 열린 터미널은 변경하지 않는다.
+- 이 소스 작업에서는 실제 사용자 설정·Codex 설치·서비스·앱을 변경하지 않았다.
+  후속 승인된 설치본 교체는 위 2026-09-09 기록으로 구분하며, DMG·커밋·푸시는 계속 별도다.
+- 안전 경계: [구형 연결 복구 계획](CODEX_LEGACY_RECOVERY_KO.md).
+
+## 직전 작업 — DMG r14 갱신과 게시 (2026-09-08)
 
 - 사용자 승인: 최신 Blabee 변경을 포함한 내부 DMG 갱신 및 관련 파일 커밋·푸시.
 - r14 fresh release, 앱 ad-hoc 서명, 미서명 DMG 생성·readonly mount·정상 detach·checksum 검증 완료.
@@ -140,7 +322,7 @@ project_enabled
 3. 사람이 직접 입력한 프롬프트와 Pet이 큐잉한 새 프롬프트는 모두 새 에피소드와 롤백 기준선을 만든다. Pet action의 binding은 선택이 만들어진 원본 에피소드를 보존해 출처를 추적한다.
 4. 공개 v0.1 자동 롤백 후보는 깨끗한 작업 트리에서 시작하고 범위가 완전한 프롬프트 에피소드 하나다. ignored 파일, 하위 모듈, LFS, 저장소 밖 파일, 크기 초과, 동시 편집, 브랜치·HEAD 변경, 외부 부수 효과가 있으면 비활성화한다.
 5. M0 센티널과 실행 스파이크는 2026-08-31 활성 트리에서 제거했다. 운영 결정 제안 채널은 프로젝트 로컬 MCP `emit_decision`이다.
-6. 지원 가능한 command형 Hook 권한 요청은 Pet의 별도 2선택 카드로 중계한다. Hook에서는 `거절`과 `Codex에서 직접 결정`만 제공한다. `이번만 허용`은 관리형 App Server의 단일 요청 `accept`로만 제공하고 세션·전역 허용은 만들지 않는다. 실패·만료·재시작에서는 Codex 네이티브 승인 체계로 반환하며 앱 복귀는 best-effort다.
+6. 지원 가능한 command형 Hook 권한 요청은 별도 카드로 중계한다. r18부터 검증된 Codex 0.153.4 arm64의 해당 요청에 한해 `이번만 허용`을 추가하며 그 외에는 `거절`과 `Codex에서 직접 결정`만 제공한다. 관리형 App Server의 단일 요청 `accept`는 별도다. 세션·전역 허용은 만들지 않는다. 실패·만료·재시작에서는 Codex 네이티브 승인 체계로 반환하며 앱 복귀는 best-effort다.
 7. 현재 protocol semantic allowlist는 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. production managed 실행은 여기에 더해 exact full-bundle fingerprint catalog와 live 자격을 통과해야 하며, 2026-09-02 등록 대상은 official `0.151.0` Apple Silicon뿐이다. Hook/MCP, `codex queue`, 관리형 App Server의 exact 출력·세션 라우팅을 각 버전 계약 테스트로 확인한 경우에만 목록과 catalog에 유지하거나 추가한다.
 8. 일반 로컬 코디네이터 연결은 2초, Hook 응답은 5초, Pet 선택은 큐 프로세스 10초보다 긴 12초로 제한한다. 실패해도 완료 중인 Codex 답변은 막지 않으며, 60초에 한 번 알리고 120초에 자동 선택 없이 만료해 늦은 입력을 거부한다.
 9. 여러 세션의 패킷은 `routing.pending` FIFO 대기열에 둔다. Pet은 선두 카드만 표시·focus·선택하고, 전면 대상 없이 선두가 선택 가능하면 대기열 길이와 관계없이 자동 focus한다. 선두가 제거되면 다음 카드로 자동 진행하며 뒤 카드는 직접 선택할 수 없다.

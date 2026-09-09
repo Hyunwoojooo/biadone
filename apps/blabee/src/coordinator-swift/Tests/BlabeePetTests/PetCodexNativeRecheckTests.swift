@@ -14,15 +14,21 @@ private struct PetRecheckSuggestionModeStore: BlabeeSuggestionModeStoring {
 private actor PetNativeRecheckManager: CodexPluginSetupManaging {
     private let blocksRecheck: Bool
     private let blocksConnect: Bool
+    private let recheckState: CodexPluginSetupState
     private var inspectCalls = 0
     private var recheckCalls = 0
     private var connectCalls = 0
     private var pauseContinuation: CheckedContinuation<Void, Never>?
     private var pauseObservers: [CheckedContinuation<Void, Never>] = []
 
-    init(blocksRecheck: Bool = false, blocksConnect: Bool = false) {
+    init(
+        blocksRecheck: Bool = false,
+        blocksConnect: Bool = false,
+        recheckState: CodexPluginSetupState = .installedNeedsHookReview(version: "0.1.0")
+    ) {
         self.blocksRecheck = blocksRecheck
         self.blocksConnect = blocksConnect
+        self.recheckState = recheckState
     }
 
     func inspect() async -> CodexPluginSetupState {
@@ -33,7 +39,7 @@ private actor PetNativeRecheckManager: CodexPluginSetupManaging {
     func recheckNativeExecutable() async -> CodexPluginSetupState {
         recheckCalls += 1
         if blocksRecheck { await pause() }
-        return .installedNeedsHookReview(version: "0.1.0")
+        return recheckState
     }
 
     func connect() async -> CodexPluginSetupState {
@@ -97,12 +103,15 @@ func petCodexNativeRecheckRequiresExplicitAction() async {
     await viewModel.refreshCodexPluginSetup()
     #expect((await manager.callCounts()).inspect == 2)
     #expect((await manager.callCounts()).recheck == 0)
+    #expect(viewModel.codexNativeRecheckReport == nil)
 
     await viewModel.recheckCodexNativeExecutable()
     #expect((await manager.callCounts()).recheck == 1)
     #expect((await manager.callCounts()).inspect == 2)
     #expect(viewModel.codexPluginSetupState == .installedNeedsHookReview(version: "0.1.0"))
     #expect(!viewModel.isCodexPluginOperationInFlight)
+    #expect(viewModel.codexNativeRecheckReport?.isChecking == false)
+    #expect(viewModel.codexNativeRecheckReport?.result?.state == .installedNeedsHookReview(version: "0.1.0"))
 }
 
 @Test("Pet drops repeated native recheck clicks and drains queued refreshes as inspect only")
@@ -113,6 +122,9 @@ func petCodexNativeRecheckDoesNotQueueRepeatedClicks() async {
     let first = Task { @MainActor in await viewModel.recheckCodexNativeExecutable() }
     await manager.waitUntilPaused()
     #expect(viewModel.isCodexPluginOperationInFlight)
+    let reportID = viewModel.codexNativeRecheckReport?.id
+    #expect(viewModel.codexNativeRecheckReport?.isChecking == true)
+    #expect(viewModel.codexNativeRecheckReport?.result == nil)
 
     await viewModel.recheckCodexNativeExecutable()
     await viewModel.recheckCodexNativeExecutable()
@@ -120,12 +132,16 @@ func petCodexNativeRecheckDoesNotQueueRepeatedClicks() async {
     await viewModel.refreshAllOnboardingSettings()
     #expect((await manager.callCounts()).recheck == 1)
     #expect((await manager.callCounts()).inspect == 0)
+    #expect(viewModel.codexNativeRecheckReport?.id == reportID)
 
     await manager.resume()
     await first.value
     #expect((await manager.callCounts()).recheck == 1)
     #expect((await manager.callCounts()).inspect == 1)
     #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect(viewModel.codexNativeRecheckReport?.id == reportID)
+    #expect(viewModel.codexNativeRecheckReport?.result?.state == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(viewModel.codexNativeRecheckReport?.completedAt != nil)
     #expect(!viewModel.isCodexPluginOperationInFlight)
 }
 
@@ -140,6 +156,7 @@ func petCodexNativeRecheckDoesNotQueueBehindConnect() async {
     await viewModel.recheckCodexNativeExecutable()
     await viewModel.refreshCodexPluginSetup()
     #expect((await manager.callCounts()).recheck == 0)
+    #expect(viewModel.codexNativeRecheckReport == nil)
 
     await manager.resume()
     await connect.value
@@ -150,4 +167,31 @@ func petCodexNativeRecheckDoesNotQueueBehindConnect() async {
 
     await viewModel.recheckCodexNativeExecutable()
     #expect((await manager.callCounts()).recheck == 1)
+}
+
+@Test("Repeated identical errors produce fresh explicit check receipts retained through passive refresh")
+@MainActor
+func petCodexNativeRecheckSameErrorStillCompletesFreshReport() async throws {
+    let manager = PetNativeRecheckManager(recheckState: .error(code: "codex_native_probe_timeout"))
+    let viewModel = petNativeRecheckViewModel(manager: manager)
+    await viewModel.recheckCodexNativeExecutable()
+    let first = try #require(viewModel.codexNativeRecheckReport)
+    #expect(first.completedAt != nil)
+    #expect(first.elapsedSeconds != nil)
+
+    await viewModel.recheckCodexNativeExecutable()
+    let second = try #require(viewModel.codexNativeRecheckReport)
+    #expect(second.id != first.id)
+    #expect(second.startedAt >= first.startedAt)
+    #expect(try #require(second.completedAt) >= second.startedAt)
+    #expect(try #require(second.elapsedSeconds) >= 0)
+    #expect(second.result == first.result)
+    #expect(second.result?.evidence.stage == .unknown)
+    #expect(second.result?.evidence.sourcePath == nil)
+
+    await viewModel.refreshCodexPluginSetup()
+    #expect(viewModel.codexPluginSetupState == .notInstalled)
+    #expect(viewModel.codexNativeRecheckReport == second)
+    #expect((await manager.callCounts()).recheck == 2)
+    #expect((await manager.callCounts()).inspect == 1)
 }

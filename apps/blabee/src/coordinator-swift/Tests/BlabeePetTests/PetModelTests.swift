@@ -22,6 +22,7 @@ func blabeePetStrictModelParsing() throws {
     #expect(snapshot.permissionRequests[0].toolName == "Bash")
     #expect(snapshot.permissionRequests[0].commandPreview == "npm test")
     #expect(snapshot.permissionRequests[0].arrivalSequence == 1)
+    #expect(!snapshot.permissionRequests[0].allowOnceAvailable)
     #expect(!snapshot.permissionRequests[0].deliveryPending)
     #expect(PetPermissionRequest.maximumCommandScalars == 120)
 
@@ -48,6 +49,35 @@ func blabeePetStrictModelParsing() throws {
     #expect(rejectedRisk)
 }
 
+@Test(
+    "BlabeePet always displays three fixed permission choices regardless of response availability",
+    arguments: [false, true], [false, true]
+)
+func blabeePetPermissionChoiceNumbersAreStable(
+    allowOnceAvailable: Bool,
+    deliveryPending: Bool
+) throws {
+    let snapshot = try PetSnapshot.parse(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "fixed_choices",
+            allowOnceAvailable: allowOnceAvailable,
+            deliveryPending: deliveryPending
+        )]
+    ))
+    let request = try #require(snapshot.permissionRequests.first)
+    #expect(request.displayedDecisions == [.allowOnce, .deny, .deferToCodex])
+    #expect(request.displayedDecisions.map(\.choiceNumber) == [1, 2, 3])
+    #expect(request.availableDecisions == (allowOnceAvailable
+        ? [.allowOnce, .deny, .deferToCodex] : [.deny, .deferToCodex]))
+    #expect(PetPermissionDecision(choiceNumber: 1) == .allowOnce)
+    #expect(PetPermissionDecision(choiceNumber: 2) == .deny)
+    #expect(PetPermissionDecision(choiceNumber: 3) == .deferToCodex)
+    for number in [-1, 0, 4, Int.max] {
+        #expect(PetPermissionDecision(choiceNumber: number) == nil)
+    }
+}
+
 @Test("BlabeePet strictly joins and orders permission requests")
 func blabeePetPermissionRequestParsing() throws {
     let first = PetTestPermissionRequest(suffix: "permission_a")
@@ -56,6 +86,7 @@ func blabeePetPermissionRequestParsing() throws {
         toolName: "mcp__server__tool",
         requestDescription: nil,
         commandPreview: "safe command",
+        allowOnceAvailable: true,
         deliveryPending: true
     )
     let snapshot = try PetSnapshot.parse(petTestSnapshotData(
@@ -67,13 +98,25 @@ func blabeePetPermissionRequestParsing() throws {
         "permission_permission_a", "permission_permission_b",
     ])
     #expect(snapshot.permissionRequests[1].displaySummary == "safe command")
+    #expect(snapshot.permissionRequests[1].allowOnceAvailable)
     #expect(snapshot.permissionRequests[1].deliveryPending)
+    #expect(snapshot.permissionRequests[0].availableDecisions == [.deny, .deferToCodex])
+    #expect(snapshot.permissionRequests[1].availableDecisions == [.allowOnce, .deny, .deferToCodex])
     #expect(PetPermissionDecision.allCases.map(\.displayTitle) == [
-        "거절", "Codex에서 직접 결정",
+        "이번만 승인", "거절", "Codex에서 직접 선택",
     ])
     #expect(PetPermissionDecision.allCases.map(\.rawValue) == [
-        "deny", "defer_to_codex",
+        "allow_once", "deny", "defer_to_codex",
     ])
+    #expect(PetPermissionDecision(rawValue: "allow") == nil)
+    #expect(PetPermissionDecision(rawValue: "acceptForSession") == nil)
+    #expect(throws: (any Error).self) {
+        _ = try PetPermissionResolutionRequest(
+            request: snapshot.permissionRequests[0],
+            responseID: "response_unqualified",
+            decision: .allowOnce
+        )
+    }
 
     var mismatched = petTestSnapshotObject(
         cards: [],
@@ -101,7 +144,7 @@ func blabeePetPermissionRequestParsing() throws {
         _ = try PetSnapshot.parse(petTestData(missingCommand))
     }
 
-    for missingField in ["arrival_sequence", "delivery_pending"] {
+    for missingField in ["arrival_sequence", "allow_once_available", "delivery_pending"] {
         var missing = petTestSnapshotObject(
             cards: [],
             permissionRequests: [first]
@@ -116,17 +159,15 @@ func blabeePetPermissionRequestParsing() throws {
         }
     }
 
-    var legacyAllow = petTestSnapshotObject(
-        cards: [],
-        permissionRequests: [first]
-    )
-    var legacyAllowRequests = try #require(
-        legacyAllow["permission_requests"] as? [[String: Any]]
-    )
-    legacyAllowRequests[0]["allow_once_available"] = true
-    legacyAllow["permission_requests"] = legacyAllowRequests
-    #expect(throws: (any Error).self) {
-        _ = try PetSnapshot.parse(petTestData(legacyAllow))
+    let invalidFlags: [Any] = [0, 1, -1, 1.0, "true", "false", NSNull(), [], [:]]
+    for invalidFlag in invalidFlags {
+        var invalid = petTestSnapshotObject(cards: [], permissionRequests: [first])
+        var invalidRequests = try #require(invalid["permission_requests"] as? [[String: Any]])
+        invalidRequests[0]["allow_once_available"] = invalidFlag
+        invalid["permission_requests"] = invalidRequests
+        #expect(throws: (any Error).self) {
+            _ = try PetSnapshot.parse(petTestData(invalid))
+        }
     }
 
     var invalidDeliveryPending = petTestSnapshotObject(
@@ -195,7 +236,7 @@ func blabeePetManagedCommandApprovalParsing() throws {
     #expect(!snapshot.managedCommandApprovals[1].allowOnceAvailable)
     #expect(snapshot.managedCommandApprovals[1].deliveryPending)
     #expect(PetManagedCommandApprovalDecision.allCases.map(\.displayTitle) == [
-        "이번만 허용", "거절", "Codex에서 직접 결정",
+        "이번만 승인", "거절", "Codex에서 직접 선택",
     ])
     #expect(!PetManagedCommandApprovalDecision.allCases.map(\.rawValue)
         .contains("acceptForSession"))

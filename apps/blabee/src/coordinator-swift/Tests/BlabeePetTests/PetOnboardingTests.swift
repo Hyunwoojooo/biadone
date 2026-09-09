@@ -1,5 +1,7 @@
+import AppKit
 import CoordinatorSwift
 import Foundation
+import SwiftUI
 import Testing
 @testable import BlabeeCoordinator
 
@@ -198,6 +200,159 @@ private func petOnboardingViewModel(
         ),
         transport
     )
+}
+
+private func petReadinessSnapshot(hasCard: Bool = false) throws -> PetSnapshot {
+    var object = petTestSnapshotObject(cards: [PetTestCard(suffix: "readiness")])
+    if !hasCard {
+        // Persisted session/turn records are deliberately retained. They are
+        // not fresh Hook or roundtrip evidence.
+        object["interactions"] = []
+        object["routing"] = petTestSnapshotObject(cards: [])["routing"]
+    }
+    return try PetSnapshot.parse(petTestData(object))
+}
+
+@Test("Connection summary separates service, installation, saved scope and real cards")
+@MainActor
+func petConnectionReadinessUsesBoundedEvidence() async throws {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.configuredPaths = ["/tmp/blabee-pet-readiness"]
+    let (viewModel, _) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: PetFakeCodexPluginSetupManager(
+            inspectState: .installedNeedsHookReview(version: "0.1.0")
+        )
+    )
+    await viewModel.refreshAllOnboardingSettings()
+    viewModel.applySnapshotForTesting(try petReadinessSnapshot())
+
+    // Optional auto-start is unregistered, yet a verified service responds.
+    #expect(viewModel.onboardingServiceState == .notRegistered)
+    #expect(viewModel.hasVerifiedServiceConnection)
+    #expect(viewModel.connectionReadiness.status == .awaitingVerification)
+    #expect(!viewModel.projectSettingsNeedRestart)
+
+    viewModel.applySnapshotForTesting(try petReadinessSnapshot(hasCard: true))
+    #expect(viewModel.connectionReadiness.status == .receiving)
+    viewModel.applySnapshotForTesting(try petReadinessSnapshot())
+    #expect(viewModel.connectionReadiness.status == .receiving)
+    #expect(adapter.registerCalls == 0)
+    #expect(adapter.enabledPaths.isEmpty)
+    #expect(adapter.disabledPaths.isEmpty)
+}
+
+@Test("Connection summary surfaces pending project additions and removals without stale green")
+@MainActor
+func petConnectionReadinessTracksRuntimeScopeAndFailure() async throws {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.configuredPaths = ["/tmp/blabee-pet-readiness"]
+    let (viewModel, transport) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: PetFakeCodexPluginSetupManager(
+            inspectState: .installedNeedsHookReview(version: "0.1.0")
+        )
+    )
+    await viewModel.refreshAllOnboardingSettings()
+    viewModel.applySnapshotForTesting(try petReadinessSnapshot(hasCard: true))
+    #expect(!viewModel.connectionReceivedCardProjectPaths.isEmpty)
+    adapter.configuredPaths.append("/tmp/gannet")
+    await viewModel.refreshOnboarding()
+    #expect(viewModel.connectionReadiness.status == .needsRestart)
+    #expect(viewModel.projectSettingsNeedRestart)
+    #expect(viewModel.connectionNextStepTitle == "프로젝트 적용 방법")
+
+    adapter.configuredPaths = []
+    await viewModel.refreshOnboarding()
+    #expect(viewModel.connectionReadiness.status == .needsRestart)
+    #expect(viewModel.activeOnlyProjectPaths == ["/tmp/blabee-pet-readiness"])
+
+    await transport.enqueueFailure(type: "get_state", code: "disconnected")
+    await viewModel.refresh()
+    #expect(!viewModel.hasVerifiedServiceConnection)
+    #expect(!viewModel.projectSettingsNeedRestart)
+    #expect(viewModel.connectionReadiness.status == .needsAttention)
+    #expect(viewModel.connectionReceivedCardProjectPaths.isEmpty)
+    #expect(adapter.registerCalls == 0)
+    #expect(adapter.enabledPaths.isEmpty)
+}
+
+@Test("Unknown project configuration cannot be presented as ready")
+@MainActor
+func petConnectionReadinessRejectsUnknownScope() async throws {
+    let adapter = PetFakeOnboardingAdapter()
+    adapter.configuredPathsError = PetOnboardingTestError.injected
+    let (viewModel, _) = petOnboardingViewModel(
+        adapter: adapter,
+        pluginSetupManager: PetFakeCodexPluginSetupManager(
+            inspectState: .installedNeedsHookReview(version: "0.1.0")
+        )
+    )
+    await viewModel.refreshAllOnboardingSettings()
+    viewModel.applySnapshotForTesting(try petReadinessSnapshot(hasCard: true))
+    #expect(!viewModel.configuredProjectPathsAreAuthoritative)
+    #expect(viewModel.connectionReadiness.status != .receiving)
+    #expect(viewModel.connectionReadiness.status != .awaitingVerification)
+    #expect(!viewModel.projectSettingsNeedRestart)
+}
+
+@Test("Connection settings render at the panel size without the system glass compositor")
+@MainActor
+func petConnectionReadinessRendersInPanel() async throws {
+    for dark in [false, true] {
+        for scenario in ["verify", "restart", "empty", "disconnected"] {
+            let adapter = PetFakeOnboardingAdapter()
+            adapter.configuredPaths = scenario == "empty" ? [] : ["/tmp/blabee-pet-readiness"]
+            if scenario == "restart" {
+                adapter.configuredPaths.append("/projects/very-long-workspace-name/gannet")
+            }
+            let (viewModel, _) = petOnboardingViewModel(
+                adapter: adapter,
+                pluginSetupManager: PetFakeCodexPluginSetupManager(
+                    inspectState: .installedNeedsHookReview(version: "0.1.0")
+                )
+            )
+            await viewModel.beginOnboarding()
+            await viewModel.refreshAllOnboardingSettings()
+            if scenario != "disconnected" {
+                viewModel.applySnapshotForTesting(try scenario == "empty"
+                    ? PetSnapshot.parse(petTestSnapshotData(cards: []))
+                    : petReadinessSnapshot())
+            }
+            let content = PetRootView(viewModel: viewModel, usesSystemGlassSurface: false)
+                .environment(\.colorScheme, dark ? .dark : .light)
+                .frame(width: PetPanelSizePolicy.width, height: PetPanelSizePolicy.expandedHeight)
+                .background(dark ? Color.black : Color.white)
+            let hosting = NSHostingView(rootView: content)
+            hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            hosting.frame = NSRect(origin: .zero, size: PetPanelSizePolicy.expandedSize)
+            hosting.layoutSubtreeIfNeeded()
+            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.effectiveAppearance.performAsCurrentDrawingAppearance {
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            }
+            #expect(bitmap.pixelsWide > 0)
+            #expect(bitmap.pixelsHigh > 0)
+            var sampledColors: Set<String> = []
+            for y in stride(from: bitmap.pixelsHigh / 5, to: bitmap.pixelsHigh * 3 / 5, by: 8) {
+                for x in stride(from: bitmap.pixelsWide / 8, to: bitmap.pixelsWide * 7 / 8, by: 8) {
+                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+                        sampledColors.insert("\(Int(color.redComponent * 255)),\(Int(color.greenComponent * 255)),\(Int(color.blueComponent * 255))")
+                    }
+                }
+            }
+            // A rounded rectangle alone is not a rendered settings screen.
+            #expect(sampledColors.count > 12)
+            // Optional deterministic view snapshots, not the installed app or
+            // evidence of a live Codex roundtrip. No visible window is created.
+            if let directory = ProcessInfo.processInfo.environment["BLABEE_READINESS_RENDER_DIRECTORY"] {
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                let url = URL(fileURLWithPath: directory, isDirectory: true)
+                    .appendingPathComponent("\(scenario)-\(dark ? "dark" : "light").png")
+                try data.write(to: url)
+            }
+        }
+    }
 }
 
 @Test("Opening settings does not execute Codex and Plugin actions remain explicit")

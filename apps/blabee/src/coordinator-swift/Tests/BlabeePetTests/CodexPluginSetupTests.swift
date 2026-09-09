@@ -3022,6 +3022,64 @@ func codexPluginSetupNativePreflightRecheckOnlyResetsFailureMemory() async throw
     #expect(preflightProbe.snapshot() == 5)
 }
 
+@Test("Explicit recheck report uses the same inspection and retains qualified executable evidence")
+func codexPluginCheckReportUsesSingleInspection() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    fixture.fake.installOwned()
+    let executable = fixture.executable
+    let probe = CodexPluginSetupTrustProbe()
+    let manager = fixture.manager(
+        qualifier: { _ in probe.qualify(executable) },
+        revalidator: probe.revalidate
+    )
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.state == .installedNeedsHookReview(version: "0.1.0"))
+    #expect(result.statusCode == "plugin_installed_hook_trust_unknown")
+    #expect(result.evidence.stage == .installationValidation)
+    #expect(result.evidence.sourcePath == executable.path)
+    #expect(result.evidence.canonicalPath == executable.path)
+    #expect(result.evidence.codexVersion == "0.152.1")
+    #expect(result.evidence.errorCode == nil)
+    #expect(probe.snapshot().qualifications == 1)
+    #expect(fixture.fake.snapshotInvocations().map(\.arguments) == [
+        ["plugin", "marketplace", "list", "--json"],
+        ["plugin", "list", "--json"],
+    ])
+}
+
+@Test("Explicit recheck report identifies failed list stage without probing again", arguments: [false, true])
+func codexPluginCheckReportIdentifiesFailedListStage(failPluginList: Bool) async throws {
+    let fixture = try CodexPluginSetupFixture()
+    if failPluginList {
+        fixture.fake.malformedPluginListOnCall = 1
+    } else {
+        fixture.fake.malformedMarketplaceListOnCall = 1
+    }
+    let result = await fixture.manager().recheckNativeExecutableWithReport()
+    #expect(result.failed)
+    #expect(result.evidence.stage == (failPluginList ? .pluginList : .marketplaceList))
+    #expect(result.evidence.sourcePath == fixture.executable.path)
+    #expect(result.evidence.codexVersion == "0.152.1")
+    #expect(result.evidence.errorCode != nil)
+    #expect(fixture.fake.snapshotInvocations().count == (failPluginList ? 2 : 1))
+}
+
+@Test("Explicit recheck report does not invent a selection when native qualification fails")
+func codexPluginCheckReportQualificationFailureKeepsSelectionUnknown() async throws {
+    let fixture = try CodexPluginSetupFixture()
+    let manager = fixture.manager(resolver: {
+        throw CoordinatorError("codex_plugin_setup_executable_unavailable")
+    })
+    let result = await manager.recheckNativeExecutableWithReport()
+    #expect(result.failed)
+    #expect(result.evidence.stage == .nativeExecutable)
+    #expect(result.evidence.sourcePath == nil)
+    #expect(result.evidence.canonicalPath == nil)
+    #expect(result.evidence.codexVersion == nil)
+    #expect(result.evidence.errorCode == "codex_plugin_setup_executable_unavailable")
+    #expect(fixture.fake.snapshotInvocations().isEmpty)
+}
+
 @Test("Prepared Plugin mutation keeps native errors instead of generic add failure")
 func codexPluginSetupNativeMutationPreservesDiagnostic() async throws {
     for diagnostic in [

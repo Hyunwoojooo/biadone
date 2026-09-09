@@ -100,6 +100,7 @@ enum CodexPluginSetupState: Sendable, Equatable {
 protocol CodexPluginSetupManaging: Sendable {
     func inspect() async -> CodexPluginSetupState
     func recheckNativeExecutable() async -> CodexPluginSetupState
+    func recheckNativeExecutableWithReport() async -> CodexPluginCheckResult
     func connect() async -> CodexPluginSetupState
     func disconnect() async -> CodexPluginSetupState
     func migrateLegacyInstallation(
@@ -109,6 +110,10 @@ protocol CodexPluginSetupManaging: Sendable {
 
 extension CodexPluginSetupManaging {
     func recheckNativeExecutable() async -> CodexPluginSetupState { await inspect() }
+
+    func recheckNativeExecutableWithReport() async -> CodexPluginCheckResult {
+        CodexPluginCheckResult(state: await recheckNativeExecutable())
+    }
 }
 
 actor CodexUnavailablePluginSetupManager: CodexPluginSetupManaging {
@@ -1261,12 +1266,31 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     }
 
     func recheckNativeExecutable() async -> CodexPluginSetupState {
+        await recheckNativeExecutableWithReport().state
+    }
+
+    func recheckNativeExecutableWithReport() async -> CodexPluginCheckResult {
         do { try nativeRuntime?.prepareExplicitRetry() }
         catch {
             state = .error(code: CodexNativeDiagnostic.normalize(error).code)
-            return state
+            return CodexPluginCheckResult(
+                state: state,
+                evidence: .init(stage: .retryPreparation)
+            )
         }
-        return await inspect()
+        var operation = makeOperationContext()
+        let inspection = performInspection(operation: &operation)
+        state = inspection.state
+        return CodexPluginCheckResult(
+            state: state,
+            evidence: .init(
+                stage: operation.checkStage,
+                sourcePath: operation.executable?.sourceURL.path,
+                canonicalPath: operation.executable?.canonicalURL.path,
+                codexVersion: operation.executable?.version,
+                errorCode: operation.checkErrorCode
+            )
+        )
     }
 
     func inspect() async -> CodexPluginSetupState {
@@ -2062,18 +2086,22 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private func performInspection(
         operation: inout OperationContext
     ) -> Inspection {
+        operation.checkStage = .bundledResources
         let configuration: BundledConfiguration
         do {
             configuration = try bundledConfiguration()
         } catch let error as CoordinatorError {
+            operation.checkErrorCode = error.code
             return Inspection(state: .unavailable(reason: error.message), context: nil)
         } catch {
+            operation.checkErrorCode = "codex_plugin_setup_bundle_unavailable"
             return Inspection(
                 state: .unavailable(reason: "Blabee 앱의 Plugin 리소스를 확인할 수 없습니다."),
                 context: nil
             )
         }
 
+        operation.checkStage = .nativeExecutable
         let executable: CodexPluginSetupQualifiedExecutable
         do {
             executable = try qualifiedExecutable(operation: &operation)
@@ -2083,12 +2111,15 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
         {
             return Inspection(state: .error(code: error.code), context: nil)
         } catch {
+            operation.checkErrorCode = (error as? CoordinatorError)?.code
+                ?? "codex_plugin_setup_executable_unavailable"
             return Inspection(
                 state: .unavailable(reason: "안전하고 지원되는 Codex CLI를 찾을 수 없습니다."),
                 context: nil
             )
         }
 
+        operation.checkStage = .marketplaceList
         let marketplaces: [MarketplaceRecord]
         do {
             marketplaces = try queryMarketplaces(
@@ -2101,6 +2132,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             return Inspection(state: .error(code: "marketplace_list_failed"), context: nil)
         }
 
+        operation.checkStage = .pluginList
         let plugins: [PluginRecord]
         do {
             plugins = try queryInstalledPlugins(
@@ -2113,6 +2145,7 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
             return Inspection(state: .error(code: "plugin_list_failed"), context: nil)
         }
 
+        operation.checkStage = .installationValidation
         let namedMarketplaces = marketplaces.filter { $0.name == Self.marketplaceName }
         guard namedMarketplaces.count <= 1 else {
             return Inspection(
@@ -2888,6 +2921,8 @@ actor CodexPluginSetupManager: CodexPluginSetupManaging {
     private struct OperationContext {
         let deadlineNanoseconds: UInt64
         var executable: CodexPluginSetupQualifiedExecutable?
+        var checkStage: CodexPluginCheckStage = .unknown
+        var checkErrorCode: String?
 
         init(deadlineNanoseconds: UInt64) {
             self.deadlineNanoseconds = deadlineNanoseconds

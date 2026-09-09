@@ -1456,9 +1456,10 @@ private func runRuntimeIdentityInspection(arguments: [String]) throws {
 
 do {
     let commandLine = CommandLine.arguments
+    let invocationEnvironment = ProductInvocationEnvironment.live()
     let mode = ProductInvocationResolver.mode(
         commandLineArguments: commandLine,
-        environment: .live()
+        environment: invocationEnvironment
     )
     switch mode {
     case "daemon":
@@ -1470,7 +1471,20 @@ do {
     case "project-settings":
         try runProductProjectSettings(arguments: Array(commandLine.dropFirst(2)))
     case "pet":
-        try runPet(arguments: Array(commandLine.dropFirst(2)))
+        if ProductInvocationResolver.requiresInstallation(
+            commandLineArguments: commandLine,
+            environment: invocationEnvironment
+        ) {
+            runAppInstallation()
+        } else {
+            try runPet(arguments: Array(commandLine.dropFirst(2)))
+        }
+    case "installed-pet":
+        try AppInstallationEntry.validateInstalledLaunch(
+            arguments: Array(commandLine.dropFirst(2)),
+            environment: invocationEnvironment
+        )
+        try runPet(arguments: [])
     case "doctor":
         let rawArguments = Array(commandLine.dropFirst(2))
         let arguments = try DoctorArguments(rawArguments)

@@ -27,13 +27,44 @@ private func invocationEnvironment(
 func productInvocationPreservesExplicitDispatch() {
     for mode in [
         "daemon", "service", "project-settings", "pet", "doctor", "hook", "mcp",
-        "managed-codex", "runtime-identity", "--database",
+        "managed-codex", "runtime-identity", "installed-pet", "--database",
     ] {
         #expect(ProductInvocationResolver.mode(
             commandLineArguments: ["/tmp/Blabee.app/Contents/MacOS/blabee-coordinator", mode],
             environment: invocationEnvironment()
         ) == mode)
     }
+}
+
+@Test("implicit nonstandard app launches enter installation without affecting explicit commands")
+func productInvocationInstallationRouting() {
+    for path in ["/Volumes/Blabee/Blabee.app", "/Users/test/Downloads/Blabee.app", "/Users/test/Downloads/Blabee 2.app"] {
+        let app = URL(fileURLWithPath: path, isDirectory: true)
+        let executable = app.appendingPathComponent("Contents/MacOS/blabee-coordinator")
+        let environment = invocationEnvironment(bundleURL: app, executableURL: executable)
+        for arguments in [[executable.path], [executable.path, "-psn_0_123"]] {
+            #expect(ProductInvocationResolver.mode(commandLineArguments: arguments, environment: environment) == "pet")
+            #expect(ProductInvocationResolver.requiresInstallation(commandLineArguments: arguments, environment: environment))
+        }
+        for mode in ["pet", "app-service", "service", "mcp", "hook", "doctor", "installed-pet"] {
+            #expect(!ProductInvocationResolver.requiresInstallation(commandLineArguments: [executable.path, mode], environment: environment))
+        }
+    }
+    let installed = URL(fileURLWithPath: "/Applications/Blabee.app", isDirectory: true)
+    let environment = invocationEnvironment(bundleURL: installed,
+        executableURL: installed.appendingPathComponent("Contents/MacOS/blabee-coordinator"))
+    #expect(ProductInvocationResolver.isStandardInstalledApp(environment))
+    #expect(!ProductInvocationResolver.requiresInstallation(commandLineArguments: ["blabee-coordinator"], environment: environment))
+}
+
+@Test("renamed app candidates do not weaken the strict service bundle predicate")
+func productInvocationRenamedCandidateKeepsStrictServiceIdentity() {
+    let renamed = URL(fileURLWithPath: "/tmp/Blabee 2.app", isDirectory: true)
+    let environment = invocationEnvironment(bundleURL: renamed,
+        executableURL: renamed.appendingPathComponent("Contents/MacOS/blabee-coordinator"))
+    #expect(ProductInvocationResolver.isInstallationCandidateAppBundle(environment))
+    #expect(!ProductInvocationResolver.isExpectedAppBundle(environment))
+    #expect(!ProductInvocationResolver.isStandardInstalledApp(environment))
 }
 
 @Test("runtime identity inspection accepts only an exact absolute Blabee app path")

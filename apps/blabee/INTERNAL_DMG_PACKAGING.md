@@ -1,7 +1,7 @@
 # Blabee 내부 테스트용 DMG 패키징
 
 - 작성일: 2026-09-05
-- 갱신일: 2026-09-08 (내부 build 14)
+- 갱신일: 2026-09-09 (내부 build 19)
 - 대상: 개발팀과 지정된 내부 테스터
 - 상태: 내부 테스트 패키징 구현 범위
 - 공개 배포: 미승인
@@ -209,10 +209,50 @@ fail-closed, x86/Universal 거부를 포함한다. 샌드박스에서 `hdiutil`�
 실행 환경과 실제 산출물 hash는 `T012_APP_BUNDLE_REPORT.md`와 `TASK_STATUS.md`에
 기록한다.
 
-### 2026-09-08 현재 후보 — r14
+### 2026-09-09 현재 후보 — r19
 
-현재 후보는 `build/internal-dmg-20260908-r14/Blabee-0.1.0-internal-arm64-20260908-r14.dmg`다.
-현재 소스의 private fresh release 빌드에서 생성했다. 앱 `0.1.0`, build `14`, exact `arm64`,
+현재 DMG는 `build/internal-dmg-20260909-r19/Blabee-0.1.0-internal-arm64-20260909-r19.dmg`다.
+build 19, arm64, SHA-256 `320b3fb7f53b33489b2d8ddd71b179865cde7bfaaff4d1b3be40e59bdaead396`.
+전달 ZIP은 `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r19-testers.zip`을 사용한다.
+DMG·sidecar, r19 안내 4개와 CONTENTS.sha256의 7개 파일만 묶는다. 구 PDF·사용자 설정·로그·
+Codex 실행 파일은 넣지 않으며 r18 산출물은 보존한다. ZIP을 새 폴더에 풀어 내부 checksum과
+문서 일치·상대 링크를 확인하고 외부 `.zip.sha256`도 별도로 검증한다.
+설치 안내·백업 확인·실행 중 보호는 실환경에서 확인했지만 교체는 사용 중으로 차단됐다.
+설치 완료·서비스·선택 반환·다른 Mac 검증은 아직 남아 있다.
+테스터 안내: [r19 릴리스 기록](INTERNAL_DMG_R19_RELEASE_KO.md).
+제작·실사용 관찰: [r19 설치 검증 기록](R19_INSTALLATION_ACCEPTANCE_KO.md).
+
+### 역사적 검증 — 2026-09-09 r18
+
+당시 전달 후보는 `build/internal-dmg-20260909-r18/Blabee-0.1.0-internal-arm64-20260909-r18.dmg`다.
+build 18, arm64, SHA-256 `ae22851504d924b33dbce83acdf1790ae93e996c4c4eefbe8b1e585c85e213e2`.
+전달 ZIP은 `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r18-testers.zip`이다.
+DMG·sidecar와 최신 안내 4개·CONTENTS.sha256의 7개 파일로 구성한다.
+Swift Testing 722개 + XCTest 5개, Node 360개 통과. Codex 본체를 동봉하거나 일반
+실행을 감싸지 않는다. 검증된 r16·r17의 제한된 이전 runtime identity만 포함한다.
+Hook 요청 단위 허용의 소스/회귀 검증과 실제 Pet 승인 왕복은 구분한다.
+제작·검증·테스트 안내는 [r18 릴리스 기록](INTERNAL_DMG_R18_RELEASE_KO.md)을 따른다.
+
+### 역사적 검증 — 2026-09-09 r17
+
+당시 전달 후보는 `build/internal-dmg-20260909-r17/Blabee-0.1.0-internal-arm64-20260909-r17.dmg`다.
+앱 `0.1.0`, build `17`, exact `arm64`, DMG SHA-256
+`7d131ed04899a7ca78f4c3758a5965a7d90beb79260cd2f1b791336a72867bae`를 확인했다.
+Node 360개, Swift Testing 696개 및 XCTest 5개를 이번 제작 전에 다시 통과했다.
+검증된 r15 DMG 앱과 설치된 build 16의 제한된 이전 runtime identity 정책을 포함하며
+이전 실행 파일이나 공식 Codex를 복사하지 않는다.
+
+전달용 ZIP은 `build/tester-distribution/Blabee-0.1.0-internal-arm64-20260909-r17-testers.zip`이다.
+ZIP에는 DMG, `.dmg.sha256`, `TESTER_START_HERE_KO.md`, `INTERNAL_TEST_INSTALL_GUIDE.md`,
+`INTERNAL_DMG_R17_RELEASE_KO.md`, `TESTER_RESULT_TEMPLATE_KO.md`, `CONTENTS.sha256`만 넣는다.
+압축을 푼 뒤 내부 checksum을 확인하며, 구 PDF·소스·사용자 설정·로그·Codex 바이너리는 넣지 않는다.
+기존 ZIP/DMG는 덮어쓰거나 삭제하지 않는다. 다른 Mac 설치 및 실제 왕복은 아직 미검증이다.
+제작·소스 식별자·테스트와 알려진 제한은 [r17 릴리스 기록](INTERNAL_DMG_R17_RELEASE_KO.md)을 따른다.
+
+### 역사적 검증 — 2026-09-08 r14
+
+당시 후보는 `build/internal-dmg-20260908-r14/Blabee-0.1.0-internal-arm64-20260908-r14.dmg`다.
+당시 소스의 private fresh release 빌드에서 생성했다. 앱 `0.1.0`, build `14`, exact `arm64`,
 DMG SHA-256 `1318370593222d207435c55544260d08bf808cfb43d9155b0d772215ab48db51`을 확인했다.
 Node 360개, Swift Testing 668개 및 XCTest 5개가 모두 통과했다. 내장 한국어 내부 테스트
 안내도 mount 검증 테스트에 포함된다. 자세한 식별자와 결과는

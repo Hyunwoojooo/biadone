@@ -4401,13 +4401,14 @@ func operationalSchedulerCommittedResponseLoss() async throws {
 private func operationalPermissionPayload(
     _ ids: [String: String],
     command: String,
-    description: String? = nil
+    description: String? = nil,
+    qualification: String? = nil
 ) throws -> Data {
     var toolInput: [String: Any] = ["command": command]
     if let description {
         toolInput["description"] = description
     }
-    return try operationalData([
+    var payload: [String: Any] = [
         "session_id": ids["session_id"]!,
         "turn_id": ids["source_turn_id"]!,
         "cwd": ids["cwd"]!,
@@ -4415,7 +4416,11 @@ private func operationalPermissionPayload(
         "permission_mode": "default",
         "tool_name": "Bash",
         "tool_input": toolInput,
-    ])
+    ]
+    if let qualification {
+        payload[HookPermissionPolicy.qualificationKey] = qualification
+    }
+    return try operationalData(payload)
 }
 
 private func operationalPermissionResolution(
@@ -4473,9 +4478,15 @@ private func operationalResolvePermissionRequest(
         )
     }
     let hookOutcome = try operationalObject(await hookWaiter.value)
-    #expect(Set(hookOutcome.keys) == [
+    var expectedKeys: Set<String> = [
         "decision", "delivery_token", "request_id", "session_id", "turn_id",
-    ])
+    ]
+    if decision == "allow_once" {
+        expectedKeys.formUnion([
+            "command_preview", "cwd", HookPermissionPolicy.qualificationKey,
+        ])
+    }
+    #expect(Set(hookOutcome.keys) == expectedKeys)
     #expect(hookOutcome["decision"] as? String == decision)
     let deliveryAckReceipt = try await app.handle(
         type: "ack_permission_request_delivery",
@@ -4680,7 +4691,7 @@ func operationalPermissionRequestDecisions() async throws {
         #expect(Set(request.keys) == [
             "request_id", "arrival_sequence", "project_id", "session_id",
             "turn_id", "cwd", "tool_name", "description", "command_preview",
-            "delivery_pending",
+            "delivery_pending", "allow_once_available",
         ])
         #expect(request["project_id"] as? String == ids["project_id"])
         #expect(request["session_id"] as? String == ids["session_id"])
@@ -4706,6 +4717,238 @@ func operationalPermissionRequestDecisions() async throws {
         _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
     }
     #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational Hook allow_once binds one delivery and never caches an identical command")
+func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_allow_once")
+    let command = "printf exact-once"
+    let loadCountBefore = fixture.journal.loadCount()
+    let firstWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                ids,
+                command: command,
+                qualification: HookPermissionPolicy.qualifiedRuntime
+            )
+        )
+    }
+    let first = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(first["allow_once_available"] as? Bool == true)
+    #expect(first["delivery_pending"] as? Bool == false)
+
+    let firstResponseID = "permission_response_allow_once_first"
+    let firstRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: first,
+        decision: "allow_once",
+        responseID: firstResponseID,
+        hookWaiter: firstWaiter
+    )
+    let outcome = firstRoundTrip.hookOutcome
+    #expect(outcome["request_id"] as? String == first["request_id"] as? String)
+    #expect(outcome["session_id"] as? String == ids["session_id"])
+    #expect(outcome["turn_id"] as? String == ids["source_turn_id"])
+    let approvedCommand = try #require(outcome["command_preview"] as? String)
+    let approvedCWD = try #require(outcome["cwd"] as? String)
+    let expectedCWD = try #require(ids["cwd"])
+    #expect(approvedCommand.utf8.elementsEqual(command.utf8))
+    #expect(approvedCWD.utf8.elementsEqual(expectedCWD.utf8))
+    #expect(outcome[HookPermissionPolicy.qualificationKey] as? String
+        == HookPermissionPolicy.qualifiedRuntime)
+    let firstReceipt = try operationalObject(firstRoundTrip.resolutionReceipt)
+    #expect(firstReceipt["resolved"] as? Bool == true)
+    #expect(firstReceipt["decision"] as? String == "allow_once")
+    #expect(firstReceipt["response_id"] as? String == firstResponseID)
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+
+    // A delivery receipt is scoped to the first request, not a command policy.
+    let secondWaiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                ids,
+                command: command,
+                qualification: HookPermissionPolicy.qualifiedRuntime
+            )
+        )
+    }
+    let second = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(second["request_id"] as? String != first["request_id"] as? String)
+    #expect(second["command_preview"] as? String == command)
+    #expect(second["allow_once_available"] as? Bool == true)
+    #expect(second["delivery_pending"] as? Bool == false)
+    #expect(try await fixture.app.handle(
+        type: "resolve_permission_request",
+        payload: operationalPermissionResolution(
+            first,
+            decision: "allow_once",
+            responseID: firstResponseID
+        )
+    ) == firstRoundTrip.resolutionReceipt)
+    let remaining = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(remaining["request_id"] as? String == second["request_id"] as? String)
+    #expect(remaining["delivery_pending"] as? Bool == false)
+
+    let secondRoundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app,
+        request: second,
+        decision: "deny",
+        responseID: "permission_response_allow_once_second_deny",
+        hookWaiter: secondWaiter
+    )
+    #expect(secondRoundTrip.hookOutcome["decision"] as? String == "deny")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+    #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Operational Hook allow_once rejects absent and unknown runtime qualifications")
+func operationalPermissionRequestUnqualifiedAllowOnceIsRejected() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_unqualified_allow_once")
+    let qualifications: [String?] = [nil, "codex-0.153.4", "unknown-runtime"]
+    for (index, qualification) in qualifications.enumerated() {
+        let waiter = Task {
+            try await fixture.app.handle(
+                type: "permission_request",
+                payload: operationalPermissionPayload(
+                    ids,
+                    command: "printf qualified-only",
+                    qualification: qualification
+                )
+            )
+        }
+        let request = try #require(
+            try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+        )
+        #expect(request["allow_once_available"] as? Bool == false)
+        await expectOperationalError("permission_allow_once_unqualified") {
+            _ = try await fixture.app.handle(
+                type: "resolve_permission_request",
+                payload: operationalPermissionResolution(
+                    request,
+                    decision: "allow_once",
+                    responseID: "permission_response_unqualified_allow_once_\(index)"
+                )
+            )
+        }
+        let remaining = try #require(
+            try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+        )
+        #expect(remaining["request_id"] as? String == request["request_id"] as? String)
+        #expect(remaining["delivery_pending"] as? Bool == false)
+        let roundTrip = try await operationalResolvePermissionRequest(
+            app: fixture.app,
+            request: request,
+            decision: "defer_to_codex",
+            responseID: "permission_response_unqualified_defer_\(index)",
+            hookWaiter: waiter
+        )
+        #expect(roundTrip.hookOutcome["decision"] as? String == "defer_to_codex")
+    }
+}
+
+@Test("Operational qualified Hook allow_once cannot approve a mismatched or superseded turn")
+func operationalPermissionRequestQualifiedAllowOnceRejectsStaleTurn() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_allow_once_stale_turn")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                ids,
+                command: "printf old-turn",
+                qualification: HookPermissionPolicy.qualifiedRuntime
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(request["allow_once_available"] as? Bool == true)
+    var wrongTurn = try operationalObject(operationalPermissionResolution(
+        request,
+        decision: "allow_once",
+        responseID: "permission_response_allow_once_wrong_turn"
+    ))
+    wrongTurn["turn_id"] = "turn_operational_permission_allow_once_other"
+    await expectOperationalError("permission_request_binding_mismatch") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalData(wrongTurn)
+        )
+    }
+
+    _ = try await fixture.app.handle(
+        type: "user_prompt_submit",
+        payload: operationalData([
+            "session_id": ids["session_id"]!,
+            "turn_id": "turn_operational_permission_allow_once_next",
+            "cwd": ids["cwd"]!,
+            "prompt": "Start a new request instead",
+            "hook_event_name": "UserPromptSubmit",
+        ])
+    )
+    await expectOperationalError("permission_request_not_found") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                request,
+                decision: "allow_once",
+                responseID: "permission_response_allow_once_stale_turn"
+            )
+        )
+    }
+    let outcome = try operationalObject(await waiter.value)
+    #expect(Set(outcome.keys) == ["decision"])
+    #expect(outcome["decision"] as? String == "defer_to_codex")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
+}
+
+@Test("Operational qualified Hook allow_once cannot approve after its Pet lease expires")
+func operationalPermissionRequestQualifiedAllowOnceRejectsExpiredPetLease() async throws {
+    let fixture = try operationalFixture(
+        petConsumerLeaseDurationNanoseconds: 1_000_000_000
+    )
+    let ids = try await operationalBegin(fixture, suffix: "permission_allow_once_expired_pet")
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                ids,
+                command: "printf stale-pet",
+                qualification: HookPermissionPolicy.qualifiedRuntime
+            )
+        )
+    }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    #expect(request["allow_once_available"] as? Bool == true)
+    fixture.cooldownClock.advance(seconds: 1)
+    // Resolution itself must fence the stale lease, without a prior UI refresh.
+    await expectOperationalError("permission_request_not_found") {
+        _ = try await fixture.app.handle(
+            type: "resolve_permission_request",
+            payload: operationalPermissionResolution(
+                request,
+                decision: "allow_once",
+                responseID: "permission_response_allow_once_expired_pet"
+            )
+        )
+    }
+    let outcome = try operationalObject(await waiter.value)
+    #expect(Set(outcome.keys) == ["decision"])
+    #expect(outcome["decision"] as? String == "defer_to_codex")
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
 @Test("Operational Hook PermissionRequest rejects legacy allow without releasing its FIFO head")

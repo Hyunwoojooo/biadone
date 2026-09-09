@@ -1109,9 +1109,9 @@ func blabeePetGlobalSelectionSingleFlight() async throws {
     #expect(await transport.requestCount(type: "select") == 1)
 }
 
-@Test("BlabeePet resolves an authoritative permission request exactly once")
+@Test("BlabeePet resolves an authoritative permission request exactly once", arguments: PetPermissionDecision.allCases)
 @MainActor
-func blabeePetPermissionNotificationOwnership() async throws {
+func blabeePetPermissionNotificationOwnership(decision: PetPermissionDecision) async throws {
     let transport = PetFakeTransport()
     let opener = PetFakeApplicationOpener()
     let viewModel = blabeePetViewModel(transport: transport, opener: opener)
@@ -1119,7 +1119,7 @@ func blabeePetPermissionNotificationOwnership() async throws {
 
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
-        permissionRequests: [PetTestPermissionRequest(suffix: "permission")],
+        permissionRequests: [PetTestPermissionRequest(suffix: "permission", allowOnceAvailable: true)],
         permissionNoticeCount: 1
     ))
     #expect(viewModel.hasNewPermissionNotice)
@@ -1129,7 +1129,7 @@ func blabeePetPermissionNotificationOwnership() async throws {
     await transport.enqueue(
         type: "resolve_permission_request",
         response: try petTestPermissionResolutionResponse(
-            .deny,
+            decision,
             requestID: "permission_permission"
         )
     )
@@ -1138,7 +1138,8 @@ func blabeePetPermissionNotificationOwnership() async throws {
         response: try petTestSnapshotData(cards: [], permissionNoticeCount: 1)
     )
     let displayedRequest = try #require(viewModel.pendingPermissionRequest)
-    await viewModel.resolvePermissionRequest(.deny, for: displayedRequest)
+    await viewModel.resolvePermissionRequest(decision, for: displayedRequest)
+    await viewModel.resolvePermissionRequest(decision, for: displayedRequest)
 
     #expect(opener.opened.count == 1)
     #expect(viewModel.hasNewPermissionNotice == false)
@@ -1159,12 +1160,156 @@ func blabeePetPermissionNotificationOwnership() async throws {
     #expect(payloadObject["project_id"] as? String == "project_permission")
     #expect(payloadObject["session_id"] as? String == "session_permission")
     #expect(payloadObject["turn_id"] as? String == "turn_permission")
-    #expect(payloadObject["decision"] as? String == "deny")
+    #expect(payloadObject["decision"] as? String == decision.rawValue)
 }
 
-@Test("BlabeePet ignores a Hook decision after its visible FIFO head changes")
+@Test(
+    "BlabeePet keeps numbered permission choices fixed when approval is unavailable",
+    arguments: [false, true], [1, 2, 3, 4]
+)
 @MainActor
-func blabeePetPermissionDecisionRequiresExactVisibleHead() async throws {
+func blabeePetPermissionNumberedDecisionsPreserveAvailability(
+    allowOnceAvailable: Bool,
+    number: Int
+) async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "numbered", allowOnceAvailable: allowOnceAvailable
+        )]
+    ))
+    let displayedRequest = try #require(viewModel.pendingPermissionRequest)
+    let expectedDecision: PetPermissionDecision? = switch number {
+    case 1: allowOnceAvailable ? .allowOnce : nil
+    case 2: .deny
+    case 3: .deferToCodex
+    default: nil
+    }
+    if let expectedDecision {
+        await transport.enqueue(
+            type: "resolve_permission_request",
+            response: try petTestPermissionResolutionResponse(
+                expectedDecision, requestID: displayedRequest.requestID
+            )
+        )
+        await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    }
+
+    if let decision = PetPermissionDecision(choiceNumber: number) {
+        await viewModel.resolvePermissionRequest(decision, for: displayedRequest)
+    }
+
+    let requests = await transport.requestPayloads(type: "resolve_permission_request")
+    if let expectedDecision {
+        #expect(requests.count == 1)
+        let payload = try petTestObject(#require(requests.first))
+        #expect(payload["decision"] as? String == expectedDecision.rawValue)
+        #expect(viewModel.pendingPermissionRequest == nil)
+    } else {
+        #expect(requests.isEmpty)
+        #expect(viewModel.pendingPermissionRequest == displayedRequest)
+    }
+    #expect(viewModel.inFlightPermissionRequestID == nil)
+    #expect(viewModel.lastError == nil)
+}
+
+@Test("BlabeePet rejects direct once-only approval without current Hook qualification")
+@MainActor
+func blabeePetPermissionAllowOnceRequiresCurrentQualification() async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    var request = PetTestPermissionRequest(suffix: "qualification", allowOnceAvailable: true)
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [request]
+    ))
+    let previouslyQualified = try #require(viewModel.pendingPermissionRequest)
+    request.allowOnceAvailable = false
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [request]
+    ))
+    let unqualified = try #require(viewModel.pendingPermissionRequest)
+
+    await viewModel.resolvePermissionRequest(.allowOnce, for: previouslyQualified)
+    await viewModel.resolvePermissionRequest(.allowOnce, for: unqualified)
+
+    #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
+    #expect(viewModel.inFlightPermissionRequestID == nil)
+    #expect(viewModel.pendingPermissionRequest == unqualified)
+    #expect(viewModel.lastError == nil)
+}
+
+@Test("BlabeePet keeps one Hook approval in flight across duplicate clicks and FIFO changes")
+@MainActor
+func blabeePetPermissionAllowOnceInFlightProtectsFIFO() async throws {
+    let transport = PetFakeTransport()
+    let viewModel = blabeePetViewModel(
+        transport: transport,
+        opener: PetFakeApplicationOpener()
+    )
+    let first = PetTestPermissionRequest(
+        suffix: "once_first", arrivalSequence: 1, allowOnceAvailable: true
+    )
+    let second = PetTestPermissionRequest(
+        suffix: "once_second", arrivalSequence: 2, allowOnceAvailable: true
+    )
+    try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
+        cards: [],
+        permissionRequests: [first, second]
+    ))
+    let displayedFirst = try #require(viewModel.pendingPermissionRequest)
+    let snapshotWithSecond = try petTestSnapshotData(cards: [], permissionRequests: [second])
+    await transport.enqueue(
+        type: "resolve_permission_request",
+        response: try petTestPermissionResolutionResponse(.allowOnce, requestID: displayedFirst.requestID)
+    )
+    await transport.enqueue(type: "get_state", response: snapshotWithSecond)
+    await transport.setNextPermissionResolutionBlocked(true)
+    defer {
+        Task { await transport.setNextPermissionResolutionBlocked(false) }
+    }
+    let resolution = Task { @MainActor in
+        await viewModel.resolvePermissionRequest(.allowOnce, for: displayedFirst)
+    }
+    let didStart = await blabeePetWaitForRequestCount(
+        1, type: "resolve_permission_request", transport: transport
+    )
+    #expect(didStart)
+    guard didStart else {
+        await transport.setNextPermissionResolutionBlocked(false)
+        await resolution.value
+        return
+    }
+    #expect(viewModel.inFlightPermissionRequestID == displayedFirst.requestID)
+    for decision in PetPermissionDecision.allCases {
+        await viewModel.resolvePermissionRequest(decision, for: displayedFirst)
+    }
+    try viewModel.receiveSnapshotDataForTesting(snapshotWithSecond)
+    let displayedSecond = try #require(viewModel.pendingPermissionRequest)
+    await viewModel.resolvePermissionRequest(.allowOnce, for: displayedFirst)
+    await viewModel.resolvePermissionRequest(.allowOnce, for: displayedSecond)
+    #expect(await transport.requestCount(type: "resolve_permission_request") == 1)
+
+    await transport.setNextPermissionResolutionBlocked(false)
+    await resolution.value
+    await viewModel.resolvePermissionRequest(.allowOnce, for: displayedFirst)
+    #expect(await transport.requestCount(type: "resolve_permission_request") == 1)
+    #expect(viewModel.inFlightPermissionRequestID == nil)
+    #expect(viewModel.pendingPermissionRequest == displayedSecond)
+}
+
+@Test("BlabeePet ignores a Hook decision after its visible FIFO head changes", arguments: [false, true])
+@MainActor
+func blabeePetPermissionDecisionRequiresExactVisibleHead(allowOnceAvailable: Bool) async throws {
     let transport = PetFakeTransport()
     let viewModel = blabeePetViewModel(
         transport: transport,
@@ -1172,7 +1317,8 @@ func blabeePetPermissionDecisionRequiresExactVisibleHead() async throws {
     )
     let previous = PetTestPermissionRequest(
         suffix: "previous_head",
-        arrivalSequence: 51
+        arrivalSequence: 51,
+        allowOnceAvailable: true
     )
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
@@ -1182,13 +1328,17 @@ func blabeePetPermissionDecisionRequiresExactVisibleHead() async throws {
 
     let replacement = PetTestPermissionRequest(
         suffix: "replacement_head",
-        arrivalSequence: 52
+        arrivalSequence: 52,
+        allowOnceAvailable: allowOnceAvailable
     )
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [],
         permissionRequests: [replacement]
     ))
-    await viewModel.resolvePermissionRequest(.deny, for: previouslyDisplayed)
+    for number in 1...4 {
+        guard let decision = PetPermissionDecision(choiceNumber: number) else { continue }
+        await viewModel.resolvePermissionRequest(decision, for: previouslyDisplayed)
+    }
     #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
     #expect(viewModel.pendingPermissionRequest?.requestID
         == "permission_replacement_head")
@@ -1321,9 +1471,9 @@ func blabeePetApprovalResolutionErrorSurvivesRefresh() async throws {
     #expect(managedFailureEvents == 1)
 }
 
-@Test("BlabeePet blocks every approval choice while Codex delivery is pending")
+@Test("BlabeePet blocks every approval choice while Codex delivery is pending", arguments: [false, true])
 @MainActor
-func blabeePetApprovalDeliveryPendingBlocksDuplicateChoices() async throws {
+func blabeePetApprovalDeliveryPendingBlocksDuplicateChoices(allowOnceAvailable: Bool) async throws {
     let hookTransport = PetFakeTransport()
     let hookViewModel = blabeePetViewModel(
         transport: hookTransport,
@@ -1333,11 +1483,13 @@ func blabeePetApprovalDeliveryPendingBlocksDuplicateChoices() async throws {
         cards: [],
         permissionRequests: [PetTestPermissionRequest(
             suffix: "hook_delivery_pending",
+            allowOnceAvailable: allowOnceAvailable,
             deliveryPending: true
         )]
     ))
     let hookRequest = try #require(hookViewModel.pendingPermissionRequest)
-    for decision in PetPermissionDecision.allCases {
+    for number in 1...4 {
+        guard let decision = PetPermissionDecision(choiceNumber: number) else { continue }
         await hookViewModel.resolvePermissionRequest(decision, for: hookRequest)
     }
     #expect(await hookTransport.requestCount(
@@ -1720,9 +1872,9 @@ func blabeePetManagedApprovalResolutionIsSingleFlight() async throws {
     #expect(viewModel.pendingManagedCommandApproval == nil)
 }
 
-@Test("BlabeePet permission head blocks hidden decision actions and shortcuts")
+@Test("BlabeePet permission head blocks hidden decision actions and shortcuts", arguments: [false, true])
 @MainActor
-func blabeePetPermissionBlocksDecisionActions() async throws {
+func blabeePetPermissionBlocksDecisionActions(allowOnceAvailable: Bool) async throws {
     let transport = PetFakeTransport()
     let opener = PetFakeApplicationOpener()
     let viewModel = blabeePetViewModel(transport: transport, opener: opener)
@@ -1742,7 +1894,9 @@ func blabeePetPermissionBlocksDecisionActions() async throws {
     try viewModel.receiveSnapshotDataForTesting(petTestSnapshotData(
         cards: [card],
         foregroundSuffix: "permission_blocks",
-        permissionRequests: [PetTestPermissionRequest(suffix: "permission_blocks")],
+        permissionRequests: [PetTestPermissionRequest(
+            suffix: "permission_blocks", allowOnceAvailable: allowOnceAvailable
+        )],
         permissionNoticeCount: 1
     ))
 

@@ -86,6 +86,61 @@ enum HookRequestPolicy {
     }
 }
 
+enum HookPermissionOutputPolicy {
+    static func qualifiedPayload(
+        _ input: [String: Any], qualification: String?
+    ) -> [String: Any] {
+        var payload = input
+        payload.removeValue(forKey: HookPermissionPolicy.qualificationKey)
+        if HookPermissionPolicy.allowsOnce(qualification: qualification) {
+            payload[HookPermissionPolicy.qualificationKey] = qualification
+        }
+        return payload
+    }
+
+    static func acceptsResponse(
+        _ result: [String: Any], input: [String: Any], currentQualification: String?
+    ) -> Bool {
+        let baseKeys: Set<String> = [
+            "decision", "delivery_token", "request_id", "session_id", "turn_id",
+        ]
+        guard let decision = result["decision"] as? String,
+              equalBytes(result["session_id"], input["session_id"]),
+              equalBytes(result["turn_id"], input["turn_id"])
+        else { return false }
+        switch decision {
+        case "deny", "defer_to_codex":
+            return Set(result.keys) == baseKeys
+        case "allow_once":
+            return Set(result.keys) == baseKeys.union([
+                "command_preview", "cwd", HookPermissionPolicy.qualificationKey,
+            ])
+                && HookPermissionPolicy.allowsOnce(qualification: currentQualification)
+                && HookPermissionPolicy.allowsOnce(
+                    qualification: input[HookPermissionPolicy.qualificationKey] as? String
+                )
+                && HookPermissionPolicy.allowsOnce(
+                    qualification: result[HookPermissionPolicy.qualificationKey] as? String
+                )
+                && input["hook_event_name"] as? String == "PermissionRequest"
+                && input["permission_mode"] as? String == "default"
+                && input["tool_name"] as? String == "Bash"
+                && equalBytes(
+                    result["command_preview"],
+                    (input["tool_input"] as? [String: Any])?["command"]
+                )
+                && equalBytes(result["cwd"], input["cwd"])
+        default:
+            return false
+        }
+    }
+
+    private static func equalBytes(_ lhs: Any?, _ rhs: Any?) -> Bool {
+        guard let lhs = lhs as? String, let rhs = rhs as? String else { return false }
+        return lhs.utf8.elementsEqual(rhs.utf8)
+    }
+}
+
 func runHookCommand(arguments: [String]) {
     // Ordinary Hooks are deliberately fail-open. Only an exact Blabee queued
     // prompt gets one bounded response-loss retry and a safe no-action context
@@ -105,10 +160,18 @@ func runHookCommand(arguments: [String]) {
         let socketFlag = try optionalSocketFlag(Array(arguments.dropFirst()))
         let socketPath = try OperationalSocketPath.resolve(explicitPath: socketFlag)
         let inputData = try readStandardInput(maximumBytes: 1_048_576)
-        let payload = try StrictJSONTransport.object(
+        var payload = try StrictJSONTransport.object(
             from: inputData,
             limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
         )
+        // The coordinator may expose Hook allow-once only after attesting the
+        // live Codex ancestry. Never trust a caller-supplied marker; derive it
+        // locally and omit it when the attestation cannot be established.
+        if eventName == "PermissionRequest" {
+            payload = HookPermissionOutputPolicy.qualifiedPayload(
+                payload, qualification: CodexHookApprovalQualification.currentQualification()
+            )
+        }
         let client = try UnixDomainSocketClient(socketPath: socketPath)
         let outcome = HookRequestPolicy.perform(
             eventName: eventName,
@@ -143,9 +206,12 @@ func runHookCommand(arguments: [String]) {
                 guard result["decision"] as? String == "defer_to_codex" else { return }
                 return
             }
-            guard Set(result.keys) == [
-                "decision", "delivery_token", "request_id", "session_id", "turn_id",
-            ], let decision = result["decision"] as? String
+            guard let decision = result["decision"] as? String,
+                  HookPermissionOutputPolicy.acceptsResponse(
+                      result, input: payload,
+                      currentQualification: decision == "allow_once"
+                          ? CodexHookApprovalQualification.currentQualification() : nil
+                  )
             else { return }
             let deliveryToken = try permissionDeliveryToken(
                 result["delivery_token"]
@@ -163,6 +229,13 @@ func runHookCommand(arguments: [String]) {
                 code: "permission_turn_id_invalid"
             )
             switch decision {
+            case "allow_once":
+                try writeStandardOutputJSON([
+                    "hookSpecificOutput": [
+                        "hookEventName": "PermissionRequest",
+                        "decision": ["behavior": "allow"],
+                    ],
+                ])
             case "deny":
                 try writeStandardOutputJSON([
                     "hookSpecificOutput": [
@@ -174,13 +247,13 @@ func runHookCommand(arguments: [String]) {
                     ],
                 ])
             case "defer_to_codex":
-                // An empty Hook response is delivered only when stdout reaches
-                // EOF. Close it before acknowledging delivery so Pet cannot
-                // report success while Codex is still waiting for fallback.
-                try FileHandle.standardOutput.close()
+                break
             default:
                 return
             }
+            // Finish adapter output before ACK. The launcher buffers this until
+            // exit; this does not prove native consumption or command execution.
+            try FileHandle.standardOutput.close()
             let acknowledgement = try client.request(
                 type: "ack_permission_request_delivery",
                 payload: [

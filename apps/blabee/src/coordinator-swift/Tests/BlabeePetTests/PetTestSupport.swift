@@ -39,6 +39,7 @@ struct PetTestPermissionRequest: Sendable, Equatable {
     var toolName: String = "Bash"
     var requestDescription: String? = "테스트 명령 실행 권한이 필요합니다."
     var commandPreview: String? = "npm test"
+    var allowOnceAvailable: Bool = false
     var deliveryPending: Bool = false
 }
 
@@ -250,6 +251,7 @@ func petTestSnapshotObject(
             "tool_name": request.toolName,
             "description": request.requestDescription ?? NSNull(),
             "command_preview": request.commandPreview ?? NSNull(),
+            "allow_once_available": request.allowOnceAvailable,
             "delivery_pending": request.deliveryPending,
         ]
     }
@@ -362,6 +364,8 @@ actor PetFakeTransport: PetCoordinatorTransport {
     private var focusWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockSelection = false
     private var selectionWaiters: [CheckedContinuation<Void, Never>] = []
+    private var blockNextPermissionResolution = false
+    private var permissionResolutionWaiters: [CheckedContinuation<Void, Never>] = []
     private var blockNextManagedApprovalResolution = false
     private var managedApprovalResolutionWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -400,6 +404,15 @@ actor PetFakeTransport: PetCoordinatorTransport {
         }
     }
 
+    func setNextPermissionResolutionBlocked(_ blocked: Bool) {
+        blockNextPermissionResolution = blocked
+        if !blocked {
+            let waiters = permissionResolutionWaiters
+            permissionResolutionWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
     func request(type: String, payload: Data) async throws -> Data {
         requests.append((type, payload))
         if type == "focus_interaction", blockFocus {
@@ -410,6 +423,12 @@ actor PetFakeTransport: PetCoordinatorTransport {
         if type == "select", blockSelection {
             await withCheckedContinuation { continuation in
                 selectionWaiters.append(continuation)
+            }
+        }
+        if type == "resolve_permission_request", blockNextPermissionResolution {
+            blockNextPermissionResolution = false
+            await withCheckedContinuation { continuation in
+                permissionResolutionWaiters.append(continuation)
             }
         }
         if type == "resolve_managed_command_approval",

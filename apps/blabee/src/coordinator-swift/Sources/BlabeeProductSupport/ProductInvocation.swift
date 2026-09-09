@@ -37,13 +37,33 @@ package enum ProductInvocationResolver {
         commandLineArguments: [String],
         environment: ProductInvocationEnvironment
     ) -> String? {
-        let isNoUserArgumentLaunch = commandLineArguments.count == 1
-            || (commandLineArguments.count == 2
-                && isLaunchServicesProcessSerialNumber(commandLineArguments[1]))
-        guard isNoUserArgumentLaunch else {
+        guard isNoUserArgumentLaunch(commandLineArguments) else {
             return commandLineArguments.count > 1 ? commandLineArguments[1] : nil
         }
-        return isExpectedAppBundle(environment) ? "pet" : nil
+        return isInstallationCandidateAppBundle(environment) ? "pet" : nil
+    }
+
+    /// Only implicit GUI launches enter onboarding. Explicit developer commands
+    /// and background helpers retain their original dispatch.
+    package static func requiresInstallation(
+        commandLineArguments: [String],
+        environment: ProductInvocationEnvironment
+    ) -> Bool {
+        isNoUserArgumentLaunch(commandLineArguments)
+            && isInstallationCandidateAppBundle(environment)
+            && !isStandardInstalledApp(environment)
+    }
+
+    package static func isStandardInstalledApp(
+        _ environment: ProductInvocationEnvironment
+    ) -> Bool {
+        isExpectedAppBundle(environment)
+            && environment.bundleURL?.standardizedFileURL.path == "/Applications/Blabee.app"
+    }
+
+    private static func isNoUserArgumentLaunch(_ arguments: [String]) -> Bool {
+        arguments.count == 1
+            || (arguments.count == 2 && isLaunchServicesProcessSerialNumber(arguments[1]))
     }
 
     private static func isLaunchServicesProcessSerialNumber(_ value: String) -> Bool {
@@ -60,6 +80,15 @@ package enum ProductInvocationResolver {
     package static func isExpectedAppBundle(
         _ environment: ProductInvocationEnvironment
     ) -> Bool {
+        isInstallationCandidateAppBundle(environment)
+            && environment.bundleURL?.standardizedFileURL.lastPathComponent == "Blabee.app"
+    }
+
+    // Renaming a downloaded app must not strand the user. This is routing only;
+    // the installer independently verifies the running code and signed bundle.
+    package static func isInstallationCandidateAppBundle(
+        _ environment: ProductInvocationEnvironment
+    ) -> Bool {
         guard environment.bundleIdentifier == "com.biadone.blabee",
               environment.bundleName == "Blabee",
               environment.bundleExecutable == "blabee-coordinator",
@@ -69,7 +98,6 @@ package enum ProductInvocationResolver {
               rawExecutableURL.isFileURL,
               let bundleURL = environment.bundleURL?.standardizedFileURL,
               let executableURL = environment.executableURL?.standardizedFileURL,
-              bundleURL.lastPathComponent == "Blabee.app",
               bundleURL.pathExtension == "app"
         else {
             return false

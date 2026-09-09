@@ -172,10 +172,21 @@ private struct PetPanelSurfaceModifier: ViewModifier {
 
 struct PetRootView: View {
     @ObservedObject var viewModel: PetViewModel
+    // Offscreen view tests omit compositor-only glass; the installed panel uses
+    // the default surface. Content and controls follow the same view hierarchy.
+    var usesSystemGlassSurface = true
+    @State private var showServiceSettings = false
+    @State private var showPluginDetails = false
+    @State private var showConnectionVerification = false
 
     var body: some View {
-        panelBody
-            .modifier(PetPanelSurfaceModifier())
+        Group {
+            if usesSystemGlassSurface {
+                panelBody.modifier(PetPanelSurfaceModifier())
+            } else {
+                panelBody
+            }
+        }
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
     }
@@ -198,8 +209,10 @@ struct PetRootView: View {
                     compactStatusMessages
                 }
             } else if viewModel.isShowingOnboarding {
-                contentViewport(for: .projectSettings) {
-                    onboardingSettings
+                ScrollViewReader { scroll in
+                    contentViewport(for: .projectSettings) {
+                        onboardingSettings(scroll: scroll)
+                    }
                 }
             } else if viewModel.isEditingShortcuts {
                 contentViewport(for: .shortcutSettings) {
@@ -296,9 +309,11 @@ struct PetRootView: View {
         HStack(spacing: 10) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(statusColor)
+                    .fill(viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
+                          ? connectionStatusColor(viewModel.connectionReadiness.status) : statusColor)
                     .frame(width: 8, height: 8)
-                Text(viewModel.presentationTitle)
+                Text(viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
+                     ? "연결 설정" : viewModel.presentationTitle)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.secondary)
                 if viewModel.isRecoveryCapable {
@@ -390,12 +405,12 @@ struct PetRootView: View {
                     .lineLimit(3)
                     .truncationMode(.tail)
                     .help(request.displaySummary)
-                Label(request.cwd, systemImage: "folder")
+                Label("세션 위치: \(request.cwd)", systemImage: "folder")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                    .help(request.cwd)
+                    .help("Hook이 제공한 세션 위치입니다. 명령의 실제 실행 폴더·환경은 제공되지 않습니다.")
                 Text(request.commandPreview)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
@@ -417,29 +432,25 @@ struct PetRootView: View {
             }
 
             VStack(spacing: 9) {
-                permissionChoiceRow(
-                    number: 1,
-                    title: PetPermissionDecision.deny.displayTitle,
-                    icon: "xmark",
-                    tint: .red,
-                    emphasized: false,
-                    disabled: isResolving
-                ) {
-                    await viewModel.resolvePermissionRequest(.deny, for: request)
-                }
-                permissionChoiceRow(
-                    number: 2,
-                    title: PetPermissionDecision.deferToCodex.displayTitle,
-                    icon: "arrow.up.forward.app",
-                    tint: .teal,
-                    emphasized: false,
-                    disabled: isResolving
-                ) {
-                    await viewModel.resolvePermissionRequest(.deferToCodex, for: request)
+                ForEach(request.displayedDecisions, id: \.rawValue) { decision in
+                    permissionChoiceRow(
+                        number: decision.choiceNumber,
+                        title: decision.displayTitle,
+                        detail: decision == .allowOnce && !request.allowOnceAvailable
+                            ? "이 연결의 일회성 승인이 아직 검증되지 않았습니다. 3번에서 Codex 승인 화면으로 이동하세요."
+                            : nil,
+                        icon: decision == .allowOnce ? "checkmark"
+                            : decision == .deny ? "xmark" : "arrow.up.forward.app",
+                        tint: decision == .allowOnce ? .blue : decision == .deny ? .red : .teal,
+                        emphasized: decision == .allowOnce,
+                        disabled: isResolving || !request.availableDecisions.contains(decision)
+                    ) {
+                        await viewModel.resolvePermissionRequest(decision, for: request)
+                    }
                 }
             }
 
-            Text("Hook 권한은 Pet에서 허용하지 않습니다. 거절하거나 Codex에서 직접 결정하세요.")
+            Text("이번 요청에만 응답합니다. 이후 명령에 대한 허용 정책은 저장하지 않습니다.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -529,6 +540,8 @@ struct PetRootView: View {
                 permissionChoiceRow(
                     number: 1,
                     title: PetManagedCommandApprovalDecision.acceptOnce.displayTitle,
+                    detail: request.allowOnceAvailable ? nil
+                        : "이 요청은 Pet에서 일회성 승인할 수 없습니다. 3번에서 Codex 승인 화면으로 이동하세요.",
                     icon: "checkmark",
                     tint: .blue,
                     emphasized: request.allowOnceAvailable,
@@ -578,6 +591,7 @@ struct PetRootView: View {
     private func permissionChoiceRow(
         number: Int,
         title: String,
+        detail: String? = nil,
         icon: String,
         tint: Color,
         emphasized: Bool,
@@ -593,8 +607,16 @@ struct PetRootView: View {
                     .foregroundStyle(tint)
                     .frame(width: 34, height: 34)
                     .background(tint.opacity(0.13), in: Circle())
-                Text(title)
-                    .font(.body.weight(.semibold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+                    if let detail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Spacer(minLength: 8)
                 Text("\(number)")
                     .font(.caption.monospaced().bold())
@@ -616,6 +638,9 @@ struct PetRootView: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.55 : 1)
+        .accessibilityIdentifier("permission-choice-\(number)")
+        .accessibilityLabel("\(number) \(title)")
+        .accessibilityHint(detail ?? "")
     }
 
     private var fifoQueueStatus: some View {
@@ -982,140 +1007,221 @@ struct PetRootView: View {
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var onboardingSettings: some View {
-        VStack(alignment: .leading, spacing: 18) {
+    private func connectionReadinessCard(scroll: ScrollViewProxy) -> some View {
+        let readiness = viewModel.connectionReadiness
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
+                Image(systemName: connectionStatusSymbol(readiness.status))
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(connectionStatusColor(readiness.status))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Blabee 설정")
-                        .font(.title2.weight(.semibold))
-                    Text("Codex 연결, 후속 제안, 프로젝트 관찰 범위와 백그라운드 서비스를 관리합니다.")
-                        .font(.callout)
+                    Text(readiness.title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(readiness.detail)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("connection-readiness-summary")
+
+            VStack(spacing: 10) {
+                ForEach(readiness.checks) { check in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: connectionCheckSymbol(check.state))
+                            .foregroundStyle(connectionCheckColor(check.state))
+                            .frame(width: 18)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(check.title).font(.caption.weight(.semibold))
+                            Text(check.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("connection-check-\(check.id)")
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button(viewModel.connectionNextStepTitle) {
+                    performConnectionNextStep(readiness.nextStep, scroll: scroll)
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .disabled(viewModel.isOnboardingOperationInFlight)
+                .accessibilityIdentifier("connection-next-step")
+                Spacer(minLength: 0)
                 if viewModel.isOnboardingOperationInFlight {
-                    ProgressView()
-                        .controlSize(.regular)
-                        .accessibilityLabel("Blabee 설정 처리 중")
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("연결 상태 확인 중")
                 }
-            }
-
-            if viewModel.isAppOwnedServiceAvailable {
-                appOwnedServiceSettings
-            }
-
-            VStack(alignment: .leading, spacing: 13) {
-                HStack(spacing: 12) {
-                    Image(systemName: onboardingServiceSymbol)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(onboardingServiceColor)
-                        .frame(width: 38, height: 38)
-                        .background(onboardingServiceColor.opacity(0.13), in: Circle())
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("macOS 자동 시작 서비스")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(viewModel.onboardingServiceState.displayTitle)
-                            .font(.body.weight(.semibold))
-                    }
-                    Spacer(minLength: 8)
-                    Text(onboardingServiceBadgeTitle)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(onboardingServiceColor)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(onboardingServiceColor.opacity(0.12), in: Capsule())
+                Button {
+                    Task { await viewModel.refreshAllOnboardingSettings() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
                 }
-                Text(viewModel.onboardingServiceState.displayDescription)
-                    .font(.caption)
+                .buttonStyle(.bordered)
+                .petCircleButtonBorder()
+                .disabled(viewModel.isOnboardingOperationInFlight)
+                .accessibilityLabel("연결 상태 새로고침")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface(emphasized: true)
+    }
+
+    private func performConnectionNextStep(
+        _ step: PetConnectionReadiness.NextStep, scroll: ScrollViewProxy
+    ) {
+        let destination: String
+        switch step {
+        case .refresh:
+            Task { await viewModel.refreshAllOnboardingSettings() }
+            return
+        case .installPlugin where viewModel.canConnectCodexPlugin:
+            Task { await viewModel.connectCodexPlugin() }
+            return
+        case .restartService where viewModel.isAppOwnedServiceEnabled
+            && viewModel.canChangeAppOwnedService:
+            Task { await viewModel.restartAppOwnedService() }
+            return
+        case .service, .restartService:
+            showServiceSettings = true
+            destination = "connection-service"
+        case .installPlugin, .pluginDetails:
+            showPluginDetails = true
+            destination = "connection-plugin"
+        case .projects:
+            destination = "connection-projects"
+        case .verifyInCodex:
+            showConnectionVerification = true
+            destination = "connection-verification"
+        }
+        // Allow an expanded disclosure to lay out before scrolling to it.
+        Task { @MainActor in
+            await Task.yield()
+            scroll.scrollTo(destination, anchor: .top)
+        }
+    }
+
+    private var connectionVerificationSteps: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("1. 현재 Codex 작업 폴더가 위 프로젝트 목록에 포함되는지 확인하세요. 다른 worktree는 별도 폴더입니다.")
+            Text("2. Codex에서 /hooks를 열어 Blabee Hook의 활성·신뢰 상태를 확인하세요. 이미 신뢰했다면 시작할 때 승인 창이 다시 뜨지 않을 수 있습니다.")
+            Text("SessionStart · UserPromptSubmit · Stop · PermissionRequest")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("3. 새 요청을 보내고 답변 뒤 선택 카드가 도착하는지 확인하세요. 카드를 선택한 뒤 원래 Codex 세션에서 다음 요청이 시작되는지까지 확인해야 왕복 검증이 완료됩니다.")
+            Text("카드 수신은 Hook 전체의 신뢰나 선택 반환 성공을 보장하지 않습니다. 이 화면에서 Codex를 대신 승인하거나 테스트 요청을 자동 전송하지 않습니다.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface()
+    }
+
+    private func connectionStatusColor(_ status: PetConnectionReadiness.Status) -> Color {
+        switch status {
+        case .needsAttention: .red
+        case .needsSetup, .needsRestart: .orange
+        case .checking, .awaitingVerification: .blue
+        case .receiving: .green
+        }
+    }
+
+    private func connectionStatusSymbol(_ status: PetConnectionReadiness.Status) -> String {
+        switch status {
+        case .needsAttention: "exclamationmark.triangle.fill"
+        case .needsSetup, .needsRestart: "exclamationmark.circle.fill"
+        case .checking: "arrow.triangle.2.circlepath"
+        case .awaitingVerification: "clock"
+        case .receiving: "checkmark.circle.fill"
+        }
+    }
+
+    private func connectionCheckColor(_ state: PetConnectionReadiness.CheckState) -> Color {
+        switch state {
+        case .confirmed: .green
+        case .pending: .secondary
+        case .attention: .orange
+        case .checking: .blue
+        }
+    }
+
+    private func connectionCheckSymbol(_ state: PetConnectionReadiness.CheckState) -> String {
+        switch state {
+        case .confirmed: "checkmark.circle.fill"
+        case .pending: "circle.dashed"
+        case .attention: "exclamationmark.circle.fill"
+        case .checking: "clock"
+        }
+    }
+
+    private func onboardingSettings(scroll: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Blabee 설정")
+                    .font(.title2.weight(.semibold))
+                Text("연결 상태를 확인하고, 필요한 단계부터 완료하세요.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if viewModel.onboardingServiceNeedsRuntimeAttention,
-                   let coordinatorError = viewModel.coordinatorTransportError
-                {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Label(
-                            "서비스는 등록되어 있지만 Coordinator에 연결하지 못했습니다.",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                            .font(.caption.weight(.semibold))
-                        Text(coordinatorError)
-                            .font(.caption2.monospaced())
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .foregroundStyle(.orange)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        Color.orange.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
-                }
-                onboardingServiceActions
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .petInsetSurface(emphasized: true)
 
-            codexPluginSetupCard
+            connectionReadinessCard(scroll: scroll)
+
+            onboardingProjects
+                .id("connection-projects")
+
+            DisclosureGroup("Codex에서 동작 확인", isExpanded: $showConnectionVerification) {
+                connectionVerificationSteps
+                    .padding(.top, 10)
+            }
+            .id("connection-verification")
+
+            DisclosureGroup("Codex 설치 · 진단 상세", isExpanded: $showPluginDetails) {
+                codexPluginSetupCard.padding(.top, 10)
+            }
+            .id("connection-plugin")
 
             suggestionModeCard
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("관찰할 프로젝트")
-                            .font(.body.weight(.semibold))
-                        Text("등록한 폴더와 그 하위 경로에서 Blabee가 연결됩니다.")
+            DisclosureGroup("서비스 관리 · 자동 시작 (선택)", isExpanded: $showServiceSettings) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("자동 시작 등록은 필수가 아닙니다. 앱 실행형 서비스가 연결되어 있으면 Blabee를 사용할 수 있습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if viewModel.isAppOwnedServiceAvailable {
+                        appOwnedServiceSettings
+                    }
+                    if viewModel.projectSettingsNeedRestart,
+                       !viewModel.isAppOwnedServiceEnabled {
+                        Text("자동 시작 서비스를 사용 중이라면 아래 ‘등록 해제’가 완료된 뒤 ‘서비스 등록’을 눌러 새 설정으로 시작하세요. 진행 중인 Blabee 선택·권한 요청을 먼저 마친 뒤 적용해 주세요. Codex 세션과 프로젝트 파일은 변경하지 않습니다.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
-                    Button {
-                        Task { await viewModel.chooseAndEnableProject() }
-                    } label: {
-                        Label("폴더 추가", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .petCapsuleButtonBorder()
-                    .controlSize(.small)
-                    .disabled(!viewModel.canMutateOnboardingProjects)
+                    onboardingAutomaticServiceSettings
                 }
-
-                if !viewModel.configuredProjectPathsAreAuthoritative {
-                    projectMessageRow(
-                        "프로젝트 설정을 확인할 수 없습니다.",
-                        systemImage: "questionmark.folder"
-                    )
-                } else if viewModel.configuredProjectPaths.isEmpty {
-                    projectMessageRow(
-                        "설정된 프로젝트가 없습니다.",
-                        systemImage: "folder.badge.plus"
-                    )
-                } else {
-                    ForEach(viewModel.configuredProjectPaths, id: \.self) { path in
-                        configuredProjectRow(path)
-                    }
-                }
-
-                ForEach(viewModel.activeOnlyProjectPaths, id: \.self) { path in
-                    activeOnlyProjectRow(path)
-                }
-
-                Label(
-                    "프로젝트 설정 변경은 서비스를 재시작한 후 적용됩니다.",
-                    systemImage: "arrow.clockwise.circle"
-                )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .petInsetSurface()
+            .id("connection-service")
+
+            DisclosureGroup("이전 Codex 연결 정리") {
+                LegacyCodexShellCleanupView(viewModel: viewModel).padding(.top, 10)
+            }
 
             if let error = viewModel.onboardingError {
                 Label {
@@ -1134,6 +1240,134 @@ struct PetRootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var onboardingAutomaticServiceSettings: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 12) {
+                Image(systemName: onboardingServiceSymbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(onboardingServiceColor)
+                    .frame(width: 38, height: 38)
+                    .background(onboardingServiceColor.opacity(0.13), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("macOS 자동 시작 서비스")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.onboardingServiceState.displayTitle)
+                        .font(.body.weight(.semibold))
+                }
+                Spacer(minLength: 8)
+                Text(onboardingServiceBadgeTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(onboardingServiceColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(onboardingServiceColor.opacity(0.12), in: Capsule())
+            }
+            Text(viewModel.onboardingServiceState.displayDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if viewModel.onboardingServiceNeedsRuntimeAttention,
+               let coordinatorError = viewModel.coordinatorTransportError
+            {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label(
+                        "서비스는 등록되어 있지만 Coordinator에 연결하지 못했습니다.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                        .font(.caption.weight(.semibold))
+                    Text(coordinatorError)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(.orange)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color.orange.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+            }
+            onboardingServiceActions
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface(emphasized: true)
+    }
+
+    private var onboardingProjects: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("관찰할 프로젝트")
+                        .font(.body.weight(.semibold))
+                    Text("현재 Codex 작업 폴더가 이 목록에 포함되어야 합니다. 등록한 폴더와 그 하위 경로에만 적용됩니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    Task { await viewModel.chooseAndEnableProject() }
+                } label: {
+                    Label("폴더 추가", systemImage: "plus")
+                        .fixedSize()
+                }
+                .buttonStyle(.borderedProminent)
+                .petCapsuleButtonBorder()
+                .controlSize(.small)
+                .disabled(!viewModel.canMutateOnboardingProjects)
+            }
+
+            if !viewModel.configuredProjectPathsAreAuthoritative {
+                projectMessageRow(
+                    "프로젝트 설정을 확인할 수 없습니다.",
+                    systemImage: "questionmark.folder"
+                )
+            } else if viewModel.configuredProjectPaths.isEmpty {
+                projectMessageRow(
+                    "설정된 프로젝트가 없습니다.",
+                    systemImage: "folder.badge.plus"
+                )
+            } else {
+                ForEach(viewModel.configuredProjectPaths, id: \.self) { path in
+                    configuredProjectRow(path)
+                }
+            }
+
+            ForEach(viewModel.activeOnlyProjectPaths, id: \.self) { path in
+                activeOnlyProjectRow(path)
+            }
+
+            if viewModel.projectSettingsNeedRestart {
+                Label(
+                    "변경한 프로젝트가 아직 서비스에 적용되지 않았습니다.",
+                    systemImage: "arrow.clockwise.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                if viewModel.isAppOwnedServiceEnabled {
+                    Button("서비스 다시 시작하여 적용") {
+                        Task { await viewModel.restartAppOwnedService() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .petCapsuleButtonBorder()
+                    .disabled(!viewModel.canChangeAppOwnedService)
+                } else {
+                    Text("아래 서비스 관리에서 실행 방식을 확인한 뒤 서비스를 다시 시작하세요.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .petInsetSurface()
+    }
+
     private var codexPluginSetupCard: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 12) {
@@ -1147,7 +1381,7 @@ struct PetRootView: View {
                     Text("Codex 연결")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text(viewModel.codexPluginSetupState.title)
+                    Text(codexPluginInstallationTitle)
                         .font(.body.weight(.semibold))
                 }
                 Spacer(minLength: 8)
@@ -1159,10 +1393,14 @@ struct PetRootView: View {
                     .background(codexPluginSetupColor.opacity(0.12), in: Capsule())
             }
 
-            Text(viewModel.codexPluginSetupState.detail)
+            Text(codexPluginInstallationDetail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let report = viewModel.codexNativeRecheckReport {
+                CodexPluginRecheckReportView(report: report)
+            }
 
             if case let .legacyInstallationDetected(marketplaceName, _) = viewModel.codexPluginSetupState {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1299,7 +1537,14 @@ struct PetRootView: View {
             Button {
                 Task { await viewModel.recheckCodexNativeExecutable() }
             } label: {
-                Label("Codex 실행 다시 검사", systemImage: "arrow.clockwise")
+                if viewModel.codexNativeRecheckReport?.isChecking == true {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Codex 실행 검사 중…")
+                    }
+                } else {
+                    Label("Codex 실행 다시 검사", systemImage: "arrow.clockwise")
+                }
             }
             .buttonStyle(.bordered)
             .petCapsuleButtonBorder()
@@ -1502,7 +1747,8 @@ struct PetRootView: View {
     }
 
     private func configuredProjectRow(_ path: String) -> some View {
-        let isActive = viewModel.activeProjectPaths.contains(path)
+        let isActive = viewModel.hasVerifiedServiceConnection
+            && viewModel.activeProjectPaths.contains(path)
         let name = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
         return HStack(spacing: 12) {
             Image(systemName: isActive ? "folder.fill" : "folder")
@@ -1526,8 +1772,10 @@ struct PetRootView: View {
                     .textSelection(.enabled)
                     .help(path)
                 Text(isActive
-                     ? "현재 서비스에서 활성"
-                     : "설정됨 · 서비스 재시작 후 활성")
+                     ? "현재 서비스에 적용됨"
+                     : viewModel.hasVerifiedServiceConnection
+                         ? "저장됨 · 서비스 재시작 필요"
+                         : "저장됨 · 서비스 연결 후 적용 확인")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -1629,7 +1877,8 @@ struct PetRootView: View {
 
     private var codexPluginSetupColor: Color {
         switch viewModel.codexPluginSetupState {
-        case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable,
+        case .installedNeedsHookReview: .green
+        case .marketplaceInstalledNeedsPlugin, .updateAvailable,
              .legacyInstallationDetected: .orange
         case .conflict, .error: .red
         case .notInstalled: .indigo
@@ -1643,12 +1892,26 @@ struct PetRootView: View {
         case .unavailable: "사용 불가"
         case .notInstalled: "미연결"
         case .marketplaceInstalledNeedsPlugin: "마무리 필요"
-        case .installedNeedsHookReview: "상태 확인"
+        case .installedNeedsHookReview: "설치 확인"
         case .updateAvailable: "업데이트"
         case .legacyInstallationDetected: "이전 연결 발견"
         case .conflict: "충돌"
         case .error: "오류"
         }
+    }
+
+    private var codexPluginInstallationTitle: String {
+        if case .installedNeedsHookReview = viewModel.codexPluginSetupState {
+            return "Blabee Plugin 설치됨"
+        }
+        return viewModel.codexPluginSetupState.title
+    }
+
+    private var codexPluginInstallationDetail: String {
+        if case .installedNeedsHookReview = viewModel.codexPluginSetupState {
+            return "Codex에서 Blabee Plugin의 설치·활성을 확인했습니다. 현재 세션의 Hook 신뢰와 실제 동작은 별도로 확인해야 합니다."
+        }
+        return viewModel.codexPluginSetupState.detail
     }
 
     private func shortcutSettingRow(_ intent: PetShortcutIntent) -> some View {

@@ -273,9 +273,14 @@ func petAppServiceViewModelReadiness() async throws {
     await vm.refresh()
     #expect(vm.appOwnedServiceState == .ready)
     #expect(vm.presentationState == .ready)
+    vm.applySnapshotForTesting(try PetSnapshot.parse(petTestSnapshotData(
+        cards: [PetTestCard(suffix: "received-before-exit")]
+    )))
+    #expect(!vm.connectionReceivedCardProjectPaths.isEmpty)
     child.isRunning = false
     await vm.refresh()
     #expect(vm.snapshot == nil)
+    #expect(vm.connectionReceivedCardProjectPaths.isEmpty)
     #expect(vm.appOwnedServiceState == .failed("app_service_exited"))
     #expect(await transport.requestCount(type: "get_state") == 1)
     await vm.shutdownAppOwnedService()
@@ -390,7 +395,12 @@ func petAppServiceLateSnapshotAfterRestart() async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(2))
     while !(await transport.waiting), ContinuousClock.now < deadline { await Task.yield() }
     try #require(await transport.waiting)
+    vm.applySnapshotForTesting(try PetSnapshot.parse(petTestSnapshotData(
+        cards: [PetTestCard(suffix: "received-before-restart")]
+    )))
+    #expect(!vm.connectionReceivedCardProjectPaths.isEmpty)
     await vm.restartAppOwnedService()
+    #expect(vm.connectionReceivedCardProjectPaths.isEmpty)
     let replacement = try #require(h.launcher.children.last)
     replacement.hasPublishedService = true
     await transport.complete(try petTestSnapshotData(cards: [PetTestCard(suffix: "old-instance")]))

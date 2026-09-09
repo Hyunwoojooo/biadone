@@ -179,6 +179,9 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             onboardingAdapter: onboardingAdapter,
             appService: appService,
             codexPluginSetupManager: codexPluginSetupManager,
+            legacyShellCleanupManager: onboardingAdapter is PetLiveOnboardingAdapter
+                ? LegacyCodexShellCleanupManager.live()
+                : LegacyUnavailableCodexShellCleanupManager(),
             suggestionModeStore: suggestionModeStore,
             projectFolderChooser: PetOpenPanelProjectFolderChooser()
         )
