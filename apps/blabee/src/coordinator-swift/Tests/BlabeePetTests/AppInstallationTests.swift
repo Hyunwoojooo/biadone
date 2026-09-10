@@ -258,6 +258,282 @@ struct AppInstallationTests {
         #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
     }
 
+    @Test("an admitted previous release or identical release uses leases despite unknown process visibility", arguments: [true, false])
+    func leaseReplacementDoesNotCallActivityGuard(sameRelease: Bool) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        let oldIdentity = sameRelease ? AppInstallationFixture.sourceIdentity : AppInstallationFixture.oldIdentity
+        try fixture.makeApp(at: fixture.destination, identity: oldIdentity)
+        try fixture.enableRuntimeUseLease(at: fixture.destination)
+        try fixture.enableRuntimeUseLease(at: fixture.source, previousIdentities: sameRelease ? [] : [
+            AppInstallationFixture.otherIdentity, AppInstallationFixture.oldIdentity,
+        ])
+        let observation = AppInstallationErrorRecorder()
+        let service = fixture.service(activityGuard: { _ in
+            observation.record(.activityInspectionUnavailable)
+            throw AppInstallationPlatformError.processInspectionUnavailable
+        })
+        let plan = try service.inspect(source: fixture.source)
+        let existing = try #require(plan.existing)
+        #expect(plan.source.admitsRuntimeUseLease(for: existing))
+        let receipt = try service.install(plan, replacementApproved: true)
+        let backup = try #require(receipt.backupURL)
+        #expect(observation.codes().isEmpty)
+        #expect(try fixture.identity(at: backup) == oldIdentity)
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+        try fixture.expectLeaseReleased(at: fixture.destination)
+        try fixture.expectLeaseReleased(at: backup)
+    }
+
+    @Test("unapproved releases and unsupported payloads retain the legacy activity guard", arguments: [
+        "unapproved-previous", "target-self-approval", "legacy-target", "missing-source-marker",
+        "unknown-target-marker", "source-extra-helper", "target-extra-helper",
+        "source-symlink", "target-symlink", "changed-launcher",
+    ])
+    func unsupportedReplacementCallsActivityGuard(reason: String) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        try fixture.enableRuntimeUseLease(at: fixture.destination)
+        try fixture.enableRuntimeUseLease(at: fixture.source, previousIdentities: [AppInstallationFixture.oldIdentity])
+        switch reason {
+        case "unapproved-previous", "target-self-approval":
+            try fixture.rewriteInfo(at: fixture.source, key: AppRuntimeUseLease.previousIdentitiesInfoKey,
+                                    value: [AppInstallationFixture.otherIdentity])
+            if reason == "target-self-approval" {
+                try fixture.rewriteInfo(at: fixture.destination, key: AppRuntimeUseLease.previousIdentitiesInfoKey,
+                                        value: [AppInstallationFixture.sourceIdentity])
+            }
+        case "legacy-target":
+            try fixture.rewriteInfo(at: fixture.destination, key: AppRuntimeUseLease.protocolInfoKey, value: nil)
+        case "missing-source-marker":
+            try fixture.rewriteInfo(at: fixture.source, key: AppRuntimeUseLease.protocolInfoKey, value: nil)
+        case "unknown-target-marker":
+            try fixture.rewriteInfo(at: fixture.destination, key: AppRuntimeUseLease.protocolInfoKey,
+                                    value: "blabee.runtime-use-lease.v2")
+        case "source-extra-helper", "target-extra-helper":
+            let app = reason == "source-extra-helper" ? fixture.source : fixture.destination
+            try fixture.writeExecutable(Data("uncovered executable".utf8), at: app.appendingPathComponent("Contents/MacOS/extra-helper"))
+        case "source-symlink", "target-symlink":
+            let app = reason == "source-symlink" ? fixture.source : fixture.destination
+            try FileManager.default.createSymbolicLink(atPath: app.appendingPathComponent("Contents/Resources/payload-link").path,
+                                                      withDestinationPath: "nested/payload.bin")
+        case "changed-launcher":
+            try fixture.writeExecutable(Data("different launcher".utf8),
+                                        at: fixture.source.appendingPathComponent(AppRuntimeUseLease.launcherPath))
+        default:
+            Issue.record("Unexpected fallback fixture")
+        }
+        let oldInode = try fixture.inode(at: fixture.destination)
+        let observation = AppInstallationErrorRecorder()
+        let service = fixture.service(activityGuard: { _ in
+            observation.record(.activityInspectionUnavailable)
+            throw AppInstallationError(.activityInspectionUnavailable)
+        })
+        let plan = try service.inspect(source: fixture.source)
+        let existing = try #require(plan.existing)
+        #expect(!plan.source.admitsRuntimeUseLease(for: existing))
+        let failure = try installationFailure { _ = try service.install(plan, replacementApproved: true) }
+        #expect(failure.code == .activityInspectionUnavailable)
+        #expect(observation.codes() == [.activityInspectionUnavailable])
+        #expect(try fixture.inode(at: fixture.destination) == oldInode)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+    }
+
+    @Test("previous-release admission metadata is a unique bounded array of valid identities", arguments: [
+        "not-an-array", "mixed-types", "invalid-identity", "short-identity", "too-many", "duplicates",
+    ])
+    func invalidLeaseAdmissionMetadataIsRejected(reason: String) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.enableRuntimeUseLease(at: fixture.source)
+        let value: Any
+        switch reason {
+        case "not-an-array": value = AppInstallationFixture.oldIdentity
+        case "mixed-types": value = [AppInstallationFixture.oldIdentity, 1] as [Any]
+        case "invalid-identity": value = ["md5:" + String(repeating: "b", count: 64)]
+        case "short-identity": value = ["sha256:b"]
+        case "too-many": value = [AppInstallationFixture.sourceIdentity, AppInstallationFixture.oldIdentity, AppInstallationFixture.otherIdentity]
+        default: value = [AppInstallationFixture.oldIdentity, AppInstallationFixture.oldIdentity]
+        }
+        try fixture.rewriteInfo(at: fixture.source, key: AppRuntimeUseLease.previousIdentitiesInfoKey, value: value)
+        let failure = try installationFailure { _ = try fixture.service().inspect(source: fixture.source) }
+        #expect(failure.code == .invalidSource)
+        #expect(try fixture.children(prefix: ".Blabee.").isEmpty)
+    }
+
+    @Test("an existing runtime shared lease blocks replacement before copying or moving the app")
+    func runningLeaseDestinationIsRejected() throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeLeaseReplacement()
+        let oldInode = try fixture.inode(at: fixture.destination)
+        let runtime = try AppRuntimeUseLease.acquire(executableURL: fixture.executable(at: fixture.destination), use: .runtime)
+        defer { withExtendedLifetime(runtime) {} }
+        let observation = AppInstallationErrorRecorder()
+        let service = fixture.service(activityGuard: { _ in observation.record(.activityInspectionUnavailable) })
+        let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
+        #expect(failure.code == .destinationActive)
+        #expect(observation.codes().isEmpty)
+        #expect(try fixture.inode(at: fixture.destination) == oldInode)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+        try runtime.verify(at: fixture.executable(at: fixture.destination))
+    }
+
+    @Test("old and staged exclusive leases survive every publication and rollback checkpoint", arguments: [false, true])
+    func transactionRetainsAndReleasesUseLeases(rollback: Bool) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeLeaseReplacement()
+        let observation = AppInstallationCheckpointRecorder()
+        let service = fixture.service(checkpoint: { phase, app in
+            let oldApp: URL
+            switch phase {
+            case .beforeCopy, .beforeBackup: oldApp = fixture.destination
+            case .afterBackup, .beforeRestore: oldApp = try #require(app)
+            case .beforePublish, .afterPublish: oldApp = try #require(fixture.children(prefix: ".Blabee.backup-").first)
+            default: return
+            }
+            observation.record(phase)
+            try fixture.expectRuntimeUseBlocked(at: oldApp)
+            if phase == .beforePublish || phase == .afterPublish {
+                try fixture.expectRuntimeUseBlocked(at: try #require(app))
+            }
+            if phase == .beforeRestore {
+                let stage = try #require(fixture.children(prefix: ".Blabee.install-").first)
+                try fixture.expectRuntimeUseBlocked(at: stage.appendingPathComponent("Blabee.app"))
+            }
+            if rollback, phase == .beforePublish { throw AppInstallationError(.publishFailed) }
+        })
+        let plan = try service.inspect(source: fixture.source)
+        if rollback {
+            let failure = try installationFailure { _ = try service.install(plan, replacementApproved: true) }
+            #expect(failure.code == .publishFailed)
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+            #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+            let stage = try #require(fixture.children(prefix: ".Blabee.install-").first)
+            try fixture.expectLeaseReleased(at: stage.appendingPathComponent("Blabee.app"))
+        } else {
+            let receipt = try service.install(plan, replacementApproved: true)
+            try fixture.expectLeaseReleased(at: try #require(receipt.backupURL))
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+        }
+        #expect(observation.phases() == [.beforeCopy, .beforeBackup, .afterBackup, .beforePublish,
+                                        rollback ? .beforeRestore : .afterPublish])
+        try fixture.expectLeaseReleased(at: fixture.destination)
+    }
+
+    @Test("a same-byte old executable inode swap never escapes its lease or becomes a verified rollback", arguments: [
+        AppInstallationCheckpoint.beforeBackup, .afterBackup, .beforePublish, .afterPublish, .beforeRestore,
+    ])
+    func oldExecutableInodeSwapPreservesRecovery(swapPhase: AppInstallationCheckpoint) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeLeaseReplacement()
+        let oldBundleInode = try fixture.inode(at: fixture.destination)
+        let savedExecutable = fixture.root.appendingPathComponent("saved-old-coordinator")
+        let observation = AppInstallationCheckpointRecorder()
+        let service = fixture.service(checkpoint: { phase, app in
+            if swapPhase == .beforeRestore, phase == .beforePublish { throw AppInstallationError(.publishFailed) }
+            guard phase == swapPhase else { return }
+            let oldApp: URL
+            switch phase {
+            case .beforeBackup: oldApp = fixture.destination
+            case .afterBackup, .beforeRestore: oldApp = try #require(app)
+            default: oldApp = try #require(fixture.children(prefix: ".Blabee.backup-").first)
+            }
+            observation.record(phase)
+            try fixture.replaceExecutableWithIdenticalCopy(at: oldApp, savingTo: savedExecutable)
+        })
+        let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
+        #expect(observation.phases() == [swapPhase])
+        #expect(failure.code == (swapPhase == .beforeBackup ? .changedSinceInspection : .recoveryRequired))
+        let recovery = try #require(failure.recoveryURL)
+        #expect(FileManager.default.fileExists(atPath: recovery.path))
+        if swapPhase == .beforeBackup {
+            #expect(try fixture.inode(at: fixture.destination) == oldBundleInode)
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+            #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+        } else {
+            let backup = try #require(fixture.children(prefix: ".Blabee.backup-").first)
+            #expect(try fixture.inode(at: backup) == oldBundleInode)
+            #expect(try fixture.identity(at: backup) == AppInstallationFixture.oldIdentity)
+            if swapPhase == .afterPublish {
+                #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+            } else {
+                #expect(!FileManager.default.fileExists(atPath: fixture.destination.path))
+            }
+        }
+        if swapPhase == .afterPublish {
+            try fixture.expectLeaseReleased(at: fixture.destination)
+        } else {
+            let stage = try #require(fixture.children(prefix: ".Blabee.install-").first)
+            let stagedApp = stage.appendingPathComponent("Blabee.app")
+            #expect(try fixture.identity(at: stagedApp) == AppInstallationFixture.sourceIdentity)
+            try fixture.expectLeaseReleased(at: stagedApp)
+        }
+        let released = try AppRuntimeUseLease.acquire(executableURL: savedExecutable, use: .installation)
+        try released.verify(at: savedExecutable)
+        withExtendedLifetime(released) {}
+    }
+
+    @Test("a same-byte staged or published executable inode swap preserves both recoverable bundles", arguments: [
+        AppInstallationCheckpoint.beforePublish, .afterPublish,
+    ])
+    func publishedExecutableInodeSwapPreservesRecovery(swapPhase: AppInstallationCheckpoint) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeLeaseReplacement()
+        let oldBundleInode = try fixture.inode(at: fixture.destination)
+        let savedExecutable = fixture.root.appendingPathComponent("saved-new-coordinator")
+        let observation = AppInstallationCheckpointRecorder()
+        let service = fixture.service(checkpoint: { phase, app in
+            guard phase == swapPhase else { return }
+            observation.record(phase)
+            try fixture.replaceExecutableWithIdenticalCopy(at: try #require(app), savingTo: savedExecutable)
+        })
+        let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
+        #expect(observation.phases() == [swapPhase])
+        if swapPhase == .beforePublish {
+            #expect(failure.code == .changedSinceInspection)
+            #expect(try fixture.inode(at: fixture.destination) == oldBundleInode)
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+            #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+            let stage = try #require(fixture.children(prefix: ".Blabee.install-").first)
+            #expect(try fixture.identity(at: stage.appendingPathComponent("Blabee.app")) == AppInstallationFixture.sourceIdentity)
+            try fixture.expectLeaseReleased(at: fixture.destination)
+        } else {
+            #expect(failure.code == .recoveryRequired)
+            #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+            let backup = try #require(fixture.children(prefix: ".Blabee.backup-").first)
+            #expect(try fixture.inode(at: backup) == oldBundleInode)
+            #expect(try fixture.identity(at: backup) == AppInstallationFixture.oldIdentity)
+            try fixture.expectLeaseReleased(at: backup)
+        }
+        let released = try AppRuntimeUseLease.acquire(executableURL: savedExecutable, use: .installation)
+        try released.verify(at: savedExecutable)
+        withExtendedLifetime(released) {}
+    }
+
+    @Test("unknown process visibility explains uncertainty and restart recovery without claiming activity")
+    func initialUnknownProcessVisibilityKeepsReason() throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let service = fixture.service(activityGuard: { _ in throw AppInstallationPlatformError.processInspectionUnavailable })
+        let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
+        #expect(failure.code == .activityInspectionUnavailable)
+        #expect(failure.userMessage.contains("확인하지 못했습니다"))
+        #expect(failure.userMessage.contains("실행 중이라는 뜻은 아닙니다"))
+        #expect(failure.userMessage.contains("Mac을 재시작"))
+        #expect(failure.userMessage.contains("Blabee와 Codex를 열기 전에"))
+        #expect(!failure.userMessage.contains("프로세스가 실행 중입니다"))
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+    }
+
     @Test("late platform activity failures preserve their reason and restore the old app", arguments: [true, false])
     func lateActivityGuardKeepsReason(active: Bool) throws {
         let fixture = try AppInstallationFixture()
@@ -563,11 +839,56 @@ private struct AppInstallationFixture: Sendable {
         try String(contentsOf: app.appendingPathComponent("Contents/Resources/fixture-identity"), encoding: .utf8)
     }
 
-    func rewriteInfo(at app: URL, key: String, value: String) throws {
+    func rewriteInfo(at app: URL, key: String, value: Any?) throws {
         let url = app.appendingPathComponent("Contents/Info.plist")
-        var info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: String])
+        var info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: Any])
         info[key] = value
         try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0).write(to: url)
+    }
+
+    func makeLeaseReplacement() throws {
+        try makeApp(at: destination, identity: Self.oldIdentity)
+        try enableRuntimeUseLease(at: destination)
+        try enableRuntimeUseLease(at: source, previousIdentities: [Self.oldIdentity])
+    }
+
+    func enableRuntimeUseLease(at app: URL, previousIdentities: [String] = []) throws {
+        try rewriteInfo(at: app, key: AppRuntimeUseLease.protocolInfoKey, value: AppRuntimeUseLease.protocolVersion)
+        try rewriteInfo(at: app, key: AppRuntimeUseLease.previousIdentitiesInfoKey, value: previousIdentities)
+        try writeExecutable(Data("fixture launcher, never run".utf8), at: app.appendingPathComponent(AppRuntimeUseLease.launcherPath))
+    }
+
+    func writeExecutable(_ data: Data, at executable: URL) throws {
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o755])
+        try data.write(to: executable)
+        guard chmod(executable.path, 0o755) == 0 else { throw AppInstallationError(.copyFailed) }
+    }
+
+    func executable(at app: URL) -> URL {
+        app.appendingPathComponent(AppRuntimeUseLease.executablePath)
+    }
+
+    func expectRuntimeUseBlocked(at app: URL) throws {
+        #expect(throws: AppRuntimeUseLeaseError.busy) {
+            _ = try AppRuntimeUseLease.acquire(executableURL: executable(at: app), use: .runtime)
+        }
+    }
+
+    func expectLeaseReleased(at app: URL) throws {
+        let lease = try AppRuntimeUseLease.acquire(executableURL: executable(at: app), use: .installation)
+        try lease.verify(at: executable(at: app))
+        withExtendedLifetime(lease) {}
+    }
+
+    func replaceExecutableWithIdenticalCopy(at app: URL, savingTo saved: URL) throws {
+        let executable = executable(at: app)
+        let previousInode = try inode(at: executable)
+        try FileManager.default.moveItem(at: executable, to: saved)
+        try FileManager.default.copyItem(at: saved, to: executable)
+        #expect(try inode(at: saved) == previousInode)
+        #expect(try inode(at: executable) != previousInode)
+        #expect(try Data(contentsOf: executable) == Data(contentsOf: saved))
     }
 
     func children(prefix: String) throws -> [URL] {
@@ -613,6 +934,23 @@ private final class AppInstallationErrorRecorder: @unchecked Sendable {
     }
 
     func codes() -> [AppInstallationError.Code] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
+private final class AppInstallationCheckpointRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [AppInstallationCheckpoint] = []
+
+    func record(_ phase: AppInstallationCheckpoint) {
+        lock.lock()
+        defer { lock.unlock() }
+        stored.append(phase)
+    }
+
+    func phases() -> [AppInstallationCheckpoint] {
         lock.lock()
         defer { lock.unlock() }
         return stored

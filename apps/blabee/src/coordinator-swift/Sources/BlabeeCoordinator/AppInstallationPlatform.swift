@@ -18,9 +18,9 @@ enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
     var userMessage: String {
         switch self {
         case .applicationActive:
-            return "설치된 Blabee 또는 관련 프로세스가 실행 중입니다. 종료한 뒤 다시 시도하세요."
+            return AppInstallationError(.destinationActive).userMessage
         case .processInspectionUnavailable:
-            return "실행 중인 프로세스를 충분히 확인할 수 없습니다. 다시 시도하거나 Finder에서 직접 설치해 주세요."
+            return AppInstallationError(.activityInspectionUnavailable).userMessage
         case .invalidDestination:
             return "설치된 앱의 위치를 확인할 수 없습니다. 응용 프로그램 폴더에서 Blabee를 확인하세요."
         case .identityMismatch:

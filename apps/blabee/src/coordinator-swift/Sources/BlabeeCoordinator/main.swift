@@ -1456,6 +1456,22 @@ private func runRuntimeIdentityInspection(arguments: [String]) throws {
 
 do {
     let commandLine = CommandLine.arguments
+    // These two bounded, stateless build-inspection commands do not use their
+    // own bundle's resources, service, settings or IPC. They must return before
+    // normal dispatch (the assembler also runs them before a bundle is sealed).
+    if commandLine.dropFirst().first == "runtime-use-lease-protocol" {
+        guard commandLine.count == 2 else {
+            throw CoordinatorError("app_runtime_use_lease_protocol_arguments_invalid")
+        }
+        try FileHandle.standardOutput.write(contentsOf: Data((AppRuntimeUseLease.protocolVersion + "\n").utf8))
+        exit(0)
+    }
+    if commandLine.dropFirst().first == "runtime-identity" {
+        try runRuntimeIdentityInspection(arguments: Array(commandLine.dropFirst(2)))
+        exit(0)
+    }
+    let runtimeUseLease = try AppRuntimeUseLease.acquireCurrent()
+    defer { withExtendedLifetime(runtimeUseLease) {} }
     let invocationEnvironment = ProductInvocationEnvironment.live()
     let mode = ProductInvocationResolver.mode(
         commandLineArguments: commandLine,
@@ -1491,8 +1507,6 @@ do {
         let execution = DoctorApplication().run(arguments: arguments)
         try FileHandle.standardOutput.write(contentsOf: execution.outputData())
         if execution.exitCode != 0 { exit(execution.exitCode) }
-    case "runtime-identity":
-        try runRuntimeIdentityInspection(arguments: Array(commandLine.dropFirst(2)))
     case "hook":
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":

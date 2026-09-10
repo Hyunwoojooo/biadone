@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -56,6 +57,13 @@ const canonicalCodexMarketplace = join(
 );
 const defaultInspectedRuntimeIdentity = `sha256:${"f".repeat(64)}`;
 const defaultInspectedManifestDigest = `sha256:${"e".repeat(64)}`;
+const runtimeUseLeaseProtocol = "blabee.runtime-use-lease.v1";
+const protocolQueryShell = [
+  'if [ "$#" -eq 1 ] && [ "${1-}" = runtime-use-lease-protocol ]; then',
+  `  printf '${runtimeUseLeaseProtocol}\\n'`,
+  "  exit 0",
+  "fi",
+].join("\n");
 
 async function mode(path) {
   return (await lstat(path)).mode & 0o777;
@@ -122,10 +130,13 @@ async function makeWorkspace(t) {
     binary,
     [
       "#!/bin/sh",
+      protocolQueryShell,
       'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
       `  identity='${defaultInspectedRuntimeIdentity}'`,
       '  if [ -f "$3/runtime-identity.txt" ]; then identity=$(/bin/cat "$3/runtime-identity.txt"); fi',
-      `  printf '{"assembly_manifest_sha256":"${defaultInspectedManifestDigest}","runtime_identity":"%s","schema_version":"blabee.runtime-identity-inspection.v2"}\\n' "$identity"`,
+      `  manifest_digest='${defaultInspectedManifestDigest}'`,
+      '  if [ -f "$3/manifest-digest.txt" ]; then manifest_digest=$(/bin/cat "$3/manifest-digest.txt"); fi',
+      '  printf \'{"assembly_manifest_sha256":"%s","runtime_identity":"%s","schema_version":"blabee.runtime-identity-inspection.v2"}\\n\' "$manifest_digest" "$identity"',
       "  exit 0",
       "fi",
       "exit 0",
@@ -149,6 +160,36 @@ async function makePreviousApp(root, parentName, runtimeIdentity) {
     })}\n`,
   );
   return app;
+}
+
+async function makeLeasePreviousApp(root, parentName, runtimeIdentity, {
+  coordinatorScript = `#!/bin/sh\n${protocolQueryShell}\nexit 1\n`,
+  protocol = runtimeUseLeaseProtocol,
+} = {}) {
+  const app = await makePreviousApp(root, parentName, runtimeIdentity);
+  const macOS = join(app, "Contents", "MacOS");
+  const pluginScripts = join(app, "Contents", "Resources", "Plugin", "blabee", "scripts");
+  await mkdir(macOS, { recursive: true });
+  await mkdir(pluginScripts, { recursive: true });
+  await writeFile(join(macOS, "blabee-coordinator"), coordinatorScript, { mode: 0o700 });
+  await copyFile(
+    join(repositoryRoot, "Plugin", "blabee", "scripts", "blabee-launcher"),
+    join(pluginScripts, "blabee-launcher"),
+  );
+  await chmod(join(pluginScripts, "blabee-launcher"), 0o755);
+  await writeFile(join(app, "Contents", "Info.plist"), JSON.stringify({
+    ...(protocol === undefined ? {} : { BlabeeRuntimeUseLeaseProtocol: protocol }),
+    BlabeeRuntimeUseLeasePreviousIdentities: [`sha256:${"0".repeat(64)}`],
+  }));
+  return app;
+}
+
+async function readAppInfo(app) {
+  const { stdout } = await execFile(
+    "/usr/bin/plutil",
+    ["-convert", "json", "-o", "-", join(app, "Contents", "Info.plist")],
+  );
+  return JSON.parse(stdout);
 }
 
 async function waitForPath(path) {
@@ -311,6 +352,8 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     ["-convert", "json", "-o", "-", infoPlist],
   );
   const plist = JSON.parse(plistJSON);
+  assert.equal(plist.BlabeeRuntimeUseLeaseProtocol, runtimeUseLeaseProtocol);
+  assert.deepEqual(plist.BlabeeRuntimeUseLeasePreviousIdentities, []);
   assert.deepEqual(
     Object.fromEntries([
       "CFBundleDisplayName",
@@ -523,6 +566,166 @@ test("assembler embeds only directly inspected previous runtime identities in so
     ),
     false,
   );
+  assert.deepEqual((await readAppInfo(fixture.output)).BlabeeRuntimeUseLeasePreviousIdentities, []);
+});
+
+test("assembler rejects legacy, malformed, oversized, noisy, and unsuccessful source protocol replies", async (t) => {
+  const cases = [
+    ["legacy", "exit 0"],
+    ["missing newline", `printf '${runtimeUseLeaseProtocol}'`],
+    ["extra newline", `printf '${runtimeUseLeaseProtocol}\\n\\n'`],
+    ["carriage return", `printf '${runtimeUseLeaseProtocol}\\r\\n'`],
+    ["invalid UTF-8", "printf '\\377\\n'"],
+    ["oversized", "/usr/bin/head -c 4097 /dev/zero"],
+    ["stderr", `printf '${runtimeUseLeaseProtocol}\\n'; printf 'unexpected\\n' >&2`],
+    ["nonzero status", `printf '${runtimeUseLeaseProtocol}\\n'; exit 1`],
+  ];
+  for (const [label, reply] of cases) {
+    const fixture = await makeWorkspace(t);
+    await writeFile(fixture.binary, `#!/bin/sh\n${reply}\n`, { mode: 0o700 });
+    await assert.rejects(
+      assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output }),
+      /runtime use lease protocol probe/,
+      label,
+    );
+    await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+    assert.deepEqual((await readdir(fixture.root)).filter((entry) => entry.startsWith(".Blabee.app.staging-")), []);
+  }
+});
+
+test("assembler bounds a stuck source protocol query", { timeout: 12_000 }, async (t) => {
+  const fixture = await makeWorkspace(t);
+  await writeFile(fixture.binary, "#!/bin/sh\nexec /bin/sleep 30\n", { mode: 0o700 });
+  const started = Date.now();
+  await assert.rejects(
+    assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output }),
+    /runtime use lease protocol probe failed/,
+  );
+  assert.ok(Date.now() - started < 10_000);
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+});
+
+test("assembler probes its staged executable before populating Info.plist with a clean environment", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const probeRecord = join(fixture.root, "protocol-probe-record");
+  const source = [
+    "#!/bin/sh",
+    '[ "$#" -eq 1 ] && [ "$1" = runtime-use-lease-protocol ] || exit 1',
+    '[ ! -f "${0%/MacOS/*}/Info.plist" ] || exit 2',
+    '[ -z "${BLABEE_COORDINATOR_BINARY-}" ] || exit 3',
+    `printf '%s\\n' "$0" > '${probeRecord}'`,
+    `printf '${runtimeUseLeaseProtocol}\\n'`,
+    "",
+  ].join("\n");
+  await writeFile(fixture.binary, source, { mode: 0o700 });
+  await execFile(process.execPath, [
+    assemblyScript, "--binary", fixture.binary, "--output", fixture.output,
+  ], {
+    env: { ...process.env, BLABEE_COORDINATOR_BINARY: "/untrusted/override" },
+  });
+  const probedPath = (await readFile(probeRecord, "utf8")).trim();
+  assert.notEqual(probedPath, fixture.binary);
+  assert.match(probedPath, /\.Blabee\.app\.staging-[^/]+\/Contents\/MacOS\/blabee-coordinator$/u);
+  assert.equal(await readFile(join(fixture.output, "Contents", "MacOS", "blabee-coordinator"), "utf8"), source);
+  assert.equal((await readAppInfo(fixture.output)).BlabeeRuntimeUseLeaseProtocol, runtimeUseLeaseProtocol);
+});
+
+test("assembler admits only explicit verified previous lease identities using a private copy", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const identities = ["1", "2"].map((digit) => `sha256:${digit.repeat(64)}`);
+  const probeRecord = join(fixture.root, "previous-probe-record");
+  const first = await makeLeasePreviousApp(fixture.root, "lease-first", identities[0], {
+    coordinatorScript: [
+      "#!/bin/sh",
+      `printf '%s\\n' "$0" > '${probeRecord}'`,
+      `/usr/bin/stat -f '%Lp' "${"${0%/*}"}" >> '${probeRecord}'`,
+      protocolQueryShell,
+      "exit 1",
+      "",
+    ].join("\n"),
+  });
+  const second = await makeLeasePreviousApp(fixture.root, "lease-second", identities[1]);
+  const originalFiles = await regularFiles(first);
+  const originalDigests = await Promise.all(originalFiles.map((path) => digest(join(first, path))));
+  const result = await assembleMacOSApp({
+    binaryPath: fixture.binary,
+    outputPath: fixture.output,
+    compatiblePreviousApps: [second, first],
+  });
+  const info = await readAppInfo(result.output);
+  assert.deepEqual(info.BlabeeRuntimeUseLeasePreviousIdentities, identities);
+  assert.equal(info.BlabeeRuntimeUseLeasePreviousIdentities.includes(`sha256:${"0".repeat(64)}`), false);
+  assert.deepEqual(result.manifest.compatible_previous_runtimes.map((entry) => entry.runtime_identity), identities);
+  const [copyPath, directoryMode] = (await readFile(probeRecord, "utf8")).trim().split("\n");
+  assert.notEqual(copyPath, join(first, "Contents", "MacOS", "blabee-coordinator"));
+  assert.equal(directoryMode, "700");
+  await assert.rejects(lstat(dirname(copyPath)), { code: "ENOENT" });
+  assert.deepEqual(await regularFiles(first), originalFiles);
+  assert.deepEqual(await Promise.all(originalFiles.map((path) => digest(join(first, path)))), originalDigests);
+  assert.equal(result.manifest.files.find((entry) => entry.path === "Contents/Info.plist").sha256,
+    await digest(join(result.output, "Contents", "Info.plist")));
+});
+
+test("a previous protocol marker alone cannot approve lease admission", async (t) => {
+  const cases = [
+    ["legacy marker", { protocol: null }],
+    ["wrong output", { coordinatorScript: "#!/bin/sh\nprintf 'wrong\\n'\n" }],
+    ["oversized output", { coordinatorScript: "#!/bin/sh\n/usr/bin/head -c 4097 /dev/zero\n" }],
+    ["extra executable", {}],
+    ["different launcher", {}],
+    ["symlink asset", {}],
+    ["excessive inventory", {}],
+  ];
+  for (const [label, options] of cases) {
+    const fixture = await makeWorkspace(t);
+    const identity = `sha256:${"3".repeat(64)}`;
+    const previous = await makeLeasePreviousApp(fixture.root, "previous", identity, options);
+    if (label === "extra executable") {
+      await writeFile(join(previous, "Contents", "MacOS", "unknown-helper"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    } else if (label === "different launcher") {
+      await writeFile(join(previous, "Contents", "Resources", "Plugin", "blabee", "scripts", "blabee-launcher"), "#!/bin/sh\nexit 0\n");
+    } else if (label === "symlink asset") {
+      await symlink(fixture.binary, join(previous, "Contents", "Resources", "linked-asset"));
+    } else if (label === "excessive inventory") {
+      for (let index = 0; index < 1025; index += 1) {
+        await writeFile(join(previous, "Contents", "Resources", `asset-${index}`), "");
+      }
+    }
+    const result = await assembleMacOSApp({
+      binaryPath: fixture.binary,
+      outputPath: fixture.output,
+      compatiblePreviousApps: [previous],
+    });
+    assert.deepEqual((await readAppInfo(result.output)).BlabeeRuntimeUseLeasePreviousIdentities, [], label);
+    assert.deepEqual(result.manifest.compatible_previous_runtimes.map((entry) => entry.runtime_identity), [identity], label);
+  }
+});
+
+test("assembler rejects a previous identity or manifest digest changing during its copied probe", async (t) => {
+  for (const changedFile of ["runtime-identity.txt", "manifest-digest.txt"]) {
+    const fixture = await makeWorkspace(t);
+    const identity = `sha256:${"4".repeat(64)}`;
+    const previous = join(fixture.root, "previous", "Blabee.app");
+    await makeLeasePreviousApp(fixture.root, "previous", identity, {
+      coordinatorScript: [
+        "#!/bin/sh",
+        `printf 'sha256:${"5".repeat(64)}\\n' > '${join(previous, changedFile)}'`,
+        protocolQueryShell,
+        "exit 1",
+        "",
+      ].join("\n"),
+    });
+    await assert.rejects(
+      assembleMacOSApp({
+        binaryPath: fixture.binary,
+        outputPath: fixture.output,
+        compatiblePreviousApps: [previous],
+      }),
+      /compatible previous app changed during lease inspection/,
+      changedFile,
+    );
+    await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+  }
 });
 
 test("assembler inspects and packages one private coordinator snapshot during source replacement", async (t) => {
@@ -538,6 +741,7 @@ test("assembler inspects and packages one private coordinator snapshot during so
   const inspectedInode = join(fixture.root, "snapshot-inspector-inode");
   const originalBinary = [
     "#!/bin/sh",
+    protocolQueryShell,
     'if [ "${1-}" = runtime-identity ]; then',
     `  /usr/bin/touch '${inspectorStarted}'`,
     `  /usr/bin/stat -f '%i' "$0" > '${inspectedInode}'`,
@@ -598,6 +802,7 @@ test("assembler snapshots compatible previous app input before its first await",
     fixture.binary,
     [
       "#!/bin/sh",
+      protocolQueryShell,
       `  /usr/bin/touch '${inspectorStarted}'`,
       `  while [ ! -f '${releaseInspector}' ]; do /bin/sleep 0.01; done`,
       '  identity=$(/bin/cat "$3/runtime-identity.txt")',
@@ -689,7 +894,7 @@ test("assembler rejects unsafe, duplicate, excessive, and malformed previous app
   );
   await writeFile(
     malformedFixture.binary,
-    "#!/bin/sh\nprintf '{\"runtime_identity\":\"not-verified\"}\\n'\n",
+    `#!/bin/sh\n${protocolQueryShell}\nprintf '{"runtime_identity":"not-verified"}\\n'\n`,
     { mode: 0o700 },
   );
   await assert.rejects(
@@ -723,7 +928,7 @@ test("assembler rejects unsafe, duplicate, excessive, and malformed previous app
     });
     await writeFile(
       invalidFixture.binary,
-      `#!/bin/sh\nprintf '%s\\n' '${response}'\n`,
+      `#!/bin/sh\n${protocolQueryShell}\nprintf '%s\\n' '${response}'\n`,
       { mode: 0o700 },
     );
     await assert.rejects(
@@ -1136,6 +1341,7 @@ test("an output created after assembly starts is preserved and blocks publish", 
     fixture.binary,
     [
       "#!/bin/sh",
+      protocolQueryShell,
       'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
       `  touch '${inspectorStarted}'`,
       `  while [ ! -f '${releaseInspector}' ]; do /bin/sleep 0.01; done`,
@@ -1468,6 +1674,7 @@ test("failure cleanup preserves a staging path whose reserved identity changed",
     fixture.binary,
     [
       "#!/bin/sh",
+      protocolQueryShell,
       `touch '${inspectorStarted}'`,
       `while [ ! -f '${releaseInspector}' ]; do /bin/sleep 0.01; done`,
       "printf 'not-json\\n'",

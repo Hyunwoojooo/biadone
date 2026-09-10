@@ -387,6 +387,14 @@ Developer ID 인증서, Apple ID/App Store Connect credential, notary profile은
 
 ## ad-hoc 내부 앱 업데이트 제한
 
+2026-09-10부터 coordinator의 실행 잠금 protocol 검사와, 명시적으로 검증한 이전 앱의
+잠금 호환 identity 봉인을 추가했다. 일반 프로세스를 전부 조회하는 구형 설치 검사의
+오탐을 줄이기 위한 변경이며, 기존 전송 호환이나 서명·공증 자격을 확대하지 않는다.
+이전 배포 앱을 `compatiblePreviousApps` 입력으로 지정해야 해당 릴리스의 잠금 지원을
+검증할 수 있다. 지원 표시만 있는 구형 앱·미등록 릴리스는 기존 보호를 유지한다.
+build 18 등 잠금 미지원 설치본의 최초 이관과 검증 경계는
+[설치 실행 잠금 기록](INSTALLER_RUNTIME_LEASE_KO.md)을 따른다.
+
 `CFBundleVersion` 증가는 서로 다른 앱 빌드를 구분하고 진단하는 데 필요하지만,
 그 자체로 macOS background item의 코드 제약 갱신을 보장하지 않는다. ad-hoc 서명은
 빌드 내용이 바뀔 때 code identity도 달라질 수 있기 때문이다. 실제로 2026-09-05의

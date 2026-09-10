@@ -1,10 +1,29 @@
 import Darwin
+import CryptoKit
 import Foundation
 
 struct AppInstallationBundle: Equatable, Sendable {
     let runtimeIdentity: String
     let version: String
     let build: String
+    var runtimeUseLeaseProtocol: String? = nil
+    var runtimeUseLeasePreviousIdentities: [String] = []
+    var runtimeUseLeasePayloadSupported = false
+    var launcherSHA256: String? = nil
+
+    var supportsRuntimeUseLease: Bool {
+        runtimeUseLeaseProtocol == AppRuntimeUseLease.protocolVersion && runtimeUseLeasePayloadSupported
+    }
+
+    func admitsRuntimeUseLease(for previous: Self) -> Bool {
+        // A target's own flag is not authority. The currently running, verified
+        // installer must be this same release or explicitly admit that exact
+        // previous signed runtime. Extra helpers or changed wrappers fall back.
+        supportsRuntimeUseLease && previous.supportsRuntimeUseLease
+            && launcherSHA256 == previous.launcherSHA256
+            && (runtimeIdentity == previous.runtimeIdentity
+                || runtimeUseLeasePreviousIdentities.contains(previous.runtimeIdentity))
+    }
 }
 
 enum AppInstallationComparison: Equatable, Sendable {
@@ -31,7 +50,7 @@ struct AppInstallationReceipt: Sendable {
 struct AppInstallationError: Error, LocalizedError, Sendable {
     enum Code: Equatable, Sendable {
         case invalidSource, invalidDestination, identityMismatch, changedSinceInspection
-        case replacementApprovalRequired, destinationActive, activityInspectionUnavailable, insufficientPermissions
+        case replacementApprovalRequired, destinationActive, activityInspectionUnavailable, runtimeUseLeaseUnavailable, insufficientPermissions
         case installationBusy, sizeLimitExceeded, deadlineExceeded, copyFailed, publishFailed
         case recoveryRequired
     }
@@ -59,9 +78,11 @@ struct AppInstallationError: Error, LocalizedError, Sendable {
         case .replacementApprovalRequired:
             "기존 Blabee 앱을 백업하고 교체하려면 먼저 교체를 확인해 주세요."
         case .destinationActive:
-            "설치된 Blabee가 실행 중입니다. Blabee를 종료한 뒤 다시 설치해 주세요."
+            "Blabee 또는 Codex에 연결된 Blabee 보조 프로세스가 실행 중입니다. 작업을 저장하고 Blabee와 연결된 Codex 세션을 종료한 뒤 다시 설치해 주세요."
         case .activityInspectionUnavailable:
-            "실행 중인 프로세스를 충분히 확인할 수 없습니다. 다시 시도하거나 Finder에서 직접 설치해 주세요."
+            "구형 앱의 사용 여부를 macOS에서 확인하지 못했습니다. Blabee가 실행 중이라는 뜻은 아닙니다. 작업을 저장한 뒤 Mac을 재시작하고, Blabee와 Codex를 열기 전에 다시 설치해 주세요."
+        case .runtimeUseLeaseUnavailable:
+            "Blabee 실행 잠금을 확인할 수 없어 안전하게 설치를 중단했습니다. 앱을 다시 열어 재시도해 주세요."
         case .insufficientPermissions:
             "응용 프로그램 폴더에 설치할 권한이 없습니다. Finder에서 앱을 복사하고 macOS의 권한 안내를 따라 주세요."
         case .installationBusy:
@@ -191,7 +212,19 @@ struct AppInstallationService: Sendable {
         let lockFile = try Self.identity(lock)
         try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
         try recheck(plan, parent: parent, deadline: deadline)
-        if plan.existing != nil { try activityGuard(destinationURL) }
+        let oldLease: AppRuntimeUseLease?
+        if let existing = plan.existing, plan.source.admitsRuntimeUseLease(for: existing) {
+            oldLease = try acquireUseLease(at: destinationURL)
+            // A byte-identical executable replacement is still a different
+            // lock inode; bind the lease to the revalidated bundle.
+            try recheck(plan, parent: parent, deadline: deadline)
+            try verifyUseLease(oldLease, at: destinationURL)
+        } else {
+            oldLease = nil
+            if plan.existing != nil { try requireLegacyInactive(destinationURL) }
+        }
+        var stagedLease: AppRuntimeUseLease?
+        defer { withExtendedLifetime((oldLease, stagedLease)) {} }
 
         let stageName = ".Blabee.install-" + UUID().uuidString.lowercased()
         guard mkdirat(parent, stageName, 0o700) == 0 else { throw Self.fileError(.copyFailed) }
@@ -229,19 +262,25 @@ struct AppInstallationService: Sendable {
             try verifyStage(parent: parent, name: stageName, expected: stageFile)
             let staged = try inspectBundle(stagedApp, deadline: deadline)
             guard staged.bundle == plan.source else { throw AppInstallationError(.identityMismatch) }
+            if staged.bundle.supportsRuntimeUseLease {
+                stagedLease = try acquireUseLease(at: stagedApp)
+            }
             try recheck(plan, parent: parent, deadline: deadline)
-            if plan.existing != nil { try activityGuard(destinationURL) }
+            if oldLease != nil { try verifyUseLease(oldLease, at: destinationURL) }
+            else if plan.existing != nil { try requireLegacyInactive(destinationURL) }
 
             if let expectedOld = plan.existing, let expectedFile = plan.existingFile {
                 try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
                 let name = ".Blabee.backup-" + UUID().uuidString.lowercased() + ".app"
                 try checkpoint(.beforeBackup, parentURL.appendingPathComponent(name))
+                try verifyUseLease(oldLease, at: destinationURL)
                 guard renameatx_np(parent, "Blabee.app", parent, name, UInt32(RENAME_EXCL)) == 0
                 else { throw Self.fileError(.publishFailed) }
                 backupName = name
                 try checkpoint(.afterBackup, parentURL.appendingPathComponent(name))
                 try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
                 let moved = try inspectBundle(parentURL.appendingPathComponent(name), deadline: deadline)
+                try verifyUseLease(oldLease, at: parentURL.appendingPathComponent(name))
                 guard moved.file == expectedFile, moved.bundle == expectedOld else {
                     // rename cannot conditionally bind the source inode. Keep any
                     // raced-in bundle here, and never claim it was the approved app.
@@ -261,23 +300,27 @@ struct AppInstallationService: Sendable {
             guard currentSource.file == plan.sourceFile, currentSource.bundle == plan.source,
                   currentStage.file == staged.file, currentStage.bundle == plan.source
             else { throw AppInstallationError(.changedSinceInspection) }
-            if plan.existing != nil {
-                try activityGuard(destinationURL)
+            if oldLease == nil, plan.existing != nil {
+                try requireLegacyInactive(destinationURL)
                 if let backupName {
                     // A process may expose its renamed executable path after backup.
                     // These checks are snapshots, not a lock on future app launches.
-                    try activityGuard(parentURL.appendingPathComponent(backupName))
+                    try requireLegacyInactive(parentURL.appendingPathComponent(backupName))
                 }
             }
             // A confirmed-absent fresh target has no bundle to move. A later
             // appearance is still protected by the exclusive publication below.
             try checkpoint(.beforePublish, stagedApp)
+            try verifyUseLease(stagedLease, at: stagedApp)
+            if let backupName { try verifyUseLease(oldLease, at: parentURL.appendingPathComponent(backupName)) }
             guard renameatx_np(stage, "Blabee.app", parent, "Blabee.app", UInt32(RENAME_EXCL)) == 0
             else { throw Self.fileError(.publishFailed) }
             published = true
             try checkpoint(.afterPublish, destinationURL)
             try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
             let installed = try inspectBundle(destinationURL, deadline: deadline)
+            try verifyUseLease(stagedLease, at: destinationURL)
+            if let backupName { try verifyUseLease(oldLease, at: parentURL.appendingPathComponent(backupName)) }
             guard installed.file == staged.file, installed.bundle == plan.source
             else { throw AppInstallationError(.recoveryRequired) }
             guard fsync(parent) == 0 else { throw AppInstallationError(.recoveryRequired) }
@@ -305,10 +348,12 @@ struct AppInstallationService: Sendable {
                 else { throw AppInstallationError(.recoveryRequired, recoveryURL: recoveryURL) }
                 do {
                     try checkpoint(.beforeRestore, recoveryURL)
+                    try verifyUseLease(oldLease, at: recoveryURL)
                     // A concurrent app/file always wins; restoration never overwrites it.
                     guard renameatx_np(parent, backupName, parent, "Blabee.app", UInt32(RENAME_EXCL)) == 0
                     else { throw AppInstallationError(.recoveryRequired) }
                     let restored = try inspectBundle(destinationURL, deadline: Date.timeIntervalSinceReferenceDate + 30)
+                    try verifyUseLease(oldLease, at: destinationURL)
                     guard restored.file == plan.existingFile, restored.bundle == plan.existing,
                           fsync(parent) == 0
                     else { throw AppInstallationError(.recoveryRequired) }
@@ -323,6 +368,30 @@ struct AppInstallationService: Sendable {
 
     private var parentURL: URL { destinationURL.deletingLastPathComponent() }
     private static let lockName = ".Blabee.install.lock"
+
+    private func requireLegacyInactive(_ appURL: URL) throws {
+        do { try activityGuard(appURL) }
+        catch { throw Self.transactionFailure(error) }
+    }
+
+    private func acquireUseLease(at appURL: URL) throws -> AppRuntimeUseLease {
+        do {
+            return try AppRuntimeUseLease.acquire(
+                executableURL: appURL.appendingPathComponent(AppRuntimeUseLease.executablePath), use: .installation
+            )
+        } catch AppRuntimeUseLeaseError.busy {
+            throw AppInstallationError(.destinationActive)
+        } catch AppRuntimeUseLeaseError.changed {
+            throw AppInstallationError(.changedSinceInspection)
+        } catch {
+            throw AppInstallationError(.runtimeUseLeaseUnavailable)
+        }
+    }
+
+    private func verifyUseLease(_ lease: AppRuntimeUseLease?, at appURL: URL) throws {
+        do { try lease?.verify(at: appURL.appendingPathComponent(AppRuntimeUseLease.executablePath)) }
+        catch { throw AppInstallationError(.changedSinceInspection) }
+    }
 
     private struct Inspection {
         let bundle: AppInstallationBundle
@@ -373,8 +442,18 @@ struct AppInstallationService: Sendable {
         else { throw AppInstallationError(.invalidSource) }
         var entries = 0
         var bytes: Int64 = 0
+        var leasePayloadSupported = true
+        var launcherSHA256: String?
         try scan(directory: root, rootURL: url, relative: "", depth: 0,
-                 entries: &entries, bytes: &bytes, deadline: deadline)
+                 entries: &entries, bytes: &bytes, leasePayloadSupported: &leasePayloadSupported,
+                 launcherSHA256: &launcherSHA256, deadline: deadline)
+        let previousIdentities: [String]
+        if let raw = info[AppRuntimeUseLease.previousIdentitiesInfoKey] {
+            guard let values = raw as? [String], values.count <= 2,
+                  values.allSatisfy(OperationalRuntimeIdentity.isValid), Set(values).count == values.count
+            else { throw AppInstallationError(.invalidSource) }
+            previousIdentities = values
+        } else { previousIdentities = [] }
         let identity = try validator(url)
         guard OperationalRuntimeIdentity.isValid(identity) else { throw AppInstallationError(.invalidSource) }
         try checkDeadline(deadline)
@@ -383,7 +462,13 @@ struct AppInstallationService: Sendable {
         guard try Self.identity(reopened) == before,
               try Self.readFile(parent: contents, name: "Info.plist", maximumBytes: 65_536) == infoData
         else { throw AppInstallationError(.changedSinceInspection) }
-        return Inspection(bundle: AppInstallationBundle(runtimeIdentity: identity, version: version, build: build), file: before)
+        return Inspection(bundle: AppInstallationBundle(
+            runtimeIdentity: identity, version: version, build: build,
+            runtimeUseLeaseProtocol: info[AppRuntimeUseLease.protocolInfoKey] as? String,
+            runtimeUseLeasePreviousIdentities: previousIdentities,
+            runtimeUseLeasePayloadSupported: leasePayloadSupported,
+            launcherSHA256: launcherSHA256
+        ), file: before)
     }
 
     /// Descriptor-relative traversal never follows directory symlinks. Internal
@@ -391,7 +476,8 @@ struct AppInstallationService: Sendable {
     /// special files are refused before Foundation starts the whole-bundle copy.
     private func scan(
         directory: Int32, rootURL: URL, relative: String, depth: Int,
-        entries: inout Int, bytes: inout Int64, deadline: TimeInterval
+        entries: inout Int, bytes: inout Int64, leasePayloadSupported: inout Bool,
+        launcherSHA256: inout String?, deadline: TimeInterval
     ) throws {
         guard depth <= limits.maximumDepth else { throw AppInstallationError(.sizeLimitExceeded) }
         let duplicate = dup(directory)
@@ -429,7 +515,8 @@ struct AppInstallationService: Sendable {
                 guard try Self.identity(child) == AppInstallationFileIdentity(value)
                 else { throw AppInstallationError(.changedSinceInspection) }
                 try scan(directory: child, rootURL: rootURL, relative: path, depth: depth + 1,
-                         entries: &entries, bytes: &bytes, deadline: deadline)
+                         entries: &entries, bytes: &bytes, leasePayloadSupported: &leasePayloadSupported,
+                         launcherSHA256: &launcherSHA256, deadline: deadline)
             case mode_t(S_IFREG):
                 guard value.st_nlink == 1, value.st_mode & 0o022 == 0,
                       value.st_mode & 0o6000 == 0, value.st_size >= 0
@@ -437,7 +524,18 @@ struct AppInstallationService: Sendable {
                 guard value.st_size <= limits.maximumBytes - bytes
                 else { throw AppInstallationError(.sizeLimitExceeded) }
                 bytes += value.st_size
+                if value.st_mode & 0o111 != 0,
+                   path != AppRuntimeUseLease.executablePath && path != AppRuntimeUseLease.launcherPath {
+                    leasePayloadSupported = false
+                }
+                if path == AppRuntimeUseLease.launcherPath {
+                    let data = try Self.readFile(parent: directory, name: name, maximumBytes: 256 * 1_024)
+                    launcherSHA256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                }
             case mode_t(S_IFLNK):
+                // Other layouts retain the legacy guard until every executable
+                // path is covered by the cooperative protocol.
+                leasePayloadSupported = false
                 var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
                 let length = readlinkat(directory, name, &buffer, buffer.count - 1)
                 guard length > 0, length < buffer.count - 1, buffer[0] != 47 else {

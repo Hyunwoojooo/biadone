@@ -69,7 +69,17 @@ async function makeWorkspace(t, prefix = "blabee-internal-dmg-") {
   const binary = join(root, "blabee-coordinator");
   if (process.platform === "darwin") {
     const source = join(root, "coordinator-fixture.c");
-    await writeFile(source, "int main(void) { return 0; }\n");
+    await writeFile(source, [
+      "#include <stdio.h>",
+      "#include <string.h>",
+      "int main(int argc, char **argv) {",
+      '  if (argc == 2 && strcmp(argv[1], "runtime-use-lease-protocol") == 0) {',
+      '    puts("blabee.runtime-use-lease.v1");',
+      "  }",
+      "  return 0;",
+      "}",
+      "",
+    ].join("\n"));
     await execFile("/usr/bin/clang", ["-arch", "arm64", source, "-o", binary]);
   } else {
     await copyFile("/usr/bin/true", binary);
@@ -313,11 +323,25 @@ test("internal app verification rejects universal and non-arm64 executables", {
     const appPath = join(fixture.root, name, "Blabee.app");
     await mkdir(dirname(appPath), { recursive: true });
     await assembleMacOSApp({
-      binaryPath,
+      binaryPath: fixture.binary,
       outputPath: appPath,
-      adhocSign: true,
+      adhocSign: false,
       bundleVersion: testBuildNumber,
     });
+    // Build a valid protocol-capable payload first, then construct the wrong-
+    // architecture verification fixture without requiring Rosetta execution.
+    const executable = join(appPath, "Contents", "MacOS", "blabee-coordinator");
+    await copyFile(binaryPath, executable);
+    await chmod(executable, 0o755);
+    const manifestPath = join(appPath, "Contents", "Resources", "assembly-manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const executableEntry = manifest.files.find((entry) => entry.path === "Contents/MacOS/blabee-coordinator");
+    executableEntry.sha256 = await digest(executable);
+    executableEntry.size = (await lstat(executable)).size;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await execFile("/usr/bin/codesign", [
+      "--force", "--sign", "-", "--timestamp=none", "--options", "runtime", appPath,
+    ]);
     await assert.rejects(
       verifyInternalAppBundle(appPath, { expectedBuildNumber: testBuildNumber }),
       /main executable must contain exactly the arm64 architecture/u,
@@ -397,7 +421,7 @@ test("unsigned app bundles and non-Mach-O input are rejected and cleaned", {
   );
 
   const scriptBinary = join(fixture.root, "not-mach-o");
-  await writeFile(scriptBinary, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await writeFile(scriptBinary, "#!/bin/sh\nprintf 'blabee.runtime-use-lease.v1\\n'\n", { mode: 0o700 });
   await assert.rejects(
     buildTestInternalDMG({ binaryPath: scriptBinary, outputPath: fixture.output }),
     /can't figure out the architecture type|not an object file|lipo/u,

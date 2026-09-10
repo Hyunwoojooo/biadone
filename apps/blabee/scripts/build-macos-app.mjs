@@ -7,6 +7,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
@@ -59,7 +60,14 @@ const codexMarketplaceRelativePath = join(
   "plugins",
   "marketplace.json",
 );
+const runtimeUseLeaseProtocol = "blabee.runtime-use-lease.v1";
+const runtimeInspectionEnvironment = Object.freeze({
+  PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  LANG: "C",
+  LC_ALL: "C",
+});
 const requiredInfoPlistValues = Object.freeze({
+  BlabeeRuntimeUseLeaseProtocol: runtimeUseLeaseProtocol,
   CFBundleDisplayName: "Blabee",
   CFBundleExecutable: "blabee-coordinator",
   CFBundleIdentifier: "com.biadone.blabee",
@@ -437,6 +445,7 @@ async function copyFileWithMode(
 async function validateInfoPlist(
   path,
   bundleVersion = requiredInfoPlistValues.CFBundleVersion,
+  runtimeUseLeasePreviousIdentities = [],
 ) {
   await execFile("/usr/bin/plutil", ["-lint", path], { maxBuffer: 1024 * 1024 });
   const { stdout } = await execFile(
@@ -458,6 +467,15 @@ async function validateInfoPlist(
     if (typeof values[key] !== typeof expected || values[key] !== expected) {
       fail(`Info.plist ${key} must be ${JSON.stringify(expected)} (${typeof expected})`);
     }
+  }
+  const previousIdentities = values.BlabeeRuntimeUseLeasePreviousIdentities;
+  if (
+    !Array.isArray(previousIdentities)
+    || previousIdentities.length > maximumCompatiblePreviousApps
+    || previousIdentities.some((identity) => !isCanonicalSHA256(identity))
+    || JSON.stringify(previousIdentities) !== JSON.stringify(runtimeUseLeasePreviousIdentities)
+  ) {
+    fail("Info.plist BlabeeRuntimeUseLeasePreviousIdentities must contain only the verified lease-compatible identities");
   }
 }
 
@@ -916,6 +934,7 @@ async function validateFinalBundleTree(
   bundleRoot,
   current = bundleRoot,
   budget = makePayloadBudget(),
+  allowedExecutablePaths,
 ) {
   assertWithin(bundleRoot, current, current);
   const directoryBefore = await lstat(current, { bigint: true });
@@ -935,11 +954,18 @@ async function validateFinalBundleTree(
       fail(`final app tree unexpectedly contains a symlink: ${path}`);
     }
     if (metadata.isDirectory()) {
-      await validateFinalBundleTree(bundleRoot, path, budget);
+      await validateFinalBundleTree(bundleRoot, path, budget, allowedExecutablePaths);
       continue;
     }
     if (!metadata.isFile()) {
       fail(`final app tree unexpectedly contains a special file: ${path}`);
+    }
+    if (
+      allowedExecutablePaths !== undefined
+      && (Number(metadata.mode) & 0o111) !== 0
+      && !allowedExecutablePaths.has(relative(bundleRoot, path))
+    ) {
+      fail(`previous app contains an unsupported executable: ${path}`);
     }
     const snapshot = await inspectManifestFile(path);
     consumePayloadBudget(
@@ -1016,6 +1042,7 @@ export async function inspectSignedRuntimeIdentity({
       ["runtime-identity", "--app", canonicalApp],
       {
         encoding: "utf8",
+        env: runtimeInspectionEnvironment,
         maxBuffer: 1024 * 1024,
         timeout: 15_000,
       },
@@ -1091,12 +1118,129 @@ async function resolveCompatiblePreviousRuntimes(coordinator, values) {
   }
   inspected.sort((left, right) => compareNames(left.runtimeIdentity, right.runtimeIdentity));
   return {
+    inspected,
     apps: inspected.map((entry) => entry.app),
     policies: inspected.map((entry) => ({
       runtime_identity: entry.runtimeIdentity,
       allowed_request_types: [...compatiblePreviousRequestTypes],
     })),
   };
+}
+
+async function requireRuntimeUseLeaseProtocol(coordinator) {
+  const before = await inspectManifestFile(coordinator);
+  let result;
+  try {
+    result = await execFile(coordinator, ["runtime-use-lease-protocol"], {
+      cwd: dirname(coordinator),
+      env: runtimeInspectionEnvironment,
+      encoding: "buffer",
+      maxBuffer: 4 * 1024,
+      timeout: 5_000,
+      killSignal: "SIGKILL",
+    });
+  } catch {
+    fail("runtime use lease protocol probe failed");
+  }
+  if (
+    !result.stdout.equals(Buffer.from(`${runtimeUseLeaseProtocol}\n`))
+    || result.stderr.length !== 0
+  ) {
+    fail("runtime use lease protocol probe returned an unsupported response");
+  }
+  if (JSON.stringify(await inspectManifestFile(coordinator)) !== JSON.stringify(before)) {
+    fail("runtime use lease protocol executable changed while it was being probed");
+  }
+  return before;
+}
+
+async function previousRuntimeSupportsUseLease(previousApp, sourceLauncher) {
+  const scratch = await mkdtemp(join(tmpdir(), "blabee-runtime-use-lease-"));
+  const ownership = await captureOwnedDirectory(scratch, "lease probe");
+  try {
+    try {
+      const infoCopy = join(scratch, "previous-info.plist");
+      await copyFileWithMode(
+        join(previousApp, "Contents", "Info.plist"),
+        infoCopy,
+        0o600,
+        1024 * 1024,
+        undefined,
+        false,
+        previousApp,
+      );
+      const { stdout } = await execFile(
+        "/usr/bin/plutil",
+        ["-convert", "json", "-o", "-", infoCopy],
+        { env: runtimeInspectionEnvironment, maxBuffer: 1024 * 1024, timeout: 5_000 },
+      );
+      if (JSON.parse(stdout)?.BlabeeRuntimeUseLeaseProtocol !== runtimeUseLeaseProtocol) {
+        return false;
+      }
+
+      const executableRelativePath = join("Contents", "MacOS", "blabee-coordinator");
+      const allowedExecutables = new Set([executableRelativePath, launcherRelativePath]);
+      await validateFinalBundleTree(previousApp, previousApp, makePayloadBudget(), allowedExecutables);
+      const previousLauncher = join(previousApp, launcherRelativePath);
+      await requireExecutableFile(previousLauncher, "previous app launcher");
+      const launcherSnapshot = await inspectManifestFile(previousLauncher);
+      const sourceLauncherSnapshot = await inspectManifestFile(sourceLauncher);
+      if (
+        launcherSnapshot.sha256 !== sourceLauncherSnapshot.sha256
+        || launcherSnapshot.size !== sourceLauncherSnapshot.size
+      ) {
+        return false;
+      }
+
+      // Never execute a previous bundle in place: an older mode dispatcher may
+      // treat an unknown query as a functional command and acquire runtime state.
+      const coordinatorCopy = join(scratch, "blabee-coordinator");
+      await copyFileWithMode(
+        join(previousApp, executableRelativePath),
+        coordinatorCopy,
+        0o700,
+        maximumPackagedFileBytes,
+        undefined,
+        true,
+        previousApp,
+      );
+      const copySnapshot = await requireRuntimeUseLeaseProtocol(coordinatorCopy);
+      const originalSnapshot = await inspectManifestFile(join(previousApp, executableRelativePath));
+      if (
+        copySnapshot.sha256 !== originalSnapshot.sha256
+        || copySnapshot.size !== originalSnapshot.size
+      ) {
+        return false;
+      }
+      await validateFinalBundleTree(previousApp, previousApp, makePayloadBudget(), allowedExecutables);
+      return true;
+    } catch {
+      // Transport compatibility does not imply the executable-use lease protocol.
+      return false;
+    }
+  } finally {
+    await removeOwnedDirectory(scratch, ownership, "lease probe");
+  }
+}
+
+async function resolveRuntimeUseLeasePreviousIdentities(coordinator, previousApps, sourceLauncher) {
+  const identities = [];
+  for (const previous of previousApps) {
+    const supportsLease = await previousRuntimeSupportsUseLease(previous.app, sourceLauncher);
+    const current = await inspectSignedRuntimeIdentity({
+      coordinatorBinaryPath: coordinator,
+      appPath: previous.app,
+    });
+    if (
+      current.app !== previous.app
+      || current.runtimeIdentity !== previous.runtimeIdentity
+      || current.assemblyManifestSHA256 !== previous.assemblyManifestSHA256
+    ) {
+      fail(`compatible previous app changed during lease inspection: ${previous.app}`);
+    }
+    if (supportsLease) identities.push(previous.runtimeIdentity);
+  }
+  return identities;
 }
 
 async function adhocSignAndVerify(bundlePath) {
@@ -1383,6 +1527,7 @@ export async function assembleMacOSApp({
       copiedPayloadBudget,
       true,
     );
+    const stagedCoordinatorSnapshot = await requireRuntimeUseLeaseProtocol(stagedCoordinator);
     const compatiblePrevious = await resolveCompatiblePreviousRuntimes(
       stagedCoordinator,
       compatiblePreviousAppsSnapshot,
@@ -1461,6 +1606,29 @@ export async function assembleMacOSApp({
       join("Contents", "Resources", "Plugin", "blabee"),
       copiedPayloadBudget,
     );
+    const runtimeUseLeasePreviousIdentities = await resolveRuntimeUseLeasePreviousIdentities(
+      stagedCoordinator,
+      compatiblePrevious.inspected,
+      join(staging, launcherRelativePath),
+    );
+    if (runtimeUseLeasePreviousIdentities.length > 0) {
+      await execFile(
+        "/usr/bin/plutil",
+        [
+          "-replace",
+          "BlabeeRuntimeUseLeasePreviousIdentities",
+          "-json",
+          JSON.stringify(runtimeUseLeasePreviousIdentities),
+          stagedInfoPlist,
+        ],
+        { maxBuffer: 1024 * 1024 },
+      );
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, runtimeUseLeasePreviousIdentities);
+    if (JSON.stringify(await inspectManifestFile(stagedCoordinator)) !== JSON.stringify(stagedCoordinatorSnapshot)) {
+      fail("staged coordinator changed after its runtime use lease protocol probe");
+    }
     const manifest = await writeAssemblyManifest(
       staging,
       compatiblePrevious.policies,

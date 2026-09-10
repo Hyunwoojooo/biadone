@@ -106,8 +106,11 @@ async function rewriteAsLegacyV1(appPath, { bundleIdentifier } = {}) {
     "assembly-manifest.json",
   );
   const current = JSON.parse(await readFile(manifestPath, "utf8"));
+  const infoPath = join(appPath, "Contents", "Info.plist");
+  for (const key of ["BlabeeRuntimeUseLeaseProtocol", "BlabeeRuntimeUseLeasePreviousIdentities"]) {
+    await execFile("/usr/bin/plutil", ["-remove", key, infoPath]);
+  }
   if (bundleIdentifier !== undefined) {
-    const infoPath = join(appPath, "Contents", "Info.plist");
     const original = await readFile(infoPath, "utf8");
     const updated = original.replace(
       "<string>com.biadone.blabee</string>",
@@ -115,13 +118,13 @@ async function rewriteAsLegacyV1(appPath, { bundleIdentifier } = {}) {
     );
     assert.notEqual(updated, original);
     await writeFile(infoPath, updated);
-    const infoEntry = current.files.find(
-      (entry) => entry.path === "Contents/Info.plist",
-    );
-    const infoData = await readFile(infoPath);
-    infoEntry.sha256 = createHash("sha256").update(infoData).digest("hex");
-    infoEntry.size = infoData.length;
   }
+  const infoEntry = current.files.find(
+    (entry) => entry.path === "Contents/Info.plist",
+  );
+  const infoData = await readFile(infoPath);
+  infoEntry.sha256 = createHash("sha256").update(infoData).digest("hex");
+  infoEntry.size = infoData.length;
   const legacy = {
     schema_version: "blabee.macos-app-assembly.v1",
     bundle_identifier: current.bundle_identifier,
@@ -190,6 +193,28 @@ test("real signed v1 and v2 apps enforce the previous-runtime verification bound
   });
   assert.match(v2Inspection.runtimeIdentity, /^sha256:[0-9a-f]{64}$/u);
   assert.notEqual(v2Inspection.runtimeIdentity, legacyInspection.runtimeIdentity);
+  const { stdout: v2InfoJSON } = await execFile("/usr/bin/plutil", [
+    "-convert", "json", "-o", "-", join(signedV2, "Contents", "Info.plist"),
+  ]);
+  assert.deepEqual(JSON.parse(v2InfoJSON).BlabeeRuntimeUseLeasePreviousIdentities, []);
+
+  const nextParent = join(root, "signed-next");
+  await mkdir(nextParent);
+  const signedNext = join(nextParent, "Blabee.app");
+  await assembleMacOSApp({
+    binaryPath: coordinator,
+    outputPath: signedNext,
+    adhocSign: true,
+    compatiblePreviousApps: [signedV2],
+  });
+  const { stdout: nextInfoJSON } = await execFile("/usr/bin/plutil", [
+    "-convert", "json", "-o", "-", join(signedNext, "Contents", "Info.plist"),
+  ]);
+  assert.deepEqual(JSON.parse(nextInfoJSON).BlabeeRuntimeUseLeasePreviousIdentities, [v2Inspection.runtimeIdentity]);
+  assert.deepEqual(await inspectSignedRuntimeIdentity({
+    coordinatorBinaryPath: coordinator,
+    appPath: signedV2,
+  }), v2Inspection);
 
   const unsignedLegacy = await makeLegacyApp(
     coordinator,
