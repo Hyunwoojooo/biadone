@@ -1,0 +1,213 @@
+name: Blabee CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blabee-pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: Detect Blabee scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      blabee_changed: ${{ steps.changes.outputs.blabee_changed }}
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect Blabee changes
+        id: changes
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Pull request base SHA is missing or invalid."
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Pull request head SHA is missing or invalid."
+            exit 1
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            echo "::error::Pull request base commit is unavailable after checkout."
+            exit 1
+          fi
+          if ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            echo "::error::Pull request head commit is unavailable after checkout."
+            exit 1
+          fi
+
+          set +e
+          git diff --quiet --no-renames "$BASE_SHA...$HEAD_SHA" -- \
+            apps/blabee \
+            ':(glob).github/workflows/blabee-*.yml'
+          diff_status=$?
+          set -e
+
+          case "$diff_status" in
+            0) blabee_changed=false ;;
+            1) blabee_changed=true ;;
+            *)
+              echo "::error::Unable to determine the Blabee pull request scope."
+              exit "$diff_status"
+              ;;
+          esac
+
+          echo "blabee_changed=$blabee_changed" >> "$GITHUB_OUTPUT"
+          echo "Blabee changes detected: $blabee_changed"
+
+  node_contract_core:
+    name: Node contract and core
+    needs: scope
+    if: needs.scope.outputs.blabee_changed == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/blabee
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: apps/blabee/package-lock.json
+
+      - name: Record runner toolchain
+        run: |
+          /usr/bin/uname -a
+          /usr/bin/xcodebuild -version
+          /usr/bin/xcrun swift --version
+          node --version
+          npm --version
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run contract tests
+        run: npm run test:contracts
+
+      - name: Run coordinator core tests
+        run: npm run test:t007a
+
+  macos_runtime:
+    name: macOS runtime and Swift
+    needs: scope
+    if: needs.scope.outputs.blabee_changed == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/blabee
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: apps/blabee/package-lock.json
+
+      - name: Record runner toolchain
+        run: |
+          /usr/bin/uname -a
+          /usr/bin/xcodebuild -version
+          /usr/bin/xcrun swift --version
+          node --version
+          npm --version
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run runtime qualification tests
+        run: npm run test:t005
+
+      - name: Run persistence tests
+        run: npm run test:t007b-a
+
+      - name: Run operational tests without the live Codex lifecycle
+        run: |
+          node --test --test-concurrency=1 \
+            Tests/CoordinatorOperational/operational-roundtrip.test.mjs \
+            Tests/CoordinatorOperational/plugin-package.test.mjs \
+            Tests/CoordinatorOperational/uds-transport.test.mjs
+
+      - name: Run the full Swift test suite
+        run: npm run test:swift
+
+  pr-gate:
+    name: Blabee PR Gate
+    needs:
+      - scope
+      - node_contract_core
+      - macos_runtime
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate the Blabee checks
+        shell: bash
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          BLABEE_CHANGED: ${{ needs.scope.outputs.blabee_changed }}
+          NODE_CONTRACT_CORE_RESULT: ${{ needs.node_contract_core.result }}
+          MACOS_RUNTIME_RESULT: ${{ needs.macos_runtime.result }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          if [[ "$SCOPE_RESULT" != "success" ]]; then
+            fail "Scope detection did not succeed: $SCOPE_RESULT"
+          fi
+
+          case "$BLABEE_CHANGED" in
+            false)
+              for result in \
+                "$NODE_CONTRACT_CORE_RESULT" \
+                "$MACOS_RUNTIME_RESULT"; do
+                if [[ "$result" != "skipped" ]]; then
+                  fail "A Blabee test job had the unexpected result '$result' for an unrelated pull request."
+                fi
+              done
+              echo "No Blabee changes; the Blabee PR gate passes without macOS jobs."
+              ;;
+            true)
+              for result in \
+                "$NODE_CONTRACT_CORE_RESULT" \
+                "$MACOS_RUNTIME_RESULT"; do
+                if [[ "$result" != "success" ]]; then
+                  fail "A required Blabee test job did not succeed: $result"
+                fi
+              done
+              echo "All Blabee PR checks succeeded."
+              ;;
+            *)
+              fail "Scope detection returned an unexpected value: '$BLABEE_CHANGED'"
+              ;;
+          esac
