@@ -1350,7 +1350,9 @@ test("MCP exposes allowlisted decision failures without a session-existence orac
       assert.equal(response.result.isError, true);
       assert.equal(
         response.result.content[0].text,
-        "Blabee coordinator unavailable or rejected the proposal.",
+        "Blabee coordinator unavailable or rejected the proposal. "
+          + `error_code=${response.result.structuredContent.error_code}; `
+          + `retryable=${response.result.structuredContent.retryable}.`,
       );
     }
     assert.equal(forwardedCalls, 6);
@@ -1399,6 +1401,11 @@ test("MCP transport failure is a generic isError result without raw payload", as
       error_code: "coordinator_unavailable_or_rejected",
       retryable: false,
     });
+    assert.equal(
+      response.result.content[0].text,
+      "Blabee coordinator unavailable or rejected the proposal. "
+        + "error_code=coordinator_unavailable_or_rejected; retryable=false.",
+    );
     assert.equal(result.stdout.includes(proposal.correlation_token), false);
     assert.equal(result.stdout.includes(proposal.task_goal), false);
   } finally {

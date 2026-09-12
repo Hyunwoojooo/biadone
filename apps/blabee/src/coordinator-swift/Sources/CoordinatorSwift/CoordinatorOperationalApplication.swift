@@ -76,8 +76,8 @@ public actor CoordinatorOperationalApplication {
     private static let maximumManagedCommandApprovalDeliveryWaitNanoseconds: UInt64 =
         10_000_000_000
     private static let maximumPermissionDescriptionScalars = 4_096
-    // Relay only commands that the fixed Pet card can render in full. Longer
-    // or visually ambiguous commands fall back to Codex's native approval UI.
+    // Managed broker previews retain their existing compact display contract.
+    // Hook commands use HookPermissionPolicy and a scrollable complete command.
     private static let maximumPermissionCommandPreviewScalars = 120
     private static let queuedActionContextMarker =
         "Blabee verified the selected action locally. Execute exactly this action JSON as the new user request. The visible ref is transport metadata, and a queue receipt is not proof that the work succeeded.\n"
@@ -202,13 +202,20 @@ public actor CoordinatorOperationalApplication {
         let sessionID: String
         let turnID: String
         let cwd: String
+        // Session lookup uses a normalized copy; approval displays and returns
+        // the exact path sent by the suspended Hook.
+        let sessionPath: String
         let toolName: String
         let description: String?
         let commandPreview: String?
-        let allowOnceAvailable: Bool
+        let allowOnceQualification: String?
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
+
+        var allowOnceAvailable: Bool {
+            HookPermissionPolicy.allowsOnce(qualification: allowOnceQualification)
+        }
 
         var snapshotObject: [String: Any] {
             [
@@ -1508,7 +1515,7 @@ private extension CoordinatorOperationalApplication {
             "permission_mode", "tool_name", "tool_input",
         ]
         let allowedKeys = requiredKeys.union([
-            "transcript_path", "model", HookPermissionPolicy.qualificationKey,
+            "transcript_path", "model", "agent_id", "agent_type", HookPermissionPolicy.qualificationKey,
         ])
         try require(
             requiredKeys.isSubset(of: Set(payload.keys))
@@ -1531,9 +1538,17 @@ private extension CoordinatorOperationalApplication {
             maximumScalars: 512,
             code: "permission_request_model_invalid"
         )
+        // Official subagent metadata is descriptive, never approval authority.
+        for key in ["agent_id", "agent_type"] {
+            try validateOptionalPermissionMetadata(
+                payload[key], maximumScalars: 512,
+                code: "permission_request_\(key)_invalid"
+            )
+        }
         let sessionID = try identifier(string(payload, "session_id"), "session_id")
         let turnID = try identifier(string(payload, "turn_id"), "turn_id")
-        let cwd = try Self.normalizedPermissionPath(string(payload, "cwd"))
+        let cwd = try string(payload, "cwd")
+        let sessionPath = try Self.normalizedPermissionPath(cwd)
         let toolName = "Bash"
         guard let toolInput = payload["tool_input"] as? [String: Any] else {
             throw CoordinatorError("permission_request_tool_input_invalid")
@@ -1549,17 +1564,17 @@ private extension CoordinatorOperationalApplication {
             maximumScalars: Self.maximumPermissionDescriptionScalars,
             code: "permission_request_description_invalid"
         )
-        let commandPreview = try permissionCommandPreview(
-            toolInput["command"]
-        )
+        guard let commandPreview = toolInput["command"] as? String,
+              HookPermissionPolicy.isValidCommand(commandPreview)
+        else { throw CoordinatorError("permission_request_command_invalid") }
         // Attested by the Hook adapter's live caller check, not by PATH or a
         // persisted version from a previously installed/resumed session.
-        let allowOnceAvailable = HookPermissionPolicy.allowsOnce(
-            qualification: payload[HookPermissionPolicy.qualificationKey] as? String
-        )
+        let qualification = payload[HookPermissionPolicy.qualificationKey] as? String
+        let allowOnceQualification = HookPermissionPolicy.allowsOnce(qualification: qualification)
+            ? qualification : nil
         guard let session = sessions[sessionID],
               Self.byteExact(session.latestTurnID, turnID),
-              Self.byteExact(session.path, cwd),
+              Self.byteExact(session.path, sessionPath),
               projects.values.contains(where: {
                   $0.enabled && Self.byteExact($0.projectID, session.projectID)
               })
@@ -1619,10 +1634,11 @@ private extension CoordinatorOperationalApplication {
                     sessionID: sessionID,
                     turnID: turnID,
                     cwd: cwd,
+                    sessionPath: sessionPath,
                     toolName: toolName,
                     description: description,
                     commandPreview: commandPreview,
-                    allowOnceAvailable: allowOnceAvailable,
+                    allowOnceQualification: allowOnceQualification,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
                     deliveryToken: nil
@@ -1713,7 +1729,7 @@ private extension CoordinatorOperationalApplication {
         guard let currentSession = sessions[head.sessionID],
               Self.byteExact(currentSession.projectID, head.projectID),
               Self.byteExact(currentSession.latestTurnID, head.turnID),
-              Self.byteExact(currentSession.path, head.cwd)
+              Self.byteExact(currentSession.path, head.sessionPath)
         else {
             pendingPermissionRequests.removeFirst()
             head.timeoutTask.cancel()
@@ -1741,7 +1757,8 @@ private extension CoordinatorOperationalApplication {
             turnID: turnID,
             deliveryToken: deliveryToken,
             approvedCommand: decision == "allow_once" ? head.commandPreview : nil,
-            approvedCWD: decision == "allow_once" ? head.cwd : nil
+            approvedCWD: decision == "allow_once" ? head.cwd : nil,
+            approvedQualification: decision == "allow_once" ? head.allowOnceQualification : nil
         )
         let deliveryTimeoutNanoseconds = permissionRequestDeliveryTimeoutNanoseconds
         return try await withTaskCancellationHandler {
@@ -1958,7 +1975,8 @@ private extension CoordinatorOperationalApplication {
         turnID: String,
         deliveryToken: String,
         approvedCommand: String? = nil,
-        approvedCWD: String? = nil
+        approvedCWD: String? = nil,
+        approvedQualification: String? = nil
     ) throws -> Data {
         try require(
             ["allow_once", "deny", "defer_to_codex"].contains(decision),
@@ -1972,7 +1990,9 @@ private extension CoordinatorOperationalApplication {
             "turn_id": turnID,
         ]
         if decision == "allow_once" {
-            guard let approvedCommand, let approvedCWD else {
+            guard let approvedCommand, let approvedCWD, let approvedQualification,
+                  HookPermissionPolicy.allowsOnce(qualification: approvedQualification)
+            else {
                 throw CoordinatorError("permission_allow_once_binding_missing")
             }
             // Only this suspended Hook gets this one response. The adapter
@@ -1980,7 +2000,7 @@ private extension CoordinatorOperationalApplication {
             response["command_preview"] = approvedCommand
             response["cwd"] = approvedCWD
             response[HookPermissionPolicy.qualificationKey] =
-                HookPermissionPolicy.qualifiedRuntime
+                approvedQualification
         }
         return try publicData(response)
     }
@@ -3884,9 +3904,7 @@ private extension CoordinatorOperationalApplication {
 
     static func normalizedPermissionPath(_ path: String) throws -> String {
         try require(
-            path.hasPrefix("/")
-                && path.unicodeScalars.count <= 4_096
-                && !path.contains("\0"),
+            HookPermissionPolicy.isValidCWD(path),
             "permission_request_cwd_invalid"
         )
         return URL(fileURLWithPath: path).standardizedFileURL.path

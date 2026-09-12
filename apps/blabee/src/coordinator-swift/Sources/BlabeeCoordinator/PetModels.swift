@@ -284,6 +284,7 @@ enum PetManagedJSONRPCRequestID: Sendable, Equatable, Hashable {
 }
 
 struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
+    static let maximumCommandScalars = 120
     let arrivalSequence: Int64
     let managedRequestID: String
     let brokerEpoch: String
@@ -350,7 +351,7 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
         commandPreview = try petString(
             jsonObject,
             "command_preview",
-            maximum: PetPermissionRequest.maximumCommandScalars
+            maximum: Self.maximumCommandScalars
         )
         try petRequire(
             !commandPreview.trimmingCharacters(in: .whitespaces).isEmpty
@@ -390,7 +391,7 @@ struct PetManagedCommandApproval: Sendable, Equatable, Identifiable {
 }
 
 struct PetPermissionRequest: Sendable, Equatable, Identifiable {
-    static let maximumCommandScalars = 120
+    static let maximumCommandScalars = HookPermissionPolicy.maximumCommandScalars
 
     let arrivalSequence: Int64
     let requestID: String
@@ -425,8 +426,8 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
         sessionID = try petString(jsonObject, "session_id", maximum: 512)
         turnID = try petString(jsonObject, "turn_id", maximum: 512)
         let rawPath = try petString(jsonObject, "cwd", maximum: 4_096)
-        try petRequire(rawPath.hasPrefix("/"), "permission_request.cwd")
-        cwd = URL(fileURLWithPath: rawPath, isDirectory: true).standardizedFileURL.path
+        try petRequire(HookPermissionPolicy.isValidCWD(rawPath), "permission_request.cwd")
+        cwd = rawPath
         toolName = try petString(jsonObject, "tool_name", maximum: 512)
         requestDescription = try petNullableString(
             jsonObject,
@@ -441,15 +442,7 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             maximum: Self.maximumCommandScalars
         )
         try petRequire(
-            !commandPreview.trimmingCharacters(in: .whitespaces).isEmpty
-                && commandPreview.unicodeScalars.allSatisfy({ scalar in
-                    let category = scalar.properties.generalCategory
-                    return !scalar.properties.isDefaultIgnorableCodePoint
-                        && category != .control
-                        && category != .format
-                        && category != .lineSeparator
-                        && category != .paragraphSeparator
-                }),
+            HookPermissionPolicy.isValidCommand(commandPreview),
             "permission_request.command_preview"
         )
     }
@@ -1129,8 +1122,9 @@ struct PetSnapshot: Sendable, Equatable {
             field: "permission_requests.arrival_sequence"
         )
         for request in permissionRequests {
+            let projectPath = URL(fileURLWithPath: request.cwd).standardizedFileURL.path
             guard let project = projectByID[request.projectID],
-                  project.cwd == request.cwd,
+                  project.cwd.utf8.elementsEqual(projectPath.utf8),
                   let session = sessions.first(where: {
                       $0.projectID == request.projectID
                           && $0.sessionID == request.sessionID

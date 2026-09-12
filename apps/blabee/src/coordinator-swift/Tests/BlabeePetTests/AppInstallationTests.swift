@@ -242,6 +242,112 @@ struct AppInstallationTests {
         #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
     }
 
+    @Test("explicit legacy quit confirmation accepts only a completed path gap and retains the old app")
+    func confirmedLegacyPathGapPreservesBackup() throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let oldInode = try fixture.inode(at: fixture.destination)
+        let processGuard = AppInstallationProcessGuard(snapshot: { [.unresolvedExecutable] })
+        let service = fixture.service(activityGuard: { try processGuard.requireInactive($0) })
+
+        let strictFailure = try installationFailure {
+            _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true)
+        }
+        #expect(strictFailure.code == .activityInspectionIncomplete)
+        #expect(try fixture.inode(at: fixture.destination) == oldInode)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+
+        let receipt = try service.install(
+            service.inspect(source: fixture.source), replacementApproved: true, legacyQuitConfirmed: true
+        )
+        let backup = try #require(receipt.backupURL)
+        #expect(try fixture.inode(at: backup) == oldInode)
+        #expect(try fixture.identity(at: backup) == AppInstallationFixture.oldIdentity)
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.sourceIdentity)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+    }
+
+    @Test("legacy quit confirmation never bypasses active users, enumeration or unknown-state failures", arguments: [
+        "active", "enumeration", "unknown-state", "application-error",
+    ])
+    func confirmedLegacyQuitRetainsHardFailures(reason: String) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let oldInode = try fixture.inode(at: fixture.destination)
+        let executable = fixture.executable(at: fixture.destination)
+        let processGuard = AppInstallationProcessGuard(snapshot: {
+            switch reason {
+            case "active": return [.unresolvedExecutable, .running(executableURL: executable)]
+            case "enumeration": throw AppInstallationPlatformError.processInspectionIncomplete
+            default: return [.unresolvedExecutable, .unavailable]
+            }
+        })
+        let service = fixture.service(activityGuard: { app in
+            if reason == "application-error" { throw AppInstallationError(.activityInspectionIncomplete) }
+            try processGuard.requireInactive(app)
+        })
+        let failure = try installationFailure {
+            _ = try service.install(
+                service.inspect(source: fixture.source), replacementApproved: true, legacyQuitConfirmed: true
+            )
+        }
+        let expected: AppInstallationError.Code = reason == "active" ? .destinationActive
+            : reason == "application-error" ? .activityInspectionIncomplete : .activityInspectionUnavailable
+        #expect(failure.code == expected)
+        #expect(try fixture.inode(at: fixture.destination) == oldInode)
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+    }
+
+    @Test("legacy quit confirmation still rejects late active users and restores a renamed backup", arguments: [
+        AppInstallationCheckpoint.afterCopy, .afterBackup,
+    ])
+    func confirmedLegacyQuitRejectsLateActiveUsers(activeAfter: AppInstallationCheckpoint) throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let oldInode = try fixture.inode(at: fixture.destination)
+        let checkpoints = AppInstallationCheckpointRecorder()
+        let service = fixture.service(activityGuard: { app in
+            if checkpoints.phases().contains(activeAfter),
+               activeAfter == .afterCopy || app.lastPathComponent.hasPrefix(".Blabee.backup-") {
+                throw AppInstallationPlatformError.applicationActive
+            }
+            throw AppInstallationPlatformError.processInspectionIncomplete
+        }, checkpoint: { phase, _ in checkpoints.record(phase) })
+        let failure = try installationFailure {
+            _ = try service.install(
+                service.inspect(source: fixture.source), replacementApproved: true, legacyQuitConfirmed: true
+            )
+        }
+        #expect(failure.code == .destinationActive)
+        #expect(failure.recoveryURL != nil)
+        #expect(try fixture.inode(at: fixture.destination) == oldInode)
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+        #expect(checkpoints.phases().contains(.beforeRestore) == (activeAfter == .afterBackup))
+    }
+
+    @Test("legacy quit confirmation cannot replace a destination changed after inspection")
+    func confirmedLegacyQuitRejectsChangedPlan() throws {
+        let fixture = try AppInstallationFixture()
+        defer { fixture.remove() }
+        try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
+        let service = fixture.service(activityGuard: { _ in throw AppInstallationPlatformError.processInspectionIncomplete })
+        let plan = try service.inspect(source: fixture.source)
+        try fixture.writeIdentity(AppInstallationFixture.otherIdentity, at: fixture.destination)
+        let failure = try installationFailure {
+            _ = try service.install(plan, replacementApproved: true, legacyQuitConfirmed: true)
+        }
+        #expect(failure.code == .changedSinceInspection)
+        #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.otherIdentity)
+        #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)
+        #expect(try fixture.children(prefix: ".Blabee.backup-").isEmpty)
+    }
+
     @Test("a confirmed absent fresh target does not inspect unrelated running processes")
     func freshInstallationDoesNotCallActivityGuard() throws {
         let fixture = try AppInstallationFixture()
@@ -363,8 +469,8 @@ struct AppInstallationTests {
         #expect(try fixture.children(prefix: ".Blabee.").isEmpty)
     }
 
-    @Test("an existing runtime shared lease blocks replacement before copying or moving the app")
-    func runningLeaseDestinationIsRejected() throws {
+    @Test("an existing runtime shared lease blocks replacement even with legacy quit confirmation", arguments: [false, true])
+    func runningLeaseDestinationIsRejected(legacyQuitConfirmed: Bool) throws {
         let fixture = try AppInstallationFixture()
         defer { fixture.remove() }
         try fixture.makeLeaseReplacement()
@@ -373,7 +479,10 @@ struct AppInstallationTests {
         defer { withExtendedLifetime(runtime) {} }
         let observation = AppInstallationErrorRecorder()
         let service = fixture.service(activityGuard: { _ in observation.record(.activityInspectionUnavailable) })
-        let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
+        let failure = try installationFailure {
+            _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true,
+                                    legacyQuitConfirmed: legacyQuitConfirmed)
+        }
         #expect(failure.code == .destinationActive)
         #expect(observation.codes().isEmpty)
         #expect(try fixture.inode(at: fixture.destination) == oldInode)
@@ -517,18 +626,19 @@ struct AppInstallationTests {
         withExtendedLifetime(released) {}
     }
 
-    @Test("unknown process visibility explains uncertainty and restart recovery without claiming activity")
-    func initialUnknownProcessVisibilityKeepsReason() throws {
+    @Test("initial process visibility failures distinguish path gaps without claiming activity", arguments: [false, true])
+    func initialUnknownProcessVisibilityKeepsReason(stablePathGap: Bool) throws {
         let fixture = try AppInstallationFixture()
         defer { fixture.remove() }
         try fixture.makeApp(at: fixture.destination, identity: AppInstallationFixture.oldIdentity)
-        let service = fixture.service(activityGuard: { _ in throw AppInstallationPlatformError.processInspectionUnavailable })
+        let service = fixture.service(activityGuard: { _ in
+            throw stablePathGap ? AppInstallationPlatformError.processInspectionIncomplete : .processInspectionUnavailable
+        })
         let failure = try installationFailure { _ = try service.install(service.inspect(source: fixture.source), replacementApproved: true) }
-        #expect(failure.code == .activityInspectionUnavailable)
+        #expect(failure.code == (stablePathGap ? .activityInspectionIncomplete : .activityInspectionUnavailable))
         #expect(failure.userMessage.contains("확인하지 못했습니다"))
-        #expect(failure.userMessage.contains("실행 중이라는 뜻은 아닙니다"))
-        #expect(failure.userMessage.contains("Mac을 재시작"))
-        #expect(failure.userMessage.contains("Blabee와 Codex를 열기 전에"))
+        if stablePathGap { #expect(failure.userMessage.contains("실행 중이라는 뜻은 아닙니다")) }
+        #expect(!failure.userMessage.contains("Mac을 재시작"))
         #expect(!failure.userMessage.contains("프로세스가 실행 중입니다"))
         #expect(try fixture.identity(at: fixture.destination) == AppInstallationFixture.oldIdentity)
         #expect(try fixture.children(prefix: ".Blabee.install-").isEmpty)

@@ -1,3 +1,4 @@
+import CoordinatorSwift
 import Foundation
 import Testing
 @testable import BlabeeCoordinator
@@ -24,7 +25,7 @@ func blabeePetStrictModelParsing() throws {
     #expect(snapshot.permissionRequests[0].arrivalSequence == 1)
     #expect(!snapshot.permissionRequests[0].allowOnceAvailable)
     #expect(!snapshot.permissionRequests[0].deliveryPending)
-    #expect(PetPermissionRequest.maximumCommandScalars == 120)
+    #expect(PetPermissionRequest.maximumCommandScalars == 16_384)
 
     var unknownTopLevel = petTestSnapshotObject(cards: [PetTestCard(suffix: "unknown")])
     unknownTopLevel["unexpected"] = true
@@ -183,10 +184,23 @@ func blabeePetPermissionRequestParsing() throws {
         _ = try PetSnapshot.parse(petTestData(invalidDeliveryPending))
     }
 
+    for command in ["printf first\nprintf second\n\techo done",
+                    String(repeating: "x", count: 512),
+                    String(repeating: "x", count: HookPermissionPolicy.maximumCommandScalars)] {
+        var valid = petTestSnapshotObject(cards: [], permissionRequests: [first])
+        var requests = try #require(valid["permission_requests"] as? [[String: Any]])
+        requests[0]["command_preview"] = command
+        valid["permission_requests"] = requests
+        let parsed = try PetSnapshot.parse(petTestData(valid))
+        #expect(parsed.permissionRequests[0].commandPreview.utf8.elementsEqual(command.utf8))
+    }
+
     for unsafeCommand in [
-        "printf first\nsecond",
+        "\n\t ",
+        "echo first\rsecond",
+        "echo hidden\u{1b}[0m",
         "echo safe\u{202e}txt",
-        String(repeating: "x", count: 121),
+        String(repeating: "x", count: HookPermissionPolicy.maximumCommandScalars + 1),
     ] {
         var unsafe = petTestSnapshotObject(
             cards: [],
@@ -201,6 +215,29 @@ func blabeePetPermissionRequestParsing() throws {
             _ = try PetSnapshot.parse(petTestData(unsafe))
         }
     }
+}
+
+@Test("BlabeePet preserves a Hook caller's path while joining its normalized project",
+      arguments: ["", "/.", "//"])
+func blabeePetPermissionPreservesCallerCWD(pathSuffix: String) throws {
+    let suffix = "cwd_\(UUID().uuidString.lowercased())"
+    var object = petTestSnapshotObject(
+        cards: [], permissionRequests: [PetTestPermissionRequest(suffix: suffix, allowOnceAvailable: true)]
+    )
+    let directoryPath = "/private/tmp/blabee-pet-\(suffix)"
+    try FileManager.default.createDirectory(atPath: directoryPath, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: directoryPath) }
+    let callerCWD = directoryPath + pathSuffix
+    var requests = try #require(object["permission_requests"] as? [[String: Any]])
+    requests[0]["cwd"] = callerCWD
+    object["permission_requests"] = requests
+    let snapshot = try PetSnapshot.parse(petTestData(object))
+    let request = try #require(snapshot.permissionRequests.first)
+    #expect(request.cwd.utf8.elementsEqual(callerCWD.utf8))
+
+    requests[0]["cwd"] = directoryPath + "-another-project"
+    object["permission_requests"] = requests
+    #expect(throws: (any Error).self) { try PetSnapshot.parse(petTestData(object)) }
 }
 
 @Test("BlabeePet parses managed approvals independently from Hook sessions")

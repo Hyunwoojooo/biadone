@@ -217,7 +217,7 @@ enum CodexAppServerApprovalAdapter {
         let command = try requiredText(
             parameters,
             key: "command",
-            maximumScalars: PetPermissionRequest.maximumCommandScalars,
+            maximumScalars: PetManagedCommandApproval.maximumCommandScalars,
             allowLineBreaks: false
         )
         let cwd = try requiredText(

@@ -35,19 +35,44 @@ struct AppInstallationProcessGuardTests {
         try guarder.requireInactive(application)
     }
 
-    @Test("unknown live executable evidence fails closed")
+    @Test("unknown process state or invalid executable evidence fails closed")
     func unknownProcessBlocks() {
-        let guarder = AppInstallationProcessGuard(snapshot: { [.unavailable] })
+        let observations: [AppInstallationProcessObservation] = [
+            .unavailable,
+            .running(executableURL: URL(string: "https://example.invalid/Blabee.app")!),
+        ]
+        for observation in observations {
+            let guarder = AppInstallationProcessGuard(snapshot: { [observation] })
+            #expect(throws: AppInstallationPlatformError.processInspectionUnavailable) {
+                try guarder.requireInactive(application)
+            }
+        }
+    }
+
+    @Test("a completed snapshot with only stable pathless processes has a distinct recoverable gap")
+    func stablePathlessProcessIsIncomplete() {
+        let guarder = AppInstallationProcessGuard(snapshot: { [.unresolvedExecutable] })
+        #expect(throws: AppInstallationPlatformError.processInspectionIncomplete) {
+            try guarder.requireInactive(application)
+        }
+    }
+
+    @Test("unknown state prevents recovery even alongside stable pathless processes", arguments: [false, true])
+    func unavailableStateWinsOverPathGap(unavailableFirst: Bool) {
+        let guarder = AppInstallationProcessGuard(snapshot: {
+            unavailableFirst ? [.unavailable, .unresolvedExecutable] : [.unresolvedExecutable, .unavailable]
+        })
         #expect(throws: AppInstallationPlatformError.processInspectionUnavailable) {
             try guarder.requireInactive(application)
         }
     }
 
-    @Test("known active executable is reported before an unrelated inspection gap")
-    func activeProcessWinsOverGap() {
+    @Test("known active executable wins over an inspection gap in either order", arguments: [false, true])
+    func activeProcessWinsOverGap(activeFirst: Bool) {
         let executable = application.appendingPathComponent("Contents/MacOS/blabee-coordinator")
         let guarder = AppInstallationProcessGuard(snapshot: {
-            [.unavailable, .running(executableURL: executable)]
+            activeFirst ? [.running(executableURL: executable), .unavailable, .unresolvedExecutable]
+                : [.unavailable, .unresolvedExecutable, .running(executableURL: executable)]
         })
         #expect(throws: AppInstallationPlatformError.applicationActive) {
             try guarder.requireInactive(application)
@@ -65,6 +90,16 @@ struct AppInstallationProcessGuardTests {
         let message = AppInstallationPlatformError.processInspectionUnavailable.localizedDescription
         #expect(!message.contains("sensitive-user"))
         #expect(!message.contains("secret-token"))
+    }
+
+    @Test("a thrown snapshot never becomes a completed inspection gap")
+    func incompleteEnumerationCannotEnableRecovery() {
+        let guarder = AppInstallationProcessGuard(snapshot: {
+            throw AppInstallationPlatformError.processInspectionIncomplete
+        })
+        #expect(throws: AppInstallationPlatformError.processInspectionUnavailable) {
+            try guarder.requireInactive(application)
+        }
     }
 
     @Test("canonical bundle paths include symlinked executable aliases")
@@ -167,7 +202,7 @@ struct AppInstallationProcessReaderTests {
         #expect(paths.readCount == 4)
     }
 
-    @Test("unreadable paths of live potentially relevant processes remain unknown")
+    @Test("stable live state with unreadable paths is distinguished from unknown state")
     func unreadableLivePath() {
         let token = token
         let reader = AppInstallationProcessReader(
@@ -176,7 +211,21 @@ struct AppInstallationProcessReaderTests {
             executableURL: { _ in nil },
             protectedExecutableURL: { _ in nil }
         )
+        #expect(reader.observe(42) == .unresolvedExecutable)
+    }
+
+    @Test("an observed executable followed by missing paths cannot enable legacy recovery")
+    func intermittentExecutableNeverBecomesPathGap() {
+        let token = token
+        let paths = InstallationLockedSequence<URL?>([executable, nil])
+        let reader = AppInstallationProcessReader(
+            processIDs: { [42] },
+            state: { _ in .running(token) },
+            executableURL: { _ in paths.next() },
+            protectedExecutableURL: { _ in nil }
+        )
         #expect(reader.observe(42) == .unavailable)
+        #expect(paths.readCount == 6)
     }
 
     @Test("protected unrelated processes can use their dynamic-code executable path")
@@ -303,6 +352,20 @@ struct AppInstallationApplicationOpenerTests {
             processObservation: { _ in .running(executableURL: URL(fileURLWithPath: "/bin/sh")) }
         )
         await #expect(throws: AppInstallationPlatformError.launchedApplicationMismatch) {
+            try await opener.openInstalled(applicationURL: application, expectedIdentity: identity)
+        }
+    }
+
+    @Test("a launched app with an unresolved executable cannot be qualified by legacy quit confirmation")
+    func launchedPathGapIsRejected() async {
+        let workspace = InstallationWorkspaceStub()
+        workspace.application = runningApplication()
+        let opener = AppInstallationApplicationOpener(
+            workspace: workspace, installedIdentity: { _ in identity },
+            runningIdentity: { _, _ in identity },
+            processObservation: { _ in .unresolvedExecutable }
+        )
+        await #expect(throws: AppInstallationPlatformError.processInspectionUnavailable) {
             try await opener.openInstalled(applicationURL: application, expectedIdentity: identity)
         }
     }

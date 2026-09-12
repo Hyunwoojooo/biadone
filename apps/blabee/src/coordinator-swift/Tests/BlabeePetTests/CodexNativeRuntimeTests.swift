@@ -393,8 +393,9 @@ struct CodexNativeRuntimeTests {
         #expect(probe.processInvocations.count == 1)
     }
 
-    @Test("Native dispatcher budgets qualification separately and caps the queue child at ten seconds")
-    func dispatcherSeparatesQualificationAndQueueBudgets() async throws {
+    @Test("Native dispatcher budgets qualification separately and caps the queue child at ten seconds",
+          arguments: ["0.153.4", "0.154.0"])
+    func dispatcherSeparatesQualificationAndQueueBudgets(version: String) async throws {
         let fixture = try NativeRuntimeFixture()
         let probe = NativeRuntimeProbe()
         let sessionID = "session-budget-test"
@@ -404,14 +405,16 @@ struct CodexNativeRuntimeTests {
             qualifier: { sourceURL, runner, preflight, timeout in
                 #expect(timeout > 40_000 && timeout <= 45_000)
                 try preflight(sourceURL, min(timeout, 5_000))
-                _ = try runner(sourceURL, ["--version"], min(timeout, 5_000))
-                return .testOnly(url: sourceURL, version: "0.153.4")
+                let result = try runner(sourceURL, ["--version"], min(timeout, 5_000))
+                let qualifiedVersion = try CodexPluginSetupProductionTrust.supportedVersion(from: result)
+                #expect(qualifiedVersion == version)
+                return .testOnly(url: sourceURL, version: qualifiedVersion)
             },
             processBehavior: { _, arguments, _ in
                 CodexPluginSetupProcessResult(
                     exitCode: 0,
                     stdout: Data((arguments == ["--version"]
-                        ? "codex-cli 0.153.4\n"
+                        ? "codex-cli \(version)\n"
                         : "Queued message submission-budget-test for thread \(sessionID).\n").utf8)
                 )
             }

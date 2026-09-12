@@ -50,7 +50,7 @@ struct AppInstallationReceipt: Sendable {
 struct AppInstallationError: Error, LocalizedError, Sendable {
     enum Code: Equatable, Sendable {
         case invalidSource, invalidDestination, identityMismatch, changedSinceInspection
-        case replacementApprovalRequired, destinationActive, activityInspectionUnavailable, runtimeUseLeaseUnavailable, insufficientPermissions
+        case replacementApprovalRequired, destinationActive, activityInspectionIncomplete, activityInspectionUnavailable, runtimeUseLeaseUnavailable, insufficientPermissions
         case installationBusy, sizeLimitExceeded, deadlineExceeded, copyFailed, publishFailed
         case recoveryRequired
     }
@@ -79,8 +79,10 @@ struct AppInstallationError: Error, LocalizedError, Sendable {
             "기존 Blabee 앱을 백업하고 교체하려면 먼저 교체를 확인해 주세요."
         case .destinationActive:
             "Blabee 또는 Codex에 연결된 Blabee 보조 프로세스가 실행 중입니다. 작업을 저장하고 Blabee와 연결된 Codex 세션을 종료한 뒤 다시 설치해 주세요."
+        case .activityInspectionIncomplete:
+            "macOS가 일부 프로세스의 실행 파일을 확인하지 못했습니다. Blabee가 실행 중이라는 뜻은 아닙니다. Blabee와 연결된 Codex 세션을 종료했다면 ‘종료 확인 후 교체’를 선택할 수 있습니다."
         case .activityInspectionUnavailable:
-            "구형 앱의 사용 여부를 macOS에서 확인하지 못했습니다. Blabee가 실행 중이라는 뜻은 아닙니다. 작업을 저장한 뒤 Mac을 재시작하고, Blabee와 Codex를 열기 전에 다시 설치해 주세요."
+            "macOS에서 실행 중인 프로세스 상태를 확인하지 못했습니다. ‘다시 확인’으로 재시도하거나 Finder에서 응용 프로그램 폴더를 확인해 주세요."
         case .runtimeUseLeaseUnavailable:
             "Blabee 실행 잠금을 확인할 수 없어 안전하게 설치를 중단했습니다. 앱을 다시 열어 재시도해 주세요."
         case .insufficientPermissions:
@@ -197,7 +199,11 @@ struct AppInstallationService: Sendable {
         )
     }
 
-    func install(_ plan: AppInstallationPlan, replacementApproved: Bool) throws -> AppInstallationReceipt {
+    func install(
+        _ plan: AppInstallationPlan,
+        replacementApproved: Bool,
+        legacyQuitConfirmed: Bool = false
+    ) throws -> AppInstallationReceipt {
         guard plan.destinationURL == destinationURL,
               plan.source.runtimeIdentity == expectedSourceIdentity
         else { throw AppInstallationError(.changedSinceInspection) }
@@ -221,7 +227,7 @@ struct AppInstallationService: Sendable {
             try verifyUseLease(oldLease, at: destinationURL)
         } else {
             oldLease = nil
-            if plan.existing != nil { try requireLegacyInactive(destinationURL) }
+            if plan.existing != nil { try requireLegacyInactive(destinationURL, quitConfirmed: legacyQuitConfirmed) }
         }
         var stagedLease: AppRuntimeUseLease?
         defer { withExtendedLifetime((oldLease, stagedLease)) {} }
@@ -267,7 +273,7 @@ struct AppInstallationService: Sendable {
             }
             try recheck(plan, parent: parent, deadline: deadline)
             if oldLease != nil { try verifyUseLease(oldLease, at: destinationURL) }
-            else if plan.existing != nil { try requireLegacyInactive(destinationURL) }
+            else if plan.existing != nil { try requireLegacyInactive(destinationURL, quitConfirmed: legacyQuitConfirmed) }
 
             if let expectedOld = plan.existing, let expectedFile = plan.existingFile {
                 try verifyTransaction(parent: parent, plan: plan, lock: lock, lockFile: lockFile)
@@ -301,11 +307,11 @@ struct AppInstallationService: Sendable {
                   currentStage.file == staged.file, currentStage.bundle == plan.source
             else { throw AppInstallationError(.changedSinceInspection) }
             if oldLease == nil, plan.existing != nil {
-                try requireLegacyInactive(destinationURL)
+                try requireLegacyInactive(destinationURL, quitConfirmed: legacyQuitConfirmed)
                 if let backupName {
                     // A process may expose its renamed executable path after backup.
                     // These checks are snapshots, not a lock on future app launches.
-                    try requireLegacyInactive(parentURL.appendingPathComponent(backupName))
+                    try requireLegacyInactive(parentURL.appendingPathComponent(backupName), quitConfirmed: legacyQuitConfirmed)
                 }
             }
             // A confirmed-absent fresh target has no bundle to move. A later
@@ -369,8 +375,13 @@ struct AppInstallationService: Sendable {
     private var parentURL: URL { destinationURL.deletingLastPathComponent() }
     private static let lockName = ".Blabee.install.lock"
 
-    private func requireLegacyInactive(_ appURL: URL) throws {
+    private func requireLegacyInactive(_ appURL: URL, quitConfirmed: Bool) throws {
         do { try activityGuard(appURL) }
+        catch AppInstallationPlatformError.processInspectionIncomplete where quitConfirmed {
+            // A one-transaction user acknowledgement of an inspection gap,
+            // not evidence of inactivity. Known users, failed enumeration,
+            // runtime leases and all transaction checks continue to block.
+        }
         catch { throw Self.transactionFailure(error) }
     }
 
@@ -719,6 +730,7 @@ struct AppInstallationService: Sendable {
         if let failure = error as? AppInstallationError { return failure }
         switch error as? AppInstallationPlatformError {
         case .applicationActive: return AppInstallationError(.destinationActive)
+        case .processInspectionIncomplete: return AppInstallationError(.activityInspectionIncomplete)
         case .processInspectionUnavailable: return AppInstallationError(.activityInspectionUnavailable)
         default: return AppInstallationError(.publishFailed)
         }

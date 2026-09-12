@@ -67,6 +67,7 @@ const runtimeInspectionEnvironment = Object.freeze({
   LC_ALL: "C",
 });
 const requiredInfoPlistValues = Object.freeze({
+  BlabeeUpdateRepository: "Hyunwoojooo/biadone",
   BlabeeRuntimeUseLeaseProtocol: runtimeUseLeaseProtocol,
   CFBundleDisplayName: "Blabee",
   CFBundleExecutable: "blabee-coordinator",

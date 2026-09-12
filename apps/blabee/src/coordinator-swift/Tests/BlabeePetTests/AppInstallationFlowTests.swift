@@ -46,6 +46,14 @@ private struct InstallationFlowFixture {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     }
 
+    func rewriteExistingBuild(_ build: String) throws {
+        let infoURL = target.appendingPathComponent("Contents/Info.plist")
+        var info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), format: nil)
+            as? [String: String])
+        info["CFBundleVersion"] = build
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: infoURL)
+    }
+
     func remove() { try? FileManager.default.removeItem(at: root) }
 }
 
@@ -54,6 +62,13 @@ private final class InstallationFlowCounter: @unchecked Sendable {
     private var count = 0
     func increment() { lock.withLock { count += 1 } }
     var value: Int { lock.withLock { count } }
+}
+
+private final class InstallationLegacyConfirmationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var confirmations: [Bool] = []
+    func record(_ confirmed: Bool) { lock.withLock { confirmations.append(confirmed) } }
+    var values: [Bool] { lock.withLock { confirmations } }
 }
 
 @Test("installed-only launch rejects translocation, aliases, extra arguments and identity mismatch")
@@ -105,7 +120,11 @@ func appInstallationInspectionHasNoImplicitEffects() async throws {
     var opens = 0
     let service = fixture.service, source = fixture.source
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { plan, approved in installs.increment(); return try service.install(plan, replacementApproved: approved) },
+        install: { plan, approved, legacyQuitConfirmed in
+            #expect(!legacyQuitConfirmed)
+            installs.increment()
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacyQuitConfirmed)
+        },
         openInstalled: { _, _ in opens += 1 })
     await model.refresh()
     #expect(model.phase == .ready)
@@ -127,10 +146,11 @@ func appInstallationConfirmationBindingOrder() async throws {
     let installs = InstallationFlowCounter()
     var opened: URL?
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { plan, approved in
+        install: { plan, approved, legacyQuitConfirmed in
             #expect(approved)
+            #expect(!legacyQuitConfirmed)
             installs.increment()
-            return try service.install(plan, replacementApproved: approved)
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacyQuitConfirmed)
         }, openInstalled: { url, _ in opened = url })
     await model.refresh()
     await model.performPrimary()
@@ -150,11 +170,19 @@ func appInstallationOpenFailureRetriesOnlyLaunch() async throws {
     let installs = InstallationFlowCounter()
     var opens = 0
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { plan, approved in installs.increment(); return try service.install(plan, replacementApproved: approved) },
-        openInstalled: { _, _ in opens += 1; if opens == 1 { throw AppInstallationPlatformError.launchTimedOut } })
+        install: { plan, approved, legacyQuitConfirmed in
+            #expect(!legacyQuitConfirmed)
+            installs.increment()
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacyQuitConfirmed)
+        },
+        openInstalled: { _, _ in opens += 1; if opens == 1 { throw AppInstallationPlatformError.processInspectionIncomplete } })
     await model.refresh()
     await model.performPrimary()
     #expect(model.phase == .failed && model.receipt != nil)
+    #expect(!model.canConfirmLegacyQuit)
+    await model.prepareLegacyReplacement()
+    await model.confirmLegacyReplacement()
+    #expect(!model.showsLegacyQuitConfirmation && installs.value == 1)
     #expect(FileManager.default.fileExists(atPath: fixture.target.path))
     await model.refresh()
     #expect(model.receipt != nil)
@@ -170,7 +198,7 @@ func appInstallationFailedCopyRequiresRefresh() async throws {
     let installs = InstallationFlowCounter()
     var opens = 0
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { _, _ in installs.increment(); throw AppInstallationError(.copyFailed) },
+        install: { _, _, _ in installs.increment(); throw AppInstallationError(.copyFailed) },
         openInstalled: { _, _ in opens += 1 })
     await model.refresh()
     await model.performPrimary()
@@ -188,7 +216,7 @@ func appInstallationExistingBuildIsReused() async throws {
     let installs = InstallationFlowCounter()
     var opens = 0
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { _, _ in installs.increment(); throw AppInstallationError(.copyFailed) },
+        install: { _, _, _ in installs.increment(); throw AppInstallationError(.copyFailed) },
         openInstalled: { url, identity in
             #expect(url == fixture.target && identity == installationFlowIdentity)
             opens += 1
@@ -208,14 +236,15 @@ func appInstallationBusyPreventsDuplicateSubmission() async throws {
     let started = AsyncStream<Void>.makeStream()
     let release = DispatchSemaphore(value: 0)
     let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
-        install: { plan, approved in
+        install: { plan, approved, legacyQuitConfirmed in
+            #expect(!legacyQuitConfirmed)
             installs.increment()
             started.continuation.yield(())
             started.continuation.finish()
             guard release.wait(timeout: .now() + 3) == .success else {
                 throw AppInstallationError(.deadlineExceeded)
             }
-            return try service.install(plan, replacementApproved: approved)
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacyQuitConfirmed)
         }, openInstalled: { _, _ in })
     await model.refresh()
     // Finish the stream even if inspection failed, so a regression cannot hang tests.
@@ -229,4 +258,136 @@ func appInstallationBusyPreventsDuplicateSubmission() async throws {
     release.signal()
     await firstClick.value
     #expect(model.phase == .launched && installs.value == 1)
+}
+
+@Test("legacy recovery is unavailable for active apps, enumeration failures, copy failures and fresh installs",
+      arguments: ["active", "enumeration", "copy", "fresh"]) @MainActor
+func appInstallationLegacyRecoveryEligibility(reason: String) async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: reason == "fresh" ? nil : "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let installs = InstallationFlowCounter()
+    let code: AppInstallationError.Code
+    switch reason {
+    case "active": code = .destinationActive
+    case "enumeration": code = .activityInspectionUnavailable
+    case "copy": code = .copyFailed
+    default: code = .activityInspectionIncomplete
+    }
+    let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+        install: { _, _, legacyQuitConfirmed in
+            #expect(!legacyQuitConfirmed)
+            installs.increment()
+            throw AppInstallationError(code)
+        }, openInstalled: { _, _ in Issue.record("A failed installation must not launch") })
+    await model.refresh()
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(installs.value == 1 && !model.canConfirmLegacyQuit)
+    await model.prepareLegacyReplacement()
+    await model.confirmLegacyReplacement()
+    #expect(installs.value == 1 && !model.showsLegacyQuitConfirmation)
+}
+
+@Test("legacy recovery reinspects and requires one explicit confirmation even after binding dismissal") @MainActor
+func appInstallationLegacyRecoveryConfirmation() async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let inspections = InstallationFlowCounter()
+    let confirmations = InstallationLegacyConfirmationRecorder()
+    var opens = 0
+    let model = AppInstallationViewModel(sourceURL: source,
+        inspect: { inspections.increment(); return try service.inspect(source: source) },
+        install: { plan, approved, legacyQuitConfirmed in
+            #expect(approved)
+            confirmations.record(legacyQuitConfirmed)
+            guard legacyQuitConfirmed else { throw AppInstallationError(.activityInspectionIncomplete) }
+            return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacyQuitConfirmed)
+        }, openInstalled: { _, _ in opens += 1 })
+    await model.refresh()
+    await model.prepareLegacyReplacement()
+    await model.confirmLegacyReplacement()
+    #expect(inspections.value == 1 && confirmations.values.isEmpty)
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(model.canConfirmLegacyQuit && model.plan == nil && confirmations.values == [false])
+    await model.confirmLegacyReplacement()
+    #expect(confirmations.values == [false])
+
+    await model.prepareLegacyReplacement()
+    #expect(inspections.value == 2 && model.showsLegacyQuitConfirmation)
+    #expect(confirmations.values == [false] && opens == 0)
+    #expect(model.plan?.existing?.build == "18")
+    model.showsLegacyQuitConfirmation = false
+    await model.confirmLegacyReplacement()
+    #expect(confirmations.values == [false, true])
+    #expect(model.receipt?.backupURL != nil && model.phase == .launched && opens == 1)
+    #expect(!model.canConfirmLegacyQuit && !model.showsLegacyQuitConfirmation)
+    await model.confirmLegacyReplacement()
+    await model.performPrimary()
+    #expect(confirmations.values == [false, true] && opens == 1)
+}
+
+@Test("cancellation, refresh and a failed legacy retry clear one-use confirmation",
+      arguments: ["cancel", "refresh", "failure"]) @MainActor
+func appInstallationLegacyRecoveryConsentDoesNotPersist(reset: String) async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let confirmations = InstallationLegacyConfirmationRecorder()
+    let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+        install: { _, approved, legacyQuitConfirmed in
+            #expect(approved)
+            confirmations.record(legacyQuitConfirmed)
+            throw AppInstallationError(legacyQuitConfirmed ? .copyFailed : .activityInspectionIncomplete)
+        }, openInstalled: { _, _ in Issue.record("A failed installation must not launch") })
+    await model.refresh()
+    await model.performPrimary()
+    await model.confirmReplacement()
+    await model.prepareLegacyReplacement()
+    #expect(model.showsLegacyQuitConfirmation && confirmations.values == [false])
+    switch reset {
+    case "cancel": model.cancelLegacyReplacement()
+    case "refresh": await model.refresh()
+    default:
+        await model.confirmLegacyReplacement()
+        #expect(model.phase == .failed && model.plan == nil && !model.canConfirmLegacyQuit)
+    }
+    let expected: [Bool] = reset == "failure" ? [false, true] : [false]
+    #expect(!model.showsLegacyQuitConfirmation)
+    await model.confirmLegacyReplacement()
+    #expect(confirmations.values == expected)
+
+    if reset == "failure" { await model.refresh() }
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(confirmations.values == expected + [false])
+}
+
+@Test("fresh recovery inspection rejects a changed comparison or absent destination",
+      arguments: ["19", "20", "preview", "absent"]) @MainActor
+func appInstallationLegacyRecoveryRechecksComparison(build: String) async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "18")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let inspections = InstallationFlowCounter()
+    let installs = InstallationFlowCounter()
+    let model = AppInstallationViewModel(sourceURL: source,
+        inspect: { inspections.increment(); return try service.inspect(source: source) },
+        install: { _, _, legacyQuitConfirmed in
+            #expect(!legacyQuitConfirmed)
+            installs.increment()
+            throw AppInstallationError(.activityInspectionIncomplete)
+        }, openInstalled: { _, _ in Issue.record("Recovery preparation must not launch") })
+    await model.refresh()
+    await model.performPrimary()
+    await model.confirmReplacement()
+    #expect(model.canConfirmLegacyQuit)
+    if build == "absent" { try FileManager.default.removeItem(at: fixture.target) }
+    else { try fixture.rewriteExistingBuild(build) }
+    await model.prepareLegacyReplacement()
+    #expect(inspections.value == 2 && !model.showsLegacyQuitConfirmation && !model.canConfirmLegacyQuit)
+    await model.confirmLegacyReplacement()
+    #expect(installs.value == 1 && model.receipt == nil)
 }

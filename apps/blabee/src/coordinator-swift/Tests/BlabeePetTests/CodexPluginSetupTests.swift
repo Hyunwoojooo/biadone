@@ -2278,7 +2278,7 @@ func codexPluginSetupFallsThroughUnsupportedCandidate() throws {
 @Test("Production Plugin CLI allowlist is explicit")
 func codexPluginSetupProductionAllowlistIsExplicit() {
     #expect(CodexPluginSetupProductionTrust.supportedPluginCLIVersions == [
-        "0.151.0", "0.152.0", "0.152.1", "0.153.2", "0.153.4",
+        "0.151.0", "0.152.0", "0.152.1", "0.153.2", "0.153.4", "0.154.0",
     ])
 }
 
@@ -2874,18 +2874,22 @@ private func codexPluginSetupTrustSnapshot(
 
 @Test("Production Plugin CLI version gate rejects unsupported canonical output")
 func codexPluginSetupProductionVersionGateRejectsUnsupportedVersion() throws {
-    let unsupported = CodexPluginSetupProcessResult(
-        exitCode: 0,
-        stdout: Data("codex-cli 0.150.1\n".utf8)
-    )
-    #expect(throws: CodexRuntimeTrustError.unsupportedVersion("0.150.1")) {
-        try CodexPluginSetupProductionTrust.supportedVersion(from: unsupported)
+    for version in ["0.150.1", "0.154.1", "0.154.10", "0.155.0"] {
+        let unsupported = CodexPluginSetupProcessResult(
+            exitCode: 0,
+            stdout: Data("codex-cli \(version)\n".utf8)
+        )
+        #expect(throws: CodexRuntimeTrustError.unsupportedVersion(version)) {
+            try CodexPluginSetupProductionTrust.supportedVersion(from: unsupported)
+        }
     }
-    let supported = CodexPluginSetupProcessResult(
-        exitCode: 0,
-        stdout: Data("codex-cli 0.153.2\n".utf8)
-    )
-    #expect(try CodexPluginSetupProductionTrust.supportedVersion(from: supported) == "0.153.2")
+    for version in ["0.153.2", "0.153.4", "0.154.0"] {
+        let supported = CodexPluginSetupProcessResult(
+            exitCode: 0,
+            stdout: Data("codex-cli \(version)\n".utf8)
+        )
+        #expect(try CodexPluginSetupProductionTrust.supportedVersion(from: supported) == version)
+    }
 }
 
 @Test("Production qualification rejects a signed non-Codex binary before execution")

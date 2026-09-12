@@ -24,6 +24,7 @@ enum CodexCompatibility {
         "0.152.1": [.pluginCLI],
         "0.153.2": [.pluginCLI],
         "0.153.4": [.pluginCLI],
+        "0.154.0": [.pluginCLI],
     ]
 
     static let supportedVersions = supportedVersions(for: .managedAppServer)

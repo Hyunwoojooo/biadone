@@ -4719,11 +4719,18 @@ func operationalPermissionRequestDecisions() async throws {
     #expect(fixture.journal.loadCount() == loadCountBefore)
 }
 
-@Test("Operational Hook allow_once binds one delivery and never caches an identical command")
-func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async throws {
+@Test("Operational Hook allow_once binds one delivery and never caches an identical command",
+      arguments: HookPermissionPolicy.qualifiedProfiles.map(\.qualification))
+func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand(
+    qualification: String
+) async throws {
     let fixture = try operationalFixture()
     let ids = try await operationalBegin(fixture, suffix: "permission_allow_once")
-    let command = "printf exact-once"
+    // Reproduce a real multi-line shell approval beyond the former 120-scalar
+    // display cutoff, including tabs, without normalizing or truncating bytes.
+    let command = "BLABEE_CHOICE_PREVIEW_RENDER_DIRECTORY=/private/tmp/blabee-approval-render "
+        + "npm run test:swift -- --filter 'PetChoicePreview|PetPanelSizePolicy'\n"
+        + "\tprintf exact-once"
     let loadCountBefore = fixture.journal.loadCount()
     let firstWaiter = Task {
         try await fixture.app.handle(
@@ -4731,7 +4738,7 @@ func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async t
             payload: operationalPermissionPayload(
                 ids,
                 command: command,
-                qualification: HookPermissionPolicy.qualifiedRuntime
+                qualification: qualification
             )
         )
     }
@@ -4759,7 +4766,7 @@ func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async t
     #expect(approvedCommand.utf8.elementsEqual(command.utf8))
     #expect(approvedCWD.utf8.elementsEqual(expectedCWD.utf8))
     #expect(outcome[HookPermissionPolicy.qualificationKey] as? String
-        == HookPermissionPolicy.qualifiedRuntime)
+        == qualification)
     let firstReceipt = try operationalObject(firstRoundTrip.resolutionReceipt)
     #expect(firstReceipt["resolved"] as? Bool == true)
     #expect(firstReceipt["decision"] as? String == "allow_once")
@@ -4773,7 +4780,7 @@ func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async t
             payload: operationalPermissionPayload(
                 ids,
                 command: command,
-                qualification: HookPermissionPolicy.qualifiedRuntime
+                qualification: qualification
             )
         )
     }
@@ -4808,6 +4815,58 @@ func operationalPermissionRequestQualifiedAllowOnceDoesNotCacheCommand() async t
     #expect(secondRoundTrip.hookOutcome["decision"] as? String == "deny")
     _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
     #expect(fixture.journal.loadCount() == loadCountBefore)
+}
+
+@Test("Hook approval preserves the caller's private tmp path through display and delivery",
+      arguments: HookPermissionPolicy.qualifiedProfiles.map(\.qualification), ["", "/.", "//"])
+func operationalPermissionRequestPreservesCallerCWD(
+    qualification: String, pathSuffix: String
+) async throws {
+    let fixture = try operationalFixture()
+    var ids = try await operationalBegin(
+        fixture, suffix: "permission_cwd_\(UUID().uuidString.lowercased())"
+    )
+    let sessionPath = try #require(ids["cwd"])
+    let directoryPath = "/private" + sessionPath
+    try FileManager.default.createDirectory(atPath: directoryPath, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: directoryPath) }
+    let callerCWD = directoryPath + pathSuffix
+    #expect(URL(fileURLWithPath: callerCWD).standardizedFileURL.path == sessionPath)
+    ids["cwd"] = callerCWD
+    let hookIDs = ids
+    let waiter = Task {
+        try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                hookIDs, command: "printf path-bound", qualification: qualification
+            )
+        )
+    }
+    defer { waiter.cancel() }
+    let request = try #require(
+        try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+    )
+    let displayedCWD = try #require(request["cwd"] as? String)
+    #expect(displayedCWD.utf8.elementsEqual(callerCWD.utf8))
+    let roundTrip = try await operationalResolvePermissionRequest(
+        app: fixture.app, request: request, decision: "allow_once",
+        responseID: "permission_response_original_cwd", hookWaiter: waiter
+    )
+    let approvedCWD = try #require(roundTrip.hookOutcome["cwd"] as? String)
+    #expect(approvedCWD.utf8.elementsEqual(callerCWD.utf8))
+    #expect(roundTrip.hookOutcome["decision"] as? String == "allow_once")
+
+    var wrongCWD = hookIDs
+    wrongCWD["cwd"] = directoryPath + "/other-project"
+    let wrongIDs = wrongCWD
+    await expectOperationalError("permission_request_binding_invalid") {
+        _ = try await fixture.app.handle(
+            type: "permission_request",
+            payload: operationalPermissionPayload(
+                wrongIDs, command: "printf path-bound", qualification: qualification
+            )
+        )
+    }
 }
 
 @Test("Operational Hook allow_once rejects absent and unknown runtime qualifications")
@@ -4985,6 +5044,45 @@ func operationalPermissionRequestRejectsLegacyAllow() async throws {
         hookWaiter: waiter
     )
     #expect(roundTrip.hookOutcome["decision"] as? String == "deny")
+}
+
+@Test("Official subagent metadata is accepted without granting or changing approval authority")
+func operationalPermissionRequestSubagentMetadata() async throws {
+    let fixture = try operationalFixture()
+    let ids = try await operationalBegin(fixture, suffix: "permission_subagent")
+    for (index, qualification) in ([nil] + HookPermissionPolicy.qualifiedProfiles.map {
+        Optional($0.qualification)
+    }).enumerated() {
+        var input = try operationalObject(operationalPermissionPayload(
+            ids, command: "printf subagent\n\tprintf complete", qualification: qualification
+        ))
+        input["agent_id"] = "01a09377-3e75-73e2-bc44-476aee603468"
+        input["agent_type"] = "worker"
+        let payload = try operationalData(input)
+        let waiter = Task { try await fixture.app.handle(type: "permission_request", payload: payload) }
+        let request = try #require(
+            try await waitForOperationalPermissionRequests(fixture.app, count: 1).first
+        )
+        #expect(request["allow_once_available"] as? Bool == (qualification != nil))
+        #expect(request["session_id"] as? String == ids["session_id"])
+        #expect(request["turn_id"] as? String == ids["source_turn_id"])
+        let roundTrip = try await operationalResolvePermissionRequest(
+            app: fixture.app, request: request,
+            decision: qualification == nil ? "defer_to_codex" : "allow_once",
+            responseID: "permission_subagent_response_\(index)", hookWaiter: waiter
+        )
+        #expect(roundTrip.hookOutcome[HookPermissionPolicy.qualificationKey] as? String == qualification)
+    }
+    for key in ["agent_id", "agent_type"] {
+        for value: Any in [42, ["role": "admin"], "", "worker\u{202e}", String(repeating: "x", count: 513)] {
+            var invalid = try operationalObject(operationalPermissionPayload(ids, command: "echo safe"))
+            invalid[key] = value
+            await expectOperationalError("permission_request_\(key)_invalid") {
+                _ = try await fixture.app.handle(type: "permission_request", payload: operationalData(invalid))
+            }
+        }
+    }
+    _ = try await waitForOperationalPermissionRequests(fixture.app, count: 0)
 }
 
 @Test("Operational Hook PermissionRequest rejects hidden fields without consuming its FIFO head")
@@ -5213,9 +5311,11 @@ func operationalPermissionRequestRejectsUnsupportedCommand() async throws {
     }
     for toolInput in [
         ["command": ""],
-        ["command": "printf first\nsecond"],
+        ["command": "\n\t "],
+        ["command": "printf first\rsecond"],
+        ["command": "echo hidden\u{1b}[0m"],
         ["command": "echo safe\u{202e}txt"],
-        ["command": String(repeating: "x", count: 121)],
+        ["command": String(repeating: "x", count: HookPermissionPolicy.maximumCommandScalars + 1)],
     ] {
         var payload = common
         payload["tool_input"] = toolInput

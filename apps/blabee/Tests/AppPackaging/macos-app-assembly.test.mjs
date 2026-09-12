@@ -352,6 +352,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     ["-convert", "json", "-o", "-", infoPlist],
   );
   const plist = JSON.parse(plistJSON);
+  assert.equal(plist.BlabeeUpdateRepository, "Hyunwoojooo/biadone");
   assert.equal(plist.BlabeeRuntimeUseLeaseProtocol, runtimeUseLeaseProtocol);
   assert.deepEqual(plist.BlabeeRuntimeUseLeasePreviousIdentities, []);
   assert.deepEqual(

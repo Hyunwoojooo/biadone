@@ -113,6 +113,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PetStartupDiagnostics.record(.delegateDidFinishLaunching)
         do {
             if let startupOverride {
                 try startupOverride()
@@ -120,6 +121,10 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 try startProductionPet()
             }
         } catch {
+            PetStartupDiagnostics.recordFailure(
+                .startupFailed,
+                code: (error as? CoordinatorError)?.code ?? "pet_startup_failed"
+            )
             startupError = error
             stopApplicationAfterStartupFailure()
         }
@@ -155,7 +160,12 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         let onboardingAdapter: any PetOnboardingAdapting
         do {
             onboardingAdapter = try PetLiveOnboardingAdapter()
+            PetStartupDiagnostics.record(.onboardingReady)
         } catch {
+            PetStartupDiagnostics.recordFailure(
+                .onboardingFallback,
+                code: (error as? CoordinatorError)?.code ?? "pet_onboarding_unavailable"
+            )
             onboardingAdapter = PetUnavailableOnboardingAdapter(
                 reason: "제품 앱 온보딩 환경을 확인할 수 없습니다: \(error)"
             )
@@ -172,6 +182,7 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         } else {
             // Raw developer Pet invocations never start a product service.
             appService = nil
+            PetStartupDiagnostics.record(.appServiceUnavailable)
         }
         let viewModel = PetViewModel(
             transport: transport,
@@ -183,8 +194,10 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
                 ? LegacyCodexShellCleanupManager.live()
                 : LegacyUnavailableCodexShellCleanupManager(),
             suggestionModeStore: suggestionModeStore,
-            projectFolderChooser: PetOpenPanelProjectFolderChooser()
+            projectFolderChooser: PetOpenPanelProjectFolderChooser(),
+            appUpdateChecker: PetGitHubAppUpdateChecker.live()
         )
+        PetStartupDiagnostics.record(.viewModelReady)
         let store = PetUserDefaultsShortcutStore()
         let backend = CarbonPetHotKeyBackend()
         let registry = try PetHotKeyRegistry(
@@ -196,9 +209,11 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         viewModel.attachHotKeyRegistry(registry)
         let menuBarController = PetMenuBarController(viewModel: viewModel)
+        PetStartupDiagnostics.record(.menuBarReady)
         self.viewModel = viewModel
         self.menuBarController = menuBarController
         viewModel.startPolling()
+        PetStartupDiagnostics.record(.pollingStarted)
     }
 }
 

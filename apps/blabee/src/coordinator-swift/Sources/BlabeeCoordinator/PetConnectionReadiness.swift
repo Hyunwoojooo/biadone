@@ -15,7 +15,7 @@ struct PetConnectionReadiness: Equatable, Sendable {
     }
 
     enum CheckState: Equatable, Sendable {
-        case confirmed, pending, attention, checking
+        case confirmed, pending, attention, checking, failed
     }
 
     struct Check: Identifiable, Equatable, Sendable {
@@ -37,6 +37,7 @@ struct PetConnectionReadiness: Equatable, Sendable {
         serviceConnected: Bool,
         serviceIsTransitioning: Bool,
         serviceIssue: String?,
+        serviceIssueRequiresAction: Bool = false,
         configuredProjectPaths: [String]?,
         activeProjectPaths: Set<String>?,
         receivedCardProjectPaths: Set<String>
@@ -56,7 +57,8 @@ struct PetConnectionReadiness: Equatable, Sendable {
                 ? "서비스 연결 상태를 확인하고 있습니다."
                 : serviceConnected ? "연결됨 · 앱과 서비스가 통신하고 있습니다."
                     : "연결 필요 · Blabee 서비스를 먼저 시작하세요.",
-            state: hasServiceIssue ? .attention : serviceIsTransitioning ? .checking
+            state: hasServiceIssue ? (serviceIssueRequiresAction ? .attention : .failed)
+                : serviceIsTransitioning ? .checking
                 : serviceConnected ? .confirmed : .attention
         )
         let pluginCheck = Self.pluginCheck(pluginState)
@@ -71,7 +73,7 @@ struct PetConnectionReadiness: Equatable, Sendable {
             projectCheck = Check(
                 id: "projects", title: "관찰 프로젝트",
                 detail: "등록된 프로젝트가 없습니다. Codex에서 작업할 폴더를 추가하세요.",
-                state: .pending
+                state: .attention
             )
         } else if let configured, activeProjectPaths != nil, hasCurrentService {
             projectCheck = Check(
@@ -175,12 +177,13 @@ struct PetConnectionReadiness: Equatable, Sendable {
         case .unchecked:
             detail = "Codex Plugin 설치 상태를 아직 확인하지 않았습니다."
             checkState = .pending
-        case .notInstalled, .marketplaceInstalledNeedsPlugin:
-            detail = state.title
-            checkState = .pending
-        default:
+        case .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable,
+             .unavailable, .legacyInstallationDetected:
             detail = state.title
             checkState = .attention
+        case .conflict, .error:
+            detail = state.title
+            checkState = .failed
         }
         return Check(id: "plugin", title: "Codex Plugin", detail: detail, state: checkState)
     }

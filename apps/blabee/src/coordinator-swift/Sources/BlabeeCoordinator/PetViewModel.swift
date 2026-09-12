@@ -123,12 +123,20 @@ final class PetViewModel: ObservableObject {
             {
                 onPanelLayoutChanged?()
             }
+            reconcileChoicePreview()
         }
     }
     @Published private(set) var localForegroundIdentity: PetInteractionIdentity?
     @Published private(set) var pendingFocusIdentity: PetInteractionIdentity?
     @Published private(set) var selectionSubmission: PetSelectionSubmission?
     @Published private(set) var riskConfirmation: PetRiskConfirmation?
+    @Published private(set) var choicePreview: PetChoicePreview? {
+        didSet {
+            guard oldValue != choicePreview else { return }
+            onPanelLayoutChanged?()
+            onChoicePreviewChanged?(choicePreview != nil)
+        }
+    }
     @Published private(set) var isExpanded = false {
         didSet {
             if oldValue != isExpanded { onPanelLayoutChanged?() }
@@ -152,16 +160,22 @@ final class PetViewModel: ObservableObject {
         }
     }
     @Published private(set) var shortcutConfiguration = PetShortcutConfiguration.defaults
+    @Published private(set) var approvalShortcutLabels: [PetApprovalShortcutIntent: String] = [:]
+    @Published private(set) var approvalShortcutDiagnostic: String?
     @Published private(set) var shortcutDraft = PetShortcutConfiguration.defaults
     @Published private(set) var isEditingShortcuts = false {
         didSet {
             if oldValue != isEditingShortcuts { onPanelLayoutChanged?() }
+            reconcileChoicePreview()
+            reconcileApprovalShortcuts()
         }
     }
     @Published private(set) var shortcutSettingsError: String?
     @Published private(set) var isShowingOnboarding = false {
         didSet {
             if oldValue != isShowingOnboarding { onPanelLayoutChanged?() }
+            reconcileChoicePreview()
+            reconcileApprovalShortcuts()
         }
     }
     @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
@@ -172,6 +186,8 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
     @Published private(set) var onboardingError: String?
+    @Published private(set) var appUpdateState: PetAppUpdateState = .notChecked
+    @Published private(set) var appUpdateSettingsRequestID = UUID()
     @Published private(set) var coordinatorTransportError: String?
     @Published private(set) var connectionReceivedCardProjectPaths: Set<String> = []
     @Published private(set) var suggestionMode: BlabeeSuggestionMode = .smart
@@ -208,6 +224,8 @@ final class PetViewModel: ObservableObject {
     private let legacyShellCleanupManager: any LegacyCodexShellCleanupManaging
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
+    private let appUpdateChecker: any PetAppUpdateChecking
+    private let appUpdateURLOpener: @MainActor (URL) -> Bool
     private let selectionIDGenerator: @Sendable () -> String
     private let permissionResponseIDGenerator: @Sendable () -> String
     private let managedApprovalResponseIDGenerator: @Sendable () -> String
@@ -222,6 +240,9 @@ final class PetViewModel: ObservableObject {
     private var inFlightSelectionIdentity: PetInteractionIdentity?
     private var focusWaiters: [PetInteractionIdentity: [CheckedContinuation<Void, Never>]] = [:]
     private var hotKeyRegistry: PetHotKeyRegistry?
+    private(set) var isPanelVisible = false
+    private let choicePreviewHoldMonitor: PetChoicePreviewHoldMonitor
+    private var previewBindingIdentity: PetInteractionIdentity?
     private var pollingTask: Task<Void, Never>?
     private var nextSnapshotRequest: UInt64 = 0
     private var lastAppliedSnapshotRequest: UInt64 = 0
@@ -235,6 +256,7 @@ final class PetViewModel: ObservableObject {
 
     var onPanelLayoutChanged: (() -> Void)?
     var onPanelToggleRequested: (() -> Void)?
+    var onChoicePreviewChanged: ((Bool) -> Void)?
     var onAttentionChanged: ((Bool) -> Void)?
     var onAttentionEvent: (() -> Void)?
     var onApprovalHeadChanged: ((PetApprovalHeadIdentity?) -> Void)?
@@ -249,6 +271,10 @@ final class PetViewModel: ObservableObject {
         legacyShellCleanupManager: any LegacyCodexShellCleanupManaging = LegacyUnavailableCodexShellCleanupManager(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
+        appUpdateChecker: any PetAppUpdateChecking = PetGitHubAppUpdateChecker(
+            currentVersion: nil, repository: nil
+        ),
+        appUpdateURLOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         selectionIDGenerator: @escaping @Sendable () -> String = {
             "selection_" + UUID().uuidString.lowercased()
@@ -258,7 +284,8 @@ final class PetViewModel: ObservableObject {
         },
         managedApprovalResponseIDGenerator: @escaping @Sendable () -> String = {
             "managed_approval_response_" + UUID().uuidString.lowercased()
-        }
+        },
+        choicePreviewHoldMonitor: PetChoicePreviewHoldMonitor = PetChoicePreviewHoldMonitor()
     ) {
         self.transport = transport
         self.externalApplicationOpener = externalApplicationOpener
@@ -268,10 +295,13 @@ final class PetViewModel: ObservableObject {
         self.legacyShellCleanupManager = legacyShellCleanupManager
         self.suggestionModeStore = suggestionModeStore
         self.projectFolderChooser = projectFolderChooser
+        self.appUpdateChecker = appUpdateChecker
+        self.appUpdateURLOpener = appUpdateURLOpener
         self.processIdentifier = processIdentifier
         self.selectionIDGenerator = selectionIDGenerator
         self.permissionResponseIDGenerator = permissionResponseIDGenerator
         self.managedApprovalResponseIDGenerator = managedApprovalResponseIDGenerator
+        self.choicePreviewHoldMonitor = choicePreviewHoldMonitor
         selectionReturnApplication = externalApplicationOpener
             .captureFrontmostExternalApplication(
                 excludingProcessIdentifier: processIdentifier
@@ -453,11 +483,12 @@ final class PetViewModel: ObservableObject {
             appOwnedServiceState == .starting || appOwnedServiceState == .reconnecting
                 || appOwnedServiceState == .stopping
         )
+        let serviceIssueRequiresAction = isAppOwnedServiceEnabled && appOwnedServiceState == .blocked
         let serviceIssue: String?
         if isAppOwnedServiceEnabled,
            case .failed = appOwnedServiceState {
             serviceIssue = appOwnedServiceState.detail
-        } else if isAppOwnedServiceEnabled, appOwnedServiceState == .blocked {
+        } else if serviceIssueRequiresAction {
             serviceIssue = appOwnedServiceState.detail
         } else if coordinatorTransportError != nil, !transitioning {
             serviceIssue = "서비스 응답을 확인하지 못했습니다. 서비스 설정에서 다시 연결해 주세요."
@@ -469,6 +500,7 @@ final class PetViewModel: ObservableObject {
             serviceConnected: connected,
             serviceIsTransitioning: transitioning,
             serviceIssue: serviceIssue,
+            serviceIssueRequiresAction: serviceIssueRequiresAction,
             configuredProjectPaths: configuredProjectPathsAreAuthoritative
                 ? configuredProjectPaths : nil,
             activeProjectPaths: connected ? activeProjectPaths : nil,
@@ -574,7 +606,22 @@ final class PetViewModel: ObservableObject {
     }
 
     func attachHotKeyRegistry(_ registry: PetHotKeyRegistry) {
+        endChoicePreview()
+        hotKeyRegistry?.onPreviewRequested = nil
+        hotKeyRegistry?.reconcilePreviews(eligibleSlots: [])
+        hotKeyRegistry?.onApprovalRequested = nil
+        hotKeyRegistry?.onApprovalShortcutAvailabilityChanged = nil
+        hotKeyRegistry?.reconcileApproval(head: nil)
         hotKeyRegistry = registry
+        registry.onPreviewRequested = { [weak self] slot in self?.beginChoicePreview(slot: slot) }
+        registry.onApprovalRequested = { [weak self] activation in
+            // The event carries the displayed request captured by Carbon,
+            // rather than looking up a possibly newer FIFO head in this Task.
+            Task { [weak self] in await self?.handleApprovalShortcut(activation) }
+        }
+        registry.onApprovalShortcutAvailabilityChanged = { [weak self] in
+            self?.refreshApprovalShortcutPresentation()
+        }
         shortcutConfiguration = registry.configuration
         shortcutDraft = registry.configuration
         shortcutSettingsError = nil
@@ -583,6 +630,7 @@ final class PetViewModel: ObservableObject {
 
     var canSaveShortcutSettings: Bool {
         hotKeyRegistry != nil && shortcutDraft.validationIssue() == nil
+            && shortcutDraft.previewValidationIssue() == nil
     }
 
     func toggleShortcutSettings() {
@@ -630,6 +678,36 @@ final class PetViewModel: ObservableObject {
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
         isShowingOnboarding = false
+    }
+
+    var appVersionDisplay: String {
+        appUpdateChecker.currentVersion?.displayLabel ?? "확인할 수 없음"
+    }
+
+    var isCheckingForAppUpdate: Bool { appUpdateState.isChecking }
+
+    func showAppUpdateSettings() {
+        cancelShortcutSettings()
+        clearLegacyCodexPluginMigrationConfirmation()
+        cancelLegacyShellCleanup()
+        isShowingOnboarding = true
+        setExpanded(true)
+        appUpdateSettingsRequestID = UUID()
+        refreshLocalOnboardingState()
+    }
+
+    func checkForAppUpdates() async {
+        guard !isCheckingForAppUpdate else { return }
+        appUpdateState = .checking
+        let result = await appUpdateChecker.checkForUpdates()
+        appUpdateState = Task.isCancelled ? .notChecked : result
+    }
+
+    func openAppUpdateLocation() {
+        guard let release = appUpdateState.availableRelease else { return }
+        if !appUpdateURLOpener(release.releaseURL) {
+            appUpdateState = .unavailable("릴리스 페이지를 열지 못했습니다. 기본 브라우저 설정을 확인한 뒤 다시 시도해 주세요.")
+        }
     }
 
     // Shell inspection is explicit and independent of Codex execution/Plugin setup.
@@ -681,6 +759,10 @@ final class PetViewModel: ObservableObject {
     }
 
     func refreshOnboarding() async {
+        refreshLocalOnboardingState()
+    }
+
+    private func refreshLocalOnboardingState() {
         guard !isOnboardingServiceOperationInFlight,
               !isOnboardingProjectOperationInFlight
         else {
@@ -883,12 +965,17 @@ final class PetViewModel: ObservableObject {
         refreshShortcutSettingsValidation()
     }
 
+    func updatePreviewShortcutDraft(_ preset: PetChoicePreviewShortcutPreset) {
+        shortcutDraft.previewPreset = preset
+        refreshShortcutSettingsValidation()
+    }
+
     func saveShortcutSettings() {
         guard let hotKeyRegistry else {
             shortcutSettingsError = "단축키 등록기가 준비되지 않았습니다."
             return
         }
-        if let issue = shortcutDraft.validationIssue() {
+        if let issue = shortcutDraft.validationIssue() ?? shortcutDraft.previewValidationIssue() {
             shortcutSettingsError = issue.message
             return
         }
@@ -998,6 +1085,10 @@ final class PetViewModel: ObservableObject {
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
+        endChoicePreview()
+        choicePreviewHoldMonitor.stop()
+        hotKeyRegistry?.reconcilePreviews(eligibleSlots: [])
+        setPanelVisible(false)
     }
 
     func shutdownAppOwnedService() async {
@@ -1027,6 +1118,7 @@ final class PetViewModel: ObservableObject {
             return
         }
         guard let slot = intent.slot else { return }
+        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         Task { [weak self] in
             await self?.handleGlobalSlot(slot)
         }
@@ -1034,6 +1126,120 @@ final class PetViewModel: ObservableObject {
 
     func requestPanelToggle() {
         onPanelToggleRequested?()
+    }
+
+    func setPanelVisible(_ visible: Bool) {
+        guard isPanelVisible != visible else { return }
+        isPanelVisible = visible
+        reconcileApprovalShortcuts()
+    }
+
+    private var shortcutApprovalHead: PetApprovalHead? {
+        // Approval cards render before settings/onboarding. Keep the draft
+        // flags intact while enabling keys for the card actually on screen.
+        guard isPanelVisible, !isShuttingDown,
+              !choicePreviewHoldMonitor.suppressesSelection,
+              inFlightPermissionRequestID == nil, inFlightManagedCommandApprovalID == nil,
+              let head = approvalHead,
+              PetApprovalShortcutIntent.allCases.contains(where: { $0.isAvailable(for: head) })
+        else { return nil }
+        return head
+    }
+
+    func approvalShortcutLabel(number: Int, for head: PetApprovalHead) -> String? {
+        guard shortcutApprovalHead == head, let intent = PetApprovalShortcutIntent(rawValue: number)
+        else { return nil }
+        return approvalShortcutLabels[intent]
+    }
+
+    private func handleApprovalShortcut(_ activation: PetApprovalShortcutActivation) async {
+        guard shortcutApprovalHead == activation.head,
+              hotKeyRegistry?.isCurrentApprovalActivation(activation) == true,
+              activation.intent.isAvailable(for: activation.head) else { return }
+        switch activation.head {
+        case .permission(let request):
+            guard let decision = PetPermissionDecision(choiceNumber: activation.intent.rawValue) else { return }
+            await resolvePermissionRequest(decision, for: request)
+        case .managed(let request):
+            let decision: PetManagedCommandApprovalDecision = switch activation.intent {
+            case .allowOnce: .acceptOnce
+            case .deny: .decline
+            case .deferToCodex: .decideInCodex
+            }
+            await resolveManagedCommandApproval(decision, for: request)
+        }
+    }
+
+    private func reconcileApprovalShortcuts() {
+        hotKeyRegistry?.reconcileApproval(head: shortcutApprovalHead)
+        refreshApprovalShortcutPresentation()
+    }
+
+    private func refreshApprovalShortcutPresentation() {
+        var labels: [PetApprovalShortcutIntent: String] = [:]
+        if let head = shortcutApprovalHead {
+            for intent in PetApprovalShortcutIntent.allCases {
+                labels[intent] = hotKeyRegistry?.approvalShortcutLabel(for: intent, head: head)
+            }
+        }
+        if approvalShortcutLabels != labels { approvalShortcutLabels = labels }
+        let diagnostic = shortcutApprovalHead == nil ? nil : hotKeyRegistry?.approvalShortcutDiagnostic
+        if approvalShortcutDiagnostic != diagnostic { approvalShortcutDiagnostic = diagnostic }
+    }
+
+    func previewShortcutLabel(for slot: Int) -> String {
+        shortcutConfiguration.previewPreset.labelPrefix + String(slot)
+    }
+
+    var previewHoldKeyName: String { shortcutConfiguration.previewPreset.holdKeyName }
+    var isChoicePreviewEnabled: Bool { shortcutConfiguration.previewPreset != .disabled }
+
+    func previewShortcutHint(for slot: Int) -> String {
+        guard isChoicePreviewEnabled, hotKeyRegistry?.isPreviewShortcutRegistered(for: slot) == true
+        else { return "" }
+        return "\(previewShortcutLabel(for: slot))를 누르면 자세히 볼 수 있습니다. \(previewHoldKeyName) 키를 떼면 닫힙니다."
+    }
+
+    func beginChoicePreview(slot: Int) {
+        let preset = shortcutConfiguration.previewPreset
+        guard let interaction = previewableInteraction,
+              let choice = interaction.choice(slot: slot), choice.isAction,
+              let shortcut = preset.shortcut(for: slot),
+              choicePreviewHoldMonitor.begin(keyCode: shortcut.keyCode, preset: preset, onModifierReleased: { [weak self] in
+                  self?.endChoicePreview()
+              })
+        else { return }
+        choicePreview = PetChoicePreview(identity: interaction.identity, choice: choice, shortcutPreset: preset)
+    }
+
+    func endChoicePreview() {
+        if choicePreview != nil { choicePreview = nil }
+        choicePreviewHoldMonitor.cancelPreview()
+    }
+
+    private var previewableInteraction: PetInteraction? {
+        guard !isShuttingDown, !isEditingShortcuts, !isShowingOnboarding,
+              approvalHead == nil, inFlightPermissionRequestID == nil,
+              inFlightManagedCommandApprovalID == nil, selectionSubmission == nil,
+              inFlightSelectionIdentity == nil,
+              let interaction = displayInteraction, interaction.isSelectionReady
+        else { return nil }
+        return interaction
+    }
+
+    private func reconcileChoicePreview() {
+        let interaction = previewableInteraction
+        if previewBindingIdentity != interaction?.identity {
+            hotKeyRegistry?.reconcilePreviews(eligibleSlots: [])
+            previewBindingIdentity = interaction?.identity
+        }
+        hotKeyRegistry?.reconcilePreviews(eligibleSlots: Set(interaction?.actionChoices.map(\.slot) ?? []))
+        if let preview = choicePreview,
+           interaction?.identity != preview.identity
+            || interaction?.choice(slot: preview.choice.slot) != preview.choice
+            || preview.shortcutPreset != shortcutConfiguration.previewPreset {
+            endChoicePreview()
+        }
     }
 
     func acknowledgeApprovalResolutionError() {
@@ -1104,6 +1310,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func handleGlobalSlot(_ slot: Int) async {
+        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let interaction = authoritativeSelectionInteraction(),
               let choice = interaction.choice(slot: slot),
               choice.enabled,
@@ -1123,6 +1330,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func requestPanelSelection(_ slot: Int) async {
+        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let interaction = authoritativeSelectionInteraction(),
               let choice = interaction.choice(slot: slot),
               choice.enabled,
@@ -1153,6 +1361,7 @@ final class PetViewModel: ObservableObject {
         _ slot: Int,
         interaction identity: PetInteractionIdentity
     ) async {
+        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let interaction = fifoHeadInteraction,
               interaction.identity == identity,
               interaction.isSelectionReady,
@@ -1212,7 +1421,8 @@ final class PetViewModel: ObservableObject {
               request.requestID.utf8.elementsEqual(displayedRequest.requestID.utf8),
               decision != .allowOnce || request.allowOnceAvailable,
               !request.deliveryPending,
-              inFlightPermissionRequestID == nil
+              inFlightPermissionRequestID == nil,
+              inFlightManagedCommandApprovalID == nil
         else { return }
         inFlightPermissionRequestID = request.requestID
         updateHotKeyEligibility()
@@ -1264,7 +1474,8 @@ final class PetViewModel: ObservableObject {
                   displayedRequest.managedRequestID.utf8
               ),
               !request.deliveryPending,
-              inFlightManagedCommandApprovalID == nil
+              inFlightManagedCommandApprovalID == nil,
+              inFlightPermissionRequestID == nil
         else { return }
         if decision == .acceptOnce, !request.allowOnceAvailable { return }
         if decision == .decline, !request.declineAvailable { return }
@@ -1555,6 +1766,7 @@ final class PetViewModel: ObservableObject {
     }
 
     private func submit(interaction: PetInteraction, choice: PetChoice) async {
+        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let current = authoritativeSelectionInteraction(),
               current.identity == interaction.identity,
               current.choice(slot: choice.slot)?.optionID == choice.optionID,
@@ -1612,6 +1824,8 @@ final class PetViewModel: ObservableObject {
     }
 
     private func updateHotKeyEligibility() {
+        reconcileChoicePreview()
+        reconcileApprovalShortcuts()
         guard pendingManagedCommandApproval == nil,
               inFlightManagedCommandApprovalID == nil,
               pendingPermissionRequest == nil,
@@ -1664,7 +1878,7 @@ final class PetViewModel: ObservableObject {
                 "단축키 등록 실패: " + registrationFailures.joined(separator: ", ")
             )
         } else {
-            setShortcutDiagnosticIfChanged(nil)
+            setShortcutDiagnosticIfChanged(hotKeyRegistry?.previewShortcutDiagnostic)
         }
     }
 
@@ -1675,7 +1889,7 @@ final class PetViewModel: ObservableObject {
     }
 
     private func refreshShortcutSettingsValidation() {
-        shortcutSettingsError = shortcutDraft.validationIssue()?.message
+        shortcutSettingsError = (shortcutDraft.validationIssue() ?? shortcutDraft.previewValidationIssue())?.message
     }
 
     private func performOnboardingOperation(

@@ -53,19 +53,22 @@ final class AppInstallationViewModel: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var recoveryURL: URL?
     @Published var showsReplacementConfirmation = false
+    @Published private(set) var canConfirmLegacyQuit = false
+    @Published var showsLegacyQuitConfirmation = false
 
     let sourceURL: URL
     private let inspect: @Sendable () throws -> AppInstallationPlan
-    private let install: @Sendable (AppInstallationPlan, Bool) throws -> AppInstallationReceipt
+    private let install: @Sendable (AppInstallationPlan, Bool, Bool) throws -> AppInstallationReceipt
     private let openInstalled: @MainActor (URL, String) async throws -> Void
     private let showInFinder: @MainActor (URL) throws -> Void
     private let didLaunch: @MainActor () -> Void
     private var replacementRequested = false
+    private var legacyReplacementRequested = false
 
     init(
         sourceURL: URL,
         inspect: @escaping @Sendable () throws -> AppInstallationPlan,
-        install: @escaping @Sendable (AppInstallationPlan, Bool) throws -> AppInstallationReceipt,
+        install: @escaping @Sendable (AppInstallationPlan, Bool, Bool) throws -> AppInstallationReceipt,
         openInstalled: @escaping @MainActor (URL, String) async throws -> Void,
         showInFinder: @escaping @MainActor (URL) throws -> Void = { _ in },
         didLaunch: @escaping @MainActor () -> Void = {}
@@ -93,7 +96,7 @@ final class AppInstallationViewModel: ObservableObject {
         return AppInstallationViewModel(
             sourceURL: sourceURL,
             inspect: { try service().inspect(source: sourceURL) },
-            install: { try service().install($0, replacementApproved: $1) },
+            install: { try service().install($0, replacementApproved: $1, legacyQuitConfirmed: $2) },
             openInstalled: { try await opener.openInstalled(applicationURL: $0, expectedIdentity: $1) },
             showInFinder: { try opener.showInFinder($0) },
             didLaunch: didLaunch
@@ -123,6 +126,13 @@ final class AppInstallationViewModel: ObservableObject {
             + "기존 앱은 응용 프로그램 폴더의 별도 백업에 보존합니다. 사용자 데이터와 Codex는 변경하지 않습니다."
     }
 
+    var legacyReplacementExplanation: String {
+        "macOS가 일부 프로세스의 실행 파일을 확인하지 못해, 기존 Blabee가 모두 종료됐는지는 확인되지 않았습니다. "
+            + "작업을 저장하고 Blabee와 연결된 Codex 세션을 종료한 뒤 진행하세요. "
+            + "종료하지 않은 작업이 있으면 연결이 중단되거나 오류가 날 수 있습니다.\n\n"
+            + replacementExplanation
+    }
+
     func refresh() async {
         guard !phase.isBusy, phase != .launched else { return }
         // After publication, a retry must open the same installation, never copy again.
@@ -133,6 +143,8 @@ final class AppInstallationViewModel: ObservableObject {
         plan = nil
         showsReplacementConfirmation = false
         replacementRequested = false
+        canConfirmLegacyQuit = false
+        cancelLegacyReplacement()
         let inspect = self.inspect
         do {
             plan = try await Task.detached(priority: .userInitiated) { try inspect() }.value
@@ -174,18 +186,50 @@ final class AppInstallationViewModel: ObservableObject {
         replacementRequested = false
     }
 
+    func prepareLegacyReplacement() async {
+        guard canConfirmLegacyQuit, !phase.isBusy, phase != .launched, receipt == nil else { return }
+        // A failed transaction invalidated the previous plan. Inspect again
+        // before showing the exact versions and requesting one-use consent.
+        await refresh()
+        guard phase == .ready, let plan, plan.existing != nil,
+              AppInstallationPrimaryAction.forComparison(plan.comparison) == .confirmReplacement
+        else { return }
+        legacyReplacementRequested = true
+        showsLegacyQuitConfirmation = true
+    }
+
+    func confirmLegacyReplacement() async {
+        guard legacyReplacementRequested, !phase.isBusy, phase != .launched,
+              receipt == nil, let plan, plan.existing != nil,
+              AppInstallationPrimaryAction.forComparison(plan.comparison) == .confirmReplacement
+        else { return }
+        cancelLegacyReplacement()
+        await performInstall(plan, replacementApproved: true, legacyQuitConfirmed: true)
+    }
+
+    func cancelLegacyReplacement() {
+        showsLegacyQuitConfirmation = false
+        legacyReplacementRequested = false
+    }
+
     func reveal(_ url: URL) {
         guard !phase.isBusy else { return }
         do { try showInFinder(url) } catch { record(error) }
     }
 
-    private func performInstall(_ plan: AppInstallationPlan, replacementApproved: Bool) async {
+    private func performInstall(
+        _ plan: AppInstallationPlan,
+        replacementApproved: Bool,
+        legacyQuitConfirmed: Bool = false
+    ) async {
         phase = .installing
         message = nil
+        canConfirmLegacyQuit = false
+        cancelLegacyReplacement()
         let install = self.install
         do {
             let receipt = try await Task.detached(priority: .userInitiated) {
-                try install(plan, replacementApproved)
+                try install(plan, replacementApproved, legacyQuitConfirmed)
             }.value
             self.receipt = receipt
             recoveryURL = receipt.backupURL
@@ -194,6 +238,9 @@ final class AppInstallationViewModel: ObservableObject {
             // A new click must inspect and reconfirm after any failed transaction.
             self.plan = nil
             record(error)
+            canConfirmLegacyQuit = receipt == nil && plan.existing != nil
+                && AppInstallationPrimaryAction.forComparison(plan.comparison) == .confirmReplacement
+                && (error as? AppInstallationError)?.code == .activityInspectionIncomplete
         }
     }
 
@@ -266,6 +313,10 @@ private struct AppInstallationView: View {
                 Button(model.primaryTitle) { Task { await model.performPrimary() } }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(model.phase.isBusy || (model.plan == nil && model.receipt == nil))
+                if model.canConfirmLegacyQuit {
+                    Button("종료 확인 후 교체") { Task { await model.prepareLegacyReplacement() } }
+                        .controlSize(.large).disabled(model.phase.isBusy)
+                }
                 HStack {
                     Button("응용 프로그램 폴더 열기") {
                         model.reveal(URL(fileURLWithPath: "/Applications", isDirectory: true))
@@ -286,6 +337,10 @@ private struct AppInstallationView: View {
             Button("백업하고 교체") { Task { await model.confirmReplacement() } }
             Button("취소", role: .cancel) { model.cancelReplacement() }
         } message: { Text(model.replacementExplanation) }
+        .confirmationDialog("Blabee와 연결된 Codex 세션을 종료했나요?", isPresented: $model.showsLegacyQuitConfirmation) {
+            Button("종료했으며, 백업하고 교체") { Task { await model.confirmLegacyReplacement() } }
+            Button("취소", role: .cancel) { model.cancelLegacyReplacement() }
+        } message: { Text(model.legacyReplacementExplanation) }
     }
 }
 

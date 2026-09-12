@@ -31,7 +31,7 @@ enum PetAppServiceState: Equatable, Sendable {
         case .stopped:
             "앱 실행형 서비스가 선택되어 있습니다. 서비스 시작을 눌러 연결하세요."
         case .starting:
-            "실행 파일과 서비스 연결을 확인하고 있습니다. 아직 준비된 상태가 아닙니다."
+            "서비스를 준비하고 있습니다. macOS에서 키체인 접근을 요청하면 확인해 주세요. 처음 실행하거나 앱을 업데이트한 뒤에는 시간이 더 걸릴 수 있습니다."
         case .ready:
             "이 앱이 시작한 서비스에 연결되었습니다. 패널을 닫아도 유지되고 Blabee 종료 시 함께 종료됩니다."
         case .reconnecting:
@@ -96,6 +96,7 @@ final class PetAppServiceController {
     private let preference: any PetAppServicePreferenceStoring
     private let registration: @MainActor () -> PetServiceRegistrationState
     private let readinessTimeoutNanoseconds: UInt64
+    private let startupTimeoutNanoseconds: UInt64
     private var child: (any AppOwnedServiceChild)?
     private var deadline: Task<Void, Never>?
     private var stopTask: Task<Void, Never>?
@@ -111,14 +112,18 @@ final class PetAppServiceController {
         launcher: any AppOwnedServiceLaunching,
         preference: any PetAppServicePreferenceStoring,
         registration: @escaping @MainActor () -> PetServiceRegistrationState,
-        readinessTimeoutNanoseconds: UInt64 = 12_000_000_000
+        readinessTimeoutNanoseconds: UInt64 = 12_000_000_000,
+        startupTimeoutNanoseconds: UInt64 = 120_000_000_000
     ) {
         self.launcher = launcher
         self.preference = preference
         self.registration = registration
         self.readinessTimeoutNanoseconds = readinessTimeoutNanoseconds
+        self.startupTimeoutNanoseconds = startupTimeoutNanoseconds
         enabled = preference.enabled
         state = preference.enabled ? .stopped : .disabled
+        PetStartupDiagnostics.preference(enabled: enabled)
+        PetStartupDiagnostics.serviceState(state)
     }
 
     deinit { deadline?.cancel() }
@@ -134,6 +139,7 @@ final class PetAppServiceController {
     }
 
     func startAtAppLaunch() {
+        PetStartupDiagnostics.record(.serviceStartRequested)
         guard enabled, state == .stopped else { return }
         launchIfAllowed()
     }
@@ -142,6 +148,7 @@ final class PetAppServiceController {
         guard !enabled, !shuttingDown, !transitionInProgress, child == nil else { return }
         enabled = true
         preference.enabled = true
+        PetStartupDiagnostics.preference(enabled: true)
         launchIfAllowed()
     }
 
@@ -160,10 +167,12 @@ final class PetAppServiceController {
         guard child == nil else { return }
         enabled = false
         preference.enabled = false
+        PetStartupDiagnostics.preference(enabled: false)
         update(.disabled)
     }
 
     func shutdown() async {
+        PetStartupDiagnostics.record(.serviceShutdownRequested)
         shuttingDown = true
         // Closing the app is not opting out: remember the user's mode for the
         // next launch. Join an ongoing stop without spinning, even if the
@@ -175,6 +184,7 @@ final class PetAppServiceController {
         guard !transitionInProgress, !shuttingDown,
               let child, !child.isRunning else { return }
         let summary = child.terminationSummary ?? "app_service_exited"
+        PetStartupDiagnostics.recordFailure(.serviceChildExited, code: summary)
         generation &+= 1
         deadline?.cancel()
         deadline = nil
@@ -199,13 +209,15 @@ final class PetAppServiceController {
         checkChildBeforePolling()
         guard child != nil, state == .ready else { return }
         update(.reconnecting)
-        armDeadline()
+        armDeadline(timeoutNanoseconds: readinessTimeoutNanoseconds)
     }
 
     private func launchIfAllowed() {
         guard enabled, !shuttingDown, !transitionInProgress, child == nil else { return }
         generation &+= 1
-        switch registration() {
+        let registrationState = registration()
+        PetStartupDiagnostics.registration(registrationState)
+        switch registrationState {
         case .notRegistered, .notFound: break
         case .enabled, .requiresApproval:
             update(.blocked)
@@ -217,23 +229,27 @@ final class PetAppServiceController {
         update(.starting)
         do {
             child = try launcher.launch()
-            armDeadline()
+            PetStartupDiagnostics.record(.serviceChildSpawned)
+            // Initial storage access can wait for a user to answer macOS's
+            // Keychain prompt. Reconnects retain their shorter health budget.
+            armDeadline(timeoutNanoseconds: startupTimeoutNanoseconds)
         } catch {
             // Never surface subprocess output, local paths, tokens or prompts.
             let code = (error as? CoordinatorError)?.code ?? "app_service_launch_failed"
+            PetStartupDiagnostics.recordFailure(.serviceLaunchFailed, code: code)
             update(.failed(code))
         }
     }
 
-    private func armDeadline() {
+    private func armDeadline(timeoutNanoseconds: UInt64) {
         deadline?.cancel()
         let expectedGeneration = generation
-        let timeout = readinessTimeoutNanoseconds
         deadline = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: timeout) } catch { return }
+            do { try await Task.sleep(nanoseconds: timeoutNanoseconds) } catch { return }
             guard let self, self.generation == expectedGeneration,
                   self.state == .starting || self.state == .reconnecting else { return }
             self.deadline = nil
+            PetStartupDiagnostics.record(.serviceReadinessTimeout)
             await self.stopOwnedChild()
             guard !self.shuttingDown else { return }
             if self.child == nil { self.update(.failed("app_service_connection_timeout")) }
@@ -271,6 +287,7 @@ final class PetAppServiceController {
     private func update(_ state: PetAppServiceState) {
         guard self.state != state else { return }
         self.state = state
+        PetStartupDiagnostics.serviceState(state)
         onChange?()
     }
 }

@@ -66,11 +66,15 @@ private struct AppServiceHarness {
     let preference = AppServiceMemoryPreference()
     let registration = AppServiceRegistration()
 
-    func controller(timeout: UInt64 = 12_000_000_000) -> PetAppServiceController {
+    func controller(
+        timeout: UInt64 = 12_000_000_000,
+        startupTimeout: UInt64? = nil
+    ) -> PetAppServiceController {
         PetAppServiceController(
             launcher: launcher, preference: preference,
             registration: { registration.state },
-            readinessTimeoutNanoseconds: timeout
+            readinessTimeoutNanoseconds: timeout,
+            startupTimeoutNanoseconds: startupTimeout ?? timeout
         )
     }
 }
@@ -168,7 +172,7 @@ func petAppServiceLaunchFailureIsManual() async {
 @MainActor
 func petAppServiceStartupTimeout() async throws {
     let h = AppServiceHarness()
-    let c = h.controller(timeout: 20_000_000)
+    let c = h.controller(timeout: 5_000_000_000, startupTimeout: 20_000_000)
     c.enable()
     try await waitForAppService { c.state == .failed("app_service_connection_timeout") }
     #expect(h.launcher.children.first?.stopCount == 1)
@@ -176,6 +180,56 @@ func petAppServiceStartupTimeout() async throws {
     for _ in 0..<10 { c.startAtAppLaunch(); c.checkChildBeforePolling() }
     #expect(h.launcher.launches == 1)
     await c.shutdown()
+}
+
+@Test("Initial readiness can wait for Keychain beyond the reconnect budget")
+@MainActor
+func petAppServiceDelayedInitialReadiness() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .starting)
+    #expect(child.isRunning)
+    #expect(child.stopCount == 0)
+    #expect(!c.mayQueryCoordinator)
+    child.hasPublishedService = true
+    c.receivedVerifiedSnapshot(generation: c.generation)
+    #expect(c.state == .ready)
+    #expect(h.launcher.launches == 1)
+    await c.shutdown()
+}
+
+@Test("The first verified snapshot cancels the initial startup deadline")
+@MainActor
+func petAppServiceInitialReadinessCancelsDeadline() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 5_000_000_000, startupTimeout: 20_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    c.receivedVerifiedSnapshot(generation: c.generation)
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .ready)
+    #expect(child.isRunning)
+    #expect(child.stopCount == 0)
+    await c.shutdown()
+}
+
+@Test("Shutdown cancels the initial deadline without another stop or restart")
+@MainActor
+func petAppServiceShutdownCancelsStartupDeadline() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 5_000_000_000, startupTimeout: 20_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    await c.shutdown()
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .stopped)
+    #expect(child.stopCount == 1)
+    #expect(!c.hasOwnedChild)
+    #expect(h.launcher.launches == 1)
 }
 
 @Test("Crash and uncertain cleanup never adopt or start another service")
@@ -209,7 +263,7 @@ func petAppServiceCrashAndCleanupFailure() async throws {
 @MainActor
 func petAppServiceGenerationAndConnectionLoss() async throws {
     let h = AppServiceHarness()
-    let c = h.controller(timeout: 50_000_000)
+    let c = h.controller(timeout: 50_000_000, startupTimeout: 10_000_000_000)
     c.enable()
     let oldGeneration = c.generation
     await c.restart()
@@ -249,6 +303,72 @@ func petAppServiceConcurrentRestart() async throws {
     #expect(!h.preference.enabled)
 }
 
+@Test("ViewModel shows registration conflicts as actions and unknown registration as failure",
+      arguments: [PetServiceRegistrationState.enabled, .requiresApproval, .unknown])
+@MainActor
+func petAppServiceViewModelRegistrationReadiness(_ registration: PetServiceRegistrationState) async {
+    let h = AppServiceHarness()
+    h.registration.state = registration
+    let c = h.controller()
+    let vm = PetViewModel(
+        transport: PetFakeTransport(), externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: c
+    )
+    await vm.beginOnboarding()
+    await vm.enableAppOwnedService()
+    let expectedTone: PetSettingsStatusTone = registration == .unknown ? .error : .actionNeeded
+    let model = vm.connectionReadiness
+    #expect(vm.appOwnedServiceState == (registration == .unknown
+        ? .failed("service_registration_unknown") : .blocked))
+    #expect(model.status == .needsAttention)
+    #expect(model.title == "서비스 연결을 확인해 주세요")
+    #expect(model.detail == vm.appOwnedServiceState.detail)
+    #expect(model.nextStep == .service)
+    #expect(model.nextStepTitle == "서비스 상태 확인")
+    #expect(model.checks[0].state == (registration == .unknown ? .failed : .attention))
+    #expect(PetSettingsStatusTone.appService(vm.appOwnedServiceState) == expectedTone)
+    #expect(PetSettingsStatusTone.connection(model) == expectedTone)
+    #expect(!vm.hasVerifiedServiceConnection)
+    #expect(h.launcher.launches == 0)
+    #expect(h.registration.registerCount == 0)
+    #expect(h.registration.unregisterCount == 0)
+    await vm.shutdownAppOwnedService()
+}
+
+@Test("ViewModel keeps an automatic service transport failure classified as an error")
+@MainActor
+func petAppServiceViewModelTransportFailureReadiness() async throws {
+    let h = AppServiceHarness()
+    h.registration.state = .enabled
+    let c = h.controller()
+    let transport = PetFakeTransport()
+    let vm = PetViewModel(
+        transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
+        onboardingAdapter: h.registration, appService: c
+    )
+    await vm.beginOnboarding()
+    await transport.enqueue(type: "get_state", response: try petTestSnapshotData(cards: []))
+    await vm.refresh()
+    #expect(vm.hasVerifiedServiceConnection)
+    #expect(vm.connectionReadiness.checks[0].state == .confirmed)
+
+    await transport.enqueueFailure(type: "get_state", code: "lost")
+    await vm.refresh()
+    let model = vm.connectionReadiness
+    #expect(!vm.hasVerifiedServiceConnection)
+    #expect(vm.appOwnedServiceState == .disabled)
+    #expect(model.status == .needsAttention)
+    #expect(model.nextStep == .service)
+    #expect(model.checks[0].state == .failed)
+    #expect(PetSettingsStatusTone.connection(model) == .error)
+    #expect(await transport.requestCount(type: "get_state") == 2)
+    #expect(h.launcher.launches == 0)
+    #expect(h.registration.registerCount == 0)
+    #expect(h.registration.unregisterCount == 0)
+    #expect(!h.preference.enabled)
+    await vm.shutdownAppOwnedService()
+}
+
 @Test("App-service settings keep registration explicit and gate snapshot readiness")
 @MainActor
 func petAppServiceViewModelReadiness() async throws {
@@ -282,6 +402,9 @@ func petAppServiceViewModelReadiness() async throws {
     #expect(vm.snapshot == nil)
     #expect(vm.connectionReceivedCardProjectPaths.isEmpty)
     #expect(vm.appOwnedServiceState == .failed("app_service_exited"))
+    #expect(vm.connectionReadiness.checks[0].state == .failed)
+    #expect(PetSettingsStatusTone.connection(vm.connectionReadiness) == .error)
+    #expect(vm.connectionReadiness.nextStep == .service)
     #expect(await transport.requestCount(type: "get_state") == 1)
     await vm.shutdownAppOwnedService()
 }

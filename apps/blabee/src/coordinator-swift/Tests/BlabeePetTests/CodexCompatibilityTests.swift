@@ -31,7 +31,7 @@ func codexCompatibilityVersionParsing() {
 func codexCompatibilityQualification() {
     #expect(CodexCompatibility.supportedVersions == ["0.149.1", "0.150.1", "0.151.0"])
     #expect(CodexCompatibility.pluginCLISupportedVersions == [
-        "0.151.0", "0.152.0", "0.152.1", "0.153.2", "0.153.4",
+        "0.151.0", "0.152.0", "0.152.1", "0.153.2", "0.153.4", "0.154.0",
     ])
     #expect(CodexCompatibility.supportedVersions(for: .managedAppServer)
         == CodexCompatibility.supportedVersions)

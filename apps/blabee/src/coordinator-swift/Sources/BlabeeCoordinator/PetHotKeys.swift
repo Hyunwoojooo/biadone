@@ -1,4 +1,5 @@
 import Carbon
+import CoreGraphics
 import Foundation
 
 enum PetShortcutIntent: String, Codable, Sendable, CaseIterable, Hashable {
@@ -103,6 +104,7 @@ struct PetShortcutKeyChoice: Identifiable, Sendable, Equatable, Hashable {
 enum PetShortcutConfigurationIssue: Sendable, Equatable {
     case unsupported(PetShortcutIntent)
     case duplicate(owner: PetShortcutIntent, duplicate: PetShortcutIntent)
+    case previewCollision(owner: PetShortcutIntent, slot: Int)
 
     var message: String {
         switch self {
@@ -110,6 +112,8 @@ enum PetShortcutConfigurationIssue: Sendable, Equatable {
             "\(intent.displayName)에 지원하지 않는 키 조합이 있습니다."
         case .duplicate(let owner, let duplicate):
             "\(owner.displayName)와 \(duplicate.displayName)에 같은 단축키를 사용할 수 없습니다."
+        case .previewCollision(let owner, let slot):
+            "\(owner.displayName)와 \(slot)번 미리보기에 같은 단축키를 사용할 수 없습니다."
         }
     }
 }
@@ -192,6 +196,7 @@ struct PetShortcutConfiguration: Codable, Sendable, Equatable {
     var slot2: PetShortcut
     var slot3: PetShortcut
     var slot4: PetShortcut
+    var previewPreset: PetChoicePreviewShortcutPreset = .controlOption
 
     static let defaults = PetShortcutConfiguration(
         toggle: PetShortcut(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)),
@@ -236,6 +241,34 @@ struct PetShortcutConfiguration: Codable, Sendable, Equatable {
         return nil
     }
 
+    func previewValidationIssue() -> PetShortcutConfigurationIssue? {
+        for slot in 1...4 {
+            guard let preview = previewPreset.shortcut(for: slot) else { continue }
+            if let owner = PetShortcutIntent.allCases.first(where: {
+                shortcut(for: $0) == preview
+            }) {
+                return .previewCollision(owner: owner, slot: slot)
+            }
+        }
+        return nil
+    }
+}
+
+extension PetShortcutConfiguration {
+    // v1 settings written before previews contain only these five selection keys.
+    // Keep those bindings intact, even when the new preview default overlaps one.
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        toggle = try values.decode(PetShortcut.self, forKey: .toggle)
+        slot1 = try values.decode(PetShortcut.self, forKey: .slot1)
+        slot2 = try values.decode(PetShortcut.self, forKey: .slot2)
+        slot3 = try values.decode(PetShortcut.self, forKey: .slot3)
+        slot4 = try values.decode(PetShortcut.self, forKey: .slot4)
+        previewPreset = try values.decodeIfPresent(
+            PetChoicePreviewShortcutPreset.self,
+            forKey: .previewPreset
+        ) ?? .controlOption
+    }
 }
 
 protocol PetShortcutConfigurationStoring: Sendable {
@@ -267,6 +300,7 @@ final class PetUserDefaultsShortcutStore: PetShortcutConfigurationStoring, @unch
 
     func save(_ configuration: PetShortcutConfiguration) {
         guard configuration.validationIssue() == nil,
+              configuration.previewValidationIssue() == nil,
               let data = try? JSONEncoder().encode(configuration)
         else { return }
         defaults.set(data, forKey: key)
@@ -274,8 +308,10 @@ final class PetUserDefaultsShortcutStore: PetShortcutConfigurationStoring, @unch
 }
 
 struct PetHotKeyEvent: Sendable, Equatable {
+    enum Phase: Sendable, Equatable { case pressed, released }
     let signature: UInt32
     let id: UInt32
+    var phase: Phase = .pressed
 }
 
 protocol PetHotKeyReference: AnyObject, Sendable {}
@@ -321,7 +357,11 @@ private func petCarbonHotKeyCallback(
     )
     guard status == noErr else { return status }
     let backend = Unmanaged<CarbonPetHotKeyBackend>.fromOpaque(userData).takeUnretainedValue()
-    backend.deliver(PetHotKeyEvent(signature: identifier.signature, id: identifier.id))
+    backend.deliver(PetHotKeyEvent(
+        signature: identifier.signature,
+        id: identifier.id,
+        phase: GetEventKind(event) == UInt32(kEventHotKeyReleased) ? .released : .pressed
+    ))
     return noErr
 }
 
@@ -336,16 +376,15 @@ final class CarbonPetHotKeyBackend: PetHotKeyBackend, @unchecked Sendable {
         lock.unlock()
         guard !alreadyInstalled else { return }
 
-        var specification = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        var specifications = [kEventHotKeyPressed, kEventHotKeyReleased].map {
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32($0))
+        }
         var installed: EventHandlerRef?
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             petCarbonHotKeyCallback,
-            1,
-            &specification,
+            specifications.count,
+            &specifications,
             Unmanaged.passUnretained(self).toOpaque(),
             &installed
         )
@@ -409,15 +448,18 @@ struct PetShortcutApplyFailure: Sendable, Equatable {
     let intent: PetShortcutIntent
     let status: PetShortcutBindingStatus
     let isRetryAttempt: Bool
+    let isPreview: Bool
 
     init(
         intent: PetShortcutIntent,
         status: PetShortcutBindingStatus,
-        isRetryAttempt: Bool = false
+        isRetryAttempt: Bool = false,
+        isPreview: Bool = false
     ) {
         self.intent = intent
         self.status = status
         self.isRetryAttempt = isRetryAttempt
+        self.isPreview = isPreview
     }
 
     var message: String {
@@ -429,7 +471,9 @@ struct PetShortcutApplyFailure: Sendable, Equatable {
         case .registrationFailure(let status):
             if let status { "등록 실패 (\(status))" } else { "등록 실패" }
         }
-        return "\(intent.displayName): \(reason)"
+        let name = isPreview ? intent.slot.map { "\($0)번 미리보기" } ?? intent.displayName
+            : intent.displayName
+        return "\(name): \(reason)"
     }
 }
 
@@ -482,6 +526,16 @@ final class PetHotKeyRegistry {
     private let backend: PetHotKeyBackend
     private let store: (any PetShortcutConfigurationStoring)?
     private let onIntent: @MainActor (PetShortcutIntent) -> Void
+    private let previewHotKeys: PetChoicePreviewHotKeys
+    private let approvalHotKeys: PetApprovalHotKeys
+    var onPreviewRequested: (@MainActor (Int) -> Void)?
+    var onApprovalRequested: (@MainActor (PetApprovalShortcutActivation) -> Void)?
+    var onApprovalShortcutAvailabilityChanged: (@MainActor () -> Void)?
+    var previewShortcutDiagnostic: String? { previewHotKeys.diagnostic }
+    func isPreviewShortcutRegistered(for slot: Int) -> Bool {
+        if case .registered? = previewHotKeys.statuses[slot] { return true }
+        return false
+    }
     private(set) var configuration: PetShortcutConfiguration
     private var active: [PetShortcutIntent: ActiveBinding] = [:]
     private var intentByEventID: [UInt32: PetShortcutIntent] = [:]
@@ -496,15 +550,30 @@ final class PetHotKeyRegistry {
         backend: PetHotKeyBackend,
         configuration: PetShortcutConfiguration,
         store: (any PetShortcutConfigurationStoring)? = nil,
+        approvalKeyIsPressed: @escaping @MainActor (UInt32) -> Bool = {
+            CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0))
+        },
         onIntent: @escaping @MainActor (PetShortcutIntent) -> Void
     ) throws {
         self.backend = backend
+        previewHotKeys = PetChoicePreviewHotKeys(backend: backend)
+        approvalHotKeys = PetApprovalHotKeys(backend: backend, keyIsPressed: approvalKeyIsPressed)
         self.configuration = configuration
         self.store = store
         self.onIntent = onIntent
+        let approvalEventGate = approvalHotKeys.eventGate
+        approvalHotKeys.onAvailabilityChanged = { [weak self] in
+            self?.onApprovalShortcutAvailabilityChanged?()
+        }
         try backend.installHandler { [weak self] event in
+            let approval = approvalEventGate.capture(event)
             Task { @MainActor in
-                self?.receive(event)
+                if event.signature == PetApprovalHotKeys.signature {
+                    guard let self, let activation = self.approvalHotKeys.receive(approval) else { return }
+                    self.onApprovalRequested?(activation)
+                } else {
+                    self?.receive(event)
+                }
             }
         }
         reconcile(eligibleSlots: [])
@@ -512,38 +581,55 @@ final class PetHotKeyRegistry {
 
     @discardableResult
     func updateConfiguration(_ configuration: PetShortcutConfiguration) -> PetShortcutApplyResult {
-        if let issue = configuration.validationIssue() {
+        if let issue = configuration.validationIssue() ?? configuration.previewValidationIssue() {
             return .invalidConfiguration(issue)
         }
+
+        let previewSlots = previewHotKeys.eligibleSlots
+        let previouslyActiveSelections = Set(active.keys)
+        let previouslyActivePreviews = Set(previewHotKeys.statuses.compactMap { slot, status in
+            if case .registered = status { return slot }
+            return nil
+        })
+        reconcilePreviews(eligibleSlots: [])
+        defer { reconcilePreviews(eligibleSlots: previewSlots) }
 
         let previousConfiguration = self.configuration
         self.configuration = configuration
         reconcile(eligibleSlots: eligibleSlots, retryFailedRegistrations: true)
+        // Settings may have temporarily hidden all cards. Verify every candidate
+        // preview chord before saving, then restore actual eligibility on return.
+        reconcilePreviews(eligibleSlots: Set(1...4))
 
         let candidateFailures = activeRegistrationFailures()
+            + previewRegistrationFailures(slots: Set(1...4))
         guard !candidateFailures.isEmpty else {
             store?.save(configuration)
             return .applied
         }
 
-        guard previousConfiguration != configuration else {
-            return .registrationRejected(candidateFailures.map {
-                PetShortcutApplyFailure(
-                    intent: $0.intent,
-                    status: $0.status,
-                    isRetryAttempt: true
-                )
-            })
-        }
-
+        reconcilePreviews(eligibleSlots: [])
         self.configuration = previousConfiguration
-        reconcile(eligibleSlots: eligibleSlots, retryFailedRegistrations: true)
-        let rollbackFailures = activeRegistrationFailures()
+        if previousConfiguration != configuration {
+            reconcile(eligibleSlots: eligibleSlots, retryFailedRegistrations: true)
+        }
+        reconcilePreviews(eligibleSlots: previewSlots)
+        let rollbackFailures = activeRegistrationFailures().filter {
+            previouslyActiveSelections.contains($0.intent)
+        } + previewRegistrationFailures(slots: previouslyActivePreviews)
+        let reportedCandidateFailures = candidateFailures.map {
+            PetShortcutApplyFailure(
+                intent: $0.intent,
+                status: $0.status,
+                isRetryAttempt: previousConfiguration == configuration,
+                isPreview: $0.isPreview
+            )
+        }
         if rollbackFailures.isEmpty {
-            return .registrationRejected(candidateFailures)
+            return .registrationRejected(reportedCandidateFailures)
         }
         return .rollbackFailed(
-            candidateFailures: candidateFailures,
+            candidateFailures: reportedCandidateFailures,
             rollbackFailures: rollbackFailures
         )
     }
@@ -664,7 +750,47 @@ final class PetHotKeyRegistry {
         }
     }
 
+    func reconcilePreviews(eligibleSlots: Set<Int>) {
+        previewHotKeys.reconcile(
+            eligibleSlots: eligibleSlots,
+            reserved: Set(PetShortcutIntent.allCases.map { configuration.shortcut(for: $0) }),
+            preset: configuration.previewPreset
+        )
+    }
+
+    func reconcileApproval(head: PetApprovalHead?) { approvalHotKeys.reconcile(head: head) }
+
+    func approvalShortcutLabel(for intent: PetApprovalShortcutIntent, head: PetApprovalHead) -> String? {
+        approvalHotKeys.label(for: intent, head: head)
+    }
+
+    var approvalShortcutDiagnostic: String? { approvalHotKeys.diagnostic }
+
+    func isCurrentApprovalActivation(_ activation: PetApprovalShortcutActivation) -> Bool {
+        approvalHotKeys.isCurrent(activation)
+    }
+
+    func pollApprovalKeyRelease() { approvalHotKeys.pollRelease() }
+
+    private func previewRegistrationFailures(slots: Set<Int>) -> [PetShortcutApplyFailure] {
+        slots.sorted().compactMap { slot in
+            guard configuration.previewPreset.shortcut(for: slot) != nil,
+                  let intent = PetShortcutIntent.slot(slot)
+            else { return nil }
+            let status = previewHotKeys.statuses[slot] ?? .registrationFailure(status: nil)
+            guard case .registered = status else {
+                return PetShortcutApplyFailure(intent: intent, status: status, isPreview: true)
+            }
+            return nil
+        }
+    }
+
     private func receive(_ event: PetHotKeyEvent) {
+        guard event.phase == .pressed else { return }
+        if let slot = previewHotKeys.slot(for: event) {
+            onPreviewRequested?(slot)
+            return
+        }
         guard event.signature == Self.signature,
               let intent = intentByEventID[event.id],
               active[intent]?.eventID == event.id

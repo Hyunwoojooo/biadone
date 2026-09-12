@@ -56,6 +56,23 @@ struct CodexHookApprovalQualificationTests {
         #expect(fixture.processReads.keys.sorted() == [90, 100])
     }
 
+    @Test("each reviewed runtime returns its own exact qualification")
+    func reviewedRuntimeProfilesQualify() {
+        for profile in HookPermissionPolicy.qualifiedProfiles {
+            let fixture = HookQualificationFixture(shells: ["/bin/sh", "/bin/zsh"])
+            fixture.signatures[fixture.codexID] = .init(
+                identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+                cdHash: profile.cdHash, requirementSatisfied: true
+            )
+            #expect(fixture.evaluate() == profile.qualification)
+            #expect(HookPermissionPolicy.allowsOnce(qualification: profile.qualification))
+            for altered in [profile.qualification + " ", profile.qualification.uppercased(),
+                            profile.qualification.replacingOccurrences(of: "arm64", with: "x64")] {
+                #expect(!HookPermissionPolicy.allowsOnce(qualification: altered))
+            }
+        }
+    }
+
     @Test("persistent launcher sh and outer Codex shell are supported")
     func launcherShapedChainQualifies() {
         let fixture = HookQualificationFixture(shells: ["/bin/sh", "/bin/zsh"])
@@ -85,6 +102,22 @@ struct CodexHookApprovalQualificationTests {
 
     @Test("wrong identifier, team, hash or invalid signature never qualifies")
     func rejectsUnqualifiedCodeIdentity() {
+        for profile in HookPermissionPolicy.qualifiedProfiles {
+            for signature in [
+                Gate.SignatureEvidence(identifier: "not-codex", teamIdentifier: Gate.codexTeamIdentifier,
+                                       cdHash: profile.cdHash, requirementSatisfied: true),
+                .init(identifier: "codex", teamIdentifier: "OTHERTEAM",
+                      cdHash: profile.cdHash, requirementSatisfied: true),
+                .init(identifier: "codex", teamIdentifier: nil,
+                      cdHash: profile.cdHash, requirementSatisfied: true),
+                .init(identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+                      cdHash: profile.cdHash, requirementSatisfied: false),
+            ] {
+                let fixture = HookQualificationFixture(shells: [])
+                fixture.signatures[fixture.codexID] = signature
+                #expect(fixture.evaluate() == nil)
+            }
+        }
         let invalidSignatures: [Gate.SignatureEvidence?] = [
             nil,
             .init(identifier: "not-codex", teamIdentifier: Gate.codexTeamIdentifier,
@@ -95,6 +128,9 @@ struct CodexHookApprovalQualificationTests {
                   cdHash: HookPermissionPolicy.qualifiedCDHash, requirementSatisfied: true),
             .init(identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
                   cdHash: String(repeating: "0", count: 40), requirementSatisfied: true),
+            // A near-match to the reviewed 0.154.0 hash must not qualify.
+            .init(identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
+                  cdHash: "506770a222b6e1e63c332cbfe40dc399876c1d2b", requirementSatisfied: true),
             .init(identifier: "codex", teamIdentifier: Gate.codexTeamIdentifier,
                   cdHash: HookPermissionPolicy.qualifiedCDHash, requirementSatisfied: false),
         ]
@@ -103,6 +139,23 @@ struct CodexHookApprovalQualificationTests {
             fixture.signatures[fixture.codexID] = signature
             #expect(fixture.evaluate() == nil)
         }
+        #expect(!HookPermissionPolicy.allowsOnce(
+            qualification: "codex-0.155.0-arm64-506770a222b6e1e63c332cbfe40dc399876c1d2a"
+        ))
+    }
+
+    @Test("switching between two reviewed runtimes during a check is rejected")
+    func rejectsChangedQualifiedRuntime() throws {
+        let profile = try #require(HookPermissionPolicy.qualifiedProfiles.first {
+            $0.cdHash != HookPermissionPolicy.qualifiedCDHash
+        })
+        let fixture = HookQualificationFixture(shells: [])
+        fixture.onSignatureRead = { pid, count, evidence in
+            guard pid == fixture.codexID && count >= 2 else { return evidence }
+            return .init(identifier: evidence.identifier, teamIdentifier: evidence.teamIdentifier,
+                         cdHash: profile.cdHash, requirementSatisfied: true)
+        }
+        #expect(fixture.evaluate() == nil)
     }
 
     @Test("system-shell path alone cannot authorize an intermediate")
@@ -250,7 +303,9 @@ struct CodexHookApprovalQualificationTests {
         #expect(expression.contains("anchor apple generic"))
         #expect(expression.contains("identifier \"codex\""))
         #expect(expression.contains(Gate.codexTeamIdentifier))
-        #expect(expression.contains("cdhash H\"\(HookPermissionPolicy.qualifiedCDHash)\""))
+        for profile in HookPermissionPolicy.qualifiedProfiles {
+            #expect(expression.contains("cdhash H\"\(profile.cdHash)\""))
+        }
     }
 }
 

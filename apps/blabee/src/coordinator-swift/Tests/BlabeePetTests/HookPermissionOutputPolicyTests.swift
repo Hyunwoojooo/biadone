@@ -75,6 +75,24 @@ func hookPermissionAllowRequiresAllQualifications() {
     }
 }
 
+@Test("the initial caller, response, and fresh caller must be the same reviewed runtime")
+func hookPermissionAllowRejectsMixedQualifiedRuntimes() {
+    for initial in HookPermissionPolicy.qualifiedProfiles {
+        for returned in HookPermissionPolicy.qualifiedProfiles {
+            for current in HookPermissionPolicy.qualifiedProfiles {
+                var input = permissionPolicyInput()
+                input[HookPermissionPolicy.qualificationKey] = initial.qualification
+                var response = permissionPolicyResponse()
+                response[HookPermissionPolicy.qualificationKey] = returned.qualification
+                #expect(HookPermissionOutputPolicy.acceptsResponse(
+                    response, input: input, currentQualification: current.qualification
+                ) == (initial.qualification == returned.qualification
+                    && initial.qualification == current.qualification))
+            }
+        }
+    }
+}
+
 @Test("Hook permission responses bind the exact session, turn, command, and session location")
 func hookPermissionResponseRejectsMismatchedBinding() {
     for key in ["session_id", "turn_id", "command_preview", "cwd"] {

@@ -23,6 +23,7 @@ struct PetPanelLayoutState: Sendable, Equatable {
     let fifoQueueCount: Int
     let hasPermissionNotice: Bool
     let hasStatusMessage: Bool
+    var isShowingChoicePreview = false
 }
 
 enum PetPanelScreenMode: Sendable, Equatable {
@@ -30,6 +31,7 @@ enum PetPanelScreenMode: Sendable, Equatable {
     case permission
     case decision(actionCount: Int)
     case details
+    case choicePreview
     case shortcutSettings
     case projectSettings
 }
@@ -43,9 +45,9 @@ enum PetPanelContentPolicy {
 
     static func allowsScrolling(in mode: PetPanelScreenMode) -> Bool {
         switch mode {
-        case .permission, .details, .projectSettings:
+        case .permission, .details, .choicePreview, .shortcutSettings, .projectSettings:
             true
-        case .ready, .decision, .shortcutSettings:
+        case .ready, .decision:
             false
         }
     }
@@ -61,6 +63,7 @@ enum PetPanelSizePolicy {
     static let fifoQueueHeight: CGFloat = 44
     static let permissionRequestHeight: CGFloat = 520
     static let statusMessageHeight: CGFloat = 48
+    static let choicePreviewSize = CGSize(width: width, height: 640)
 
     static let compactSize = CGSize(width: width, height: compactHeight)
     static let expandedSize = CGSize(width: width, height: expandedHeight)
@@ -74,6 +77,10 @@ enum PetPanelSizePolicy {
 
         if state.isEditingShortcuts || state.isShowingOnboarding {
             return expandedSize
+        }
+
+        if state.isShowingChoicePreview, let actionCount = state.actionCount, actionCount > 0 {
+            return choicePreviewSize
         }
 
         var height: CGFloat
@@ -200,6 +207,20 @@ enum PetMenuBarInteractionPolicy {
     }
 }
 
+@MainActor
+enum PetAppUpdateMenuAction {
+    static func perform(
+        showSettings: () -> Void,
+        showPanel: () -> Void,
+        checkForUpdates: () async -> Void
+    ) async {
+        // Present settings explicitly, including when the panel is already open.
+        showSettings()
+        showPanel()
+        await checkForUpdates()
+    }
+}
+
 enum PetStatusItemUpdatePolicy {
     static func shouldApply(previousAttention: Bool?, newAttention: Bool) -> Bool {
         previousAttention != newAttention
@@ -286,6 +307,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
     private var lastScreenID: Int?
+    private var openedOnlyForChoicePreview = false
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
@@ -307,6 +329,9 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         viewModel.onPanelLayoutChanged = { [weak self] in
             self?.refreshContentSize()
         }
+        viewModel.onChoicePreviewChanged = { [weak self] isShowing in
+            self?.choicePreviewChanged(isShowing: isShowing)
+        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -322,12 +347,19 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     func showWithoutActivation() {
+        // A normal presentation takes ownership even if a preview opened first.
+        openedOnlyForChoicePreview = false
         placeAtStatusItem(display: false)
         panel.orderFrontRegardless()
+        viewModel.setPanelVisible(panel.isVisible)
         startObservingOutsideClicks()
     }
 
     func hide() {
+        // Clear ownership before ending the preview to avoid callback recursion.
+        openedOnlyForChoicePreview = false
+        viewModel.setPanelVisible(false)
+        viewModel.endChoicePreview()
         panel.orderOut(nil)
         stopObservingOutsideClicks()
     }
@@ -341,6 +373,10 @@ final class PetPanelController: NSObject, NSWindowDelegate {
     }
 
     func stopObservingScreenChanges() {
+        viewModel.setPanelVisible(false)
+        viewModel.endChoicePreview()
+        viewModel.onChoicePreviewChanged = nil
+        viewModel.onPanelLayoutChanged = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
         stopObservingOutsideClicks()
@@ -350,6 +386,11 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         if let screen = panel.screen {
             lastScreenID = Self.screenID(screen)
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        viewModel.setPanelVisible(false)
+        stopObservingOutsideClicks()
     }
 
     private func configurePanel() {
@@ -375,6 +416,23 @@ final class PetPanelController: NSObject, NSWindowDelegate {
         guard requestedSize != lastRequestedSize else { return }
         placeAtStatusItem(display: true)
         if panel.isVisible { panel.orderFrontRegardless() }
+    }
+
+    private func choicePreviewChanged(isShowing: Bool) {
+        if isShowing {
+            if !panel.isVisible {
+                showWithoutActivation()
+                openedOnlyForChoicePreview = true
+            }
+            refreshContentSize()
+        } else {
+            // Opening settings is an explicit request to keep the panel open.
+            let shouldHide = openedOnlyForChoicePreview
+                && !viewModel.isEditingShortcuts && !viewModel.isShowingOnboarding
+            openedOnlyForChoicePreview = false
+            refreshContentSize()
+            if shouldHide { hide() }
+        }
     }
 
     private func screenParametersChanged() {
@@ -420,7 +478,8 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             actionCount: viewModel.displayInteraction?.actionChoices.count,
             fifoQueueCount: viewModel.fifoQueueCount,
             hasPermissionNotice: viewModel.hasNewPermissionNotice,
-            hasStatusMessage: viewModel.hasVisibleStatusMessage
+            hasStatusMessage: viewModel.hasVisibleStatusMessage,
+            isShowingChoicePreview: viewModel.choicePreview != nil
         )
     }
 
@@ -614,6 +673,14 @@ final class PetMenuBarController: NSObject {
         case .showQuitMenu:
             guard let event else { return }
             let menu = NSMenu()
+            let updateItem = NSMenuItem(
+                title: "업데이트 확인…",
+                action: #selector(checkForAppUpdates(_:)),
+                keyEquivalent: ""
+            )
+            updateItem.target = self
+            menu.addItem(updateItem)
+            menu.addItem(.separator())
             let quitItem = NSMenuItem(
                 title: PetMenuBarInteractionPolicy.quitMenuTitle,
                 action: #selector(terminateApplication(_:)),
@@ -622,6 +689,18 @@ final class PetMenuBarController: NSObject {
             quitItem.target = self
             menu.addItem(quitItem)
             NSMenu.popUpContextMenu(menu, with: event, for: sender)
+        }
+    }
+
+    @objc private func checkForAppUpdates(_ sender: NSMenuItem) {
+        automaticPresentationOwner = nil
+        Task { [weak self] in
+            guard let self else { return }
+            await PetAppUpdateMenuAction.perform(
+                showSettings: viewModel.showAppUpdateSettings,
+                showPanel: panelController.showWithoutActivation,
+                checkForUpdates: viewModel.checkForAppUpdates
+            )
         }
     }
 

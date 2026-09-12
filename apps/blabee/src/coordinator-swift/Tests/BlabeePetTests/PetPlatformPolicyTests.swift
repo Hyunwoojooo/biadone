@@ -245,7 +245,7 @@ func blabeePetExactApprovalPresentationPolicy() {
 func blabeePetPermissionContentCanScroll() {
     #expect(PetPanelContentPolicy.allowsScrolling(in: .permission))
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .ready))
-    #expect(!PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
+    #expect(PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
 }
 
 @Test("BlabeePet separates selection qualification from approval and polling deadlines")

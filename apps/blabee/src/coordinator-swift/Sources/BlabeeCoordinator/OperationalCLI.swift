@@ -116,11 +116,11 @@ enum HookPermissionOutputPolicy {
                 "command_preview", "cwd", HookPermissionPolicy.qualificationKey,
             ])
                 && HookPermissionPolicy.allowsOnce(qualification: currentQualification)
-                && HookPermissionPolicy.allowsOnce(
-                    qualification: input[HookPermissionPolicy.qualificationKey] as? String
+                && equalBytes(
+                    input[HookPermissionPolicy.qualificationKey], currentQualification
                 )
-                && HookPermissionPolicy.allowsOnce(
-                    qualification: result[HookPermissionPolicy.qualificationKey] as? String
+                && equalBytes(
+                    result[HookPermissionPolicy.qualificationKey], currentQualification
                 )
                 && input["hook_event_name"] as? String == "PermissionRequest"
                 && input["permission_mode"] as? String == "default"
@@ -414,11 +414,14 @@ private func handleMCPMessage(
             ], secretCorpus: messageSecretCorpus)
         } catch {
             let failure = publicEmitDecisionFailure(error)
+            let errorCode = failure["error_code"] as? String ?? "coordinator_unavailable_or_rejected"
+            let retryable = failure["retryable"] as? Bool ?? false
             try writeMCPResult(id: message["id"], value: [
                 "isError": true,
                 "content": [[
                     "type": "text",
-                    "text": "Blabee coordinator unavailable or rejected the proposal.",
+                    "text": "Blabee coordinator unavailable or rejected the proposal. "
+                        + "error_code=\(errorCode); retryable=\(retryable).",
                 ]],
                 "structuredContent": failure,
             ], secretCorpus: messageSecretCorpus)

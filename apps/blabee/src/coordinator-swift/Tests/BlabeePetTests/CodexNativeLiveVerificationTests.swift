@@ -57,5 +57,9 @@ func codexNativeInstalledRuntimeVerification() async throws {
         }
     }.value
     #expect(result.exitCode == 0)
-    #expect(CodexCompatibility.parseVersionOutput(result.stdout) != nil)
+    let version = try #require(CodexCompatibility.parseVersionOutput(result.stdout))
+    if let expectedVersion = ProcessInfo.processInfo.environment["BLABEE_NATIVE_LIVE_EXPECTED_VERSION"] {
+        #expect(version == expectedVersion)
+    }
+    print("NATIVE_LIVE_VERSION \(version)")
 }

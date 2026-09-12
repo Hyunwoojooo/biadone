@@ -2,7 +2,9 @@ import CoordinatorSwift
 import SwiftUI
 
 private enum PetPanelVisualStyle {
-    static let cornerRadius: CGFloat = 30
+    // Fits the inner screen curve in Apple's 13-inch M5 Air bezel asset:
+    // 35.19 native pixels * 1470 logical points / 2560 native pixels.
+    static let cornerRadius: CGFloat = 20.2
     static let rimWidth: CGFloat = 0.75
     static let contentPadding: CGFloat = 22
     static let sectionRadius: CGFloat = 20
@@ -213,11 +215,19 @@ struct PetRootView: View {
                     contentViewport(for: .projectSettings) {
                         onboardingSettings(scroll: scroll)
                     }
+                    .onChange(of: viewModel.appUpdateSettingsRequestID) { _ in
+                        scroll.scrollTo("app-update", anchor: .top)
+                    }
                 }
             } else if viewModel.isEditingShortcuts {
                 contentViewport(for: .shortcutSettings) {
                     shortcutSettings
                 }
+            } else if let preview = viewModel.choicePreview {
+                contentViewport(for: .choicePreview) {
+                    PetChoicePreviewView(preview: preview)
+                }
+                .id(preview.choice.slot)
             } else {
                 contentViewport(for: screenMode) {
                     decisionContent
@@ -265,6 +275,9 @@ struct PetRootView: View {
         {
             return .permission
         }
+        if viewModel.choicePreview != nil {
+            return .choicePreview
+        }
         if viewModel.isExpanded, viewModel.displayInteraction != nil {
             return .details
         }
@@ -310,10 +323,10 @@ struct PetRootView: View {
             HStack(spacing: 8) {
                 Circle()
                     .fill(viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
-                          ? connectionStatusColor(viewModel.connectionReadiness.status) : statusColor)
+                          ? PetSettingsStatusTone.connection(viewModel.connectionReadiness).color : statusColor)
                     .frame(width: 8, height: 8)
                 Text(viewModel.isShowingOnboarding && !viewModel.hasNewPermissionNotice
-                     ? "연결 설정" : viewModel.presentationTitle)
+                     ? "Blabee 설정" : viewModel.presentationTitle)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.secondary)
                 if viewModel.isRecoveryCapable {
@@ -358,7 +371,8 @@ struct PetRootView: View {
 
     private func permissionRequestCard(_ request: PetPermissionRequest) -> some View {
         let isResolving = request.deliveryPending
-            || viewModel.inFlightPermissionRequestID == request.requestID
+            || viewModel.inFlightPermissionRequestID != nil
+            || viewModel.inFlightManagedCommandApprovalID != nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
@@ -411,18 +425,7 @@ struct PetRootView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .help("Hook이 제공한 세션 위치입니다. 명령의 실제 실행 폴더·환경은 제공되지 않습니다.")
-                Text(request.commandPreview)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .help(request.commandPreview)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        Color.primary.opacity(0.05),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
+                PetApprovalCommandPreview(command: request.commandPreview)
             }
 
             if request.deliveryPending {
@@ -435,6 +438,7 @@ struct PetRootView: View {
                 ForEach(request.displayedDecisions, id: \.rawValue) { decision in
                     permissionChoiceRow(
                         number: decision.choiceNumber,
+                        shortcutLabel: viewModel.approvalShortcutLabel(number: decision.choiceNumber, for: .permission(request)),
                         title: decision.displayTitle,
                         detail: decision == .allowOnce && !request.allowOnceAvailable
                             ? "이 연결의 일회성 승인이 아직 검증되지 않았습니다. 3번에서 Codex 승인 화면으로 이동하세요."
@@ -450,6 +454,8 @@ struct PetRootView: View {
                 }
             }
 
+            approvalShortcutDiagnostic
+
             Text("이번 요청에만 응답합니다. 이후 명령에 대한 허용 정책은 저장하지 않습니다.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -462,6 +468,7 @@ struct PetRootView: View {
     ) -> some View {
         let isResolving = request.deliveryPending
             || viewModel.inFlightManagedCommandApprovalID != nil
+            || viewModel.inFlightPermissionRequestID != nil
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
@@ -539,6 +546,7 @@ struct PetRootView: View {
             VStack(spacing: 9) {
                 permissionChoiceRow(
                     number: 1,
+                    shortcutLabel: viewModel.approvalShortcutLabel(number: 1, for: .managed(request)),
                     title: PetManagedCommandApprovalDecision.acceptOnce.displayTitle,
                     detail: request.allowOnceAvailable ? nil
                         : "이 요청은 Pet에서 일회성 승인할 수 없습니다. 3번에서 Codex 승인 화면으로 이동하세요.",
@@ -554,6 +562,7 @@ struct PetRootView: View {
                 }
                 permissionChoiceRow(
                     number: 2,
+                    shortcutLabel: viewModel.approvalShortcutLabel(number: 2, for: .managed(request)),
                     title: PetManagedCommandApprovalDecision.decline.displayTitle,
                     icon: "xmark",
                     tint: .red,
@@ -567,6 +576,7 @@ struct PetRootView: View {
                 }
                 permissionChoiceRow(
                     number: 3,
+                    shortcutLabel: viewModel.approvalShortcutLabel(number: 3, for: .managed(request)),
                     title: PetManagedCommandApprovalDecision.decideInCodex.displayTitle,
                     icon: "arrow.up.forward.app",
                     tint: .teal,
@@ -580,6 +590,8 @@ struct PetRootView: View {
                 }
             }
 
+            approvalShortcutDiagnostic
+
             Text("세션 동안 허용은 제공하지 않습니다. 응답하지 않으면 Codex의 기존 승인 화면으로 돌아갑니다.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -590,6 +602,7 @@ struct PetRootView: View {
 
     private func permissionChoiceRow(
         number: Int,
+        shortcutLabel: String?,
         title: String,
         detail: String? = nil,
         icon: String,
@@ -618,7 +631,7 @@ struct PetRootView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text("\(number)")
+                Text(shortcutLabel ?? "\(number)")
                     .font(.caption.monospaced().bold())
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -640,7 +653,17 @@ struct PetRootView: View {
         .opacity(disabled ? 0.55 : 1)
         .accessibilityIdentifier("permission-choice-\(number)")
         .accessibilityLabel("\(number) \(title)")
-        .accessibilityHint(detail ?? "")
+        .accessibilityHint([detail, shortcutLabel.map { "단축키 \($0)" }].compactMap { $0 }.joined(separator: " "))
+    }
+
+    @ViewBuilder
+    private var approvalShortcutDiagnostic: some View {
+        if let diagnostic = viewModel.approvalShortcutDiagnostic {
+            Text(diagnostic)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var fifoQueueStatus: some View {
@@ -712,6 +735,7 @@ struct PetRootView: View {
         let ownsProgress = accessory == .progress
         let enabled = choice.enabled && interaction.isSelectionReady && !submissionInProgress
         let tint = choiceTint(slot: choice.slot)
+        let previewHint = viewModel.previewShortcutHint(for: choice.slot)
         return Button {
             Task {
                 await viewModel.focusAndRequestPanelSelection(
@@ -813,6 +837,8 @@ struct PetRootView: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled || ownsProgress ? 1 : submissionInProgress ? 0.72 : 0.52)
+        .help(previewHint.isEmpty ? choice.displayTitle : "\(choice.displayTitle)\n\(previewHint)")
+        .accessibilityHint(previewHint)
     }
 
     private func secondaryControls(interaction: PetInteraction) -> some View {
@@ -978,9 +1004,22 @@ struct PetRootView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("단축키 설정")
                     .font(.headline)
-                Text("보조키 없는 입력을 가로채지 않도록 Option을 포함해야 하며, Option 단독은 숫자와 Space에만 사용할 수 있습니다.")
+                Text("자세히 보기와 선택 실행에 사용할 단축키를 정합니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            choicePreviewShortcutSettings
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("선택 실행 · 패널 열기")
+                    .font(.callout.bold())
+                Text("이 단축키는 Option을 포함해야 하며, Option 단독은 숫자와 Space에만 사용할 수 있습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ForEach(PetShortcutIntent.allCases, id: \.self) { intent in
@@ -1007,14 +1046,63 @@ struct PetRootView: View {
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
     }
 
+    private var choicePreviewShortcutSettings: some View {
+        let preset = viewModel.shortcutDraft.previewPreset
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("상세 미리보기")
+                .font(.callout.bold())
+            Picker(
+                "상세 미리보기 단축키",
+                selection: Binding(
+                    get: { viewModel.shortcutDraft.previewPreset },
+                    set: { viewModel.updatePreviewShortcutDraft($0) }
+                )
+            ) {
+                ForEach(PetChoicePreviewShortcutPreset.allCases) { preset in
+                    Text(verbatim: preset.displayLabel).tag(preset)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("choice-preview-shortcut-preset")
+
+            if preset == .disabled {
+                Text("상세 미리보기 단축키를 사용하지 않습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("\(preset.displayLabel)을 누른 뒤 \(preset.holdKeyName) 키를 누르고 있으면 유지됩니다. \(preset.holdKeyName) 키를 떼면 닫힙니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if preset == .control {
+                Text("macOS의 데스크탑 전환 단축키와 겹칠 수 있습니다. 겹치면 시스템 설정 → 키보드 → 키보드 단축키 → Mission Control에서 같은 단축키를 해제하거나 다른 조합을 선택하세요.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if preset == .controlOption {
+                Text("VoiceOver의 Control+Option 단축키와 겹칠 수 있습니다. 필요하면 다른 조합을 선택하거나 미리보기를 꺼 주세요.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if preset == .controlCommand {
+                Text("Safari의 단축키와 겹칠 수 있습니다. 필요하면 다른 조합을 선택하거나 미리보기를 꺼 주세요.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func connectionReadinessCard(scroll: ScrollViewProxy) -> some View {
         let readiness = viewModel.connectionReadiness
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: connectionStatusSymbol(readiness.status))
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(connectionStatusColor(readiness.status))
-                    .accessibilityHidden(true)
+                PetSettingsStatusDot(tone: .connection(readiness))
+                    .padding(.top, 6)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(readiness.title)
                         .font(.title3.weight(.semibold))
@@ -1031,10 +1119,9 @@ struct PetRootView: View {
             VStack(spacing: 10) {
                 ForEach(readiness.checks) { check in
                     HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: connectionCheckSymbol(check.state))
-                            .foregroundStyle(connectionCheckColor(check.state))
+                        PetSettingsStatusDot(tone: .check(check.state))
                             .frame(width: 18)
-                            .accessibilityHidden(true)
+                            .padding(.top, 3)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(check.title).font(.caption.weight(.semibold))
                             Text(check.detail)
@@ -1048,6 +1135,8 @@ struct PetRootView: View {
                     .accessibilityIdentifier("connection-check-\(check.id)")
                 }
             }
+
+            PetSettingsStatusLegend()
 
             HStack(spacing: 8) {
                 Button(viewModel.connectionNextStepTitle) {
@@ -1132,52 +1221,20 @@ struct PetRootView: View {
         .petInsetSurface()
     }
 
-    private func connectionStatusColor(_ status: PetConnectionReadiness.Status) -> Color {
-        switch status {
-        case .needsAttention: .red
-        case .needsSetup, .needsRestart: .orange
-        case .checking, .awaitingVerification: .blue
-        case .receiving: .green
-        }
-    }
-
-    private func connectionStatusSymbol(_ status: PetConnectionReadiness.Status) -> String {
-        switch status {
-        case .needsAttention: "exclamationmark.triangle.fill"
-        case .needsSetup, .needsRestart: "exclamationmark.circle.fill"
-        case .checking: "arrow.triangle.2.circlepath"
-        case .awaitingVerification: "clock"
-        case .receiving: "checkmark.circle.fill"
-        }
-    }
-
-    private func connectionCheckColor(_ state: PetConnectionReadiness.CheckState) -> Color {
-        switch state {
-        case .confirmed: .green
-        case .pending: .secondary
-        case .attention: .orange
-        case .checking: .blue
-        }
-    }
-
-    private func connectionCheckSymbol(_ state: PetConnectionReadiness.CheckState) -> String {
-        switch state {
-        case .confirmed: "checkmark.circle.fill"
-        case .pending: "circle.dashed"
-        case .attention: "exclamationmark.circle.fill"
-        case .checking: "clock"
-        }
-    }
-
     private func onboardingSettings(scroll: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Blabee 설정")
                     .font(.title2.weight(.semibold))
-                Text("연결 상태를 확인하고, 필요한 단계부터 완료하세요.")
+                Text("앱 업데이트와 Codex 연결 상태를 확인하세요.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+
+            PetAppUpdateView(viewModel: viewModel)
+                .padding(16)
+                .petInsetSurface()
+                .id("app-update")
 
             connectionReadinessCard(scroll: scroll)
 
@@ -1190,14 +1247,24 @@ struct PetRootView: View {
             }
             .id("connection-verification")
 
-            DisclosureGroup("Codex 설치 · 진단 상세", isExpanded: $showPluginDetails) {
+            DisclosureGroup(isExpanded: $showPluginDetails) {
                 codexPluginSetupCard.padding(.top, 10)
+            } label: {
+                HStack(spacing: 8) {
+                    PetSettingsStatusDot(tone: .codexPlugin(viewModel.codexPluginSetupState))
+                    Text("Codex 설치 · 진단 상세")
+                    Text(codexPluginSetupBadgeTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(codexPluginInstallationTitle)
             }
             .id("connection-plugin")
 
             suggestionModeCard
 
-            DisclosureGroup("서비스 관리 · 자동 시작 (선택)", isExpanded: $showServiceSettings) {
+            DisclosureGroup(isExpanded: $showServiceSettings) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("자동 시작 등록은 필수가 아닙니다. 앱 실행형 서비스가 연결되어 있으면 Blabee를 사용할 수 있습니다.")
                         .font(.caption)
@@ -1216,6 +1283,18 @@ struct PetRootView: View {
                     onboardingAutomaticServiceSettings
                 }
                 .padding(.top, 10)
+            } label: {
+                HStack(spacing: 8) {
+                    if let check = viewModel.connectionReadiness.checks.first(where: { $0.id == "service" }) {
+                        PetSettingsStatusDot(tone: .check(check.state))
+                    }
+                    Text("서비스 관리 · 자동 시작 (선택)")
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(
+                    viewModel.connectionReadiness.checks.first(where: { $0.id == "service" })?.detail
+                        ?? "서비스 상태 확인 전"
+                )
             }
             .id("connection-service")
 
@@ -1257,12 +1336,11 @@ struct PetRootView: View {
                         .font(.body.weight(.semibold))
                 }
                 Spacer(minLength: 8)
-                Text(onboardingServiceBadgeTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(onboardingServiceColor)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(onboardingServiceColor.opacity(0.12), in: Capsule())
+                PetSettingsStatusBadge(
+                    tone: onboardingServiceTone,
+                    title: onboardingServiceBadgeTitle
+                )
+                .accessibilityIdentifier("automatic-service-status")
             }
             Text(viewModel.onboardingServiceState.displayDescription)
                 .font(.caption)
@@ -1282,11 +1360,11 @@ struct PetRootView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(.orange)
+                .foregroundStyle(onboardingServiceColor)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    Color.orange.opacity(0.10),
+                    onboardingServiceColor.opacity(0.10),
                     in: RoundedRectangle(cornerRadius: 12)
                 )
             }
@@ -1301,8 +1379,13 @@ struct PetRootView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("관찰할 프로젝트")
-                        .font(.body.weight(.semibold))
+                    HStack(spacing: 8) {
+                        if let check = viewModel.connectionReadiness.checks.first(where: { $0.id == "projects" }) {
+                            PetSettingsStatusDot(tone: .check(check.state))
+                        }
+                        Text("관찰할 프로젝트")
+                            .font(.body.weight(.semibold))
+                    }
                     Text("현재 Codex 작업 폴더가 이 목록에 포함되어야 합니다. 등록한 폴더와 그 하위 경로에만 적용됩니다.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1385,12 +1468,11 @@ struct PetRootView: View {
                         .font(.body.weight(.semibold))
                 }
                 Spacer(minLength: 8)
-                Text(codexPluginSetupBadgeTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(codexPluginSetupColor)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(codexPluginSetupColor.opacity(0.12), in: Capsule())
+                PetSettingsStatusBadge(
+                    tone: .codexPlugin(viewModel.codexPluginSetupState),
+                    title: codexPluginSetupBadgeTitle
+                )
+                .accessibilityIdentifier("codex-plugin-installation-status")
             }
 
             Text(codexPluginInstallationDetail)
@@ -1430,9 +1512,17 @@ struct PetRootView: View {
 
             if case .installedNeedsHookReview = viewModel.codexPluginSetupState {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Codex에서 Hook 상태 확인")
-                        .font(.caption2.weight(.semibold))
+                    HStack(spacing: 8) {
+                        PetSettingsStatusDot(tone: .neutral)
+                        Text("Hook 신뢰 · Codex에서 확인")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    Text("앱에서는 Hook 신뢰를 자동 판정하지 않습니다. 미확인이 오류를 뜻하지는 않습니다. /hooks와 실제 카드 수신·선택 반환으로 확인하세요.")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("/hooks")
                         .font(.callout.monospaced().weight(.semibold))
                         .textSelection(.enabled)
@@ -1703,6 +1793,11 @@ struct PetRootView: View {
                         .font(.body.weight(.semibold))
                 }
                 Spacer()
+                PetSettingsStatusBadge(
+                    tone: .appService(viewModel.appOwnedServiceState),
+                    title: appOwnedServiceBadgeTitle
+                )
+                .accessibilityIdentifier("app-service-status")
                 if viewModel.appOwnedServiceState == .starting
                     || viewModel.appOwnedServiceState == .stopping
                     || viewModel.appOwnedServiceState == .reconnecting
@@ -1847,20 +1942,33 @@ struct PetRootView: View {
         }
     }
 
-    private var onboardingServiceColor: Color {
-        if viewModel.onboardingServiceNeedsRuntimeAttention { return .orange }
-        return switch viewModel.onboardingServiceState {
-        case .enabled: .green
-        case .requiresApproval: .orange
-        case .notRegistered: .secondary
-        case .notFound, .unknown: .secondary
+    private var appOwnedServiceBadgeTitle: String {
+        switch viewModel.appOwnedServiceState {
+        case .ready: "연결됨"
+        case .disabled: "사용 안 함"
+        case .stopped: "시작 필요"
+        case .starting, .reconnecting: "확인 중"
+        case .stopping: "종료 중"
+        case .blocked: "조치 필요"
+        case .failed: "오류"
         }
     }
 
+    private var onboardingServiceTone: PetSettingsStatusTone {
+        .automaticService(
+            viewModel.onboardingServiceState,
+            needsRuntimeAttention: viewModel.onboardingServiceNeedsRuntimeAttention
+        )
+    }
+
+    private var onboardingServiceColor: Color {
+        onboardingServiceTone.color
+    }
+
     private var onboardingServiceBadgeTitle: String {
-        viewModel.onboardingServiceNeedsRuntimeAttention
-            ? "실행 확인 필요"
-            : viewModel.onboardingServiceState.displayTitle
+        if viewModel.onboardingServiceNeedsRuntimeAttention { return "연결 오류" }
+        if viewModel.onboardingServiceState == .notRegistered { return "선택 사항 · 꺼짐" }
+        return viewModel.onboardingServiceState.displayTitle
     }
 
     private var codexPluginSetupSymbol: String {
@@ -1876,14 +1984,7 @@ struct PetRootView: View {
     }
 
     private var codexPluginSetupColor: Color {
-        switch viewModel.codexPluginSetupState {
-        case .installedNeedsHookReview: .green
-        case .marketplaceInstalledNeedsPlugin, .updateAvailable,
-             .legacyInstallationDetected: .orange
-        case .conflict, .error: .red
-        case .notInstalled: .indigo
-        case .unchecked, .unavailable: .secondary
-        }
+        PetSettingsStatusTone.codexPlugin(viewModel.codexPluginSetupState).color
     }
 
     private var codexPluginSetupBadgeTitle: String {
@@ -1892,7 +1993,7 @@ struct PetRootView: View {
         case .unavailable: "사용 불가"
         case .notInstalled: "미연결"
         case .marketplaceInstalledNeedsPlugin: "마무리 필요"
-        case .installedNeedsHookReview: "설치 확인"
+        case .installedNeedsHookReview: "설치 완료"
         case .updateAvailable: "업데이트"
         case .legacyInstallationDetected: "이전 연결 발견"
         case .conflict: "충돌"
@@ -2009,6 +2110,27 @@ struct PetRootView: View {
         case .ready: .green
         case .disconnected, .working: .secondary
         }
+    }
+}
+
+/// Keep the complete Hook command selectable while bounding its viewport so
+/// long or multiline commands cannot push the approval actions arbitrarily far.
+struct PetApprovalCommandPreview: View {
+    let command: String
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Text(verbatim: command)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+        }
+        .frame(height: 140)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityIdentifier("permission-command-preview")
     }
 }
 

@@ -48,9 +48,12 @@ enum CodexHookApprovalQualification {
         var expression: String {
             switch self {
             case .qualifiedCodex:
+                let hashes = HookPermissionPolicy.qualifiedProfiles.map {
+                    "cdhash H\"\($0.cdHash)\""
+                }.joined(separator: " or ")
                 return "identifier \"codex\" and anchor apple generic "
                     + "and certificate leaf[subject.OU] = \"\(codexTeamIdentifier)\" "
-                    + "and cdhash H\"\(HookPermissionPolicy.qualifiedCDHash)\""
+                    + "and (\(hashes))"
             case .systemShell(let identifier):
                 return "identifier \"\(identifier)\" and anchor apple"
             }
@@ -62,7 +65,7 @@ enum CodexHookApprovalQualification {
             case .qualifiedCodex:
                 return evidence.identifier == "codex"
                     && evidence.teamIdentifier == codexTeamIdentifier
-                    && evidence.cdHash == HookPermissionPolicy.qualifiedCDHash
+                    && HookPermissionPolicy.qualification(forCDHash: evidence.cdHash) != nil
             case .systemShell(let identifier):
                 return evidence.identifier == identifier && !evidence.cdHash.isEmpty
             }
@@ -93,7 +96,7 @@ enum CodexHookApprovalQualification {
         var chain = [current]
         var signatures: [(CodeRequirement, SignatureEvidence)] = []
         var visited: Set<Int32> = [processID]
-        var foundCodex = false
+        var qualifiedRuntime: String?
 
         for _ in 0..<maximumAncestorCount {
             let child = chain[chain.count - 1]
@@ -117,11 +120,11 @@ enum CodexHookApprovalQualification {
             chain.append(parent)
             signatures.append((requirement, signature))
             if requirement == .qualifiedCodex {
-                foundCodex = true
+                qualifiedRuntime = HookPermissionPolicy.qualification(forCDHash: signature.cdHash)
                 break
             }
         }
-        guard foundCodex else { return nil }
+        guard let qualifiedRuntime else { return nil }
 
         // Fail closed on missing/reparented/recycled processes or exec changes
         // during qualification. Re-check the dynamic signature as well as the
@@ -136,7 +139,7 @@ enum CodexHookApprovalQualification {
         guard chain.allSatisfy({ processEvidence($0.processID) == $0 }) else {
             return nil
         }
-        return HookPermissionPolicy.qualifiedRuntime
+        return qualifiedRuntime
     }
 
     private static func runningProcessEvidence(_ processID: Int32) -> ProcessEvidence? {

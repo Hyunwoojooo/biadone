@@ -11,6 +11,7 @@ struct PetConnectionReadinessTests {
         serviceConnected: Bool = true,
         serviceIsTransitioning: Bool = false,
         serviceIssue: String? = nil,
+        serviceIssueRequiresAction: Bool = false,
         configuredProjectPaths: [String]? = ["/projects/gannet"],
         activeProjectPaths: Set<String>? = ["/projects/gannet"],
         receivedCardProjectPaths: Set<String> = []
@@ -20,6 +21,7 @@ struct PetConnectionReadinessTests {
             serviceConnected: serviceConnected,
             serviceIsTransitioning: serviceIsTransitioning,
             serviceIssue: serviceIssue,
+            serviceIssueRequiresAction: serviceIssueRequiresAction,
             configuredProjectPaths: configuredProjectPaths,
             activeProjectPaths: activeProjectPaths,
             receivedCardProjectPaths: receivedCardProjectPaths
@@ -77,8 +79,28 @@ struct PetConnectionReadinessTests {
         #expect(model.nextStep == .service)
         #expect(model.detail == "socket unavailable")
         #expect(model.checks.count == 4)
-        #expect(model.checks[0].state == .attention)
+        #expect(model.checks[0].state == .failed)
         #expect(model.checks[3].state == .pending)
+    }
+
+    @Test("An actionable service issue changes only its presentation classification")
+    func actionableServiceIssue() {
+        let issue = "기존 서비스 등록 해제 필요"
+        let failure = readiness(serviceIssue: issue)
+        let action = readiness(serviceIssue: issue, serviceIssueRequiresAction: true)
+        #expect(action.status == failure.status)
+        #expect(action.title == failure.title)
+        #expect(action.detail == failure.detail)
+        #expect(action.nextStep == failure.nextStep)
+        #expect(action.nextStepTitle == failure.nextStepTitle)
+        #expect(action.checks[0].state == .attention)
+        #expect(failure.checks[0].state == .failed)
+        #expect(PetSettingsStatusTone.connection(action) == .actionNeeded)
+        #expect(PetSettingsStatusTone.connection(failure) == .error)
+
+        let noIssue = readiness(serviceIssue: "  \n ", serviceIssueRequiresAction: true)
+        #expect(noIssue.status == .awaitingVerification)
+        #expect(noIssue.checks[0].state == .confirmed)
     }
 
     @Test("Disconnected or restarting service does not reuse live evidence or report a project mismatch")
@@ -89,6 +111,7 @@ struct PetConnectionReadinessTests {
         )
         #expect(disconnected.status == .needsSetup)
         #expect(disconnected.nextStep == .service)
+        #expect(disconnected.checks[0].state == .attention)
         #expect(disconnected.checks[2].state == .pending)
         #expect(disconnected.checks[3].state == .pending)
 
@@ -100,7 +123,9 @@ struct PetConnectionReadinessTests {
         #expect(transitioning.checks[0].state == .checking)
         #expect(transitioning.checks[2].state == .pending)
         #expect(transitioning.checks[3].state == .pending)
-        #expect(readiness(serviceIssue: "  \n ").status == .awaitingVerification)
+        let blankIssue = readiness(serviceIssue: "  \n ")
+        #expect(blankIssue.status == .awaitingVerification)
+        #expect(blankIssue.checks[0].state == .confirmed)
     }
 
     @Test("Missing Plugin takes precedence over project configuration and received cards")
@@ -112,7 +137,7 @@ struct PetConnectionReadinessTests {
             )
             #expect(model.status == .needsSetup)
             #expect(model.nextStep == .installPlugin)
-            #expect(model.checks[1].state == .pending)
+            #expect(model.checks[1].state == .attention)
             #expect(model.checks.count == 4)
         }
     }
@@ -141,17 +166,18 @@ struct PetConnectionReadinessTests {
             pluginRootPath: "/legacy/blabee", pluginIsInstalled: true, pluginVersion: "0.1.0",
             filesystemIdentity: .allMissing
         )
-        let states: [CodexPluginSetupState] = [
-            .unavailable(reason: "Codex missing"), .conflict(reason: "Plugin conflict"),
-            .error(code: "test_check_failed"),
-            .legacyInstallationDetected(marketplaceName: "legacy", confirmation: legacy),
+        let cases: [(CodexPluginSetupState, PetConnectionReadiness.CheckState)] = [
+            (.unavailable(reason: "Codex missing"), .attention),
+            (.conflict(reason: "Plugin conflict"), .failed),
+            (.error(code: "test_check_failed"), .failed),
+            (.legacyInstallationDetected(marketplaceName: "legacy", confirmation: legacy), .attention),
         ]
-        for state in states {
+        for (state, expectedCheckState) in cases {
             let model = readiness(pluginState: state, receivedCardProjectPaths: [gannet])
             #expect(model.status == .needsAttention)
             #expect(model.nextStep == .pluginDetails)
             #expect(model.detail == state.detail)
-            #expect(model.checks[1].state == .attention)
+            #expect(model.checks[1].state == expectedCheckState)
         }
     }
 
@@ -160,7 +186,7 @@ struct PetConnectionReadinessTests {
         let model = readiness(configuredProjectPaths: [], activeProjectPaths: [])
         #expect(model.status == .needsSetup)
         #expect(model.nextStep == .projects)
-        #expect(model.checks[2].state == .pending)
+        #expect(model.checks[2].state == .attention)
         #expect(model.checks[3].state == .pending)
     }
 

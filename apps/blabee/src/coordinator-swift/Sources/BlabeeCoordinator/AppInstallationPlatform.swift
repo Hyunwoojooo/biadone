@@ -5,6 +5,7 @@ import Security
 
 enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
     case applicationActive
+    case processInspectionIncomplete
     case processInspectionUnavailable
     case invalidDestination
     case identityMismatch
@@ -19,6 +20,8 @@ enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
         switch self {
         case .applicationActive:
             return AppInstallationError(.destinationActive).userMessage
+        case .processInspectionIncomplete:
+            return AppInstallationError(.activityInspectionIncomplete).userMessage
         case .processInspectionUnavailable:
             return AppInstallationError(.activityInspectionUnavailable).userMessage
         case .invalidDestination:
@@ -46,6 +49,7 @@ enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
 enum AppInstallationProcessObservation: Equatable, Sendable {
     case running(executableURL: URL)
     case exited
+    case unresolvedExecutable
     case unavailable
 }
 
@@ -69,6 +73,7 @@ struct AppInstallationProcessGuard: Sendable {
         do { observations = try snapshot() }
         catch { throw AppInstallationPlatformError.processInspectionUnavailable }
         var hasUnavailableEvidence = false
+        var hasUnresolvedExecutable = false
         for observation in observations {
             switch observation {
             case .running(let executableURL):
@@ -82,12 +87,20 @@ struct AppInstallationProcessGuard: Sendable {
                 }
             case .exited:
                 break
+            case .unresolvedExecutable:
+                hasUnresolvedExecutable = true
             case .unavailable:
                 hasUnavailableEvidence = true
             }
         }
         if hasUnavailableEvidence {
             throw AppInstallationPlatformError.processInspectionUnavailable
+        }
+        if hasUnresolvedExecutable {
+            // Enumeration succeeded, but some live executable paths could not
+            // be resolved (for example after another app unlinked an update).
+            // Keep this distinct from being unable to enumerate processes.
+            throw AppInstallationPlatformError.processInspectionIncomplete
         }
     }
 }
@@ -126,6 +139,7 @@ struct AppInstallationProcessReader: Sendable {
 
     func observe(_ processID: Int32) -> AppInstallationProcessObservation {
         guard processID > 0 else { return .unavailable }
+        var sawExecutable = false
         // Re-read the kernel path and process state to tolerate an exited PID
         // and retry a recycled PID or concurrent exec. No process-name or UID
         // heuristic exempts a live process whose executable remains unknown.
@@ -136,14 +150,17 @@ struct AppInstallationProcessReader: Sendable {
                   token.processID == processID
             else { return .unavailable }
             let first = resolvedExecutableURL(processID)
+            sawExecutable = sawExecutable || first != nil
             let middle = state(processID)
             if middle == .exited { return .exited }
             guard middle == before else { continue }
             let second = resolvedExecutableURL(processID)
+            sawExecutable = sawExecutable || second != nil
             let after = state(processID)
             if after == .exited { return .exited }
             guard after == before else { continue }
-            guard let first, let second else { return .unavailable }
+            if first == nil, second == nil, !sawExecutable { return .unresolvedExecutable }
+            guard let first, let second else { continue }
             guard first == second else { continue }
             return .running(executableURL: second)
         }
@@ -359,7 +376,7 @@ final class AppInstallationApplicationOpener {
                 }
             case .exited:
                 throw AppInstallationPlatformError.launchedProcessExited
-            case .unavailable:
+            case .unavailable, .unresolvedExecutable:
                 throw AppInstallationPlatformError.processInspectionUnavailable
             }
             if snapshot.isFinishedLaunching {
