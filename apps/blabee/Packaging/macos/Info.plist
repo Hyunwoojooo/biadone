@@ -14,6 +14,8 @@
 	<string>Blabee</string>
 	<key>CFBundleExecutable</key>
 	<string>blabee-coordinator</string>
+	<key>CFBundleIconFile</key>
+	<string>Blabee.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.biadone.blabee</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -32,6 +34,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Codex 관리 세션을 시작하거나 복원할 때 Terminal의 새 창을 엽니다.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

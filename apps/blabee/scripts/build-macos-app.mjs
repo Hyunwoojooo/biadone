@@ -31,11 +31,18 @@ import { TextDecoder, promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { requireInternalBuildNumber } from "./internal-build-number.mjs";
+import {
+  appSigningEntitlementsFileName,
+  normalizeReleaseSigning,
+  signReleaseApp,
+  validateAppSigningEntitlements,
+} from "./release-signing.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = resolve(dirname(scriptPath), "..");
 const bundleName = "Blabee.app";
+const appIconFileName = "Blabee.icns";
 const menuBarIconFileName = "BlabeeMenuBar.svg";
 const codexMarketplaceFileName = "CodexMarketplace.json";
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
@@ -66,11 +73,19 @@ const runtimeInspectionEnvironment = Object.freeze({
   LANG: "C",
   LC_ALL: "C",
 });
+const previousRuntimeProbeSandbox = [
+  "(version 1)",
+  "(deny default)",
+  "(allow file-read*)",
+  "(allow sysctl-read)",
+  '(allow process-exec (literal (param "BLABEE_PROBE_EXECUTABLE")))',
+].join("\n");
 const requiredInfoPlistValues = Object.freeze({
   BlabeeUpdateRepository: "Hyunwoojooo/biadone",
   BlabeeRuntimeUseLeaseProtocol: runtimeUseLeaseProtocol,
   CFBundleDisplayName: "Blabee",
   CFBundleExecutable: "blabee-coordinator",
+  CFBundleIconFile: appIconFileName,
   CFBundleIdentifier: "com.biadone.blabee",
   CFBundleName: "Blabee",
   CFBundlePackageType: "APPL",
@@ -79,6 +94,7 @@ const requiredInfoPlistValues = Object.freeze({
   LSMinimumSystemVersion: "13.0",
   LSUIElement: true,
   NSHighResolutionCapable: true,
+  NSAppleEventsUsageDescription: "Codex 관리 세션을 시작하거나 복원할 때 Terminal의 새 창을 엽니다.",
   NSPrincipalClass: "NSApplication",
 });
 const requiredLaunchAgentValues = Object.freeze({
@@ -727,6 +743,7 @@ async function copyTreeStrict(
   destination,
   destinationRelativeRoot,
   payloadBudget,
+  executablePaths,
 ) {
   assertWithin(sourceRoot, source, source);
   await requireNoSymlinkComponents(sourceRoot, source, source);
@@ -760,13 +777,15 @@ async function copyTreeStrict(
         destinationEntry,
         destinationRelative,
         payloadBudget,
+        executablePaths,
       );
       continue;
     }
     if (!metadata.isFile()) {
       fail(`resource input must be a regular file or directory: ${sourceEntry}`);
     }
-    const mode = destinationRelative === launcherRelativePath ? 0o755 : 0o644;
+    const mode = destinationRelative === launcherRelativePath
+      || executablePaths?.has(destinationRelative) ? 0o755 : 0o644;
     await copyFileWithMode(
       sourceEntry,
       destinationEntry,
@@ -1128,12 +1147,19 @@ async function resolveCompatiblePreviousRuntimes(coordinator, values) {
   };
 }
 
-async function requireRuntimeUseLeaseProtocol(coordinator) {
+async function requireRuntimeUseLeaseProtocol(coordinator, { confined = false } = {}) {
   const before = await inspectManifestFile(coordinator);
+  const executable = confined ? await realpath(coordinator) : coordinator;
+  const command = confined ? "/usr/bin/sandbox-exec" : executable;
+  const arguments_ = confined ? [
+    "-D", `BLABEE_PROBE_EXECUTABLE=${executable}`,
+    "-p", previousRuntimeProbeSandbox,
+    executable, "runtime-use-lease-protocol",
+  ] : ["runtime-use-lease-protocol"];
   let result;
   try {
-    result = await execFile(coordinator, ["runtime-use-lease-protocol"], {
-      cwd: dirname(coordinator),
+    result = await execFile(command, arguments_, {
+      cwd: dirname(executable),
       env: runtimeInspectionEnvironment,
       encoding: "buffer",
       maxBuffer: 4 * 1024,
@@ -1182,6 +1208,7 @@ async function previousRuntimeSupportsUseLease(previousApp, sourceLauncher) {
       const executableRelativePath = join("Contents", "MacOS", "blabee-coordinator");
       const allowedExecutables = new Set([executableRelativePath, launcherRelativePath]);
       await validateFinalBundleTree(previousApp, previousApp, makePayloadBudget(), allowedExecutables);
+      await requireExecutableFile(join(previousApp, executableRelativePath), "previous app coordinator");
       const previousLauncher = join(previousApp, launcherRelativePath);
       await requireExecutableFile(previousLauncher, "previous app launcher");
       const launcherSnapshot = await inspectManifestFile(previousLauncher);
@@ -1193,19 +1220,23 @@ async function previousRuntimeSupportsUseLease(previousApp, sourceLauncher) {
         return false;
       }
 
-      // Never execute a previous bundle in place: an older mode dispatcher may
-      // treat an unknown query as a functional command and acquire runtime state.
-      const coordinatorCopy = join(scratch, "blabee-coordinator");
-      await copyFileWithMode(
-        join(previousApp, executableRelativePath),
-        coordinatorCopy,
-        0o700,
-        maximumPackagedFileBytes,
-        undefined,
-        true,
-        previousApp,
+      // A signed Mach-O needs its sealed Info.plist and resource tree. Keep the
+      // verified bundle intact in a private copy, never re-sign it or run the
+      // original. An older dispatcher must not mutate user state or start other
+      // processes: the query runs with writes, IPC, network and fork denied.
+      const bundleCopy = join(scratch, bundleName);
+      await copyTreeStrict(
+        previousApp, previousApp, bundleCopy, "", makePayloadBudget(), allowedExecutables,
       );
-      const copySnapshot = await requireRuntimeUseLeaseProtocol(coordinatorCopy);
+      await validateFinalBundleTree(bundleCopy, bundleCopy, makePayloadBudget(), allowedExecutables);
+      await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundleCopy], {
+        env: runtimeInspectionEnvironment,
+        maxBuffer: 4 * 1024,
+        timeout: 5_000,
+        killSignal: "SIGKILL",
+      });
+      const coordinatorCopy = join(bundleCopy, executableRelativePath);
+      const copySnapshot = await requireRuntimeUseLeaseProtocol(coordinatorCopy, { confined: true });
       const originalSnapshot = await inspectManifestFile(join(previousApp, executableRelativePath));
       if (
         copySnapshot.sha256 !== originalSnapshot.sha256
@@ -1248,6 +1279,9 @@ async function adhocSignAndVerify(bundlePath) {
   if (process.platform !== "darwin") {
     fail("--adhoc-sign is supported only on macOS");
   }
+  const entitlements = await validateAppSigningEntitlements(
+    join(bundlePath, "Contents", "Resources", appSigningEntitlementsFileName),
+  );
   await execFile(
     "/usr/bin/codesign",
     [
@@ -1257,6 +1291,8 @@ async function adhocSignAndVerify(bundlePath) {
       "--timestamp=none",
       "--options",
       "runtime",
+      "--entitlements",
+      entitlements,
       bundlePath,
     ],
     { maxBuffer: 1024 * 1024 },
@@ -1383,10 +1419,15 @@ export async function assembleMacOSApp({
   outputPath,
   sourceRoot = defaultSourceRoot,
   adhocSign = false,
+  releaseSigning = null,
   cleanupOnFailure = true,
   compatiblePreviousApps = [],
   bundleVersion = requiredInfoPlistValues.CFBundleVersion,
 } = {}) {
+  const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
+  if (adhocSign && normalizedReleaseSigning !== null) {
+    fail("ad-hoc signing and Developer ID release signing cannot be combined");
+  }
   const normalizedBundleVersion = requireInternalBuildNumber(
     bundleVersion,
     "bundle version",
@@ -1410,6 +1451,7 @@ export async function assembleMacOSApp({
   await requireDirectory(requestedSourceRoot, "source root");
   const canonicalSourceRoot = await realpath(requestedSourceRoot);
   const sourceInfoPlist = join(canonicalSourceRoot, "Packaging", "macos", "Info.plist");
+  const sourceEntitlements = join(canonicalSourceRoot, "Packaging", "macos", appSigningEntitlementsFileName);
   const sourceLaunchAgentDirectory = join(
     canonicalSourceRoot,
     "Packaging",
@@ -1417,6 +1459,13 @@ export async function assembleMacOSApp({
     "LaunchAgents",
   );
   const sourceLaunchAgent = join(sourceLaunchAgentDirectory, launchAgentFileName);
+  const sourceAppIcon = join(
+    canonicalSourceRoot,
+    "Packaging",
+    "macos",
+    "Resources",
+    appIconFileName,
+  );
   const sourceMenuBarIcon = join(
     canonicalSourceRoot,
     "Packaging",
@@ -1434,7 +1483,9 @@ export async function assembleMacOSApp({
   const sourceContracts = join(canonicalSourceRoot, "Contracts", "v1");
   const sourcePlugin = join(canonicalSourceRoot, "Plugin", "blabee");
   assertWithin(canonicalSourceRoot, sourceInfoPlist, "Info.plist");
+  assertWithin(canonicalSourceRoot, sourceEntitlements, "app signing entitlements");
   assertWithin(canonicalSourceRoot, sourceLaunchAgent, "LaunchAgent plist");
+  assertWithin(canonicalSourceRoot, sourceAppIcon, "app icon");
   assertWithin(canonicalSourceRoot, sourceMenuBarIcon, "menu-bar icon");
   assertWithin(
     canonicalSourceRoot,
@@ -1445,7 +1496,9 @@ export async function assembleMacOSApp({
   assertWithin(canonicalSourceRoot, sourcePlugin, "Plugin/blabee");
   for (const [path, label] of [
     [sourceInfoPlist, "Info.plist"],
+    [sourceEntitlements, "app signing entitlements"],
     [sourceLaunchAgent, "LaunchAgent plist"],
+    [sourceAppIcon, "app icon"],
     [sourceMenuBarIcon, "menu-bar icon"],
     [sourceCodexMarketplace, "Codex marketplace manifest"],
     [sourceContracts, "Contracts/v1"],
@@ -1454,8 +1507,10 @@ export async function assembleMacOSApp({
     await requireNoSymlinkComponents(canonicalSourceRoot, path, label);
   }
   await requireRegularFile(sourceInfoPlist, "Info.plist");
+  await validateAppSigningEntitlements(sourceEntitlements);
   await requireDirectory(sourceLaunchAgentDirectory, "LaunchAgents");
   await requireRegularFile(sourceLaunchAgent, "LaunchAgent plist");
+  await requireRegularFile(sourceAppIcon, "app icon");
   await requireRegularFile(sourceMenuBarIcon, "menu-bar icon");
   await validateCodexMarketplace(sourceCodexMarketplace);
   await validateLaunchAgentPlist(sourceLaunchAgent);
@@ -1485,7 +1540,9 @@ export async function assembleMacOSApp({
   await validateSourcePayloadBudget([
     binary,
     sourceInfoPlist,
+    sourceEntitlements,
     sourceLaunchAgent,
+    sourceAppIcon,
     sourceMenuBarIcon,
     sourceCodexMarketplace,
     sourceContracts,
@@ -1560,6 +1617,17 @@ export async function assembleMacOSApp({
       await chmod(stagedInfoPlist, 0o644);
     }
     await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion);
+    const stagedEntitlements = join(resources, appSigningEntitlementsFileName);
+    await copyFileWithMode(
+      sourceEntitlements,
+      stagedEntitlements,
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
+    await validateAppSigningEntitlements(stagedEntitlements);
     await copyFileWithMode(
       sourceLaunchAgent,
       join(staging, launchAgentRelativePath),
@@ -1570,6 +1638,15 @@ export async function assembleMacOSApp({
       canonicalSourceRoot,
     );
     await validateLaunchAgentPlist(join(staging, launchAgentRelativePath));
+    await copyFileWithMode(
+      sourceAppIcon,
+      join(resources, appIconFileName),
+      0o644,
+      maximumPackagedFileBytes,
+      copiedPayloadBudget,
+      false,
+      canonicalSourceRoot,
+    );
     await copyFileWithMode(
       sourceMenuBarIcon,
       join(resources, menuBarIconFileName),
@@ -1634,7 +1711,11 @@ export async function assembleMacOSApp({
       staging,
       compatiblePrevious.policies,
     );
-    if (adhocSign) await adhocSignAndVerify(staging);
+    if (normalizedReleaseSigning !== null) {
+      await signReleaseApp(staging, normalizedReleaseSigning);
+    } else if (adhocSign) {
+      await adhocSignAndVerify(staging);
+    }
     await validateFinalBundleTree(staging);
     const contentsOwnership = await captureOwnedDirectory(contents, "staged Contents");
     await verifyOwnedDirectoryEntries(
@@ -1675,7 +1756,7 @@ export async function assembleMacOSApp({
     outputReserved = false;
     return {
       output,
-      signed: adhocSign,
+      signed: adhocSign || normalizedReleaseSigning !== null,
       bundleVersion: normalizedBundleVersion,
       manifest,
       compatiblePreviousApps: compatiblePrevious.apps,

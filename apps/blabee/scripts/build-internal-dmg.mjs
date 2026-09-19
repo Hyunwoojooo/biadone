@@ -33,6 +33,11 @@ import { promisify } from "node:util";
 
 import { assembleMacOSApp } from "./build-macos-app.mjs";
 import {
+  normalizeReleaseSigning,
+  signReleaseDMG,
+  verifyDeveloperIDSignature,
+} from "./release-signing.mjs";
+import {
   requireInternalBuildNumber,
   requireInternalDMGOutputBuildSuffix,
 } from "./internal-build-number.mjs";
@@ -44,6 +49,8 @@ const bundleName = "Blabee.app";
 const checksumSuffix = ".sha256";
 const volumeName = "Blabee Internal Test";
 const internalNoticeName = "INTERNAL_TESTING.txt";
+const releaseNoticeName = "README.txt";
+const releaseVolumeName = "Blabee";
 const schemaVersion = "blabee.internal-dmg.v1";
 const publishTransactionSchemaVersion = "blabee.internal-dmg-publish.v2";
 const requiredArchitecture = "arm64";
@@ -58,6 +65,7 @@ const maximumChecksumBytes = 4 * 1024;
 const stableReadBufferBytes = 64 * 1024;
 const requiredPlistValues = Object.freeze({
   CFBundleExecutable: "blabee-coordinator",
+  CFBundleIconFile: "Blabee.icns",
   CFBundleIdentifier: "com.biadone.blabee",
   CFBundlePackageType: "APPL",
   CFBundleShortVersionString: "0.1.0",
@@ -89,6 +97,27 @@ const internalNotice = [
   "",
 ].join("\n");
 const maximumInternalNoticeBytes = Buffer.byteLength(internalNotice, "utf8");
+const releaseNotice = [
+  "BLABEE",
+  "",
+  "Blabee requires an Apple Silicon Mac with macOS 13 or later.",
+  "Drag Blabee.app to Applications, then open it from Applications.",
+  "Follow Blabee's setup instructions to connect your Codex projects.",
+  "The app and disk image are signed with a Developer ID Application certificate.",
+  "Distribute this image only after its Apple notarization and stapled ticket have been verified.",
+  "Use the SHA-256 checksum delivered with the final notarized disk image.",
+  "",
+  "설치: Blabee.app을 Applications 폴더로 옮긴 뒤 응용 프로그램에서 실행하세요.",
+  "앱의 설정 안내에 따라 Codex와 관찰할 프로젝트를 연결하세요.",
+  "macOS가 접근 권한을 요청하면 요청한 앱과 용도를 확인해 주세요.",
+  "",
+].join("\n");
+
+function distributionNotice(releaseSigning) {
+  return releaseSigning === null
+    ? { name: internalNoticeName, text: internalNotice, maximumBytes: maximumInternalNoticeBytes }
+    : { name: releaseNoticeName, text: releaseNotice, maximumBytes: Buffer.byteLength(releaseNotice, "utf8") };
+}
 
 function fail(message) {
   throw new Error(message);
@@ -453,7 +482,9 @@ async function verifyAdHocSignature(appPath) {
 
 export async function verifyInternalAppBundle(appPath, {
   expectedBuildNumber = requiredPlistValues.CFBundleVersion,
+  releaseSigning = null,
 } = {}) {
+  const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
   const normalizedBuildNumber = requireInternalBuildNumber(
     expectedBuildNumber,
     "expected app build number",
@@ -478,6 +509,10 @@ export async function verifyInternalAppBundle(appPath, {
       fail(`Info.plist ${key} must be ${JSON.stringify(expected)}`);
     }
   }
+  await requireRegularFile(
+    join(canonicalApp, "Contents", "Resources", requiredPlistValues.CFBundleIconFile),
+    "app icon",
+  );
   const executable = join(
     canonicalApp,
     "Contents",
@@ -490,7 +525,15 @@ export async function verifyInternalAppBundle(appPath, {
   }
   const architectures = await inspectArchitectures(executable);
   requireExactInternalArchitecture(architectures, "main executable");
-  await verifyAdHocSignature(canonicalApp);
+  if (normalizedReleaseSigning === null) {
+    await verifyAdHocSignature(canonicalApp);
+  } else {
+    await verifyDeveloperIDSignature(canonicalApp, {
+      teamID: normalizedReleaseSigning.teamID,
+      kind: "app",
+      identifier: requiredPlistValues.CFBundleIdentifier,
+    });
+  }
   return {
     appPath: canonicalApp,
     architectures,
@@ -602,9 +645,10 @@ async function publishExclusive(source, destination, label) {
   return inspectLinkIdentity(source);
 }
 
-async function verifyMountedVolume(mountPoint, expectedApp) {
+async function verifyMountedVolume(mountPoint, expectedApp, releaseSigning = null) {
+  const selectedNotice = distributionNotice(releaseSigning);
   const names = (await readdir(mountPoint)).sort();
-  const expectedNames = ["Applications", bundleName, internalNoticeName].sort();
+  const expectedNames = ["Applications", bundleName, selectedNotice.name].sort();
   if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
     fail(`mounted DMG root must contain exactly ${expectedNames.join(", ")}`);
   }
@@ -617,16 +661,16 @@ async function verifyMountedVolume(mountPoint, expectedApp) {
     fail("Applications link must target /Applications");
   }
   const notice = await readStableRegularFile(
-    join(mountPoint, internalNoticeName),
-    "mounted internal-testing notice",
-    { maximumBytes: maximumInternalNoticeBytes },
+    join(mountPoint, selectedNotice.name),
+    "mounted distribution notice",
+    { maximumBytes: selectedNotice.maximumBytes },
   );
-  if (notice.bytes.toString("utf8") !== internalNotice) {
-    fail(`${internalNoticeName} content changed`);
+  if (notice.bytes.toString("utf8") !== selectedNotice.text) {
+    fail(`${selectedNotice.name} content changed`);
   }
   const mountedApp = await verifyInternalAppBundle(
     join(mountPoint, bundleName),
-    { expectedBuildNumber: expectedApp.build },
+    { expectedBuildNumber: expectedApp.build, releaseSigning },
   );
   if (
     mountedApp.bundleIdentifier !== expectedApp.bundleIdentifier
@@ -1429,8 +1473,12 @@ export async function buildInternalDMG({
   platform = process.platform,
   prePublishValidation = null,
   sourceRoot = repositoryRoot,
+  releaseSigning = null,
 } = {}) {
   requireDarwin(platform);
+  const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
+  const selectedNotice = distributionNotice(normalizedReleaseSigning);
+  const selectedVolumeName = normalizedReleaseSigning === null ? volumeName : releaseVolumeName;
   const normalizedBuildNumber = requireInternalBuildNumber(
     buildNumber,
     "build number",
@@ -1491,26 +1539,28 @@ export async function buildInternalDMG({
       binaryPath: pinnedBinary.path,
       outputPath: join(volumeRoot, bundleName),
       sourceRoot: canonicalSourceRoot,
-      adhocSign: true,
+      adhocSign: normalizedReleaseSigning === null,
+      releaseSigning: normalizedReleaseSigning,
       bundleVersion: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
     });
     const assembledApp = await verifyInternalAppBundle(appResult.output, {
       expectedBuildNumber: normalizedBuildNumber,
+      releaseSigning: normalizedReleaseSigning,
     });
     await symlink("/Applications", join(volumeRoot, "Applications"));
     const noticeHandle = await open(
-      join(volumeRoot, internalNoticeName),
+      join(volumeRoot, selectedNotice.name),
       "wx",
       0o600,
     );
     try {
-      await noticeHandle.writeFile(internalNotice, "utf8");
+      await noticeHandle.writeFile(selectedNotice.text, "utf8");
       await noticeHandle.sync();
     } finally {
       await noticeHandle.close();
     }
-    await chmod(join(volumeRoot, internalNoticeName), 0o644);
+    await chmod(join(volumeRoot, selectedNotice.name), 0o644);
 
     await execFile(
       "/usr/bin/hdiutil",
@@ -1519,7 +1569,7 @@ export async function buildInternalDMG({
         "-srcfolder",
         volumeRoot,
         "-volname",
-        volumeName,
+        selectedVolumeName,
         "-fs",
         "HFS+",
         "-format",
@@ -1531,12 +1581,19 @@ export async function buildInternalDMG({
       { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
     );
     await requireRegularFile(stagedDMG, "created DMG");
+    if (normalizedReleaseSigning !== null) {
+      await signReleaseDMG(stagedDMG, normalizedReleaseSigning);
+    }
     await execFile(
       "/usr/bin/hdiutil",
       ["verify", stagedDMG],
       { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
     );
-    const mountedApp = await attachAndVerifyDMG(stagedDMG, workRoot, assembledApp);
+    const mountedApp = await attachAndVerifyDMG(stagedDMG, workRoot, assembledApp, {
+      verifyMounted: (mountPoint, expectedApp) => verifyMountedVolume(
+        mountPoint, expectedApp, normalizedReleaseSigning,
+      ),
+    });
     const sha256 = await streamSHA256(stagedDMG);
     const checksumLine = `${sha256}  ${basename(destination.output)}\n`;
     const checksumHandle = await open(stagedChecksum, "wx", 0o600);
@@ -1583,7 +1640,7 @@ export async function buildInternalDMG({
       checksum_artifact: destination.checksum,
       sha256,
       input_binary_sha256: pinnedBinary.sha256,
-      volume_name: volumeName,
+      volume_name: selectedVolumeName,
       app: {
         bundle_identifier: mountedApp.bundleIdentifier,
         version: mountedApp.version,
@@ -1591,8 +1648,9 @@ export async function buildInternalDMG({
         minimum_system_version: mountedApp.minimumSystemVersion,
         architectures: mountedApp.architectures,
       },
-      app_signing: "adhoc",
-      dmg_signing: "unsigned",
+      app_signing: normalizedReleaseSigning === null ? "adhoc" : "developer-id",
+      dmg_signing: normalizedReleaseSigning === null ? "unsigned" : "developer-id",
+      ...(normalizedReleaseSigning === null ? {} : { signing_team_id: normalizedReleaseSigning.teamID }),
       notarized: false,
       public_distribution_ready: false,
     };

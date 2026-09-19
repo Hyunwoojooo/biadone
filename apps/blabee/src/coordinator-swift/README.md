@@ -164,13 +164,20 @@ Developer ID 서명·공증과 DMG는 T-012 후속 범위다.
 누락, timeout, nonzero·signal 종료, 부분 출력, 닫히지 않은 pipe나 남은 descendant,
 출력 상한 초과는 모두 빈 stdout·stderr와 exit 0으로 합쳐 일반 Codex를 계속
 실행한다. 내부 deadline은 `SessionStart`·`UserPromptSubmit` 7초, `Stop` 5초,
-`PermissionRequest` 57초다. coordinator Hook CLI는 일반 요청 5초,
-`PermissionRequest` 55초 상한을 사용하므로 Codex의 바깥 Hook 상한보다 먼저
+`PermissionRequest` 315초다. coordinator Hook CLI는 일반 요청 5초,
+`PermissionRequest` 305초 상한을 사용하므로 Codex의 바깥 Hook 상한보다 먼저
 종료된다. timeout·signal 정리에서는 launcher가 소유한 process group을 제한된
 TERM grace 뒤 KILL하고 무한히 기다리지 않는다. MCP는 이 fail-open buffering을
-사용하지 않고 coordinator 오류나 부재를 JSON-RPC 오류와 nonzero 상태로 반환하는
-fail-closed 경로다. Plugin 설치, 제품 바이너리 PATH 등록, 자동 시작과 진단은
-T-012가 소유한다.
+사용하지 않는다. 실행기가 coordinator를 시작할 수 없으면 JSON-RPC 오류와 nonzero
+상태로 종료하고, 실행 중 `tools/call` 오류는 JSON-RPC 결과의 `isError: true`로
+전달한다. Plugin 설치, 제품 바이너리 PATH 등록, 자동 시작과 진단은 T-012가 소유한다.
+
+MCP `emit_decision`은 연결에 최대 5초, 요청 전송과 응답에 최대 15초를 기다리며
+자동 재전송하지 않는다. 응답 timeout, 연결 종료, 전송 I/O 오류는
+`decision_delivery_unconfirmed`, `retryable: false`로 반환한다. 이때 기존 envelope의
+`accepted: false`는 ACK를 받지 못했다는 뜻이며, 저장 거절을 확정하지 않는다.
+실제로는 제안이 이미 저장됐을 수 있으므로 응답 부재만으로 재시도하거나 새 제안을
+만들지 않는다. Hook과 승인 대기 시간은 이 MCP 제한과 별개다.
 
 이전 dogfood Plugin 마이그레이션의 삭제 경로는 앱 bundle과 Codex 실행 파일의
 신뢰 재검증을 먼저 끝낸다. 그 뒤 exact Marketplace/Plugin 소유권과 descriptor 기반
@@ -273,11 +280,18 @@ fallback하지 않는다. private bundle이 확정된 뒤 token·listener 같은
 자식은 정리하고 실패를 보고한다. signal로 끝난 자식의 종료 상태는
 `128 + signal` 규칙으로 보존한다.
 세부 신뢰 기준은 [관리형 Codex 실행 신뢰 경계](docs/MANAGED_CODEX_TRUST.md)에 고정한다.
-기본 `doctor`는 정적·읽기 전용이다. `codex --version`, Plugin 목록, Hook
-App Server를 실행하지 않고 package manifest·layout·identity와 Blabee
-build identity만 검사한다. 실제 Plugin locator가 확인되지 않으면 표준 앱 fallback만으로
-build identity를 통과시키지 않는다. 실제 binary 버전, Plugin/Hook 활성, code-mode는
-별도 live qualification 전까지 `action_required`로 보고한다.
+기본 `doctor`는 `--profile plugin`을 사용하며 정적·읽기 전용이다. 일반 Plugin
+CLI의 경로 신뢰, 공식 서명 또는 기존에 등록된 실행 파일 해시와 Blabee build identity를
+검사한다. 전체 관리형 package manifest·layout·code-mode 검사는
+`doctor --profile managed --codex /absolute/package/bin/codex`로 명시적으로 선택한다.
+두 profile 모두 `codex --version`, Plugin 목록, Hook App Server를 실행하지 않는다.
+정적 해시 증거로 버전을 식별할 수 없으면 Plugin CLI 버전은 실패 대신 미확인
+`action_required`로 남긴다. 실제 실행 버전·공증·Plugin/Hook 활성과 관리형 code-mode는
+별도 live 확인이 필요하다. 실제 Plugin locator가 확인되지 않으면 표준 앱 fallback만으로
+build identity를 통과시키지 않는다.
+출력에는 검사 profile과 Codex의 source/resolved 경로가 포함되며, 최초 거부 사유는
+`detail`, 선행 실패 때문에 확인하지 못한 항목은 `blocked_by`로 표시한다.
+[Doctor 진단 기준과 출력](docs/DOCTOR_DIAGNOSTICS.md)에 선택 규칙과 JSON 필드를 설명한다.
 semantic version allowlist와 production bundle catalog는 별도다. 2026-09-02 현재
 exact full-bundle fingerprint가 등록된 production 대상은 official Homebrew Codex
 `0.151.0` Apple Silicon 하나이며, 같은 Team ID·version만으로 다른 release host를
@@ -441,7 +455,7 @@ T-007b-B2 제품 경로는 선택 권한을 별도 operation으로 분리한다.
   덮어쓴다.
 - `routing_snapshot`: 세션별 대기 카드, 전면 카드, reminder와 in-flight 개수를
   반환한다.
-- `process_time`: 연속 단조 clock 기준의 60초 reminder, 120초 선택 만료와 300초
+- `process_time`: 연속 단조 clock 기준의 60초 reminder, 600초(10분) 선택 만료와 300초
   in-flight timeout 결과를 처리한다. 실행 파일은 stdin을 `poll(2)`하며 같은
   deadline에 자동으로 깨어나므로 입력이 없어도 terminal event를 append한다.
   stdin이 계속 readable이거나 malformed 입력이 반복돼도 JSON 파싱 전에 due

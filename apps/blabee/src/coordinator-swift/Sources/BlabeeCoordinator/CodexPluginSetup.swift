@@ -166,6 +166,14 @@ struct CodexPluginSetupQualifiedExecutable: Sendable, Equatable {
     }
 }
 
+/// Read-only evidence for diagnostics. This is not a qualification or launch
+/// grant: the live version and notarization preflight have not run.
+struct CodexPluginSetupStaticExecutable: Sendable, Equatable {
+    let sourceURL: URL
+    let canonicalURL: URL
+    let pinnedVersion: String?
+}
+
 typealias CodexPluginSetupExecutableQualifying = @Sendable (
     _ timeoutMilliseconds: Int
 ) throws
@@ -565,6 +573,49 @@ enum CodexPluginSetupProductionTrust {
     private static let expectedIdentifier = "codex"
     private static let expectedTeamIdentifier = "2DC432GLL2"
     private static let maximumVersionOutputBytes = 4_096
+
+    static func inspectStatically(
+        sourceURL: URL
+    ) throws -> CodexPluginSetupStaticExecutable {
+        let gate = CodexRuntimeTrustGate()
+        return try inspectStatically(
+            sourceURL: sourceURL,
+            trustInspector: gate.inspect,
+            signatureValidator: validateOfficialSignature,
+            pinnedExecutableValidator: {
+                try CodexPluginSetupPinnedExecutableTrust.validate(
+                    executable: $0,
+                    expectedIdentity: $1,
+                    expectedVersion: $2
+                )
+            }
+        )
+    }
+
+    static func inspectStatically(
+        sourceURL: URL,
+        trustInspector: CodexPluginSetupTrustInspecting,
+        signatureValidator: CodexPluginSetupSignatureValidating,
+        pinnedExecutableValidator: CodexPluginSetupPinnedExecutableValidating
+    ) throws -> CodexPluginSetupStaticExecutable {
+        let before = try trustInspector(sourceURL)
+        let canonicalURL = URL(fileURLWithPath: before.canonicalPath)
+        let pinnedArtifact = try validateExecutableTrust(
+            canonicalURL,
+            expectedIdentity: before.targetIdentity,
+            expectedVersion: nil,
+            signatureValidator: signatureValidator,
+            pinnedExecutableValidator: pinnedExecutableValidator
+        )
+        guard try trustInspector(sourceURL) == before else {
+            throw CodexRuntimeTrustError.changedDuringInspection
+        }
+        return CodexPluginSetupStaticExecutable(
+            sourceURL: URL(fileURLWithPath: before.stableSourcePath),
+            canonicalURL: canonicalURL,
+            pinnedVersion: pinnedArtifact?.version
+        )
+    }
 
     static func qualify(
         sourceURL: URL,

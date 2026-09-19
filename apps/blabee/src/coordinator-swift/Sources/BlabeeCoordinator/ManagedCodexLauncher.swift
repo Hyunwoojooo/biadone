@@ -319,7 +319,7 @@ private final class ManagedCodexSignalRelay: @unchecked Sendable {
     func retainUntilScopeExit() {}
 }
 
-private final class ManagedCodexTerminalForegroundLease: @unchecked Sendable {
+final class ManagedCodexTerminalForegroundLease: @unchecked Sendable {
     private let descriptor: Int32
     private let originalProcessGroup: pid_t
     private let lock = NSLock()
@@ -394,7 +394,7 @@ private final class ManagedCodexTerminalForegroundLease: @unchecked Sendable {
     }
 }
 
-private final class ManagedCodexJSONLineReader: @unchecked Sendable {
+final class ManagedCodexJSONLineReader: @unchecked Sendable {
     private static let maximumLineBytes = ManagedCodexTransportLimits.maximumMessageBytes
     private let handle: FileHandle
     private let descriptor: Int32
@@ -491,7 +491,7 @@ private final class ManagedCodexJSONLineReader: @unchecked Sendable {
     }
 }
 
-private final class ManagedCodexJSONLineWriter: @unchecked Sendable {
+final class ManagedCodexJSONLineWriter: @unchecked Sendable {
     private static let maximumLineBytes = ManagedCodexTransportLimits.maximumMessageBytes
     private let handle: FileHandle
     private let lock = NSLock()

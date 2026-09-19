@@ -1,0 +1,538 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/bridge/common.v1.json",
+  "title": "Blabee product wire common values",
+  "description": "Syntax only, never credential, peer, liveness, enrollment or authority verification. Opaque provider DTOs require their named inner validator before use. UInt64 values use canonical decimal strings; opaque values prohibit reserved secret keys recursively.",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\\s\\S])"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "uint64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)(?![\\s\\S])"
+    },
+    "positive_uint64": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)(?![\\s\\S])"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "channel_source": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*(?![\\s\\S])"
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope_id",
+        "native_session_id",
+        "session_incarnation",
+        "service_incarnation",
+        "owner_connection_id",
+        "authority_epoch"
+      ],
+      "properties": {
+        "scope_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "native_session_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "session_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "service_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "owner_connection_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "authority_epoch": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "session_id",
+        "source_turn_id",
+        "source_prompt_id",
+        "episode_id",
+        "episode_root_prompt_id",
+        "episode_baseline_checkpoint_id",
+        "decision_boundary_id",
+        "boundary_sequence"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "session_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "source_turn_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "source_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "episode_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "episode_root_prompt_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "episode_baseline_checkpoint_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "decision_boundary_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+        },
+        "boundary_sequence": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/revision"
+        }
+      }
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deadline_nanoseconds",
+        "renewal_sequence"
+      ],
+      "properties": {
+        "deadline_nanoseconds": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+        },
+        "renewal_sequence": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_request",
+            "unsupported_version",
+            "unauthorized",
+            "forbidden",
+            "stale_authority",
+            "binding_mismatch",
+            "expired",
+            "revoked",
+            "capacity",
+            "unavailable",
+            "unknown_result"
+          ]
+        }
+      }
+    },
+    "safe_object": {
+      "type": "object",
+      "maxProperties": 256,
+      "propertyNames": {
+        "not": {
+          "pattern": "^[_-]*(?:[aA][_-]*[uU][_-]*[tT][_-]*[hH][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[hH][_-]*[oO][_-]*[oO][_-]*[kK][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[bB][_-]*[rR][_-]*[iI][_-]*[dD][_-]*[gG][_-]*[eE][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[sS][_-]*[eE][_-]*[lL][_-]*[eE][_-]*[cC][_-]*[tT][_-]*[oO][_-]*[rR][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[sS][_-]*[eE][_-]*[lL][_-]*[eE][_-]*[cC][_-]*[tT][_-]*[iI][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[oO][_-]*[wW][_-]*[nN][_-]*[eE][_-]*[rR][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[cC][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[rR][_-]*[oO][_-]*[lL][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[cC][_-]*[aA][_-]*[pP][_-]*[aA][_-]*[bB][_-]*[iI][_-]*[lL][_-]*[iI][_-]*[tT][_-]*[yY]|[cC][_-]*[aA][_-]*[pP][_-]*[aA][_-]*[bB][_-]*[iI][_-]*[lL][_-]*[iI][_-]*[tT][_-]*[iI][_-]*[eE][_-]*[sS]|[cC][_-]*[rR][_-]*[eE][_-]*[dD][_-]*[eE][_-]*[nN][_-]*[tT][_-]*[iI][_-]*[aA][_-]*[lL]|[cC][_-]*[rR][_-]*[eE][_-]*[dD][_-]*[eE][_-]*[nN][_-]*[tT][_-]*[iI][_-]*[aA][_-]*[lL][_-]*[sS]|[oO][_-]*[wW][_-]*[nN][_-]*[eE][_-]*[rR][_-]*[hH][_-]*[aA][_-]*[nN][_-]*[dD][_-]*[lL][_-]*[eE]|[aA][_-]*[uU][_-]*[tT][_-]*[hH][_-]*[oO][_-]*[rR][_-]*[iI][_-]*[zZ][_-]*[aA][_-]*[tT][_-]*[iI][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[iI][_-]*[cC][_-]*[kK][_-]*[eE][_-]*[tT]|[tT][_-]*[iI][_-]*[cC][_-]*[kK][_-]*[eE][_-]*[tT]|[cC][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[iI][_-]*[nN][_-]*[uU][_-]*[aA][_-]*[tT][_-]*[iI][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[cC][_-]*[oO][_-]*[rR][_-]*[rR][_-]*[eE][_-]*[lL][_-]*[aA][_-]*[tT][_-]*[iI][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[rR][_-]*[aA][_-]*[wW][_-]*[cC][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[iI][_-]*[nN][_-]*[uU][_-]*[aA][_-]*[tT][_-]*[iI][_-]*[oO][_-]*[nN][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN]|[pP][_-]*[rR][_-]*[iI][_-]*[vV][_-]*[aA][_-]*[tT][_-]*[eE][_-]*[kK][_-]*[eE][_-]*[yY]|[nN][_-]*[oO][_-]*[nN][_-]*[cC][_-]*[eE]|[dD][_-]*[eE][_-]*[lL][_-]*[iI][_-]*[vV][_-]*[eE][_-]*[rR][_-]*[yY][_-]*[tT][_-]*[oO][_-]*[kK][_-]*[eE][_-]*[nN])[_-]*(?![\\s\\S])"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/safe_json"
+      }
+    },
+    "safe_json": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 65536
+        },
+        {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/safe_json"
+          }
+        },
+        {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/safe_object"
+        }
+      ]
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "value"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-proposal.v1"
+        },
+        "value": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/safe_object"
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "value"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.claude-action.v1"
+        },
+        "value": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/safe_object"
+        }
+      }
+    },
+    "probe_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "probe_id",
+        "expires_at_nanoseconds",
+        "status"
+      ],
+      "properties": {
+        "probe_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "expires_at_nanoseconds": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+        },
+        "status": {
+          "const": "pending"
+        }
+      }
+    },
+    "poll_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event"
+      ],
+      "properties": {
+        "event": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "probe_id",
+                "nonce",
+                "expires_at_nanoseconds",
+                "channel_source",
+                "delivery_sequence"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "readiness_probe"
+                },
+                "probe_id": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                },
+                "nonce": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+                },
+                "expires_at_nanoseconds": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+                },
+                "channel_source": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/channel_source"
+                },
+                "delivery_sequence": {
+                  "$ref": "#/$defs/positive_uint64"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "selection_id",
+                "delivery_token",
+                "expires_at_nanoseconds",
+                "channel_source",
+                "delivery_sequence"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "selection"
+                },
+                "selection_id": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                },
+                "delivery_token": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+                },
+                "expires_at_nanoseconds": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+                },
+                "channel_source": {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/channel_source"
+                },
+                "delivery_sequence": {
+                  "$ref": "#/$defs/positive_uint64"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "hook": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "source"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "SessionStart"
+            },
+            "source": {
+              "const": "startup"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "source"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "SessionStart"
+            },
+            "source": {
+              "const": "compact"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "prompt_id",
+            "prompt_sha256"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "UserPromptSubmit"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "prompt_sha256": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/nonce"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "prompt_id"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "Stop"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "background_task_ids": {
+              "type": "array",
+              "maxItems": 256,
+              "items": {
+                "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/identifier"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "failure_code"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "StopFailure"
+            },
+            "prompt_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "failure_code": {
+              "enum": [
+                "api_error",
+                "interrupted",
+                "unknown"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "SessionEnd"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "native_session_id",
+            "cwd",
+            "event",
+            "reason"
+          ],
+          "properties": {
+            "native_session_id": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+            },
+            "cwd": {
+              "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+            },
+            "event": {
+              "const": "ObservationUnavailable"
+            },
+            "reason": {
+              "enum": [
+                "invalid_prompt_id",
+                "invalid_prompt_text",
+                "unknown_event",
+                "unsupported_source"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

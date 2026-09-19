@@ -71,6 +71,7 @@ struct PetRiskConfirmation: Sendable, Equatable {
     let identity: PetInteractionIdentity
     let slot: Int
     let optionID: String
+    var inputMethod: PetProductInputMethod = .button
 }
 
 struct PetSelectionSubmission: Sendable, Equatable {
@@ -87,11 +88,38 @@ enum PetActionAccessoryPresentation: Sendable, Equatable {
 
 @MainActor
 final class PetViewModel: ObservableObject {
+    let provider: PetProvider
+    let automaticAppUpdate: AppUpdateTransactionController
+    let account: PetAccountController?
+    var firstRunPreferences: PetFirstRunPreferences?
+    let usageAnalytics: PetUsageAnalytics?
+    let errorDiagnostics: PetErrorDiagnostics?
+    let feedback: PetFeedbackController?
+    private let insightCards: PetInsightCardTracker?
+    private enum InsightCardIdentity: Hashable {
+        case suggestion(PetInteractionIdentity)
+        case approval(PetApprovalHeadIdentity)
+    }
+    // These identities stay in memory. Only fresh telemetry UUIDs leave the app.
+    private var insightCardKeys: [InsightCardIdentity: String] = [:]
+    private var insightOwner: PetProductIdentity?
+    private var isApplyingSnapshot = false
+    private(set) var isFeedbackWindowVisible = false
+    private var lastSnapshotDiagnosticContext: PetErrorContext?
+    // Local acceptance observer; remote recording separately requires the
+    // consent/identity context captured when the user initiated the action.
+    var onUsageAccepted: ((PetUsageEventKind) -> Void)?
     private enum OnboardingOperationDomain {
         case service
         case codexPlugin
         case project
         case legacyShell
+    }
+
+    private struct FocusOperation: Sendable {
+        let id = UUID()
+        let identity: PetInteractionIdentity
+        let serviceGeneration: UInt64?
     }
 
     @Published private(set) var snapshot: PetSnapshot? {
@@ -126,15 +154,26 @@ final class PetViewModel: ObservableObject {
             reconcileChoicePreview()
         }
     }
+    @Published private(set) var selectedEventReference: PetEventReference? {
+        didSet { reconcileInsightPresentation() }
+    }
+    @Published private(set) var pendingEventFocus: PetEventFocusTarget?
+    @Published private(set) var eventNavigationShortcutDiagnostic: String?
+    private var confirmedEventFocus: PetEventFocusTarget?
+    private var automaticallyFocusingEvent = false
+
     @Published private(set) var localForegroundIdentity: PetInteractionIdentity?
     @Published private(set) var pendingFocusIdentity: PetInteractionIdentity?
     @Published private(set) var selectionSubmission: PetSelectionSubmission?
+    @Published private(set) var inFlightDismissalIdentity: PetInteractionIdentity?
     @Published private(set) var riskConfirmation: PetRiskConfirmation?
     @Published private(set) var choicePreview: PetChoicePreview? {
         didSet {
             guard oldValue != choicePreview else { return }
             onPanelLayoutChanged?()
             onChoicePreviewChanged?(choicePreview != nil)
+            reconcileEventNavigationShortcuts()
+            reconcileInsightPresentation()
         }
     }
     @Published private(set) var isExpanded = false {
@@ -163,11 +202,16 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var approvalShortcutLabels: [PetApprovalShortcutIntent: String] = [:]
     @Published private(set) var approvalShortcutDiagnostic: String?
     @Published private(set) var shortcutDraft = PetShortcutConfiguration.defaults
+    // A permission card temporarily replaces the settings view. Keep its selected
+    // pane alongside the draft so remounting cannot silently switch tabs.
+    @Published private(set) var selectedSettingsTab: PetSettingsTab = .general
     @Published private(set) var isEditingShortcuts = false {
         didSet {
             if oldValue != isEditingShortcuts { onPanelLayoutChanged?() }
             reconcileChoicePreview()
             reconcileApprovalShortcuts()
+            reconcileEventNavigationShortcuts()
+            reconcileInsightPresentation()
         }
     }
     @Published private(set) var shortcutSettingsError: String?
@@ -176,12 +220,24 @@ final class PetViewModel: ObservableObject {
             if oldValue != isShowingOnboarding { onPanelLayoutChanged?() }
             reconcileChoicePreview()
             reconcileApprovalShortcuts()
+            reconcileEventNavigationShortcuts()
+            reconcileInsightPresentation()
         }
     }
     @Published private(set) var onboardingServiceState: PetServiceRegistrationState = .unknown
     @Published private(set) var appOwnedServiceState: PetAppServiceState = .disabled
     @Published private(set) var isAppOwnedServiceEnabled = false
     @Published private(set) var codexPluginSetupState: CodexPluginSetupState = .unchecked
+    @Published private var rawCodexHookReadiness: PetHookReadinessState = .unchecked
+    @Published private var checkedHookProjectPath: String?
+    @Published private(set) var selectedHookProjectPath: String?
+    @Published private(set) var isCodexHookCheckInFlight = false
+    @Published private(set) var storageRecoveryConfirmation: PetStorageRecoveryConfirmation?
+    @Published private(set) var storageRecoveryReceipt: PetStorageRecoveryReceipt?
+    @Published private(set) var storageRecoveryError: String?
+    @Published private(set) var isStorageRecoveryOperationInFlight = false
+    private var hookCheckGeneration = UUID()
+    private var storageRecoveryGeneration = UUID()
     @Published private(set) var codexNativeRecheckReport: CodexPluginRecheckReport?
     @Published private(set) var configuredProjectPaths: [String] = []
     @Published private(set) var configuredProjectPathsAreAuthoritative = false
@@ -190,6 +246,10 @@ final class PetViewModel: ObservableObject {
     @Published private(set) var appUpdateSettingsRequestID = UUID()
     @Published private(set) var coordinatorTransportError: String?
     @Published private(set) var connectionReceivedCardProjectPaths: Set<String> = []
+    @Published private var firstRunSetupSnapshot: PetSnapshot?
+    private var firstRunSetupActive = false
+    private var firstRunSetupGeneration = UUID()
+    private var firstRunRefreshToken: UUID?
     @Published private(set) var suggestionMode: BlabeeSuggestionMode = .smart
     @Published private(set) var suggestionModeDiagnostic: String? {
         didSet {
@@ -221,6 +281,8 @@ final class PetViewModel: ObservableObject {
     private let onboardingAdapter: any PetOnboardingAdapting
     private let appService: PetAppServiceController?
     private let codexPluginSetupManager: any CodexPluginSetupManaging
+    private let hookReadinessManager: any PetHookReadinessManaging
+    private let storageRecoveryManager: any PetStorageRecoveryManaging
     private let legacyShellCleanupManager: any LegacyCodexShellCleanupManaging
     private let suggestionModeStore: any BlabeeSuggestionModeStoring
     private let projectFolderChooser: any PetProjectFolderChoosing
@@ -238,7 +300,8 @@ final class PetViewModel: ObservableObject {
         String: PetExternalApplicationReference
     ] = [:]
     private var inFlightSelectionIdentity: PetInteractionIdentity?
-    private var focusWaiters: [PetInteractionIdentity: [CheckedContinuation<Void, Never>]] = [:]
+    private var activeFocusOperation: FocusOperation?
+    private var focusWaiters: [UUID: [CheckedContinuation<Bool, Never>]] = [:]
     private var hotKeyRegistry: PetHotKeyRegistry?
     private(set) var isPanelVisible = false
     private let choicePreviewHoldMonitor: PetChoicePreviewHoldMonitor
@@ -252,6 +315,7 @@ final class PetViewModel: ObservableObject {
     private var onboardingRefreshRequested = false
     private var codexPluginRefreshRequested = false
     private var autoFocusAttemptedIdentity: PetInteractionIdentity?
+    private var autoFocusAttemptToken: UUID?
     private var persistentApprovalResolutionError: String?
 
     var onPanelLayoutChanged: (() -> Void)?
@@ -261,13 +325,17 @@ final class PetViewModel: ObservableObject {
     var onAttentionEvent: (() -> Void)?
     var onApprovalHeadChanged: ((PetApprovalHeadIdentity?) -> Void)?
     var onApprovalResolutionFailed: (() -> Void)?
+    var onFeedbackRequested: ((String?) -> Void)?
 
     init(
         transport: any PetCoordinatorTransport,
         externalApplicationOpener: any PetExternalApplicationOpening,
+        provider: PetProvider = .codex,
         onboardingAdapter: any PetOnboardingAdapting = PetUnavailableOnboardingAdapter(),
         appService: PetAppServiceController? = nil,
         codexPluginSetupManager: any CodexPluginSetupManaging = CodexUnavailablePluginSetupManager(),
+        hookReadinessManager: any PetHookReadinessManaging = PetUnavailableHookReadinessManager(),
+        storageRecoveryManager: any PetStorageRecoveryManaging = PetUnavailableStorageRecoveryManager(),
         legacyShellCleanupManager: any LegacyCodexShellCleanupManaging = LegacyUnavailableCodexShellCleanupManager(),
         suggestionModeStore: any BlabeeSuggestionModeStoring = BlabeeSuggestionModeStore(),
         projectFolderChooser: any PetProjectFolderChoosing = PetUnavailableProjectFolderChooser(),
@@ -275,6 +343,12 @@ final class PetViewModel: ObservableObject {
             currentVersion: nil, repository: nil
         ),
         appUpdateURLOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        automaticAppUpdate: AppUpdateTransactionController? = nil,
+        account: PetAccountController? = nil,
+        usageAnalytics: PetUsageAnalytics? = nil,
+        errorDiagnostics: PetErrorDiagnostics? = nil,
+        feedback: PetFeedbackController? = nil,
+        insightCards: PetInsightCardTracker? = nil,
         processIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         selectionIDGenerator: @escaping @Sendable () -> String = {
             "selection_" + UUID().uuidString.lowercased()
@@ -288,15 +362,24 @@ final class PetViewModel: ObservableObject {
         choicePreviewHoldMonitor: PetChoicePreviewHoldMonitor = PetChoicePreviewHoldMonitor()
     ) {
         self.transport = transport
+        self.provider = provider
         self.externalApplicationOpener = externalApplicationOpener
         self.onboardingAdapter = onboardingAdapter
         self.appService = appService
         self.codexPluginSetupManager = codexPluginSetupManager
+        self.hookReadinessManager = hookReadinessManager
+        self.storageRecoveryManager = storageRecoveryManager
         self.legacyShellCleanupManager = legacyShellCleanupManager
         self.suggestionModeStore = suggestionModeStore
         self.projectFolderChooser = projectFolderChooser
         self.appUpdateChecker = appUpdateChecker
         self.appUpdateURLOpener = appUpdateURLOpener
+        self.automaticAppUpdate = automaticAppUpdate ?? AppUpdateTransactionController()
+        self.account = account
+        self.usageAnalytics = usageAnalytics
+        self.errorDiagnostics = errorDiagnostics
+        self.feedback = feedback
+        self.insightCards = insightCards ?? usageAnalytics.map { PetInsightCardTracker(analytics: $0) }
         self.processIdentifier = processIdentifier
         self.selectionIDGenerator = selectionIDGenerator
         self.permissionResponseIDGenerator = permissionResponseIDGenerator
@@ -317,7 +400,7 @@ final class PetViewModel: ObservableObject {
 
     var focusedInteraction: PetInteraction? {
         guard let localForegroundIdentity,
-              fifoHeadInteraction?.identity == localForegroundIdentity,
+              displayInteraction?.identity == localForegroundIdentity,
               snapshot?.routing.foreground == localForegroundIdentity,
               let interaction = snapshot?.interaction(identity: localForegroundIdentity),
               interaction.foreground
@@ -342,16 +425,94 @@ final class PetViewModel: ObservableObject {
         return index + 1
     }
 
-    var displayInteraction: PetInteraction? {
-        return fifoHeadInteraction
+    var eventQueue: [PetQueuedEvent] { snapshot?.queuedEvents ?? [] }
+    var eventQueueCount: Int { eventQueue.count }
+
+    var displayedEvent: PetQueuedEvent? {
+        guard let snapshot else { return nil }
+        if let navigation = snapshot.eventNavigation {
+            if let selectedEventReference, let event = snapshot.event(reference: selectedEventReference) {
+                return event
+            }
+            if let focused = navigation.focused, let event = snapshot.event(reference: focused) {
+                return event
+            }
+            return eventQueue.first
+        }
+        if let approval = defaultApprovalHead {
+            switch approval {
+            case .permission(let request): return .permission(request)
+            case .managed(let request): return .managed(request)
+            }
+        }
+        return fifoHeadInteraction.map(PetQueuedEvent.decision)
     }
 
-    var approvalHead: PetApprovalHead? {
+    var displayedEventQueuePosition: Int? {
+        guard let reference = displayedEvent?.reference,
+              let index = eventQueue.firstIndex(where: { $0.reference == reference }) else { return nil }
+        return index + 1
+    }
+
+    var displayInteraction: PetInteraction? {
+        guard snapshot?.eventNavigation != nil else { return fifoHeadInteraction }
+        guard case .decision(let interaction) = displayedEvent else { return nil }
+        return interaction
+    }
+
+    private var defaultApprovalHead: PetApprovalHead? {
         guard let snapshot else { return nil }
         return PetApprovalHead.first(
             permissionRequests: snapshot.permissionRequests,
             managedCommandApprovals: snapshot.managedCommandApprovals
         )
+    }
+
+    var approvalHead: PetApprovalHead? {
+        snapshot?.eventNavigation == nil ? defaultApprovalHead : displayedEvent?.approval
+    }
+
+    var eventDeliveryPending: Bool {
+        snapshot?.eventNavigation?.deliveryPending
+            ?? eventQueue.contains(where: \.deliveryPending)
+    }
+
+    var canNavigateEvents: Bool {
+        snapshot?.eventNavigation != nil && eventQueueCount > 1
+            && !isShuttingDown && !isEditingShortcuts && !isShowingOnboarding && !isFeedbackWindowVisible
+            && choicePreview == nil && !choicePreviewHoldMonitor.suppressesSelection
+            && pendingEventFocus == nil && pendingFocusIdentity == nil
+            && selectionSubmission == nil && inFlightSelectionIdentity == nil
+            && inFlightDismissalIdentity == nil && riskConfirmation == nil
+            && inFlightPermissionRequestID == nil && inFlightManagedCommandApprovalID == nil
+            && !eventDeliveryPending
+    }
+
+    /// A new visible event never inherits another event's selection authority.
+    var canActOnDisplayedEvent: Bool {
+        guard !isShuttingDown, pendingEventFocus == nil, !eventDeliveryPending else { return false }
+        guard providerAllowsSelection else { return false }
+        guard let navigation = snapshot?.eventNavigation else { return true }
+        guard let event = displayedEvent, navigation.focused == event.reference else { return false }
+        if selectedEventReference != nil {
+            return (try? event.focusTarget()) == confirmedEventFocus
+        }
+        // Default approval-first/FIFO operation remains available without browsing.
+        if let approval = event.approval {
+            return approval == defaultApprovalHead || (try? event.focusTarget()) == confirmedEventFocus
+        }
+        if case .decision(let interaction) = event {
+            return interaction.identity == fifoHeadInteraction?.identity
+                || (try? event.focusTarget()) == confirmedEventFocus
+        }
+        return false
+    }
+
+    func canRequestPanelSelection(_ identity: PetInteractionIdentity) -> Bool {
+        canActOnDisplayedEvent && displayInteraction?.identity == identity
+            && pendingFocusIdentity == nil && selectionSubmission == nil
+            && inFlightDismissalIdentity == nil && inFlightSelectionIdentity == nil
+            && inFlightPermissionRequestID == nil && inFlightManagedCommandApprovalID == nil
     }
 
     var approvalQueueCount: Int {
@@ -385,7 +546,9 @@ final class PetViewModel: ObservableObject {
     /// card owns the panel. Keep the diagnostic for the normal and settings
     /// screens, but do not let it compete with a time-sensitive approval.
     var visibleShortcutDiagnostic: String? {
-        hasNewPermissionNotice ? nil : shortcutDiagnostic
+        if hasNewPermissionNotice || provider == .claude { return nil }
+        let messages = [shortcutDiagnostic, eventNavigationShortcutDiagnostic].compactMap { $0 }
+        return messages.isEmpty ? nil : messages.joined(separator: " · ")
     }
 
     var hasVisibleStatusMessage: Bool {
@@ -406,6 +569,13 @@ final class PetViewModel: ObservableObject {
         if snapshot == nil {
             return lastError == nil ? .disconnected : .malformed
         }
+        if provider == .claude {
+            guard let status = snapshot?.providerStatus, status.bridgeConnected, status.ready else {
+                return .disconnected
+            }
+            if snapshot?.interactions.isEmpty == false { return .waiting }
+            return providerHasPendingResult ? .working : .ready
+        }
         if pendingManagedCommandApproval != nil || pendingPermissionRequest != nil {
             return .permission
         }
@@ -421,6 +591,15 @@ final class PetViewModel: ObservableObject {
     }
 
     var presentationTitle: String {
+        if provider == .claude {
+            guard let status = snapshot?.providerStatus else { return "Claude 연결 대기" }
+            if !status.bridgeConnected { return "Claude 연결 대기" }
+            if !status.ready { return "연결 확인 필요" }
+            if snapshot?.interactions.isEmpty == false {
+                return status.selectionEnabled ? "결정 대기" : "Claude 응답 대기"
+            }
+            return providerHasPendingResult ? "선택 결과 대기" : "준비됨"
+        }
         if isAppOwnedServiceEnabled, appOwnedServiceState != .ready {
             return appOwnedServiceState.title
         }
@@ -428,6 +607,16 @@ final class PetViewModel: ObservableObject {
     }
 
     var emptyStateDescription: String {
+        if provider == .claude {
+            guard let status = snapshot?.providerStatus, status.bridgeConnected else {
+                return "이 창을 연 Claude 세션의 연결을 기다리고 있습니다."
+            }
+            if !status.ready { return "같은 Claude 대화창에서 Blabee 연결 확인을 요청해 주세요." }
+            if providerHasPendingResult {
+                return "선택을 접수했습니다. Claude의 작업 결과 보고를 기다리고 있습니다."
+            }
+            return "Claude가 제안을 보내면 여기에 표시됩니다."
+        }
         if isAppOwnedServiceEnabled, appOwnedServiceState != .ready {
             return appOwnedServiceState.detail
         }
@@ -437,6 +626,17 @@ final class PetViewModel: ObservableObject {
     }
 
     var isAppOwnedServiceAvailable: Bool { appService != nil }
+
+    var supportsProductSettings: Bool { provider == .codex }
+    var supportsDecisionDismissal: Bool { provider == .codex }
+    private var providerAllowsSelection: Bool {
+        provider == .codex || (snapshot?.providerStatus?.provider == .claude
+            && snapshot?.providerStatus?.selectionEnabled == true)
+    }
+    private var providerHasPendingResult: Bool {
+        (snapshot?.routing.inFlightCount ?? 0) > 0
+            || (snapshot?.providerStatus?.pendingReportCount ?? 0) > 0
+    }
 
     var canChangeAppOwnedService: Bool {
         appService != nil && !isShuttingDown
@@ -453,9 +653,20 @@ final class PetViewModel: ObservableObject {
                 connectionReceivedCardProjectPaths = []
             }
             let previousApproval = approvalHead?.identity
+            invalidateFocusOperation()
             snapshot = nil
+            confirmedEventFocus = nil
+            pendingEventFocus = nil
+            automaticallyFocusingEvent = false
             localForegroundIdentity = nil
             pendingFocusIdentity = nil
+            // A new service generation must not inherit an old request's
+            // disabled controls. Late completions are fenced at each await.
+            inFlightPermissionRequestID = nil
+            inFlightManagedCommandApprovalID = nil
+            inFlightSelectionIdentity = nil
+            selectionSubmission = nil
+            inFlightDismissalIdentity = nil
             riskConfirmation = nil
             lastTerminalPresentation = nil
             updateHotKeyEligibility()
@@ -470,8 +681,130 @@ final class PetViewModel: ObservableObject {
             && focusedInteraction.choice(slot: 4)?.enabled == true
     }
 
+    var hookReadinessProjectPaths: [String] {
+        (configuredProjectPathsAreAuthoritative ? Set(configuredProjectPaths) : activeProjectPaths).sorted()
+    }
+
+    var hookReadinessProjectPath: String? {
+        if let selectedHookProjectPath, hookReadinessProjectPaths.contains(selectedHookProjectPath) {
+            return selectedHookProjectPath
+        }
+        return hookReadinessProjectPaths.first
+    }
+
+    var codexHookReadiness: PetHookReadinessState {
+        guard checkedHookProjectPath == hookReadinessProjectPath else { return .unchecked }
+        return rawCodexHookReadiness
+    }
+
+    var isConnectionSetupReady: Bool {
+        guard codexHookReadiness == .trusted else { return false }
+        switch connectionReadiness.status {
+        case .awaitingVerification, .receiving: return true
+        default: return false
+        }
+    }
+
+    var canCheckCodexHooks: Bool {
+        guard !isShuttingDown, !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight,
+              !isStorageRecoveryOperationInFlight, hookReadinessProjectPath != nil,
+              case .installedNeedsHookReview = codexPluginSetupState else { return false }
+        return true
+    }
+
+    func selectHookProject(_ path: String) {
+        guard hookReadinessProjectPaths.contains(path), path != hookReadinessProjectPath else { return }
+        selectedHookProjectPath = path
+        invalidateHookReadiness()
+    }
+
+    private func invalidateHookReadiness() {
+        hookCheckGeneration = UUID()
+        checkedHookProjectPath = nil
+        rawCodexHookReadiness = .unchecked
+    }
+
+    func checkCodexHooks() async {
+        guard canCheckCodexHooks, let path = hookReadinessProjectPath else { return }
+        let generation = UUID()
+        hookCheckGeneration = generation
+        isCodexHookCheckInFlight = true
+        checkedHookProjectPath = path
+        rawCodexHookReadiness = .checking
+        defer { isCodexHookCheckInFlight = false }
+        let result = await hookReadinessManager.inspect(projectURL: URL(fileURLWithPath: path))
+        guard hookCheckGeneration == generation, path == hookReadinessProjectPath,
+              !isShuttingDown, !Task.isCancelled else {
+            if hookCheckGeneration == generation { invalidateHookReadiness() }
+            return
+        }
+        rawCodexHookReadiness = result
+    }
+
+    /// Recovery is exposed only while the service is fully stopped. The engine
+    /// independently takes process locks and revalidates the confirmed plan.
+    var canPrepareStorageRecovery: Bool {
+        guard isAppOwnedServiceAvailable, !isShuttingDown,
+              !isOnboardingOperationInFlight, !hasVerifiedServiceConnection,
+              appService?.hasOwnedChild == false, appService?.isTransitioning == false,
+              onboardingServiceState == .notRegistered || onboardingServiceState == .notFound
+        else { return false }
+        switch appOwnedServiceState {
+        case .disabled, .stopped: return true
+        case .failed(let code): return code == "freshness_storage_missing"
+        default: return false
+        }
+    }
+
+    func cancelStorageRecovery() {
+        storageRecoveryGeneration = UUID()
+        storageRecoveryConfirmation = nil
+    }
+
+    func prepareStorageRecovery() async {
+        guard (isShowingSettings || firstRunSetupActive), canPrepareStorageRecovery else { return }
+        cancelStorageRecovery()
+        let generation = storageRecoveryGeneration
+        storageRecoveryError = nil
+        storageRecoveryReceipt = nil
+        isStorageRecoveryOperationInFlight = true
+        defer { isStorageRecoveryOperationInFlight = false }
+        do {
+            let confirmation = try await storageRecoveryManager.prepare()
+            guard storageRecoveryGeneration == generation, !isShuttingDown, !Task.isCancelled,
+                  isShowingSettings || firstRunSetupActive else { return }
+            storageRecoveryConfirmation = confirmation
+        } catch {
+            guard storageRecoveryGeneration == generation, !isShuttingDown else { return }
+            storageRecoveryError = PetStorageRecoveryMessage.failure(error)
+        }
+    }
+
+    func confirmStorageRecovery() async {
+        reloadOnboardingState()
+        guard (isShowingSettings || firstRunSetupActive), canPrepareStorageRecovery,
+              let confirmation = storageRecoveryConfirmation else { return }
+        // Consume once before awaiting; duplicate clicks cannot replay a reset.
+        cancelStorageRecovery()
+        storageRecoveryError = nil
+        isStorageRecoveryOperationInFlight = true
+        do {
+            storageRecoveryReceipt = try await storageRecoveryManager.recover(confirmation: confirmation)
+            invalidateHookReadiness()
+            connectionReceivedCardProjectPaths = []
+        } catch {
+            storageRecoveryError = PetStorageRecoveryMessage.failure(error)
+        }
+        isStorageRecoveryOperationInFlight = false
+        guard storageRecoveryReceipt != nil, !isShuttingDown, !Task.isCancelled else { return }
+        // Re-enabling is part of the user's confirmed 'start fresh' action.
+        // A later verified snapshot, not the receipt, establishes service health.
+        if isAppOwnedServiceEnabled { await restartAppOwnedService() }
+        else { await enableAppOwnedService() }
+    }
+
     var activeProjectPaths: Set<String> {
-        Set(snapshot?.projects.filter(\.enabled).map(\.cwd) ?? [])
+        Set((snapshot ?? firstRunSetupSnapshot)?.projects.filter(\.enabled).map(\.cwd) ?? [])
     }
 
     /// Installation, a responding service, and a received card are different
@@ -483,7 +816,9 @@ final class PetViewModel: ObservableObject {
             appOwnedServiceState == .starting || appOwnedServiceState == .reconnecting
                 || appOwnedServiceState == .stopping
         )
-        let serviceIssueRequiresAction = isAppOwnedServiceEnabled && appOwnedServiceState == .blocked
+        let serviceIssueRequiresAction = isAppOwnedServiceEnabled && (
+            appOwnedServiceState == .blocked || appOwnedServiceState == .unresponsive
+        )
         let serviceIssue: String?
         if isAppOwnedServiceEnabled,
            case .failed = appOwnedServiceState {
@@ -504,7 +839,9 @@ final class PetViewModel: ObservableObject {
             configuredProjectPaths: configuredProjectPathsAreAuthoritative
                 ? configuredProjectPaths : nil,
             activeProjectPaths: connected ? activeProjectPaths : nil,
-            receivedCardProjectPaths: connected ? connectionReceivedCardProjectPaths : []
+            receivedCardProjectPaths: connected ? connectionReceivedCardProjectPaths : [],
+            hookReadiness: codexHookReadiness,
+            hookProjectPath: hookReadinessProjectPath
         )
     }
 
@@ -517,7 +854,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var hasVerifiedServiceConnection: Bool {
-        snapshot != nil && coordinatorTransportError == nil
+        (snapshot != nil || firstRunSetupSnapshot != nil) && coordinatorTransportError == nil
             && (!isAppOwnedServiceEnabled || appOwnedServiceState == .ready)
     }
 
@@ -538,10 +875,12 @@ final class PetViewModel: ObservableObject {
             || isCodexPluginOperationInFlight
             || isOnboardingProjectOperationInFlight
             || isLegacyShellCleanupOperationInFlight
+            || isCodexHookCheckInFlight || isStorageRecoveryOperationInFlight
     }
 
     private var isOnboardingConfigurationOperationInFlight: Bool {
         isOnboardingServiceOperationInFlight || isOnboardingProjectOperationInFlight
+            || isStorageRecoveryOperationInFlight
     }
 
     var canRegisterOnboardingService: Bool {
@@ -581,7 +920,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var canConnectCodexPlugin: Bool {
-        guard !isCodexPluginOperationInFlight else { return false }
+        guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight else { return false }
         return switch codexPluginSetupState {
         case .unchecked, .notInstalled, .marketplaceInstalledNeedsPlugin, .updateAvailable: true
         case .unavailable, .installedNeedsHookReview, .legacyInstallationDetected, .conflict, .error: false
@@ -589,7 +928,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var canDisconnectCodexPlugin: Bool {
-        guard !isCodexPluginOperationInFlight else { return false }
+        guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight else { return false }
         return switch codexPluginSetupState {
         case .marketplaceInstalledNeedsPlugin, .installedNeedsHookReview, .updateAvailable: true
         case .unchecked, .unavailable, .notInstalled, .legacyInstallationDetected, .conflict, .error: false
@@ -597,7 +936,7 @@ final class PetViewModel: ObservableObject {
     }
 
     var canMigrateLegacyCodexPlugin: Bool {
-        guard !isCodexPluginOperationInFlight else { return false }
+        guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight else { return false }
         return switch codexPluginSetupState {
         case .legacyInstallationDetected: true
         case .unchecked, .unavailable, .notInstalled, .marketplaceInstalledNeedsPlugin,
@@ -607,12 +946,25 @@ final class PetViewModel: ObservableObject {
 
     func attachHotKeyRegistry(_ registry: PetHotKeyRegistry) {
         endChoicePreview()
+        hotKeyRegistry?.onEventNavigationRequested = nil
+        hotKeyRegistry?.reconcileEventNavigation(contextID: nil)
         hotKeyRegistry?.onPreviewRequested = nil
         hotKeyRegistry?.reconcilePreviews(eligibleSlots: [])
         hotKeyRegistry?.onApprovalRequested = nil
         hotKeyRegistry?.onApprovalShortcutAvailabilityChanged = nil
         hotKeyRegistry?.reconcileApproval(head: nil)
         hotKeyRegistry = registry
+        registry.onEventNavigationRequested = { [weak self] activation in
+            Task { [weak self] in
+                guard let self, self.canNavigateEvents, self.isPanelVisible,
+                      self.hotKeyRegistry?.isCurrentEventNavigationActivation(activation) == true,
+                      self.eventNavigationContextID == activation.contextID else { return }
+                switch activation.direction {
+                case .previous: await self.navigateToPreviousEvent()
+                case .next: await self.navigateToNextEvent()
+                }
+            }
+        }
         registry.onPreviewRequested = { [weak self] slot in self?.beginChoicePreview(slot: slot) }
         registry.onApprovalRequested = { [weak self] activation in
             // The event carries the displayed request captured by Carbon,
@@ -633,6 +985,17 @@ final class PetViewModel: ObservableObject {
             && shortcutDraft.previewValidationIssue() == nil
     }
 
+    var isShowingSettings: Bool { isShowingOnboarding || isEditingShortcuts }
+
+    func selectSettingsTab(_ tab: PetSettingsTab) {
+        guard isShowingSettings else { return }
+        if tab == .shortcuts, !isEditingShortcuts {
+            beginShortcutSettings()
+        } else {
+            selectedSettingsTab = tab
+        }
+    }
+
     func toggleShortcutSettings() {
         if isEditingShortcuts {
             cancelShortcutSettings()
@@ -642,18 +1005,26 @@ final class PetViewModel: ObservableObject {
     }
 
     func beginShortcutSettings() {
+        guard supportsProductSettings else { return }
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
         isShowingOnboarding = false
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
+        selectedSettingsTab = .shortcuts
         isEditingShortcuts = true
         setExpanded(true)
     }
 
     func cancelShortcutSettings() {
+        cancelStorageRecovery()
+        if isEditingShortcuts {
+            clearLegacyCodexPluginMigrationConfirmation()
+            cancelLegacyShellCleanup()
+        }
         shortcutDraft = shortcutConfiguration
         shortcutSettingsError = nil
+        selectedSettingsTab = .general
         isEditingShortcuts = false
     }
 
@@ -666,17 +1037,21 @@ final class PetViewModel: ObservableObject {
     }
 
     func beginOnboarding() async {
+        guard supportsProductSettings else { return }
         cancelShortcutSettings()
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
+        selectedSettingsTab = .general
         isShowingOnboarding = true
         setExpanded(true)
         await refreshOnboarding()
     }
 
     func closeOnboarding() {
+        cancelStorageRecovery()
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
+        selectedSettingsTab = .general
         isShowingOnboarding = false
     }
 
@@ -690,6 +1065,7 @@ final class PetViewModel: ObservableObject {
         cancelShortcutSettings()
         clearLegacyCodexPluginMigrationConfirmation()
         cancelLegacyShellCleanup()
+        selectedSettingsTab = .general
         isShowingOnboarding = true
         setExpanded(true)
         appUpdateSettingsRequestID = UUID()
@@ -699,8 +1075,77 @@ final class PetViewModel: ObservableObject {
     func checkForAppUpdates() async {
         guard !isCheckingForAppUpdate else { return }
         appUpdateState = .checking
+        let productContext = usageAnalytics?.captureContext()
         let result = await appUpdateChecker.checkForUpdates()
         appUpdateState = Task.isCancelled ? .notChecked : result
+        if !Task.isCancelled, !isShuttingDown, let release = result.availableRelease,
+           let productContext {
+            usageAnalytics?.observeUpdateAvailable(
+                version: release.version.version, build: release.version.build, context: productContext
+            )
+        }
+    }
+
+    /// Called only after verified account state or an explicit consent change.
+    /// Snapshot-derived milestones wait for a new, consent-bound request.
+    func observeProductAccountState() {
+        usageAnalytics?.observeEnvironment()
+        usageAnalytics?.observeMilestone(.accountReady)
+        automaticAppUpdate.recoverProductMetrics()
+        reconcileInsightPresentation()
+    }
+
+    func requestFeedback() {
+        let suggestion: String?
+        if !isShowingOnboarding, !isEditingShortcuts, approvalHead == nil,
+           let interaction = displayInteraction {
+            suggestion = ([interaction.summary] + interaction.actionChoices.map(\.displayTitle))
+                .joined(separator: "\n")
+        } else { suggestion = nil }
+        onFeedbackRequested?(suggestion)
+    }
+
+    func setFeedbackWindowVisible(_ visible: Bool) {
+        guard isFeedbackWindowVisible != visible else { return }
+        isFeedbackWindowVisible = visible
+        if visible { endChoicePreview() }
+        updateHotKeyEligibility()
+    }
+
+    func clearInsightIdentity() {
+        insightCards?.reset()
+        insightCardKeys.removeAll()
+        insightOwner = nil
+    }
+
+    private func insightKey(for identity: InsightCardIdentity) -> String {
+        if let key = insightCardKeys[identity] { return key }
+        if insightCardKeys.count >= PetUsageAnalytics.maximumEventCount,
+           let oldest = insightCardKeys.keys.first { insightCardKeys.removeValue(forKey: oldest) }
+        let key = UUID().uuidString
+        insightCardKeys[identity] = key
+        return key
+    }
+
+    /// Mirrors PetRootView's content priority after snapshot reconciliation.
+    /// A received/background card, held preview, or hidden panel is not a view.
+    private func reconcileInsightPresentation() {
+        guard !isApplyingSnapshot else { return }
+        // Temporary token verification pauses observation; it does not turn a
+        // previously visible card into another impression. Logout clears below
+        // through the explicit application lifecycle callback.
+        guard let owner = usageAnalytics?.productIdentity else { return }
+        if owner != insightOwner {
+            clearInsightIdentity()
+            insightOwner = owner
+        }
+        guard isPanelVisible, !isShuttingDown else { return }
+        if let approval = approvalHead {
+            insightCards?.present(key: insightKey(for: .approval(approval.identity)), kind: .approval)
+        } else if !isShowingOnboarding, !isEditingShortcuts, choicePreview == nil,
+                  let interaction = displayInteraction, interaction.isSelectionReady {
+            insightCards?.present(key: insightKey(for: .suggestion(interaction.identity)), kind: .suggestion)
+        }
     }
 
     func openAppUpdateLocation() {
@@ -721,14 +1166,14 @@ final class PetViewModel: ObservableObject {
     }
 
     func prepareLegacyShellCleanup() async {
-        guard isShowingOnboarding, !isLegacyShellCleanupOperationInFlight,
+        guard isShowingSettings, !isLegacyShellCleanupOperationInFlight,
               legacyShellCleanupInspection?.canPrepare == true
         else { return }
         cancelLegacyShellCleanup()
         let generation = legacyShellConfirmationGeneration
         await performOnboardingOperation(.legacyShell) {
             let confirmation = await legacyShellCleanupManager.prepare()
-            guard generation == legacyShellConfirmationGeneration, isShowingOnboarding else { return }
+            guard generation == legacyShellConfirmationGeneration, isShowingSettings else { return }
             legacyShellCleanupConfirmation = confirmation
             if confirmation == nil {
                 legacyShellCleanupInspection = await legacyShellCleanupManager.inspect()
@@ -742,7 +1187,7 @@ final class PetViewModel: ObservableObject {
     }
 
     func confirmLegacyShellCleanup() async {
-        guard isShowingOnboarding, !isLegacyShellCleanupOperationInFlight,
+        guard isShowingSettings, !isLegacyShellCleanupOperationInFlight,
               let confirmation = legacyShellCleanupConfirmation
         else { return }
         // Consume the UI confirmation before awaiting; a double click cannot replay it.
@@ -777,7 +1222,61 @@ final class PetViewModel: ObservableObject {
         await refreshCodexPluginSetup()
     }
 
+    func beginFirstRunSetup() {
+        guard !firstRunSetupActive else { return }
+        firstRunSetupActive = true
+        firstRunSetupGeneration = UUID()
+        firstRunRefreshToken = nil
+    }
+
+    func endFirstRunSetup() {
+        cancelStorageRecovery()
+        firstRunSetupActive = false
+        firstRunSetupGeneration = UUID()
+        firstRunRefreshToken = nil
+        firstRunSetupSnapshot = nil
+        cancelShortcutSettings()
+    }
+
+    /// The wizard checks service health without claiming to display live cards.
+    /// No consumer heartbeat, focus, presentation, or selection is sent here.
+    func refreshFirstRunSetup(inspectSettings: Bool = true) async {
+        guard firstRunSetupActive, !isShuttingDown, firstRunRefreshToken == nil else { return }
+        let setupGeneration = firstRunSetupGeneration
+        let token = UUID()
+        firstRunRefreshToken = token
+        defer { if firstRunRefreshToken == token { firstRunRefreshToken = nil } }
+        if inspectSettings { await refreshAllOnboardingSettings() }
+        guard firstRunSetupActive, firstRunSetupGeneration == setupGeneration,
+              !isShuttingDown, !Task.isCancelled else { return }
+        appService?.checkChildBeforePolling()
+        guard appService?.mayQueryCoordinator != false else {
+            firstRunSetupSnapshot = nil
+            return
+        }
+        let generation = appService?.generation
+        do {
+            let data = try await transport.request(type: "get_state", payload: Data("{}".utf8))
+            let parsed = try await transport.decodeSnapshot(data)
+            guard firstRunSetupActive, firstRunSetupGeneration == setupGeneration,
+                  !isShuttingDown, !Task.isCancelled,
+                  generation.map({ appService?.acceptsSnapshot(generation: $0) == true }) ?? true
+            else { return }
+            if let generation { appService?.receivedVerifiedSnapshot(generation: generation) }
+            firstRunSetupSnapshot = parsed
+            coordinatorTransportError = nil
+        } catch {
+            guard firstRunSetupActive, firstRunSetupGeneration == setupGeneration,
+                  !isShuttingDown, !Task.isCancelled,
+                  generation == appService?.generation else { return }
+            firstRunSetupSnapshot = nil
+            if let generation { appService?.connectionFailed(generation: generation) }
+            coordinatorTransportError = String(describing: error)
+        }
+    }
+
     func refreshCodexPluginSetup() async {
+        invalidateHookReadiness()
         guard !isCodexPluginOperationInFlight else {
             codexPluginRefreshRequested = true
             return
@@ -790,8 +1289,9 @@ final class PetViewModel: ObservableObject {
 
     func recheckCodexNativeExecutable() async {
         // Explicit retries are never queued behind another Plugin operation.
-        guard !isCodexPluginOperationInFlight else { return }
+        guard !isCodexPluginOperationInFlight, !isCodexHookCheckInFlight else { return }
         await performOnboardingOperation(.codexPlugin) {
+            let insightContext = usageAnalytics?.captureContext()
             var report = CodexPluginRecheckReport()
             let startedUptime = DispatchTime.now().uptimeNanoseconds
             codexNativeRecheckReport = report
@@ -803,6 +1303,18 @@ final class PetViewModel: ObservableObject {
             codexPluginSetupState = result.state
             codexNativeRecheckReport = report
             clearLegacyCodexPluginMigrationConfirmation()
+            if let insightContext {
+                let version = PetProductEnvironment.normalizedVersion(result.evidence.codexVersion ?? "unknown")
+                let compatibility: PetInsightCompatibility = version == "unknown" ? .unknown
+                    : CodexCompatibility.pluginCLISupportedVersions.contains(version) ? .qualified : .unqualified
+                let mode: PetInsightConnectionMode
+                switch result.state {
+                case .installedNeedsHookReview, .updateAvailable: mode = .plugin
+                default: mode = .unknown
+                }
+                usageAnalytics?.observeConnection(codexVersion: version, mode: mode,
+                    compatibility: compatibility, context: insightContext)
+            }
         }
     }
 
@@ -1020,7 +1532,10 @@ final class PetViewModel: ObservableObject {
         interaction: PetInteraction,
         choice: PetChoice
     ) -> PetActionAccessoryPresentation {
+        guard inFlightDismissalIdentity == nil, pendingEventFocus == nil,
+              canActOnDisplayedEvent else { return .suppressed }
         guard let submission = selectionSubmission else {
+            if provider == .claude { return .suppressed }
             return .shortcut(actionShortcutLabel(interaction: interaction, choice: choice))
         }
         guard submission.identity == interaction.identity,
@@ -1093,6 +1608,9 @@ final class PetViewModel: ObservableObject {
 
     func shutdownAppOwnedService() async {
         isShuttingDown = true
+        endFirstRunSetup()
+        invalidateFocusOperation()
+        pendingFocusIdentity = nil
         stopPolling()
         await appService?.shutdown()
     }
@@ -1117,10 +1635,12 @@ final class PetViewModel: ObservableObject {
             requestPanelToggle()
             return
         }
-        guard let slot = intent.slot else { return }
-        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
+        guard !isFeedbackWindowVisible, let slot = intent.slot else { return }
+        guard !choicePreviewHoldMonitor.suppressesSelection,
+              let identity = authoritativeSelectionInteraction()?.identity else { return }
         Task { [weak self] in
-            await self?.handleGlobalSlot(slot)
+            guard let self, self.authoritativeSelectionInteraction()?.identity == identity else { return }
+            await self.handleGlobalSlot(slot)
         }
     }
 
@@ -1132,14 +1652,17 @@ final class PetViewModel: ObservableObject {
         guard isPanelVisible != visible else { return }
         isPanelVisible = visible
         reconcileApprovalShortcuts()
+        reconcileEventNavigationShortcuts()
+        reconcileInsightPresentation()
     }
 
     private var shortcutApprovalHead: PetApprovalHead? {
         // Approval cards render before settings/onboarding. Keep the draft
         // flags intact while enabling keys for the card actually on screen.
-        guard isPanelVisible, !isShuttingDown,
+        guard isPanelVisible, !isShuttingDown, !isFeedbackWindowVisible,
               !choicePreviewHoldMonitor.suppressesSelection,
               inFlightPermissionRequestID == nil, inFlightManagedCommandApprovalID == nil,
+              canActOnDisplayedEvent,
               let head = approvalHead,
               PetApprovalShortcutIntent.allCases.contains(where: { $0.isAvailable(for: head) })
         else { return nil }
@@ -1159,14 +1682,14 @@ final class PetViewModel: ObservableObject {
         switch activation.head {
         case .permission(let request):
             guard let decision = PetPermissionDecision(choiceNumber: activation.intent.rawValue) else { return }
-            await resolvePermissionRequest(decision, for: request)
+            await resolvePermissionRequest(decision, for: request, inputMethod: .keyboard)
         case .managed(let request):
             let decision: PetManagedCommandApprovalDecision = switch activation.intent {
             case .allowOnce: .acceptOnce
             case .deny: .decline
             case .deferToCodex: .decideInCodex
             }
-            await resolveManagedCommandApproval(decision, for: request)
+            await resolveManagedCommandApproval(decision, for: request, inputMethod: .keyboard)
         }
     }
 
@@ -1215,13 +1738,15 @@ final class PetViewModel: ObservableObject {
     func endChoicePreview() {
         if choicePreview != nil { choicePreview = nil }
         choicePreviewHoldMonitor.cancelPreview()
+        reconcileEventNavigationShortcuts()
     }
 
     private var previewableInteraction: PetInteraction? {
-        guard !isShuttingDown, !isEditingShortcuts, !isShowingOnboarding,
+        guard !isShuttingDown, !isEditingShortcuts, !isShowingOnboarding, !isFeedbackWindowVisible,
               approvalHead == nil, inFlightPermissionRequestID == nil,
               inFlightManagedCommandApprovalID == nil, selectionSubmission == nil,
-              inFlightSelectionIdentity == nil,
+              inFlightDismissalIdentity == nil, inFlightSelectionIdentity == nil,
+              pendingEventFocus == nil, canActOnDisplayedEvent,
               let interaction = displayInteraction, interaction.isSelectionReady
         else { return nil }
         return interaction
@@ -1265,18 +1790,159 @@ final class PetViewModel: ObservableObject {
         apply(snapshot)
     }
 
-    func focus(_ identity: PetInteractionIdentity) async {
-        guard fifoHeadInteraction?.identity == identity else { return }
-        if focusedInteraction?.identity == identity { return }
-        if pendingFocusIdentity == identity {
-            await waitForFocusCompletion(identity)
+    private var eventNavigationContextID: String? {
+        guard isPanelVisible, canNavigateEvents, let navigation = snapshot?.eventNavigation,
+              let target = try? displayedEvent?.focusTarget() else { return nil }
+        return String(navigation.revision) + ":" + target.data.base64EncodedString()
+    }
+
+    private func reconcileEventNavigationShortcuts() {
+        hotKeyRegistry?.reconcileEventNavigation(contextID: eventNavigationContextID)
+        let diagnostic = eventNavigationContextID == nil ? nil
+            : hotKeyRegistry?.eventNavigationShortcutDiagnostic
+        if eventNavigationShortcutDiagnostic != diagnostic {
+            eventNavigationShortcutDiagnostic = diagnostic
+            onPanelLayoutChanged?()
+        }
+    }
+
+    func navigateToPreviousEvent() async { await navigateEvent(offset: -1) }
+    func navigateToNextEvent() async { await navigateEvent(offset: 1) }
+
+    private func navigateEvent(offset: Int) async {
+        guard canNavigateEvents, let position = displayedEventQueuePosition else { return }
+        let events = eventQueue
+        let index = (position - 1 + offset + events.count) % events.count
+        await focusEvent(events[index])
+    }
+
+    /// Navigation sends only exact focus authority. No approval, selection,
+    /// prompt delivery or dismissal can occur along this path.
+    private func focusEvent(_ event: PetQueuedEvent) async {
+        guard snapshot?.eventNavigation != nil, pendingEventFocus == nil,
+              pendingFocusIdentity == nil, inFlightDismissalIdentity == nil,
+              inFlightSelectionIdentity == nil, inFlightPermissionRequestID == nil,
+              inFlightManagedCommandApprovalID == nil, !eventDeliveryPending,
+              riskConfirmation == nil, !isShuttingDown,
+              let target = try? event.focusTarget(),
+              (try? snapshot?.event(reference: target.reference)?.focusTarget()) == target
+        else { return }
+        let serviceGeneration = appService?.generation
+        if selectedEventReference == nil { selectedEventReference = displayedEvent?.reference }
+        pendingEventFocus = target
+        endChoicePreview()
+        updateHotKeyEligibility()
+        lastError = persistentApprovalResolutionError
+        defer {
+            if serviceGeneration == appService?.generation, pendingEventFocus == target {
+                pendingEventFocus = nil
+                updateHotKeyEligibility()
+            }
+        }
+        do {
+            let response = try await transport.request(type: "focus_event", payload: target.data)
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            try PetTransportResponse.requireFocused(response)
+            await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            guard snapshot?.eventNavigation?.focused == target.reference,
+                  let current = snapshot?.event(reference: target.reference),
+                  try current.focusTarget() == target,
+                  !eventDeliveryPending else {
+                throw PetModelError.invalid("event_focus_snapshot_authority")
+            }
+            if case .decision(let interaction) = current {
+                guard snapshot?.routing.foreground == interaction.identity, interaction.foreground else {
+                    throw PetModelError.invalid("event_focus_snapshot_authority")
+                }
+                localForegroundIdentity = interaction.identity
+                if let application = externalApplicationOpener.captureFrontmostExternalApplication(
+                    excludingProcessIdentifier: processIdentifier
+                ) { selectionReturnApplication = application }
+            } else {
+                localForegroundIdentity = nil
+            }
+            selectedEventReference = target.reference
+            confirmedEventFocus = target
+            lastTerminalPresentation = nil
+            onPanelLayoutChanged?()
+            onApprovalHeadChanged?(approvalHead?.identity)
+        } catch {
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            confirmedEventFocus = nil
+            localForegroundIdentity = nil
+            // Reconcile once after a lost/rejected reply. The old displayed
+            // event stays visible; its authority must be acquired again.
+            let focusError = String(describing: error)
+            await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            lastError = focusError
+        }
+    }
+
+    private func reconcileEventSelection(
+        previousEvent: PetQueuedEvent?, previousQueue: [PetQueuedEvent]
+    ) {
+        guard let navigation = snapshot?.eventNavigation else {
+            if selectedEventReference != nil { selectedEventReference = nil }
+            confirmedEventFocus = nil
             return
+        }
+        if let reference = selectedEventReference, snapshot?.event(reference: reference) == nil {
+            let oldIndex = previousQueue.firstIndex { $0.reference == reference } ?? 0
+            selectedEventReference = eventQueue.isEmpty ? nil
+                : eventQueue[oldIndex % eventQueue.count].reference
+            confirmedEventFocus = nil
+        } else if selectedEventReference == nil, navigation.focused == nil, !eventQueue.isEmpty {
+            // A removed server focus also occurs after a Pet restart. Never
+            // silently turn the fallback preview into action authority.
+            let oldIndex = previousQueue.firstIndex { $0.reference == previousEvent?.reference } ?? 0
+            selectedEventReference = eventQueue[oldIndex % eventQueue.count].reference
+        }
+        if let confirmedEventFocus,
+           navigation.focused != confirmedEventFocus.reference
+            || (try? displayedEvent?.focusTarget()) != confirmedEventFocus {
+            self.confirmedEventFocus = nil
+        }
+        if let riskConfirmation, displayInteraction?.identity != riskConfirmation.identity {
+            self.riskConfirmation = nil
+        }
+    }
+
+    func focus(_ identity: PetInteractionIdentity) async {
+        _ = await acquireFocus(identity)
+    }
+
+    /// Return success only for this acquisition, never for a later operation
+    /// which happens to focus the same card after a disconnect or restart.
+    private func acquireFocus(_ identity: PetInteractionIdentity) async -> Bool {
+        guard providerAllowsSelection, !isShuttingDown, inFlightDismissalIdentity == nil, pendingEventFocus == nil,
+              displayInteraction?.identity == identity else { return false }
+        let serviceGeneration = appService?.generation
+        if snapshot?.eventNavigation != nil,
+           selectedEventReference != nil || identity != fifoHeadInteraction?.identity {
+            guard let event = displayedEvent else { return false }
+            await focusEvent(event)
+            return acceptsActionCompletion(generation: serviceGeneration)
+                && focusedInteraction?.identity == identity
+        }
+        if focusedInteraction?.identity == identity { return true }
+        if pendingFocusIdentity == identity {
+            guard let operation = activeFocusOperation, operation.identity == identity else { return false }
+            return await waitForFocusCompletion(operation)
         }
         guard let interaction = snapshot?.interaction(identity: identity),
               interaction.isSelectionReady,
               pendingFocusIdentity == nil,
               inFlightSelectionIdentity == nil
-        else { return }
+        else { return false }
+        if let previous = activeFocusOperation {
+            finishFocusOperation(previous, succeeded: false)
+        }
+        let operation = FocusOperation(identity: identity, serviceGeneration: serviceGeneration)
+        activeFocusOperation = operation
+        var succeeded = false
+        defer { finishFocusOperation(operation, succeeded: succeeded) }
         if let currentHost = externalApplicationOpener.captureFrontmostExternalApplication(
             excludingProcessIdentifier: processIdentifier
         ) {
@@ -1291,14 +1957,18 @@ final class PetViewModel: ObservableObject {
                 type: "focus_interaction",
                 payload: try PetFocusRequest(identity: identity).data()
             )
+            guard acceptsFocusCompletion(operation) else { return false }
             try PetTransportResponse.requireFocused(response)
             await fetchAndApplySnapshot()
+            guard acceptsFocusCompletion(operation) else { return false }
             guard localForegroundIdentity == identity else {
                 pendingFocusIdentity = nil
                 updateHotKeyEligibility()
                 throw PetModelError.invalid("focus_snapshot_authority")
             }
+            succeeded = true
         } catch {
+            guard acceptsFocusCompletion(operation) else { return false }
             pendingFocusIdentity = nil
             localForegroundIdentity = nil
             riskConfirmation = nil
@@ -1306,11 +1976,11 @@ final class PetViewModel: ObservableObject {
             updateHotKeyEligibility()
             await fetchAndApplySnapshot()
         }
-        resumeFocusWaiters(identity)
+        return succeeded && acceptsFocusCompletion(operation)
     }
 
     func handleGlobalSlot(_ slot: Int) async {
-        guard !choicePreviewHoldMonitor.suppressesSelection else { return }
+        guard !isFeedbackWindowVisible, !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let interaction = authoritativeSelectionInteraction(),
               let choice = interaction.choice(slot: slot),
               choice.enabled,
@@ -1320,13 +1990,14 @@ final class PetViewModel: ObservableObject {
             riskConfirmation = PetRiskConfirmation(
                 identity: interaction.identity,
                 slot: slot,
-                optionID: choice.optionID
+                optionID: choice.optionID,
+                inputMethod: .keyboard
             )
             setExpanded(true)
             updateHotKeyEligibility()
             return
         }
-        await submit(interaction: interaction, choice: choice)
+        await submit(interaction: interaction, choice: choice, inputMethod: .keyboard)
     }
 
     func requestPanelSelection(_ slot: Int) async {
@@ -1349,6 +2020,78 @@ final class PetViewModel: ObservableObject {
         await submit(interaction: interaction, choice: choice)
     }
 
+    func canSkipDecision(_ identity: PetInteractionIdentity) -> Bool {
+        guard supportsDecisionDismissal, !isShuttingDown, approvalHead == nil, canActOnDisplayedEvent,
+              inFlightPermissionRequestID == nil, inFlightManagedCommandApprovalID == nil,
+              selectionSubmission == nil, inFlightSelectionIdentity == nil,
+              inFlightDismissalIdentity == nil, pendingFocusIdentity == nil,
+              let interaction = displayInteraction,
+              interaction.identity == identity, interaction.usesRankedNextActions,
+              interaction.isSelectionReady,
+              snapshot?.routing.foreground == nil || snapshot?.routing.foreground == identity
+        else { return false }
+        return true
+    }
+
+    func skipDecision(for displayedIdentity: PetInteractionIdentity) async {
+        guard canSkipDecision(displayedIdentity) else { return }
+        let insightResponse = insightCardKeys[.suggestion(displayedIdentity)].flatMap {
+            insightCards?.captureResponse(key: $0, response: .dismissed)
+        }
+        let serviceGeneration = appService?.generation
+        // Capture the displayed identity before awaiting. Never substitute a new
+        // FIFO head when the user clicks a card which has since changed.
+        inFlightDismissalIdentity = displayedIdentity
+        riskConfirmation = nil
+        endChoicePreview()
+        updateHotKeyEligibility()
+        lastError = persistentApprovalResolutionError
+        defer {
+            if serviceGeneration == appService?.generation,
+               inFlightDismissalIdentity == displayedIdentity {
+                inFlightDismissalIdentity = nil
+                updateHotKeyEligibility()
+            }
+        }
+        let errorContext = errorDiagnostics?.captureContext()
+        var productOperation: PetProductOperation?
+        var productFinished = false
+        defer {
+            if !productFinished { usageAnalytics?.finishFeature(productOperation, outcome: .cancelled) }
+        }
+        do {
+            let request = PetDismissRequest(identity: displayedIdentity)
+            let usageOwnerID = account?.usageAuthorization()?.userID
+            let usageContext = usageAnalytics?.captureContext()
+            let payload = try request.data()
+            productOperation = usageAnalytics?.beginFeature(feature: .dismiss, inputMethod: .button)
+            let response = try await transport.request(
+                type: "dismiss_interaction", payload: payload
+            )
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            try request.requireDismissed(response)
+            usageAnalytics?.finishFeature(productOperation, outcome: .succeeded)
+            productFinished = true
+            recordAcceptedUsage(.suggestionDismissed, ownerID: usageOwnerID, context: usageContext)
+            insightCards?.recordResponse(insightResponse)
+            if localForegroundIdentity == displayedIdentity { localForegroundIdentity = nil }
+            lastTerminalPresentation = nil
+            await fetchAndApplySnapshot()
+        } catch {
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            usageAnalytics?.finishFeature(productOperation, outcome: productFailureOutcome(error))
+            productFinished = true
+            // A lost response can follow a committed dismissal. Reconcile from
+            // the service and require another click; do not silently retry.
+            recordDiagnostic(.suggestionDismissFailed, error: error, context: errorContext)
+            if localForegroundIdentity == displayedIdentity { localForegroundIdentity = nil }
+            let dismissalError = String(describing: error)
+            await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            lastError = dismissalError
+        }
+    }
+
     func requestLegacyPause() async {
         guard let interaction = authoritativeSelectionInteraction(),
               let choice = interaction.legacyPauseChoice,
@@ -1362,31 +2105,35 @@ final class PetViewModel: ObservableObject {
         interaction identity: PetInteractionIdentity
     ) async {
         guard !choicePreviewHoldMonitor.suppressesSelection else { return }
-        guard let interaction = fifoHeadInteraction,
+        guard canActOnDisplayedEvent, pendingEventFocus == nil,
+              let interaction = displayInteraction,
               interaction.identity == identity,
               interaction.isSelectionReady,
               let choice = interaction.choice(slot: slot),
               choice.enabled,
               choice.isAction,
-              selectionSubmission == nil
+              selectionSubmission == nil, inFlightDismissalIdentity == nil
         else { return }
         let submission = PetSelectionSubmission(
             identity: identity,
             slot: slot,
             optionID: choice.optionID
         )
+        let serviceGeneration = appService?.generation
         selectionSubmission = submission
         updateHotKeyEligibility()
         defer {
-            if selectionSubmission == submission {
+            if serviceGeneration == appService?.generation,
+               selectionSubmission == submission {
                 selectionSubmission = nil
                 updateHotKeyEligibility()
             }
         }
         if focusedInteraction?.identity != identity {
-            await focus(identity)
+            guard await acquireFocus(identity) else { return }
         }
-        guard focusedInteraction?.identity == identity else { return }
+        guard acceptsActionCompletion(generation: serviceGeneration),
+              focusedInteraction?.identity == identity else { return }
         await requestPanelSelection(slot)
     }
 
@@ -1404,7 +2151,7 @@ final class PetViewModel: ObservableObject {
             return
         }
         riskConfirmation = nil
-        await submit(interaction: interaction, choice: choice)
+        await submit(interaction: interaction, choice: choice, inputMethod: confirmation.inputMethod)
     }
 
     func cancelRiskConfirmation() {
@@ -1414,9 +2161,11 @@ final class PetViewModel: ObservableObject {
 
     func resolvePermissionRequest(
         _ decision: PetPermissionDecision,
-        for displayedRequest: PetPermissionRequest
+        for displayedRequest: PetPermissionRequest,
+        inputMethod: PetProductInputMethod = .button
     ) async {
-        guard let request = pendingPermissionRequest,
+        guard canActOnDisplayedEvent, pendingFocusIdentity == nil,
+              let request = pendingPermissionRequest,
               request == displayedRequest,
               request.requestID.utf8.elementsEqual(displayedRequest.requestID.utf8),
               decision != .allowOnce || request.allowOnceAvailable,
@@ -1424,51 +2173,82 @@ final class PetViewModel: ObservableObject {
               inFlightPermissionRequestID == nil,
               inFlightManagedCommandApprovalID == nil
         else { return }
+        let insightResponse = insightCardKeys[.approval(.permission(requestID: request.requestID))].flatMap { key in
+            decision == .deferToCodex ? nil : insightCards?.captureResponse(
+                key: key, response: decision == .allowOnce ? .approved : .denied)
+        }
+        let serviceGeneration = appService?.generation
         inFlightPermissionRequestID = request.requestID
         updateHotKeyEligibility()
+        defer {
+            if serviceGeneration == appService?.generation,
+               inFlightPermissionRequestID == request.requestID {
+                inFlightPermissionRequestID = nil
+                updateHotKeyEligibility()
+            }
+        }
         lastError = persistentApprovalResolutionError
+        let errorContext = errorDiagnostics?.captureContext()
+        var productOperation: PetProductOperation?
+        var productFinished = false
+        defer {
+            if !productFinished { usageAnalytics?.finishFeature(productOperation, outcome: .cancelled) }
+        }
         do {
             let responseID = permissionResponseIDGenerator()
+            let usageOwnerID = account?.usageAuthorization()?.userID
+            let usageContext = usageAnalytics?.captureContext()
+            let payload = try PetPermissionResolutionRequest(
+                request: request, responseID: responseID, decision: decision
+            ).data()
+            productOperation = usageAnalytics?.beginFeature(feature: .approval, inputMethod: inputMethod)
             let response = try await transport.request(
                 type: "resolve_permission_request",
-                payload: try PetPermissionResolutionRequest(
-                    request: request,
-                    responseID: responseID,
-                    decision: decision
-                ).data()
+                payload: payload
             )
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             try PetTransportResponse.requireResolvedPermission(
                 response,
                 requestID: request.requestID,
                 responseID: responseID,
                 expectedDecision: decision
             )
+            usageAnalytics?.finishFeature(productOperation, outcome: .succeeded)
+            productFinished = true
+            recordAcceptedUsage(.approvalResolved, ownerID: usageOwnerID, context: usageContext)
+            insightCards?.recordResponse(insightResponse)
             let returnApplication = permissionReturnApplications.removeValue(
                 forKey: request.requestID
             )
             await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             if let returnApplication,
                !externalApplicationOpener.open(returnApplication)
             {
                 lastError = "권한 요청 때 감지한 앱을 열 수 없습니다."
             }
         } catch {
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            usageAnalytics?.finishFeature(productOperation, outcome: productFailureOutcome(error))
+            productFinished = true
+            recordDiagnostic(.approvalSubmitFailed, error: error, context: errorContext)
             let resolutionError = String(describing: error)
             await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             persistentApprovalResolutionError = resolutionError
             lastError = resolutionError
             onAttentionChanged?(hasAttention)
             onApprovalResolutionFailed?()
         }
-        inFlightPermissionRequestID = nil
-        updateHotKeyEligibility()
     }
 
     func resolveManagedCommandApproval(
         _ decision: PetManagedCommandApprovalDecision,
-        for displayedRequest: PetManagedCommandApproval
+        for displayedRequest: PetManagedCommandApproval,
+        inputMethod: PetProductInputMethod = .button
     ) async {
-        guard let request = pendingManagedCommandApproval,
+        guard canActOnDisplayedEvent, pendingFocusIdentity == nil,
+              let request = pendingManagedCommandApproval,
               request == displayedRequest,
               request.managedRequestID.utf8.elementsEqual(
                   displayedRequest.managedRequestID.utf8
@@ -1479,44 +2259,77 @@ final class PetViewModel: ObservableObject {
         else { return }
         if decision == .acceptOnce, !request.allowOnceAvailable { return }
         if decision == .decline, !request.declineAvailable { return }
+        let insightResponse = insightCardKeys[.approval(.managed(managedRequestID: request.managedRequestID))].flatMap { key in
+            decision == .decideInCodex ? nil : insightCards?.captureResponse(
+                key: key, response: decision == .acceptOnce ? .approved : .denied)
+        }
+        let serviceGeneration = appService?.generation
         inFlightManagedCommandApprovalID = request.managedRequestID
         updateHotKeyEligibility()
+        defer {
+            if serviceGeneration == appService?.generation,
+               inFlightManagedCommandApprovalID == request.managedRequestID {
+                inFlightManagedCommandApprovalID = nil
+                updateHotKeyEligibility()
+            }
+        }
         lastError = persistentApprovalResolutionError
+        let errorContext = errorDiagnostics?.captureContext()
+        var productOperation: PetProductOperation?
+        var productFinished = false
+        defer {
+            if !productFinished { usageAnalytics?.finishFeature(productOperation, outcome: .cancelled) }
+        }
         do {
             let responseID = managedApprovalResponseIDGenerator()
+            let usageOwnerID = account?.usageAuthorization()?.userID
+            let usageContext = usageAnalytics?.captureContext()
+            let payload = try PetManagedCommandApprovalResolutionRequest(
+                request: request, responseID: responseID, decision: decision
+            ).data()
+            productOperation = usageAnalytics?.beginFeature(feature: .approval, inputMethod: inputMethod)
             let response = try await transport.request(
                 type: "resolve_managed_command_approval",
-                payload: try PetManagedCommandApprovalResolutionRequest(
-                    request: request,
-                    responseID: responseID,
-                    decision: decision
-                ).data()
+                payload: payload
             )
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             try requireResolvedManagedCommandApproval(
                 response,
                 managedRequestID: request.managedRequestID,
                 responseID: responseID,
                 expectedDecision: decision
             )
+            usageAnalytics?.finishFeature(productOperation, outcome: .succeeded)
+            productFinished = true
+            recordAcceptedUsage(.approvalResolved, ownerID: usageOwnerID, context: usageContext)
+            insightCards?.recordResponse(insightResponse)
             let returnApplication = managedApprovalReturnApplications.removeValue(
                 forKey: request.managedRequestID
             )
             await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             if let returnApplication,
                !externalApplicationOpener.open(returnApplication)
             {
                 lastError = "관리형 권한 요청 때 감지한 앱을 열 수 없습니다."
             }
         } catch {
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            usageAnalytics?.finishFeature(productOperation, outcome: productFailureOutcome(error))
+            productFinished = true
+            recordDiagnostic(.approvalSubmitFailed, error: error, context: errorContext)
             let resolutionError = String(describing: error)
             await fetchAndApplySnapshot()
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
             persistentApprovalResolutionError = resolutionError
             lastError = resolutionError
             onAttentionChanged?(hasAttention)
             onApprovalResolutionFailed?()
         }
-        inFlightManagedCommandApprovalID = nil
-        updateHotKeyEligibility()
+    }
+
+    private func acceptsActionCompletion(generation: UInt64?) -> Bool {
+        !isShuttingDown && generation == appService?.generation
     }
 
     private func fetchAndApplySnapshot() async {
@@ -1526,23 +2339,35 @@ final class PetViewModel: ObservableObject {
         let serviceGeneration = appService?.generation
         nextSnapshotRequest &+= 1
         let requestNumber = nextSnapshotRequest
+        let errorContext = errorDiagnostics?.captureContext()
+        let productContext = usageAnalytics?.captureContext()
+        var receivedResponse = false
         do {
             let payload = try PetTransportRequestPayload.snapshotWithConsumerHeartbeat()
             let data = try await transport.request(type: "get_state", payload: payload)
-            let parsed = try await Task.detached(priority: .utility) {
-                try PetSnapshot.parse(data)
-            }.value
+            receivedResponse = true
+            let parsed = try await transport.decodeSnapshot(data)
             guard !isShuttingDown,
                   requestNumber >= lastAppliedSnapshotRequest,
                   serviceGeneration.map({ appService?.acceptsSnapshot(generation: $0) == true }) ?? true
             else { return }
             lastAppliedSnapshotRequest = requestNumber
             consecutiveSnapshotFailures = 0
+            lastSnapshotDiagnosticContext = nil
             if let serviceGeneration {
                 appService?.receivedVerifiedSnapshot(generation: serviceGeneration)
             }
             apply(parsed)
             if coordinatorTransportError != nil { coordinatorTransportError = nil }
+            if let productContext {
+                if hasVerifiedServiceConnection {
+                    usageAnalytics?.observeMilestone(.serviceConnected, context: productContext)
+                }
+                if parsed.interactions.contains(where: \.isSelectionReady)
+                    || !parsed.permissionRequests.isEmpty || !parsed.managedCommandApprovals.isEmpty {
+                    usageAnalytics?.observeMilestone(.cardReceived, context: productContext)
+                }
+            }
             if lastError != persistentApprovalResolutionError {
                 lastError = persistentApprovalResolutionError
             }
@@ -1552,13 +2377,22 @@ final class PetViewModel: ObservableObject {
                   requestNumber >= lastAppliedSnapshotRequest,
                   serviceGeneration == appService?.generation else { return }
             lastAppliedSnapshotRequest = requestNumber
+            // A new consent/account context can observe a new failing request
+            // during an existing outage, without replaying earlier failures.
+            if let errorContext, errorContext != lastSnapshotDiagnosticContext,
+               recordDiagnostic(receivedResponse ? .coordinatorResponseInvalid : .coordinatorConnectionFailed,
+                                error: error, context: errorContext) {
+                lastSnapshotDiagnosticContext = errorContext
+            }
             consecutiveSnapshotFailures = min(3, consecutiveSnapshotFailures + 1)
             if let serviceGeneration { appService?.connectionFailed(generation: serviceGeneration) }
             let priorApprovalHeadIdentity = approvalHead?.identity
+            invalidateFocusOperation()
             if !connectionReceivedCardProjectPaths.isEmpty {
                 connectionReceivedCardProjectPaths = []
             }
             if snapshot != nil { snapshot = nil }
+            confirmedEventFocus = nil
             if localForegroundIdentity != nil { localForegroundIdentity = nil }
             if pendingFocusIdentity != nil { pendingFocusIdentity = nil }
             if riskConfirmation != nil { riskConfirmation = nil }
@@ -1576,6 +2410,11 @@ final class PetViewModel: ObservableObject {
     }
 
     private func apply(_ newSnapshot: PetSnapshot) {
+        isApplyingSnapshot = true
+        defer {
+            isApplyingSnapshot = false
+            reconcileInsightPresentation()
+        }
         // Keep actual card reception visible after selection consumes the card.
         // This is in-memory observation, not saved sessions or a return receipt.
         // Connection loss/service transitions clear it; removed projects drop out.
@@ -1587,6 +2426,9 @@ final class PetViewModel: ObservableObject {
             connectionReceivedCardProjectPaths = receivedPaths
         }
         let priorApprovalHeadIdentity = approvalHead?.identity
+        let previousEvent = displayedEvent
+        let previousQueue = eventQueue
+        let previousActionCount = displayInteraction?.actionChoices.count
         let priorLocalForeground = localForegroundIdentity
         let priorHead = fifoHeadInteraction
         let priorReadyHeadIdentity = priorHead?.isSelectionReady == true
@@ -1597,6 +2439,12 @@ final class PetViewModel: ObservableObject {
             ? priorHead?.identity
             : nil
         if snapshot != newSnapshot { snapshot = newSnapshot }
+        reconcileEventSelection(previousEvent: previousEvent, previousQueue: previousQueue)
+        if previousEvent?.reference != displayedEvent?.reference
+            || previousQueue.count != eventQueueCount
+            || previousActionCount != displayInteraction?.actionChoices.count {
+            onPanelLayoutChanged?()
+        }
         if permissionNoticeCount != newSnapshot.permissionNoticeCount {
             permissionNoticeCount = newSnapshot.permissionNoticeCount
         }
@@ -1640,14 +2488,14 @@ final class PetViewModel: ObservableObject {
         let authoritative = newSnapshot.routing.foreground
         if let localForegroundIdentity,
            authoritative == localForegroundIdentity,
-           newSnapshot.interactions.first?.identity == localForegroundIdentity,
+           displayInteraction?.identity == localForegroundIdentity,
            newSnapshot.interaction(identity: localForegroundIdentity) != nil
         {
             // Preserve an exact explicit local identity only while the
             // coordinator continues to expose that immutable identity.
         } else if let pendingFocusIdentity,
                   authoritative == pendingFocusIdentity,
-                  newSnapshot.interactions.first?.identity == pendingFocusIdentity,
+                  displayInteraction?.identity == pendingFocusIdentity,
                   newSnapshot.interaction(identity: pendingFocusIdentity) != nil
         {
             if localForegroundIdentity != pendingFocusIdentity {
@@ -1660,6 +2508,7 @@ final class PetViewModel: ObservableObject {
             if let pendingFocusIdentity,
                newSnapshot.interaction(identity: pendingFocusIdentity) == nil
             {
+                invalidateFocusOperation()
                 self.pendingFocusIdentity = nil
             }
         }
@@ -1685,6 +2534,7 @@ final class PetViewModel: ObservableObject {
            newSnapshot.interaction(identity: autoFocusAttemptedIdentity) == nil
         {
             self.autoFocusAttemptedIdentity = nil
+            autoFocusAttemptToken = nil
         }
         updateHotKeyEligibility()
         onAttentionChanged?(hasAttention)
@@ -1709,38 +2559,72 @@ final class PetViewModel: ObservableObject {
         }
     }
 
-    private func waitForFocusCompletion(_ identity: PetInteractionIdentity) async {
-        await withCheckedContinuation { continuation in
-            focusWaiters[identity, default: []].append(continuation)
+    private func acceptsFocusCompletion(_ operation: FocusOperation) -> Bool {
+        activeFocusOperation?.id == operation.id
+            && acceptsActionCompletion(generation: operation.serviceGeneration)
+    }
+
+    private func waitForFocusCompletion(_ operation: FocusOperation) async -> Bool {
+        guard acceptsFocusCompletion(operation) else { return false }
+        return await withCheckedContinuation { continuation in
+            focusWaiters[operation.id, default: []].append(continuation)
         }
     }
 
-    private func resumeFocusWaiters(_ identity: PetInteractionIdentity) {
-        let waiters = focusWaiters.removeValue(forKey: identity) ?? []
-        for waiter in waiters { waiter.resume() }
+    private func finishFocusOperation(_ operation: FocusOperation, succeeded: Bool) {
+        guard activeFocusOperation?.id == operation.id else { return }
+        activeFocusOperation = nil
+        let waiters = focusWaiters.removeValue(forKey: operation.id) ?? []
+        for waiter in waiters { waiter.resume(returning: succeeded) }
+    }
+
+    private func invalidateFocusOperation() {
+        if let operation = activeFocusOperation {
+            finishFocusOperation(operation, succeeded: false)
+        }
+        autoFocusAttemptedIdentity = nil
+        autoFocusAttemptToken = nil
     }
 
     private func focusFIFOHeadIfNeeded() async {
+        guard providerAllowsSelection, pendingEventFocus == nil, !automaticallyFocusingEvent, !eventDeliveryPending,
+              selectionSubmission == nil || selectedEventReference == nil,
+              riskConfirmation == nil,
+              inFlightPermissionRequestID == nil, inFlightManagedCommandApprovalID == nil else { return }
+        if snapshot?.eventNavigation != nil, let event = displayedEvent,
+           selectedEventReference != nil || !canActOnDisplayedEvent {
+            guard (try? event.focusTarget()) != confirmedEventFocus else { return }
+            let serviceGeneration = appService?.generation
+            automaticallyFocusingEvent = true
+            await focusEvent(event)
+            if serviceGeneration == appService?.generation {
+                automaticallyFocusingEvent = false
+            }
+            return
+        }
         guard pendingManagedCommandApproval == nil,
               pendingPermissionRequest == nil,
               localForegroundIdentity == nil,
               pendingFocusIdentity == nil,
-              inFlightSelectionIdentity == nil
+              inFlightSelectionIdentity == nil, inFlightDismissalIdentity == nil
         else { return }
-        guard let head = fifoHeadInteraction,
+        guard let head = displayInteraction,
               head.isSelectionReady,
               coordinatorAllowsAutomaticFocus(on: head.identity)
         else { return }
         let identity = head.identity
         guard autoFocusAttemptedIdentity != identity else { return }
+        let attemptToken = UUID()
         autoFocusAttemptedIdentity = identity
+        autoFocusAttemptToken = attemptToken
         await focus(identity)
-        if autoFocusAttemptedIdentity == identity {
+        if autoFocusAttemptToken == attemptToken {
             // Keep the marker throughout focus()'s reconciliation fetch so a
             // transient failure cannot recurse or hot-loop. Once the attempt
             // settles, the next poll re-evaluates coordinator authority before
             // retrying this exact FIFO head.
             autoFocusAttemptedIdentity = nil
+            autoFocusAttemptToken = nil
         }
     }
 
@@ -1752,12 +2636,13 @@ final class PetViewModel: ObservableObject {
     }
 
     private func authoritativeSelectionInteraction() -> PetInteraction? {
-        guard pendingManagedCommandApproval == nil,
+        guard inFlightDismissalIdentity == nil, canActOnDisplayedEvent,
+              pendingManagedCommandApproval == nil,
               inFlightManagedCommandApprovalID == nil,
               pendingPermissionRequest == nil,
               inFlightPermissionRequestID == nil,
               let interaction = focusedInteraction,
-              fifoHeadInteraction?.identity == interaction.identity,
+              displayInteraction?.identity == interaction.identity,
               interaction.isSelectionReady,
               snapshot?.routing.foreground == interaction.identity,
               pendingFocusIdentity == nil
@@ -1765,7 +2650,9 @@ final class PetViewModel: ObservableObject {
         return interaction
     }
 
-    private func submit(interaction: PetInteraction, choice: PetChoice) async {
+    private func submit(
+        interaction: PetInteraction, choice: PetChoice, inputMethod: PetProductInputMethod = .button
+    ) async {
         guard !choicePreviewHoldMonitor.suppressesSelection else { return }
         guard let current = authoritativeSelectionInteraction(),
               current.identity == interaction.identity,
@@ -1780,35 +2667,60 @@ final class PetViewModel: ObservableObject {
             optionID: choice.optionID
         )
         guard selectionSubmission == nil || selectionSubmission == submission else { return }
+        let insightResponse = insightCardKeys[.suggestion(current.identity)].flatMap {
+            insightCards?.captureResponse(key: $0, response: .selected)
+        }
+        let serviceGeneration = appService?.generation
         if selectionSubmission == nil { selectionSubmission = submission }
         inFlightSelectionIdentity = key
         updateHotKeyEligibility()
         defer {
-            if selectionSubmission == submission {
+            if serviceGeneration == appService?.generation,
+               selectionSubmission == submission {
                 selectionSubmission = nil
                 updateHotKeyEligibility()
             }
         }
         lastError = persistentApprovalResolutionError
+        let errorContext = errorDiagnostics?.captureContext()
+        var productOperation: PetProductOperation?
+        var productFinished = false
+        defer {
+            if !productFinished { usageAnalytics?.finishFeature(productOperation, outcome: .cancelled) }
+        }
         do {
             let request = try PetSelectionRequest(
                 identity: current.identity,
                 selectionID: selectionIDGenerator(),
                 optionID: choice.optionID
             )
-            let response = try await transport.request(type: "select", payload: request.data())
-            let outcome = try PetTransportResponse.requireAcceptedSelection(response)
+            let usageOwnerID = account?.usageAuthorization()?.userID
+            let usageContext = usageAnalytics?.captureContext()
+            let payload = try request.data()
+            productOperation = usageAnalytics?.beginFeature(feature: .choice, inputMethod: inputMethod)
+            let response = try await transport.request(type: "select", payload: payload)
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            let outcome = try await transport.selectionOutcome(response, request: request)
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            usageAnalytics?.finishFeature(productOperation, outcome: .succeeded)
+            productFinished = true
+            recordAcceptedUsage(.choiceAccepted, ownerID: usageOwnerID, context: usageContext)
+            insightCards?.recordResponse(insightResponse)
             if inFlightSelectionIdentity == key { inFlightSelectionIdentity = nil }
             localForegroundIdentity = nil
             pendingFocusIdentity = nil
             riskConfirmation = nil
-            lastTerminalPresentation = outcome == "pause" ? .paused : nil
+            lastTerminalPresentation = outcome == .pause ? .paused : nil
             updateHotKeyEligibility()
             if let selectionReturnApplication {
                 _ = externalApplicationOpener.open(selectionReturnApplication)
             }
             await fetchAndApplySnapshot()
         } catch {
+            guard acceptsActionCompletion(generation: serviceGeneration) else { return }
+            usageAnalytics?.finishFeature(productOperation, outcome: productFailureOutcome(error))
+            productFinished = true
+            recordDiagnostic(.choiceSubmitFailed, error: error, context: errorContext)
             if inFlightSelectionIdentity == key { inFlightSelectionIdentity = nil }
             // A transport or response failure can mean the coordinator committed
             // the immutable selection but the response was lost. Drop local
@@ -1823,10 +2735,37 @@ final class PetViewModel: ObservableObject {
         }
     }
 
+    private func productFailureOutcome(_ error: any Error) -> PetProductOutcome {
+        Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
+            ? .cancelled : .failed
+    }
+
+    @discardableResult
+    private func recordDiagnostic(_ code: PetErrorCode, error: any Error, context: PetErrorContext?) -> Bool {
+        guard !isShuttingDown, !Task.isCancelled, !(error is CancellationError),
+              (error as? URLError)?.code != .cancelled, let context else { return false }
+        errorDiagnostics?.record(code: code, context: context)
+        return true
+    }
+
+    private func recordAcceptedUsage(
+        _ kind: PetUsageEventKind, ownerID: String?, context: PetUsageContext?
+    ) {
+        // A user can sign out or switch accounts while an action is awaiting its
+        // response. Never attribute that earlier action to the new account.
+        guard !isShuttingDown, ownerID == account?.usageAuthorization()?.userID else { return }
+        if let context {
+            usageAnalytics?.record(kind, context: context)
+            usageAnalytics?.observeMilestone(.firstAction, context: context)
+        }
+        onUsageAccepted?(kind)
+    }
+
     private func updateHotKeyEligibility() {
+        reconcileEventNavigationShortcuts()
         reconcileChoicePreview()
         reconcileApprovalShortcuts()
-        guard pendingManagedCommandApproval == nil,
+        guard !isFeedbackWindowVisible, pendingManagedCommandApproval == nil,
               inFlightManagedCommandApprovalID == nil,
               pendingPermissionRequest == nil,
               inFlightPermissionRequestID == nil,
@@ -1897,6 +2836,8 @@ final class PetViewModel: ObservableObject {
         operation: () async -> Void
     ) async {
         guard !isOnboardingOperationInFlight(domain) else { return }
+        if domain == .codexPlugin { invalidateHookReadiness() }
+        if domain == .service || domain == .project { cancelStorageRecovery() }
         setOnboardingOperationInFlight(true, domain: domain)
         defer { finishOnboardingOperation(domain) }
         await operation()
@@ -1961,6 +2902,10 @@ final class PetViewModel: ObservableObject {
     }
 
     private func reloadOnboardingState(operationError: String? = nil) {
+        let previousHookProject = hookReadinessProjectPath
+        defer {
+            if previousHookProject != hookReadinessProjectPath { invalidateHookReadiness() }
+        }
         onboardingServiceState = onboardingAdapter.serviceRegistrationState()
         applySuggestionModeLoadResult(suggestionModeStore.load())
         do {

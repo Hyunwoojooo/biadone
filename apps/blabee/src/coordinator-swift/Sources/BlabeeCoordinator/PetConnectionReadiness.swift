@@ -11,7 +11,7 @@ struct PetConnectionReadiness: Equatable, Sendable {
     }
 
     enum NextStep: Equatable, Sendable {
-        case refresh, service, installPlugin, pluginDetails, projects, restartService, verifyInCodex
+        case refresh, service, installPlugin, pluginDetails, projects, restartService, verifyInCodex, checkHooks
     }
 
     enum CheckState: Equatable, Sendable {
@@ -40,7 +40,9 @@ struct PetConnectionReadiness: Equatable, Sendable {
         serviceIssueRequiresAction: Bool = false,
         configuredProjectPaths: [String]?,
         activeProjectPaths: Set<String>?,
-        receivedCardProjectPaths: Set<String>
+        receivedCardProjectPaths: Set<String>,
+        hookReadiness: PetHookReadinessState = .unchecked,
+        hookProjectPath: String? = nil
     ) {
         let issue = serviceIssue?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasServiceIssue = issue?.isEmpty == false
@@ -98,7 +100,16 @@ struct PetConnectionReadiness: Equatable, Sendable {
                 : "\(receivedDescription) Hook 전체 상태와 선택 결과의 Codex 반환은 자동 판정하지 않습니다.",
             state: received.isEmpty ? .pending : .confirmed
         )
-        checks = [serviceCheck, pluginCheck, projectCheck, cardCheck]
+        let hookState: CheckState = switch hookReadiness {
+        case .trusted: .confirmed
+        case .checking: .checking
+        case .unchecked: .pending
+        case .reviewRequired, .unavailable: .attention
+        }
+        let hookScope = hookProjectPath.map { "확인 대상: \($0). " } ?? ""
+        let hookCheck = Check(id: "hooks", title: "Hook 신뢰 · \(hookReadiness.title)",
+                              detail: hookScope + hookReadiness.detail, state: hookState)
+        checks = [serviceCheck, pluginCheck, projectCheck, cardCheck, hookCheck]
 
         // Resolve one next action without hiding the independent evidence in the checklist.
         let recommendation: Recommendation
@@ -138,6 +149,13 @@ struct PetConnectionReadiness: Equatable, Sendable {
                 status: .checking, title: "프로젝트 적용 상태 확인 필요",
                 detail: "저장된 프로젝트와 현재 서비스의 관찰 범위를 아직 비교하지 못했습니다.",
                 nextStep: .refresh, nextStepTitle: "상태 다시 확인"
+            )
+        } else if hookReadiness != .trusted {
+            recommendation = Recommendation(
+                status: hookReadiness == .checking ? .checking
+                    : hookReadiness == .unchecked ? .awaitingVerification : .needsAttention,
+                title: "Hook 신뢰 · \(hookReadiness.title)", detail: hookReadiness.detail,
+                nextStep: .checkHooks, nextStepTitle: "Hook 상태 확인"
             )
         } else if received.isEmpty {
             recommendation = Recommendation(

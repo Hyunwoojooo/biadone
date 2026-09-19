@@ -1,4 +1,5 @@
 import AppKit
+import BlabeeProductSupport
 import CoordinatorSwift
 import Darwin
 import Foundation
@@ -83,6 +84,9 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     private let stopApplicationAfterStartupFailure: @MainActor () -> Void
     private var viewModel: PetViewModel?
     private var menuBarController: PetMenuBarController?
+    private var firstRunController: PetFirstRunController?
+    private var firstRunWindow: PetFirstRunWindowController?
+    private var firstRunPreferences: PetFirstRunPreferences?
     private var terminationInProgress = false
     private(set) var startupError: Error?
 
@@ -135,6 +139,10 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        viewModel?.feedback?.stop()
+        viewModel?.errorDiagnostics?.stop()
+        viewModel?.usageAnalytics?.stop()
+        viewModel?.account?.stop()
         viewModel?.stopPolling()
         menuBarController?.stop()
     }
@@ -152,6 +160,17 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        firstRunPreferences?.reloadLaunchAtLoginStatus()
+        guard let account = viewModel?.account else { return }
+        Task { await account.refresh() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if firstRunController?.isComplete == false { firstRunWindow?.show() }
+        return true
     }
 
     private func startProductionPet() throws {
@@ -172,12 +191,24 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
         }
         let suggestionModeStore = BlabeeSuggestionModeStore()
         let codexPluginSetupManager = CodexPluginSetupManager.live()
+        let account = PetAccountController.live()
+        let usageAnalytics = PetUsageAnalytics.live { [weak account] in
+            account?.usageAuthorization()
+        }
+        let errorDiagnostics = PetErrorDiagnostics.live { [weak account] in
+            account?.usageAuthorization()
+        }
+        let feedback = PetFeedbackController.live { [weak account] in
+            account?.usageAuthorization()
+        }
+        account.errorDiagnostics = errorDiagnostics
         let appService: PetAppServiceController?
         if onboardingAdapter is PetLiveOnboardingAdapter {
             appService = PetAppServiceController(
                 launcher: AppOwnedServiceProcessLauncher(socketPath: arguments.socketPath),
                 preference: PetAppServicePreferenceStore(),
-                registration: { onboardingAdapter.serviceRegistrationState() }
+                registration: { onboardingAdapter.serviceRegistrationState() },
+                errorDiagnostics: errorDiagnostics
             )
         } else {
             // Raw developer Pet invocations never start a product service.
@@ -190,30 +221,124 @@ final class PetApplicationDelegate: NSObject, NSApplicationDelegate {
             onboardingAdapter: onboardingAdapter,
             appService: appService,
             codexPluginSetupManager: codexPluginSetupManager,
+            hookReadinessManager: PetHookReadinessManager.live(),
+            storageRecoveryManager: onboardingAdapter is PetLiveOnboardingAdapter
+                ? PetStorageRecoveryManager.live(socketPath: arguments.socketPath)
+                : PetUnavailableStorageRecoveryManager(),
             legacyShellCleanupManager: onboardingAdapter is PetLiveOnboardingAdapter
                 ? LegacyCodexShellCleanupManager.live()
                 : LegacyUnavailableCodexShellCleanupManager(),
             suggestionModeStore: suggestionModeStore,
             projectFolderChooser: PetOpenPanelProjectFolderChooser(),
-            appUpdateChecker: PetGitHubAppUpdateChecker.live()
+            appUpdateChecker: PetGitHubAppUpdateChecker.live(),
+            account: account,
+            usageAnalytics: usageAnalytics,
+            errorDiagnostics: errorDiagnostics,
+            feedback: feedback
         )
+        let feedbackWindow = PetFeedbackWindowController(controller: feedback)
+        feedbackWindow.onVisibilityChanged = { [weak viewModel] visible in
+            viewModel?.setFeedbackWindowVisible(visible)
+        }
+        viewModel.onFeedbackRequested = { suggestion in
+            feedbackWindow.show(suggestion: suggestion)
+        }
         PetStartupDiagnostics.record(.viewModelReady)
+        viewModel.automaticAppUpdate.productMetrics = .live(analytics: usageAnalytics)
+        usageAnalytics.onConsentChanged = { [weak viewModel] in
+            viewModel?.observeProductAccountState()
+        }
+        self.viewModel = viewModel
+        let preferences = PetFirstRunPreferences()
+        firstRunPreferences = preferences
+        viewModel.firstRunPreferences = preferences
+        preferences.applyAppearance()
+        // Developer CLI invocations do not consume or modify product onboarding.
+        if ProductInvocationResolver.isStandardInstalledApp(.live()) {
+            firstRunController = PetFirstRunController()
+        }
         let store = PetUserDefaultsShortcutStore()
         let backend = CarbonPetHotKeyBackend()
         let registry = try PetHotKeyRegistry(
             backend: backend,
             configuration: store.load() ?? .defaults,
             store: store
-        ) { [weak viewModel] intent in
+        ) { [weak self, weak viewModel] intent in
+            if self?.firstRunController?.isComplete == false {
+                if intent == .toggle { self?.firstRunWindow?.show() }
+                return
+            }
             viewModel?.handleShortcut(intent)
         }
         viewModel.attachHotKeyRegistry(registry)
-        let menuBarController = PetMenuBarController(viewModel: viewModel)
+        account.onPhaseChanged = { [weak self, weak usageAnalytics, weak viewModel, weak feedback, weak feedbackWindow] phase in
+            if case .signedIn(let user) = phase {
+                self?.firstRunController?.synchronizeAccount(id: user.id, email: user.email)
+            } else {
+                self?.firstRunController?.synchronizeAccount(
+                    id: nil, email: nil, isVerifying: phase == .checking
+                )
+            }
+            switch phase {
+            case .signedOut, .signingOut:
+                feedbackWindow?.close()
+                feedback?.clearIdentity()
+                usageAnalytics?.clearIdentity()
+                viewModel?.clearInsightIdentity()
+                viewModel?.automaticAppUpdate.productMetrics?.clearIdentity()
+            default:
+                usageAnalytics?.accountStateChanged()
+                feedback?.accountStateChanged()
+            }
+            if case .signedIn = phase { viewModel?.observeProductAccountState() }
+        }
+        account.onSignInCompleted = { [weak self] in
+            if self?.firstRunController?.isComplete == false {
+                self?.firstRunWindow?.show()
+            } else {
+                self?.menuBarController?.showAccountAfterSignIn()
+            }
+        }
+        Task { await account.restoreIfNeeded() }
+        if let firstRunController, !firstRunController.isComplete {
+            viewModel.beginFirstRunSetup()
+            let window = PetFirstRunWindowController(
+                controller: firstRunController, viewModel: viewModel, preferences: preferences
+            )
+            window.onFinish = { [weak self] deferred in self?.finishFirstRun(connectionDeferred: deferred) }
+            window.onClose = { NSApplication.shared.terminate(nil) }
+            firstRunController.onComplete = { [weak self] in
+                guard let self else { return }
+                self.firstRunWindow?.closeAfterCompletion()
+                self.firstRunWindow = nil
+                self.startNormalPet(showPanel: true)
+            }
+            firstRunWindow = window
+            window.show()
+        } else {
+            startNormalPet()
+        }
+    }
+
+    private func finishFirstRun(connectionDeferred: Bool) {
+        guard let viewModel, let firstRunController,
+              !viewModel.isOnboardingOperationInFlight,
+              case .signedIn = viewModel.account?.phase else { return }
+        let ready = viewModel.isConnectionSetupReady
+        firstRunController.finishSetup(isReady: ready, connectionDeferred: connectionDeferred) { usage, diagnostics in
+            viewModel.usageAnalytics?.setEnabled(usage)
+            viewModel.errorDiagnostics?.setEnabled(diagnostics)
+        }
+    }
+
+    private func startNormalPet(showPanel: Bool = false) {
+        guard menuBarController == nil, let viewModel else { return }
+        viewModel.endFirstRunSetup()
+        menuBarController = PetMenuBarController(viewModel: viewModel)
         PetStartupDiagnostics.record(.menuBarReady)
-        self.viewModel = viewModel
-        self.menuBarController = menuBarController
         viewModel.startPolling()
         PetStartupDiagnostics.record(.pollingStarted)
+        if showPanel { viewModel.requestPanelToggle() }
     }
 }
 

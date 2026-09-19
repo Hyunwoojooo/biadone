@@ -430,6 +430,7 @@ test("pipeline packages only the binary produced inside its fresh build transact
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].buildNumber, testBuildNumber);
+  assert.equal("releaseSigning" in calls[0], false);
   assert.match(calls[0].sourceRoot, /fresh-work\/release-source$/u);
   assert.notEqual(calls[0].sourceRoot, await realpath(fixture.root));
   assert.equal(calls[0].packageManifest, "// swift-tools-version: 6.0\n");

@@ -298,15 +298,15 @@ private final class ManagedCodexBridgeHarness: @unchecked Sendable {
         let token = "harness-token"
         let listener = try ManagedCodexWebSocketListener(expectedToken: token)
         client = try managedCodexConnectClient(port: listener.port)
-        try managedCodexTestWrite(Data((
-            "GET / HTTP/1.1\r\n"
-                + "Host: 127.0.0.1:\(listener.port)\r\n"
-                + "Upgrade: websocket\r\n"
-                + "Connection: Upgrade\r\n"
-                + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                + "Sec-WebSocket-Version: 13\r\n"
-                + "Authorization: Bearer \(token)\r\n\r\n"
-        ).utf8), descriptor: client)
+        try managedCodexTestWrite(Data(([
+            "GET / HTTP/1.1\r\n",
+            "Host: 127.0.0.1:\(listener.port)\r\n",
+            "Upgrade: websocket\r\n",
+            "Connection: Upgrade\r\n",
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+            "Sec-WebSocket-Version: 13\r\n",
+            "Authorization: Bearer \(token)\r\n\r\n",
+        ] as [String]).joined().utf8), descriptor: client)
         let connection = try listener.accept(timeoutMilliseconds: 1_000)
         _ = try managedCodexTestReadHeaders(descriptor: client)
         listener.close()
@@ -1265,15 +1265,15 @@ func managedCodexSyntheticDecisionsRequireDeliveryToken() throws {
 
 @Test("Managed WebSocket handshake follows RFC example and requires bearer token")
 func managedCodexWebSocketHandshakeIsAuthenticated() throws {
-    let request = Data((
-        "GET / HTTP/1.1\r\n"
-            + "Host: 127.0.0.1\r\n"
-            + "Upgrade: websocket\r\n"
-            + "Connection: keep-alive, Upgrade\r\n"
-            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            + "Sec-WebSocket-Version: 13\r\n"
-            + "Authorization: Bearer test-token\r\n\r\n"
-    ).utf8)
+    let request = Data(([
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: keep-alive, Upgrade\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "Authorization: Bearer test-token\r\n\r\n",
+    ] as [String]).joined().utf8)
     let response = try ManagedCodexWebSocketHandshake.response(
         for: request,
         expectedToken: "test-token"
@@ -1722,15 +1722,15 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
     let listener = try ManagedCodexWebSocketListener(expectedToken: token)
     let primaryClient = try managedCodexConnectClient(port: listener.port)
     defer { Darwin.close(primaryClient) }
-    try managedCodexTestWrite(Data((
-        "GET / HTTP/1.1\r\n"
-            + "Host: 127.0.0.1:\(listener.port)\r\n"
-            + "Upgrade: websocket\r\n"
-            + "Connection: Upgrade\r\n"
-            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            + "Sec-WebSocket-Version: 13\r\n"
-            + "Authorization: Bearer \(token)\r\n\r\n"
-    ).utf8), descriptor: primaryClient)
+    try managedCodexTestWrite(Data(([
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1:\(listener.port)\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: Upgrade\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "Authorization: Bearer \(token)\r\n\r\n",
+    ] as [String]).joined().utf8), descriptor: primaryClient)
     let primaryConnection = try listener.accept(timeoutMilliseconds: 1_000)
     defer { primaryConnection.close() }
     _ = try managedCodexTestReadHeaders(descriptor: primaryClient)
@@ -1766,15 +1766,15 @@ func managedCodexAuxiliaryConnectionRoundTripAndCleanup() throws {
 
     let auxiliaryClient = try managedCodexConnectClient(port: listener.port)
     defer { Darwin.close(auxiliaryClient) }
-    try managedCodexTestWrite(Data((
-        "GET / HTTP/1.1\r\n"
-            + "Host: 127.0.0.1:\(listener.port)\r\n"
-            + "Upgrade: websocket\r\n"
-            + "Connection: Upgrade\r\n"
-            + "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"
-            + "Sec-WebSocket-Version: 13\r\n"
-            + "Authorization: Bearer \(token)\r\n\r\n"
-    ).utf8), descriptor: auxiliaryClient)
+    try managedCodexTestWrite(Data(([
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1:\(listener.port)\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: Upgrade\r\n",
+        "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "Authorization: Bearer \(token)\r\n\r\n",
+    ] as [String]).joined().utf8), descriptor: auxiliaryClient)
     let handshake = try managedCodexTestReadHeaders(
         descriptor: auxiliaryClient,
         timeoutMilliseconds: 5_000
@@ -2652,15 +2652,15 @@ func managedCodexBridgeSocketPipeRoundTrip() throws {
     defer { listener.close() }
     let client = try managedCodexConnectClient(port: listener.port)
     defer { Darwin.close(client) }
-    try managedCodexTestWrite(Data((
-        "GET / HTTP/1.1\r\n"
-            + "Host: 127.0.0.1:\(listener.port)\r\n"
-            + "Upgrade: websocket\r\n"
-            + "Connection: Upgrade\r\n"
-            + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            + "Sec-WebSocket-Version: 13\r\n"
-            + "Authorization: Bearer \(token)\r\n\r\n"
-    ).utf8), descriptor: client)
+    try managedCodexTestWrite(Data(([
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1:\(listener.port)\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: Upgrade\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "Authorization: Bearer \(token)\r\n\r\n",
+    ] as [String]).joined().utf8), descriptor: client)
     let connection = try listener.accept(timeoutMilliseconds: 1_000)
     let handshake = try managedCodexTestReadHeaders(descriptor: client)
     #expect(String(data: handshake, encoding: .utf8)?.hasPrefix(
@@ -3019,15 +3019,15 @@ private func managedCodexTestHandshakeRequest(
     token: String,
     key: String
 ) -> Data {
-    Data((
-        "GET / HTTP/1.1\r\n"
-            + "Host: 127.0.0.1:\(port)\r\n"
-            + "Upgrade: websocket\r\n"
-            + "Connection: Upgrade\r\n"
-            + "Sec-WebSocket-Key: \(key)\r\n"
-            + "Sec-WebSocket-Version: 13\r\n"
-            + "Authorization: Bearer \(token)\r\n\r\n"
-    ).utf8)
+    Data(([
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1:\(port)\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: Upgrade\r\n",
+        "Sec-WebSocket-Key: \(key)\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "Authorization: Bearer \(token)\r\n\r\n",
+    ] as [String]).joined().utf8)
 }
 
 private func managedCodexTestReadExact(

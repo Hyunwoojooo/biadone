@@ -1,15 +1,68 @@
 import SwiftUI
 
-struct PetAppUpdateView: View {
-    @ObservedObject var viewModel: PetViewModel
+/// Feedback is presentation-only; the release/error stays in the model after the label expires.
+struct PetAppUpdateCheckFeedback: Equatable {
+    static let duration: TimeInterval = 3
+    private let resultTitle: String
+    let expiresAt: Date
+
+    init?(state: PetAppUpdateState, now: Date = .now) {
+        switch state {
+        case .available: resultTitle = "업데이트 가능"
+        case .upToDate: resultTitle = "최신 버전"
+        case .notChecked, .checking, .noPublishedRelease, .unavailable: return nil
+        }
+        expiresAt = now.addingTimeInterval(Self.duration)
+    }
+
+    func title(at now: Date = .now) -> String? {
+        now < expiresAt ? resultTitle : nil
+    }
+}
+
+struct PetAppUpdateCheckButton: View {
+    let state: PetAppUpdateState
+    let checkForUpdates: () -> Void
+    @State private var feedback: PetAppUpdateCheckFeedback?
 
     var body: some View {
-        PetAppUpdateStatusView(
-            state: viewModel.appUpdateState,
-            currentVersion: viewModel.appVersionDisplay,
-            checkForUpdates: { Task { await viewModel.checkForAppUpdates() } },
-            openUpdateLocation: viewModel.openAppUpdateLocation
-        )
+        Button(action: checkForUpdates) {
+            Text(state.isChecking ? "확인 중…" : feedback?.title() ?? "업데이트 확인")
+                .frame(minWidth: 84)
+        }
+            .font(.caption)
+            .buttonStyle(.bordered)
+            .petCapsuleButtonBorder()
+            .disabled(state.isChecking)
+            .accessibilityIdentifier("check-app-updates")
+            .task(id: state) {
+                feedback = PetAppUpdateCheckFeedback(state: state)
+                guard feedback != nil else { return }
+                do { try await Task.sleep(for: .seconds(PetAppUpdateCheckFeedback.duration)) }
+                catch { return }
+                feedback = nil
+            }
+    }
+}
+
+struct PetAppUpdateView: View {
+    @ObservedObject var viewModel: PetViewModel
+    var showsCheckForUpdates = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PetAppUpdateStatusView(
+                state: viewModel.appUpdateState,
+                currentVersion: viewModel.appVersionDisplay,
+                checkForUpdates: { Task { await viewModel.checkForAppUpdates() } },
+                openUpdateLocation: viewModel.openAppUpdateLocation,
+                showsCheckForUpdates: showsCheckForUpdates
+            )
+            PetAutomaticAppUpdateView(
+                controller: viewModel.automaticAppUpdate,
+                release: viewModel.appUpdateState.availableRelease
+            )
+        }
     }
 }
 
@@ -18,6 +71,7 @@ struct PetAppUpdateStatusView: View {
     let currentVersion: String
     let checkForUpdates: () -> Void
     let openUpdateLocation: () -> Void
+    var showsCheckForUpdates = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -72,10 +126,9 @@ struct PetAppUpdateStatusView: View {
 
     @ViewBuilder
     private var updateButtons: some View {
-        Button("업데이트 확인", action: checkForUpdates)
-            .buttonStyle(.bordered)
-            .disabled(state.isChecking)
-            .accessibilityIdentifier("check-app-updates")
+        if showsCheckForUpdates {
+            PetAppUpdateCheckButton(state: state, checkForUpdates: checkForUpdates)
+        }
         if let actionTitle = state.locationActionTitle {
             Button(actionTitle, action: openUpdateLocation)
                 .buttonStyle(.borderedProminent)

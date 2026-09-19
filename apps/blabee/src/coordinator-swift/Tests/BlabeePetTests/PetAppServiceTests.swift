@@ -259,7 +259,7 @@ func petAppServiceCrashAndCleanupFailure() async throws {
     #expect(!h.preference.enabled)
 }
 
-@Test("Late snapshots cannot mark a replacement ready and reconnect has a deadline")
+@Test("Late snapshots cannot mark a replacement ready and slow responses do not stop the child")
 @MainActor
 func petAppServiceGenerationAndConnectionLoss() async throws {
     let h = AppServiceHarness()
@@ -277,9 +277,126 @@ func petAppServiceGenerationAndConnectionLoss() async throws {
     #expect(c.state == .ready)
     c.connectionFailed(generation: c.generation)
     #expect(c.state == .reconnecting)
-    try await waitForAppService { c.state == .failed("app_service_connection_timeout") }
-    #expect(child.stopCount == 1)
+    let recoveringGeneration = c.generation
+    try await waitForAppService { c.state == .unresponsive }
+    #expect(child.stopCount == 0)
+    #expect(child.isRunning)
+    #expect(c.hasOwnedChild)
+    #expect(c.mayQueryCoordinator)
+    #expect(c.generation == recoveringGeneration)
+    #expect(!c.acceptsSnapshot(generation: oldGeneration))
+    for _ in 0..<10 {
+        c.connectionFailed(generation: recoveringGeneration)
+        c.startAtAppLaunch()
+        c.checkChildBeforePolling()
+    }
+    #expect(c.state == .unresponsive)
     #expect(h.launcher.launches == 2)
+    #expect(child.stopCount == 0)
+    c.receivedVerifiedSnapshot(generation: recoveringGeneration)
+    #expect(c.state == .ready)
+    #expect(c.generation == recoveringGeneration)
+    await c.shutdown()
+    #expect(child.stopCount == 1)
+}
+
+@Test("A verified response cancels the reconnect deadline without stopping or replacing the child")
+@MainActor
+func petAppServiceRecoveryCancelsReconnectDeadline() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    c.receivedVerifiedSnapshot(generation: c.generation)
+    c.connectionFailed(generation: c.generation)
+    #expect(c.state == .reconnecting)
+    c.receivedVerifiedSnapshot(generation: c.generation)
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .ready)
+    #expect(child.stopCount == 0)
+    #expect(h.launcher.launches == 1)
+    await c.shutdown()
+}
+
+@Test("Manual restart during reconnect fences old responses and deadlines and starts exactly one replacement",
+      arguments: [false, true])
+@MainActor
+func petAppServiceUnresponsiveManualRestart(_ afterTimeout: Bool) async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
+    c.enable()
+    let first = try #require(h.launcher.children.first)
+    first.hasPublishedService = true
+    let oldGeneration = c.generation
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    c.connectionFailed(generation: oldGeneration)
+    if afterTimeout { try await waitForAppService { c.state == .unresponsive } }
+    await c.restart()
+    let second = try #require(h.launcher.children.last)
+    #expect(h.launcher.launches == 2)
+    #expect(first.stopCount == 1)
+    #expect(c.state == .starting)
+    #expect(c.generation != oldGeneration)
+    second.hasPublishedService = true
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    c.connectionFailed(generation: oldGeneration)
+    #expect(c.state == .starting)
+    c.receivedVerifiedSnapshot(generation: c.generation)
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .ready)
+    #expect(second.stopCount == 0)
+    await c.shutdown()
+    #expect(second.stopCount == 1)
+    #expect(h.launcher.launches == 2)
+}
+
+@Test("An unresponsive child that actually exits fails without automatic replacement")
+@MainActor
+func petAppServiceUnresponsiveChildExit() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    let oldGeneration = c.generation
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    c.connectionFailed(generation: oldGeneration)
+    try await waitForAppService { c.state == .unresponsive }
+    child.isRunning = false
+    child.terminationSummary = "app_service_exit_1"
+    c.checkChildBeforePolling()
+    #expect(c.state == .failed("app_service_exit_1"))
+    #expect(!c.hasOwnedChild)
+    #expect(!c.mayQueryCoordinator)
+    #expect(c.generation != oldGeneration)
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    c.startAtAppLaunch()
+    #expect(c.state == .failed("app_service_exit_1"))
+    #expect(h.launcher.launches == 1)
+    #expect(child.stopCount == 0)
+    await c.shutdown()
+}
+
+@Test("Shutdown during reconnect cancels its deadline and ignores late responses")
+@MainActor
+func petAppServiceShutdownCancelsReconnectDeadline() async throws {
+    let h = AppServiceHarness()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
+    c.enable()
+    let child = try #require(h.launcher.children.first)
+    child.hasPublishedService = true
+    let oldGeneration = c.generation
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    c.connectionFailed(generation: oldGeneration)
+    await c.shutdown()
+    c.receivedVerifiedSnapshot(generation: oldGeneration)
+    try await Task.sleep(nanoseconds: 80_000_000)
+    #expect(c.state == .stopped)
+    #expect(!c.hasOwnedChild)
+    #expect(!c.mayQueryCoordinator)
+    #expect(child.stopCount == 1)
+    #expect(h.launcher.launches == 1)
 }
 
 @Test("Concurrent restart and opt-out are serialized around owned cleanup")
@@ -476,6 +593,10 @@ func petAppServiceRecoveryMessages() {
     #expect(PetAppServiceState.failed("freshness_anchor_corrupt").detail.contains("삭제하지 말고"))
     #expect(PetAppServiceState.failed("app_service_connection_timeout").detail.contains("다시 시작"))
     #expect(PetAppServiceState.failed("app_service_stop_incomplete").detail.contains("새 실행을 막았습니다"))
+    #expect(PetAppServiceState.unresponsive.title == "서비스 응답 지연")
+    #expect(PetAppServiceState.unresponsive.detail.contains("실행 중인 서비스를 유지"))
+    #expect(PetAppServiceState.unresponsive.detail.contains("기존 작업을 자동으로 다시 보내지 않습니다"))
+    #expect(PetAppServiceState.unresponsive.detail.contains("설정에서 서비스 다시 시작"))
 }
 
 @Test("Cancelled app shutdown joins a pending restart stop without respawning")
@@ -534,11 +655,11 @@ func petAppServiceLateSnapshotAfterRestart() async throws {
     await vm.shutdownAppOwnedService()
 }
 
-@Test("Connection failure clears a permission card and verified recovery restores it")
+@Test("A delayed service keeps actions cleared beyond its reconnect budget and a verified response restores them")
 @MainActor
 func petAppServiceConnectionLossClearsActions() async throws {
     let h = AppServiceHarness()
-    let c = h.controller()
+    let c = h.controller(timeout: 20_000_000, startupTimeout: 2_000_000_000)
     let transport = PetFakeTransport()
     let vm = PetViewModel(
         transport: transport, externalApplicationOpener: PetFakeApplicationOpener(),
@@ -553,16 +674,30 @@ func petAppServiceConnectionLossClearsActions() async throws {
     await transport.enqueue(type: "get_state", response: data)
     await vm.refresh()
     #expect(vm.pendingPermissionRequest != nil)
+    #expect(vm.hasVerifiedServiceConnection)
     await transport.enqueueFailure(type: "get_state", code: "lost")
     await vm.refresh()
     #expect(vm.pendingPermissionRequest == nil)
     #expect(vm.snapshot == nil)
     #expect(vm.appOwnedServiceState == .reconnecting)
+    try await waitForAppService { vm.appOwnedServiceState == .unresponsive }
+    #expect(vm.snapshot == nil)
+    #expect(vm.pendingPermissionRequest == nil)
+    #expect(!vm.hasVerifiedServiceConnection)
+    #expect(vm.presentationTitle == "서비스 응답 지연")
+    #expect(vm.canChangeAppOwnedService)
+    #expect(child.stopCount == 0)
+    #expect(h.launcher.launches == 1)
     await transport.enqueue(type: "get_state", response: data)
     await vm.refresh()
     #expect(vm.appOwnedServiceState == .ready)
     #expect(vm.pendingPermissionRequest != nil)
+    #expect(vm.hasVerifiedServiceConnection)
     #expect(h.launcher.launches == 1)
+    #expect(child.stopCount == 0)
+    #expect(await transport.requestCount(type: "get_state") == 3)
     #expect(await transport.requestCount(type: "resolve_permission_request") == 0)
+    #expect(await transport.requestCount(type: "select") == 0)
+    #expect(await transport.requestCount(type: "dismiss_interaction") == 0)
     await vm.shutdownAppOwnedService()
 }

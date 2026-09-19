@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .library(name: "CoordinatorSwift", targets: ["CoordinatorSwift"]),
+        .library(name: "ClaudeCoreAdapter", targets: ["ClaudeCoreAdapter"]),
         .executable(name: "blabee-coordinator", targets: ["BlabeeCoordinator"]),
     ],
     targets: [
@@ -20,14 +21,19 @@ let package = Package(
             ]
         ),
         .target(
+            name: "ClaudeCoreAdapter",
+            dependencies: ["CoordinatorSwift"]
+        ),
+        .target(
             name: "BlabeeProductSupport",
             dependencies: ["CoordinatorSwift"]
         ),
         .executableTarget(
             name: "BlabeeCoordinator",
-            dependencies: ["CoordinatorSwift", "BlabeeProductSupport"],
+            dependencies: ["CoordinatorSwift", "BlabeeProductSupport", "ClaudeCoreAdapter"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("AuthenticationServices"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("ServiceManagement"),

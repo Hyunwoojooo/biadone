@@ -72,7 +72,7 @@ test("plugin manifest has production metadata and relies on default hook discove
 
   assert.equal(manifest.name, "blabee");
   assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
   assert.equal(manifest.author.name, "BiaDone");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -90,7 +90,7 @@ test("four supported hooks call the native coordinator through the plugin launch
     SessionStart: { timeout: 8, nativeBudget: 7 },
     UserPromptSubmit: { timeout: 8, nativeBudget: 7 },
     Stop: { timeout: 8, nativeBudget: 5 },
-    PermissionRequest: { timeout: 60, nativeBudget: 57 },
+    PermissionRequest: { timeout: 320, nativeBudget: 315 },
   };
 
   assert.deepEqual(Object.keys(hookDocument.hooks).sort(), Object.keys(expected).sort());
@@ -114,6 +114,10 @@ test("four supported hooks call the native coordinator through the plugin launch
   assert.match(
     hookDocument.hooks.PermissionRequest[0].hooks[0].statusMessage,
     /확인/,
+  );
+  assert.match(
+    await readFile(launcherPath, "utf8"),
+    /PermissionRequest\) hook_deadline_seconds=315 ;;/,
   );
   assert.equal(
     hookDocument.hooks.Stop[0].hooks[0].statusMessage,

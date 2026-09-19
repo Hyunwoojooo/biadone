@@ -212,16 +212,16 @@ ack를 보낸 경우에만 Pet receipt를 반환한다. 이 receipt도 Codex의 
 
 - Hook 전체가 launcher의 5초 내부 deadline 안에 완료되지 않으면 buffered 출력을 버리고 성공 상태로 종료해 일반 Codex 사용을 막지 않는다. coordinator CLI의 응답 상한은 5초이고 Codex Hook의 외부 제한은 8초다.
 - 현재 턴에 유효한 결정 제안이 없으면 성공 상태로 종료하고 턴이 정상적으로 끝나게 한다.
-- 결정 제안이 있으면 코디네이터가 Pet 카드를 `waiting`으로 공개한 뒤 Stop을 즉시 종료한다. Pet 대기 시간은 Stop 연결과 분리되어 있으며, 선택이 없으면 60초에 한 번 알리고 120초에 패킷을 만료시킨다.
+- 결정 제안이 있으면 코디네이터가 Pet 카드를 `waiting`으로 공개한 뒤 Stop을 즉시 종료한다. Pet 대기 시간은 Stop 연결과 분리되어 있으며, 선택이 없으면 60초에 한 번 알리고 600초(10분)에 패킷을 만료시킨다.
 - `1`~`4`의 우선순위 작업: 선택 요청의 프로젝트·세션·턴·에피소드·상호작용·패킷·리비전·옵션 바인딩 전체를 검증하고 활성 패킷을 원자적으로 선점한다. 코디네이터는 봉인된 작업 의미 전체와 일회성 continuation token을 물질화하고 프로세스 안에서 즉시 한 번 소비한 뒤, 비민감 action 메시지만 같은 `session_id`의 Codex 큐에 전달한다. 원문 token은 Hook·MCP·Pet·UDS·프로세스 출력에 넣지 않는다.
 - `codex queue`의 정확한 receipt를 받으면 해당 선택의 **전송 수명 주기**를 완료하고 원래 결정 경계를 닫는다. 이는 선택한 작업의 실행 시작이나 성공 판정이 아니며 성공·실패는 새 턴의 별도 outcome/evidence로 판단한다. 큐 명령이 실패하거나 결과가 불명확하면 선택을 자동 재전송하지 않고 fail-closed한다.
-- 120초 만료는 Pet 선택 전의 대기 패킷에 적용한다. T-006/B1은 dispatch 이후 `pet_action`의 `in_flight_deadline_at`과 timeout 결과 계약을 고정했고, B2는 coordinator-owned 120초 Pet·형식 보정 token과 300초 in-flight window를 연속 단조 시계로 실행한다. token consume/claim과 transport completion 시각은 외부 입력 대신 logical monotonic time으로 덮어쓴다. deadline을 넘기면 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 절전 경과는 포함하고 wall clock 변경은 권한 판정에 사용하지 않으며, 재시작으로 monotonic anchor를 증명할 수 없으면 fail-closed한다.
+- 600초(10분) 만료는 Pet 선택 전의 대기 패킷에 적용한다. T-006/B1은 dispatch 이후 `pet_action`의 `in_flight_deadline_at`과 timeout 결과 계약을 고정했고, B2는 coordinator-owned 120초 Pet·형식 보정 token과 300초 in-flight window를 연속 단조 시계로 실행한다. token consume/claim과 transport completion 시각은 외부 입력 대신 logical monotonic time으로 덮어쓴다. deadline을 넘기면 결과를 `unknown`으로 남기고 취소·실패를 추론하거나 자동 재시도하지 않는다. 절전 경과는 포함하고 wall clock 변경은 권한 판정에 사용하지 않으며, 재시작으로 monotonic anchor를 증명할 수 없으면 fail-closed한다.
 - 보조 `나중에 결정`: 숫자 작업 슬롯과 분리해 재개 캡슐을 저장하고 턴 종료를 허용한다.
 - 롤백 계약: 숫자 작업 슬롯과 분리한다. 현재 공개 빌드에서는 활성화하지 않으며, 향후 검증된 로컬 복원을 제공할 때에도 새 작업을 자동 시작하지 않는다.
-- 120초 만료 시 자동으로 선택하지 않고 재개 캡슐을 저장한 뒤 턴 종료를 허용한다. 만료 후 도착한 단축키는 거부한다.
+- 600초(10분) 만료 시 자동으로 선택하지 않고 재개 캡슐을 저장한 뒤 턴 종료를 허용한다. 만료 후 도착한 단축키는 거부한다.
 - 데몬 실패가 발생하면 일반 Codex 사용은 계속 허용하되, 자동 동작 실행은 차단한다.
 
-60초·120초 판정에는 시스템 절전 시간을 포함하는 연속 단조 시계를 사용하고, 벽시계의 `expires_at`은 표시와 감사 기록에만 사용한다. 시스템 시계가 바뀌어도 대기 시간이 늘어나면 안 된다. 프로세스 재시작 후 경과 시간을 안전하게 증명할 수 없으면 해당 패킷을 만료 처리한다.
+60초·600초 판정에는 시스템 절전 시간을 포함하는 연속 단조 시계를 사용하고, 벽시계의 `expires_at`은 표시와 감사 기록에만 사용한다. 시스템 시계가 바뀌어도 대기 시간이 늘어나면 안 된다. 프로세스 재시작 후 경과 시간을 안전하게 증명할 수 없으면 해당 패킷을 만료 처리한다.
 
 `codex queue` 새 턴 전달은 Codex CLI `0.149.0`의 격리 세션에서 확인했다. 열린 유휴 TUI에서는 즉시 실행됐고, 닫힌 세션에서는 큐가 보존되어 재개 시 실행됐다. 이 명령은 버전 의존 전송 어댑터 뒤에 두고, 최소 지원 버전마다 exact argv·receipt·유휴/재개 동작을 다시 검증한다. 장기적인 공식 수명 주기 경로는 App Server의 `thread/resume`과 `turn/start` 어댑터로 분리한다. 참고: [Codex Hooks](https://developers.openai.com/codex/hooks), [Codex App Server](https://developers.openai.com/codex/app-server).
 
@@ -302,7 +302,7 @@ Codex가 생성한다.
   "boundary_sequence": 1,
   "valid_after_event_sequence": 184,
   "sealed_at": "2026-08-20T12:00:00Z",
-  "expires_at": "2026-08-20T12:02:00Z",
+  "expires_at": "2026-08-20T12:10:00Z",
   "summary": "OAuth 콜백 구현 완료",
   "evidence": [
     {
@@ -542,7 +542,7 @@ WORKING
                                             │                            └─ 새 UserPromptSubmit ─> WORKING
                                             ├─ 보조 나중에 결정 ─────────> PAUSED
                                             └─ 60초 ─────> REMINDER
-                                                 └─ 120초 ─> EXPIRED ─────> PAUSED
+                                                 └─ 600초 ─> EXPIRED ─────> PAUSED
 ```
 
 MVP에서는 세션마다 대기 중인 활성 상호작용을 최대 하나만 허용하되 여러 Codex 세션의 대기 요청은 로컬 코디네이터가 함께 보관할 수 있다. 코디네이터는 생성 anchor와 immutable binding tie-break로 `routing.pending`을 FIFO 정렬하고, Pet은 그 배열의 첫 항목만 표시·focus·선택 대상으로 삼는다. Pet이 전역 단축키를 연결하는 **전면 카드(foreground interaction)**는 시스템 전체에서 하나뿐이다. 전면 대상이 없고 FIFO 선두가 선택 가능하면 대기열 길이와 관계없이 Pet이 그 immutable identity의 14-field `focus_interaction`을 한 번 자동 전송한다. 선두가 `sealed`·만료 등으로 선택 불가하면 뒤의 준비된 카드도 추월하지 못한다. 선두가 제거되면 다음 항목이 새 선두가 되어 같은 절차로 자동 전면화된다.
@@ -815,7 +815,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 - 오래되었거나 중복된 단축키 입력으로 동작이 두 번 실행될 수 없다.
 - 두 Codex 세션이 동시에 결정을 기다려도 FIFO 선두가 아닌 카드에 단축키가 전달되거나 다른 프로젝트가 롤백되지 않으며, 선두가 제거된 뒤에만 다음 카드가 자동 전면화된다.
 - `high`·`critical` 위험 작업은 전역 숫자 단축키로 시작할 수 없고, Pet의 위험 확인과 이후 Codex 네이티브 승인을 서로 대체하지 않는다.
-- 60초에는 알림만 표시하고, 120초에는 자동 선택 없이 패킷을 만료하고 재개 캡슐을 저장하며 늦은 입력을 거부한다.
+- 60초에는 알림만 표시하고, 600초에는 자동 선택 없이 패킷을 만료하고 재개 캡슐을 저장하며 늦은 입력을 거부한다.
 - 일반 로컬 코디네이터 연결은 2초, 일반 Hook CLI 응답은 5초 안에 성립하지 않으면 fail-open한다. launcher의 내부 hard deadline은 `SessionStart`·`UserPromptSubmit` 7초, `Stop` 5초다. 사용자의 권한 결정을 기다리는 `PermissionRequest`는 coordinator 50초, Hook CLI 55초, launcher 57초를 차례로 적용하며 실패하면 빈 stdout으로 Codex의 기존 승인 화면에 돌려보낸다. 어떤 경로도 자동 선택이나 롤백을 실행하지 않는다. Pet의 명시적 선택은 10초 queue 실행 제한을 포함하도록 12초를 기다린다.
 - Hook launcher는 1 MiB 이하의 완전한 성공 stdout만 공개하고 stderr를 공개하지 않는다. timeout, nonzero·signal 종료, 부분 출력, 열린 pipe·descendant 잔존, 출력 상한 초과는 빈 stdout·stderr와 exit 0으로 수렴하며 소유 process group을 제한 시간 안에 정리한다. MCP는 같은 실패를 성공으로 숨기지 않는다.
 - Pet의 typed heartbeat가 만든 process-local 3초 lease가 없으면 Hook 권한 요청과 관리형 App Server command approval은 카드·FIFO·notice를 만들지 않고 즉시 Codex 직접 결정으로 돌아간다. lease 만료는 두 경로의 미선택 요청만 해제하고 이미 노출된 delivery token의 exact-once 상태를 보존한다.
@@ -836,7 +836,7 @@ runtime-known secret corpus 검사는 현재 프로세스가 관찰·등록한 �
 2. 체크포인트 한도는 파일당 16 MiB, 체크포인트당 128 MiB, 프로젝트당 1 GiB다. 종료된 에피소드부터 정리하고 활성·보류 기준선, 대기 패킷 참조, 최신 복구 스냅샷은 보호한다. 무시 파일, 하위 모듈, LFS, 저장소 밖 경로와 외부 부수 효과는 공개 v0.1 복원 범위에서 제외한다.
 3. 실제 Codex에서 엄격히 검증된 Hook PermissionRequest의 거절·직접 결정, legacy `allow` 거부와 숨은/알 수 없는 필드·지원하지 않는 tool·timeout·서비스 재시작 fallback을 검증한다. 관리형 App Server에서는 `accept`·`decline`·원래 TUI 전달을 별도로 검증하고, 두 요청 종류가 동시에 대기할 때 공통 `arrival_sequence`대로만 전면화되는지 확인한다. Pet 선택 접수, Hook deny stdout write 또는 직접 결정 EOF, App Server response write, 실제 명령 완료도 별도 증거로 검증한다. 원래 PID/창 identity가 없어 정확한 원래 창 복귀는 약속하지 않는다.
 4. 현재 코드의 지원 허용 목록은 Codex `0.149.1`, `0.150.1`, `0.151.0`이다. `0.149.0`은 과거 로컬 알파 실험 증거로만 남긴다. 공개 배포는 이 허용 목록과 `blabee doctor` 검사를 함께 사용하고, 주간·새 Codex 버전 발견 시·Blabee 릴리스 전에 Hook/MCP/queue/App Server 계약 검사를 다시 실행한다.
-5. Stop은 카드를 공개한 뒤 즉시 끝난다. Pet 카드 대기 중 60초에 한 번 알리고 120초에 패킷을 만료한다. 자동 선택은 하지 않으며 재개 캡슐을 저장하고 늦은 입력을 거부한다.
+5. Stop은 카드를 공개한 뒤 즉시 끝난다. Pet 카드 대기 중 60초에 한 번 알리고 600초(10분)에 패킷을 만료한다. 자동 선택은 하지 않으며 재개 캡슐을 저장하고 늦은 입력을 거부한다.
 6. 여러 Hook 세션의 패킷은 각각 만료 시간을 갖는 FIFO 대기열에 보관하고, Pet은 선두 카드 하나에만 표시·focus·선택·전역 단축키를 연결한다. 선두가 제거되면 다음 카드로 자동 진행하며 뒤 카드는 추월할 수 없다.
 
 M0에서 실제 Codex CLI `0.148.0`과 임시 Git 프로젝트를 사용해 다음을 확인했다.

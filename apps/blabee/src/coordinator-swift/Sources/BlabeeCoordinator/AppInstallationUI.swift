@@ -55,6 +55,7 @@ final class AppInstallationViewModel: ObservableObject {
     @Published var showsReplacementConfirmation = false
     @Published private(set) var canConfirmLegacyQuit = false
     @Published var showsLegacyQuitConfirmation = false
+    @Published private(set) var requiresFinderRecovery = false
 
     let sourceURL: URL
     private let inspect: @Sendable () throws -> AppInstallationPlan
@@ -104,10 +105,33 @@ final class AppInstallationViewModel: ObservableObject {
     }
 
     var primaryTitle: String {
+        if requiresFinderRecovery { return "Finder에서 설치 복구" }
         if receipt != nil { return "설치된 Blabee 다시 열기" }
         guard let plan else { return "응용 프로그램에 설치하고 시작" }
         return AppInstallationPrimaryAction.forComparison(plan.comparison) == .openExisting
             ? "설치된 Blabee 열기" : "응용 프로그램에 설치하고 시작"
+    }
+
+    var title: String {
+        if requiresFinderRecovery { return "설치된 앱 실행을 확인해 주세요" }
+        if receipt != nil || plan?.existing != nil { return "설치된 Blabee가 있습니다" }
+        return "Blabee 설치가 필요합니다"
+    }
+
+    var explanation: String {
+        if requiresFinderRecovery {
+            return "앱은 설치되어 있지만 설치된 위치에서 실행됐는지 확인하지 못했습니다. 같은 실행을 반복하지 않고 Finder에서 설치를 마무리합니다."
+        }
+        if receipt != nil || plan?.existing != nil {
+            return "응용 프로그램 폴더의 앱을 확인했습니다. 아래 버전과 빌드를 확인하고 설치된 앱을 열거나 업데이트하세요."
+        }
+        return "앱을 응용 프로그램 폴더에 설치하면 Codex 연결을 설정할 수 있습니다. Codex 자체와 기존 대화는 변경하지 않습니다."
+    }
+
+    var finderRecoveryInstructions: String {
+        "1. 작업을 저장하고 Blabee와 연결된 Codex 세션을 정상 종료합니다. 이 설치 창도 닫습니다.\n"
+            + "2. Finder에서 응용 프로그램의 Blabee.app을 임시 폴더로 옮긴 뒤, 다시 응용 프로그램으로 옮겨 실행합니다. 단순히 다시 여는 것과 다른 단계입니다.\n"
+            + "3. 계속 실행되지 않으면 공증된 최신 DMG를 다시 받아 Finder에서 앱을 응용 프로그램으로 드래그해 설치하세요. macOS 보안 경고가 반복되면 내용을 기록해 문의해 주세요."
     }
 
     var progressText: String {
@@ -134,7 +158,7 @@ final class AppInstallationViewModel: ObservableObject {
     }
 
     func refresh() async {
-        guard !phase.isBusy, phase != .launched else { return }
+        guard !phase.isBusy, phase != .launched, !requiresFinderRecovery else { return }
         // After publication, a retry must open the same installation, never copy again.
         guard receipt == nil else { return }
         phase = .inspecting
@@ -154,6 +178,12 @@ final class AppInstallationViewModel: ObservableObject {
 
     func performPrimary() async {
         guard !phase.isBusy, phase != .launched else { return }
+        if requiresFinderRecovery {
+            if let destination = receipt?.destinationURL ?? plan?.destinationURL {
+                reveal(destination)
+            }
+            return
+        }
         if let receipt {
             await open(applicationURL: receipt.destinationURL, identity: receipt.identity)
             return
@@ -251,7 +281,19 @@ final class AppInstallationViewModel: ObservableObject {
             try await openInstalled(applicationURL, identity)
             phase = .launched
             didLaunch()
-        } catch { record(error) }
+        } catch {
+            record(error)
+            // installed-pet can reject the location and exit before the parent
+            // sees its path. Neither result proves translocation specifically.
+            // Preserve the installation/receipt and require user-mediated
+            // recovery rather than offer another identical launch or copy.
+            switch error as? AppInstallationPlatformError {
+            case .launchedApplicationMismatch, .launchedProcessExited, .launchFailed, .launchTimedOut:
+                requiresFinderRecovery = true
+            default:
+                break
+            }
+        }
     }
 
     private func record(_ error: Error) {
@@ -276,8 +318,8 @@ private struct AppInstallationView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Image(systemName: "app.badge.checkmark")
                     .font(.system(size: 38)).foregroundStyle(.tint).accessibilityHidden(true)
-                Text("Blabee 설치가 필요합니다").font(.title).fontWeight(.semibold)
-                Text("앱을 응용 프로그램 폴더에 설치하면 Codex 연결을 설정할 수 있습니다. Codex 자체와 기존 대화는 변경하지 않습니다.")
+                Text(model.title).font(.title).fontWeight(.semibold)
+                Text(model.explanation)
                     .foregroundStyle(.secondary)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
@@ -303,6 +345,14 @@ private struct AppInstallationView: View {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }
+                if model.requiresFinderRecovery {
+                    GroupBox("Finder에서 설치 마무리") {
+                        Text(model.finderRecoveryInstructions)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(6)
+                    }
+                }
                 if let recovery = model.recoveryURL {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("보존된 앱 또는 복구 자료").font(.caption).fontWeight(.semibold)
@@ -321,7 +371,7 @@ private struct AppInstallationView: View {
                     Button("응용 프로그램 폴더 열기") {
                         model.reveal(URL(fileURLWithPath: "/Applications", isDirectory: true))
                     }
-                    if model.receipt == nil {
+                    if model.receipt == nil && !model.requiresFinderRecovery {
                         Button("다시 확인") { Task { await model.refresh() } }
                     }
                     Spacer()

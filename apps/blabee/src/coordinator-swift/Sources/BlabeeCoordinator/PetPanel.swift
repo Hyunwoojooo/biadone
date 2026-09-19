@@ -39,15 +39,15 @@ enum PetPanelScreenMode: Sendable, Equatable {
 enum PetPanelContentPolicy {
     static let projectNameLineLimit = 1
     static let summaryLineLimit = 2
-    static let actionTitleLineLimit = 1
+    static let actionTitleLineLimit: Int? = nil
     static let disabledReasonLineLimit = 1
     static let statusMessageLineLimit = 2
 
     static func allowsScrolling(in mode: PetPanelScreenMode) -> Bool {
         switch mode {
-        case .permission, .details, .choicePreview, .shortcutSettings, .projectSettings:
+        case .permission, .decision, .details, .choicePreview, .shortcutSettings, .projectSettings:
             true
-        case .ready, .decision:
+        case .ready:
             false
         }
     }
@@ -55,11 +55,12 @@ enum PetPanelContentPolicy {
 
 enum PetPanelSizePolicy {
     static let width: CGFloat = 460
-    static let compactHeight: CGFloat = 240
+    static let compactHeight: CGFloat = 480
     static let expandedHeight: CGFloat = 680
-    static let minimumDecisionHeight: CGFloat = 300
-    static let decisionBaseHeight: CGFloat = 214
-    static let actionHeight: CGFloat = 70
+    static let minimumDecisionHeight: CGFloat = 500
+    static let decisionBaseHeight: CGFloat = 350
+    // Air choices form at most two rows; long text scrolls inside the panel.
+    static let actionHeight: CGFloat = 150
     static let fifoQueueHeight: CGFloat = 44
     static let permissionRequestHeight: CGFloat = 520
     static let statusMessageHeight: CGFloat = 48
@@ -71,6 +72,7 @@ enum PetPanelSizePolicy {
     static func preferredSize(for state: PetPanelLayoutState) -> CGSize {
         if state.hasPermissionNotice {
             let height = permissionRequestHeight
+                + (state.fifoQueueCount > 1 ? fifoQueueHeight : 0)
                 + (state.hasStatusMessage ? statusMessageHeight : 0)
             return CGSize(width: width, height: min(height, expandedHeight))
         }
@@ -90,7 +92,7 @@ enum PetPanelSizePolicy {
             }
             height = max(
                 minimumDecisionHeight,
-                decisionBaseHeight + CGFloat(max(actionCount, 0)) * actionHeight
+                decisionBaseHeight + CGFloat((min(max(actionCount, 0), 4) + 1) / 2) * actionHeight
             )
             if state.fifoQueueCount > 1 {
                 height += fifoQueueHeight
@@ -476,7 +478,7 @@ final class PetPanelController: NSObject, NSWindowDelegate {
             isEditingShortcuts: viewModel.isEditingShortcuts,
             isShowingOnboarding: viewModel.isShowingOnboarding,
             actionCount: viewModel.displayInteraction?.actionChoices.count,
-            fifoQueueCount: viewModel.fifoQueueCount,
+            fifoQueueCount: viewModel.eventQueueCount,
             hasPermissionNotice: viewModel.hasNewPermissionNotice,
             hasStatusMessage: viewModel.hasVisibleStatusMessage,
             isShowingChoicePreview: viewModel.choicePreview != nil
@@ -581,31 +583,124 @@ enum PetStatusItemIcon {
     static func loadBaseImage(at url: URL) -> NSImage? {
         guard let image = NSImage(contentsOf: url), image.isValid else { return nil }
         image.size = size
-        image.isTemplate = false
+        image.isTemplate = true
         return image
     }
 
-    static func render(baseImage: NSImage?, attention: Bool) -> NSImage {
-        let usesFallback = baseImage == nil
-        let source = baseImage
-            ?? NSImage(
-                systemSymbolName: "ladybug.fill",
-                accessibilityDescription: "Blabee"
-            )
-            ?? NSImage(size: size)
+    static func render(
+        baseImage: NSImage?, attention: Bool, appearance: NSAppearance? = nil
+    ) -> NSImage {
+        render(
+            baseImage: baseImage,
+            attention: attention,
+            foreground: foreground(attention: attention, appearance: appearance)
+        )
+    }
+
+    static func foreground(attention: Bool, appearance: NSAppearance?) -> NSColor {
+        // Resolve only the colored composite ourselves. Idle uses a template so
+        // the menu bar can apply its own foreground, including highlighted states.
+        var ink = NSColor.black
+        if attention {
+            (appearance ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+                ink = NSColor.labelColor.usingColorSpace(.deviceRGB) ?? .black
+            }
+        }
+        return ink
+    }
+
+    static func render(baseImage: NSImage?, attention: Bool, foreground: NSColor) -> NSImage {
         let image = NSImage(size: size, flipped: false) { frame in
-            let imageFrame = usesFallback
-                ? frame.insetBy(dx: 4, dy: 2)
-                : frame
-            source.draw(in: imageFrame)
+            if let baseImage {
+                baseImage.draw(in: frame)
+                foreground.setFill()
+                frame.fill(using: .sourceIn)
+            } else if let context = NSGraphicsContext.current?.cgContext {
+                // SwiftUI's bee coordinates point down; AppKit's badge points up.
+                context.saveGState()
+                context.translateBy(x: 0, y: frame.height)
+                context.scaleBy(x: 1, y: -1)
+                context.addPath(PetAirBeeMark().path(in: frame.insetBy(dx: 2, dy: 0)).cgPath)
+                context.setFillColor(foreground.cgColor)
+                context.fillPath()
+                context.restoreGState()
+            }
             if attention {
                 NSColor.systemRed.setFill()
                 NSBezierPath(ovalIn: badgeFrame).fill()
             }
             return true
         }
-        image.isTemplate = false
+        image.isTemplate = !attention
         return image
+    }
+}
+
+/// Avoid writing image/title back during AppKit's status-item appearance
+/// snapshots. A setter schedules another snapshot, whose temporary appearance
+/// changes used to schedule yet another forced setter indefinitely.
+@MainActor
+final class PetStatusItemPresenter {
+    private let button: NSButton
+    private let baseImage: NSImage?
+    private let idleImage: NSImage
+    private var appearanceObservation: NSKeyValueObservation?
+    private var appearanceRefresh: Task<Void, Never>?
+    private var renderedAttention: Bool?
+    private var renderedForeground: NSColor?
+    private var stopped = false
+
+    init(button: NSButton, baseImage: NSImage?) {
+        self.button = button
+        self.baseImage = baseImage
+        idleImage = PetStatusItemIcon.render(baseImage: baseImage, attention: false)
+        button.attributedTitle = NSAttributedString(string: "")
+        appearanceObservation = button.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleAppearanceRefresh()
+            }
+        }
+    }
+
+    func update(attention: Bool) {
+        guard !stopped else { return }
+        let attentionChanged = PetStatusItemUpdatePolicy.shouldApply(
+            previousAttention: renderedAttention, newAttention: attention
+        )
+        let foreground = PetStatusItemIcon.foreground(
+            attention: attention, appearance: button.effectiveAppearance
+        )
+        // Idle templates adapt themselves; colored attention images only need
+        // replacement when their resolved ink actually changes.
+        guard attentionChanged || (attention && foreground != renderedForeground) else { return }
+        renderedAttention = attention
+        renderedForeground = foreground
+        button.image = attention ? PetStatusItemIcon.render(
+            baseImage: baseImage, attention: true, foreground: foreground
+        ) : idleImage
+        if attentionChanged {
+            button.toolTip = attention ? "Blabee · 결정 필요" : "Blabee"
+            button.setAccessibilityLabel(attention ? "Blabee, 결정 필요" : "Blabee 메뉴")
+        }
+    }
+
+    func stop() {
+        stopped = true
+        appearanceObservation = nil
+        appearanceRefresh?.cancel()
+        appearanceRefresh = nil
+    }
+
+    private func scheduleAppearanceRefresh() {
+        guard !stopped, renderedAttention == true, appearanceRefresh == nil else { return }
+        appearanceRefresh = Task { @MainActor [weak self] in
+            // Coalesce AppKit's transient snapshot appearances and inspect the
+            // final value, not the appearance captured by a KVO notification.
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.appearanceRefresh = nil
+            self.update(attention: self.renderedAttention == true)
+        }
     }
 }
 
@@ -614,15 +709,13 @@ final class PetMenuBarController: NSObject {
     private let viewModel: PetViewModel
     private let panelController: PetPanelController
     private let statusItem: NSStatusItem
-    private let baseStatusImage: NSImage?
+    private var statusItemPresenter: PetStatusItemPresenter?
     private var automaticPresentationOwner: PetAutomaticPresentationOwner?
-    private var renderedAttention: Bool?
 
     init(viewModel: PetViewModel) {
         self.viewModel = viewModel
         panelController = PetPanelController(viewModel: viewModel)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        baseStatusImage = PetStatusItemIcon.loadBaseImage()
         super.init()
 
         if let button = statusItem.button {
@@ -631,11 +724,12 @@ final class PetMenuBarController: NSObject {
             button.target = self
             button.action = #selector(handleStatusItemInteraction(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "Blabee"
-            button.setAccessibilityLabel("Blabee 메뉴")
             panelController.attach(to: button)
+            statusItemPresenter = PetStatusItemPresenter(
+                button: button, baseImage: PetStatusItemIcon.loadBaseImage()
+            )
         }
-        updateStatusItem(attention: viewModel.hasAttention)
+        statusItemPresenter?.update(attention: viewModel.hasAttention)
 
         viewModel.onPanelToggleRequested = { [weak self] in
             self?.togglePanel(nil)
@@ -655,6 +749,8 @@ final class PetMenuBarController: NSObject {
     }
 
     func stop() {
+        statusItemPresenter?.stop()
+        statusItemPresenter = nil
         viewModel.onPanelToggleRequested = nil
         viewModel.onAttentionChanged = nil
         viewModel.onAttentionEvent = nil
@@ -663,6 +759,11 @@ final class PetMenuBarController: NSObject {
         panelController.stopObservingScreenChanges()
         panelController.hide()
         NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    func showAccountAfterSignIn() {
+        automaticPresentationOwner = nil
+        panelController.showWithoutActivation()
     }
 
     @objc private func handleStatusItemInteraction(_ sender: NSStatusBarButton) {
@@ -759,7 +860,7 @@ final class PetMenuBarController: NSObject {
     }
 
     private func attentionChanged(_ attention: Bool) {
-        updateStatusItem(attention: attention)
+        statusItemPresenter?.update(attention: attention)
         guard !attention,
               automaticPresentationOwner != nil,
               !viewModel.isEditingShortcuts,
@@ -769,19 +870,4 @@ final class PetMenuBarController: NSObject {
         panelController.hide()
     }
 
-    private func updateStatusItem(attention: Bool) {
-        guard let button = statusItem.button else { return }
-        guard PetStatusItemUpdatePolicy.shouldApply(
-            previousAttention: renderedAttention,
-            newAttention: attention
-        ) else { return }
-        renderedAttention = attention
-        button.image = PetStatusItemIcon.render(
-            baseImage: baseStatusImage,
-            attention: attention
-        )
-        button.attributedTitle = NSAttributedString(string: "")
-        button.toolTip = attention ? "Blabee · 결정 필요" : "Blabee"
-        button.setAccessibilityLabel(attention ? "Blabee, 결정 필요" : "Blabee 메뉴")
-    }
 }

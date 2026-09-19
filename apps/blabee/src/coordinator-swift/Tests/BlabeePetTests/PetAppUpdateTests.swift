@@ -35,7 +35,7 @@ struct PetAppUpdateTests {
         #expect(PetAppUpdateVersion(version: "0.1.0", build: build) == nil)
     }
 
-    @Test("Only an available release offers navigation")
+    @Test("An available release without installer assets offers fallback navigation")
     func exposesReleaseNavigationOnlyWhenAvailable() throws {
         let release = PetAppUpdateRelease(
             version: try #require(PetAppUpdateVersion(version: "0.1.0", build: "30")),
@@ -297,6 +297,68 @@ struct PetAppUpdateTests {
         #expect(await unconfigured.checkForUpdates().isFailure)
         #expect(await transport.requests.isEmpty)
         #expect(await PetUnavailableAppUpdateChecker().checkForUpdates().isFailure)
+    }
+
+    @Test("Uploaded matching DMG and checksum enable automatic installation")
+    func recognizesInstallerAssets() async throws {
+        var record = release("blabee-v0.1.0+build.30")
+        record["assets"] = [installerAsset(), installerAsset(checksum: true)]
+        let transport = PetAppUpdateFixtureTransport([.init(data: try releaseData([record]))])
+        let checker = try checker(transport: transport)
+        let update = try #require(await checker.checkForUpdates().availableRelease)
+        let assets = try #require(update.installerAssets)
+        #expect(assets.dmg.name == "Blabee-0.1.0-arm64-r30.dmg")
+        #expect(assets.checksum.name == "Blabee-0.1.0-arm64-r30.dmg.sha256")
+        #expect(update.installerUnavailableReason == nil)
+        #expect(try AppUpdateDownloadPolicy.validatedAssets(update) == assets)
+        #expect(PetAppUpdateState.available(update).locationActionTitle == nil)
+        #expect(!PetAppUpdateState.available(update).detail.contains("릴리스 페이지"))
+    }
+
+    @Test("Unsafe or missing installer assets keep release navigation but disable installation", arguments: [
+        "missing", "missing-checksum", "duplicate", "duplicate-checksum", "pending", "oversized",
+        "oversized-checksum", "zero", "wrong-repository", "wrong-tag", "http", "credentials", "query",
+        "traversal", "fragment", "wrong-name",
+    ])
+    func disablesUnsafeInstallerAssets(_ mutation: String) async throws {
+        var image = installerAsset()
+        var checksum = installerAsset(checksum: true)
+        let key = "browser_download_url"
+        let address = image[key] as! String
+        switch mutation {
+        case "pending": image["state"] = "new"
+        case "oversized": image["size"] = AppUpdateDownloadPolicy.maximumDiskImageBytes + 1
+        case "oversized-checksum": checksum["size"] = AppUpdateDownloadPolicy.maximumChecksumBytes + 1
+        case "zero": image["size"] = 0
+        case "wrong-repository": image[key] = address.replacingOccurrences(of: "/biadone/", with: "/other/")
+        case "wrong-tag": image[key] = address.replacingOccurrences(of: "build.30/", with: "build.31/")
+        case "http": image[key] = address.replacingOccurrences(of: "https:", with: "http:")
+        case "credentials": image[key] = address.replacingOccurrences(of: "https://", with: "https://user@")
+        case "query": image[key] = address + "?redirect=evil"
+        case "fragment": image[key] = address + "#fragment"
+        case "traversal": image[key] = address.replacingOccurrences(of: "/download/", with: "/download/%2e%2e/")
+        case "wrong-name": image["name"] = "Blabee-0.1.0-arm64-r29.dmg"
+        default: break
+        }
+        var assets = [image, checksum]
+        if mutation == "missing" { assets = [] }
+        if mutation == "missing-checksum" { assets = [image] }
+        if mutation == "duplicate" { assets.append(image) }
+        if mutation == "duplicate-checksum" { assets.append(checksum) }
+        var record = release("blabee-v0.1.0+build.30")
+        record["assets"] = assets
+        let transport = PetAppUpdateFixtureTransport([.init(data: try releaseData([record]))])
+        let checker = try checker(transport: transport)
+        let update = try #require(await checker.checkForUpdates().availableRelease)
+        #expect(update.installerAssets == nil)
+        #expect(update.installerUnavailableReason?.isEmpty == false)
+        #expect(PetAppUpdateState.available(update).locationActionTitle == "릴리스 페이지 열기")
+    }
+
+    private func installerAsset(checksum: Bool = false) -> [String: Any] {
+        let name = "Blabee-0.1.0-arm64-r30.dmg" + (checksum ? ".sha256" : "")
+        return ["name": name, "state": "uploaded", "size": checksum ? 100 : 12345,
+            "browser_download_url": "https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.30/" + name]
     }
 
     private func checker(

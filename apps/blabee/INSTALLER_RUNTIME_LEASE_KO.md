@@ -83,6 +83,41 @@ build 18에는 실행 잠금 코드가 없다. 새 설치 프로그램이 이미
 - 개발 Mac `/Applications` 교체, 새 Pet 설정 화면, 서비스·선택 반환 및 다른 Mac 이관은
   위 테스트의 성공으로 대체하지 않는다.
 
+### 2026-09-16: 이전 앱 호환성 검사에서 서명 문맥이 사라지는 문제
+
+계정 로그인 테스트용 build 43의 이전 런타임 호환 목록을 조사한 결과, 전송 호환 정보는
+있지만 `BlabeeRuntimeUseLeasePreviousIdentities`는 비어 있었다. 설치된 build 42의
+실행 파일만 임시 디렉터리로 복사하는 기존 probe를 재현하면 macOS가 즉시 종료했고,
+서명 검사는 `invalid Info.plist`를 반환했다. Info.plist와 CodeResources만 추가한
+부분 복사 역시 봉인된 리소스가 누락되어 실패했다. 원래 서명을 유지한 전체 앱 복사본은
+서명 검사와 정확한 protocol 응답 모두 통과했다. 원본 앱의 실행 파일 해시는 변하지 않았다.
+
+이 probe의 실패는 호환 목록 제외로 처리되어 설치기가 기존 경로 검사로 돌아갔다.
+실제 진단에서 이전 실행 파일을 사용하는 프로세스가 현재 `/Applications/Blabee.app`
+경로를 계속 보고했지만, 실행 중인 파일의 inode는 현재 디스크 파일과 달랐다.
+현재 대화의 MCP 보조 프로세스는 별도로 현재 설치 파일을 실제 사용 중이었다.
+따라서 두 경우를 구분해야 하며, 호환 정보 보완 후에도 실제 현재 사용자의 종료는 필요하다.
+
+서명을 유지한 임시 앱 전체를 제한된 probe로 실행하는 방식을 확인했다. macOS의
+`sandbox-exec`에 default-deny 정책을 적용하고 읽기, sysctl 읽기, 정규화한 복사본 실행
+경로만 허용했을 때 실제 build 42가 정확한 protocol 응답과 종료 코드 0을 반환했다.
+쓰기·네트워크·Mach IPC·자식 프로세스를 허용하지 않는다. 이는 명시적으로 제공한 이전
+앱의 부작용을 막는 검사이며, 일반적인 비신뢰 코드용 비밀정보 보호 sandbox는 아니다.
+샌드박스를 사용할 수 없거나 검사가 실패하면 제한 없이 재시도해서는 안 된다.
+
+수정한 assembler로 `/tmp/blabee-account-build44.chY21h/Blabee.app`을 조립했다.
+서명된 plist에 실제 build 42의 identity
+`sha256:bc6d7188128aacd82cc86975680b2757ea7e29470d94e36a9855528bd3d536b2`가
+포함됐고, 앱 전체 `codesign --verify --deep --strict` 및 plist 검증을 통과했다.
+기존 build 42와 입력 바이너리 해시는 유지됐다. 설치 UI의 42 → 44 표시까지 확인했으며,
+실제 교체·네이티브 로그인 결과는 아직 검증하지 않았다.
+
+수정 후 `node --test Tests/AppPackaging/macos-app-assembly.test.mjs`의 38개 검사가
+모두 통과했다(실패·건너뜀 0). 실제 서명된 Mach-O의 복사 문맥, 파일 쓰기·fork·
+같은/다른 실행 파일 spawn·네트워크·Mach 통신 차단, 5초 시간 제한과 소유한 임시
+디렉터리 정리, 원본 보존을 검증한다. 두 변경 JavaScript 파일의 문법 검사와
+변경 범위의 `git diff --check`도 통과했다. 실제 사용 중인 프로세스는 종료하지 않았다.
+
 ### r23 산출물과 최종 확인 (2026-09-10)
 
 - 앱: `build/local-installer-20260910-r23/Blabee.app` — `0.1.0`, build `23`, arm64.

@@ -248,6 +248,7 @@ async function startFixtureTransportServer({
   authorityRootPath,
   directory: existingDirectory,
   socketName = "blabee.sock",
+  environment = {},
 } = {}) {
   const build = await buildCoordinator();
   const directory = existingDirectory
@@ -269,6 +270,7 @@ async function startFixtureTransportServer({
       env: {
         ...build.environment,
         BLABEE_RUNTIME_IDENTITY: fixtureRuntimeIdentity,
+        ...environment,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -1147,6 +1149,47 @@ test("Hook accepted by a silent daemon still fails open within the command budge
   }
 });
 
+test("Hook large request times out even when the daemon never reads the socket", async () => {
+  const build = await buildProductCoordinator();
+  const directory = await mkdtemp(path.join(tmpdir(), "blabee-uds-slow-reader-"));
+  await chmod(directory, 0o700);
+  const socketPath = path.join(directory, "blabee.sock");
+  const connections = new Set();
+  const server = net.createServer((socket) => {
+    connections.add(socket);
+    socket.pause();
+    socket.on("error", () => {});
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    await chmod(socketPath, 0o600);
+    const started = performance.now();
+    const result = await runBuiltBinary(
+      build,
+      ["hook", "SessionStart", "--socket", socketPath],
+      {
+        input: JSON.stringify(hookPayload("SessionStart", {
+          source: "startup",
+          fixture_padding: "x".repeat(900_000),
+        })),
+        timeoutMs: 8_000,
+      },
+    );
+    const elapsed = performance.now() - started;
+    assert.equal(connections.size, 1, "the large request must reach the socket");
+    assert.deepEqual(result, { code: 0, signal: null, stderr: "", stdout: "" });
+    assert.ok(elapsed >= 4_500, `write timeout returned too early: ${elapsed}ms`);
+    assert.ok(elapsed < 8_000, `write timeout exceeded Hook budget: ${elapsed}ms`);
+  } finally {
+    for (const socket of connections) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("MCP requires the ranked proposal schema and never echoes correlation tokens", async () => {
   let forwardedCalls = 0;
   const fake = await startFakeCoordinator((request) => {
@@ -1270,6 +1313,129 @@ test("MCP requires the ranked proposal schema and never echoes correlation token
     await fake.close();
   }
 });
+
+test("MCP waits for a delayed acceptance beyond five seconds without resending the proposal", async () => {
+  const build = await buildProductCoordinator();
+  const requests = [];
+  const fake = await startFakeCoordinator(async (request) => {
+    requests.push(request);
+    // Model a committed proposal whose acknowledgement is delayed.
+    await new Promise((resolve) => setTimeout(resolve, 5_600));
+    return { accepted: true, status: "waiting_for_selection" };
+  });
+  const arguments_ = {
+    project_id: proposal.project_id,
+    session_id: proposal.session_id,
+    source_turn_id: proposal.source_turn_id,
+    source_prompt_id: proposal.source_prompt_id,
+    episode_id: proposal.episode_id,
+    correlation_token: proposal.correlation_token,
+    proposal: operationalProposal,
+  };
+  try {
+    const started = performance.now();
+    const result = await runBuiltBinary(build, ["mcp", "--socket", fake.socketPath], {
+      input: `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: "delayed_acceptance",
+        method: "tools/call",
+        params: { name: "emit_decision", arguments: arguments_ },
+      })}\n`,
+      timeoutMs: 12_000,
+    });
+    const elapsed = performance.now() - started;
+    assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
+    assert.equal(result.stderr, "");
+    const response = JSON.parse(result.stdout);
+    assert.equal(response.id, "delayed_acceptance");
+    assert.notEqual(response.result.isError, true);
+    assert.deepEqual(response.result.structuredContent, {
+      accepted: true,
+      status: "waiting_for_selection",
+    });
+    assert.equal(requests.length, 1, "waiting for an ACK must never resend the decision");
+    assert.equal(requests[0].type, "emit_decision");
+    assert.deepEqual(requests[0].payload, arguments_);
+    assert.ok(elapsed >= 5_500, `delayed ACK returned too early: ${elapsed}ms`);
+    assert.ok(elapsed < 12_000, `delayed ACK exceeded the test budget: ${elapsed}ms`);
+    assert.equal(result.stdout.includes(proposal.correlation_token), false);
+    assert.equal(result.stdout.includes(proposal.task_goal), false);
+  } finally {
+    await fake.close();
+  }
+});
+
+for (const failureMode of ["closed", "timeout", "io_error"]) {
+  test(`MCP ${failureMode} without an ACK reports unconfirmed delivery and never retries`, async () => {
+    const build = await buildProductCoordinator();
+    const requests = [];
+    const fake = await startFakeCoordinator((request) => {
+      requests.push(request);
+      if (failureMode === "closed") {
+        // A peer that closes after reading the request cannot prove rejection.
+        throw new Error("fixture closes without an acknowledgement");
+      }
+      if (failureMode === "io_error") {
+        // Exercise the typed write/read/poll failure without platform errno assumptions.
+        const error = new Error("fixture transport I/O failure");
+        error.coordinatorCode = "operational_transport_failed";
+        throw error;
+      }
+      return new Promise(() => {});
+    });
+    const arguments_ = {
+      project_id: proposal.project_id,
+      session_id: proposal.session_id,
+      source_turn_id: proposal.source_turn_id,
+      source_prompt_id: proposal.source_prompt_id,
+      episode_id: proposal.episode_id,
+      correlation_token: proposal.correlation_token,
+      proposal: operationalProposal,
+    };
+    try {
+      const started = performance.now();
+      const result = await runBuiltBinary(build, ["mcp", "--socket", fake.socketPath], {
+        input: `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: `unconfirmed_${failureMode}`,
+          method: "tools/call",
+          params: { name: "emit_decision", arguments: arguments_ },
+        })}\n`,
+        timeoutMs: 18_000,
+      });
+      const elapsed = performance.now() - started;
+      assert.deepEqual({ code: result.code, signal: result.signal }, { code: 0, signal: null });
+      assert.equal(result.stderr, "");
+      const response = JSON.parse(result.stdout);
+      assert.equal(response.id, `unconfirmed_${failureMode}`);
+      assert.equal(response.result.isError, true);
+      assert.deepEqual(response.result.structuredContent, {
+        accepted: false,
+        error_code: "decision_delivery_unconfirmed",
+        retryable: false,
+      });
+      assert.equal(
+        response.result.content[0].text,
+        "Blabee did not receive a decision acknowledgement. The proposal may already "
+          + "be stored; a missing acknowledgement does not mean rejection. "
+          + "Do not automatically retry or submit a new proposal. "
+          + "error_code=decision_delivery_unconfirmed; retryable=false.",
+      );
+      assert.equal(requests.length, 1, "a lost ACK must never resend the decision");
+      assert.equal(requests[0].type, "emit_decision");
+      assert.deepEqual(requests[0].payload, arguments_);
+      if (failureMode === "timeout") {
+        assert.ok(elapsed >= 14_500, `MCP timeout returned too early: ${elapsed}ms`);
+      }
+      assert.ok(elapsed < 18_000, `MCP ${failureMode} exceeded its budget: ${elapsed}ms`);
+      assert.equal(result.stdout.includes(proposal.correlation_token), false);
+      assert.equal(result.stdout.includes(proposal.task_goal), false);
+      assert.equal(result.stdout.includes("coordinator_unavailable_or_rejected"), false);
+    } finally {
+      await fake.close();
+    }
+  });
+}
 
 test("MCP exposes allowlisted decision failures without a session-existence oracle", async () => {
   let forwardedCalls = 0;
@@ -1557,6 +1723,42 @@ test("Hook rejects missing or forged runtime identity responses without exposing
     } finally {
       await fake.close();
     }
+  }
+});
+
+test("pending concurrent approvals leave the cooperative executor available for Pet and resolution", async () => {
+  const fixture = await startFixtureTransportServer({
+    environment: { LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1" },
+  });
+  const requests = [];
+  try {
+    // A constrained executor makes starvation reproducible without depending
+    // on this Mac's CPU count. The peer stays connected while awaiting a user.
+    for (let index = 0; index < 4; index += 1) {
+      requests.push(udsRequest(
+        fixture.socketPath,
+        index % 2 === 0 ? "permission_request" : "managed_command_approval",
+        { fixture_delay_ms: 2_000, fixture_index: index },
+      ));
+    }
+    const allApprovals = Promise.allSettled(requests);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const started = performance.now();
+    const [snapshot, resolution] = await Promise.all([
+      udsRequest(fixture.socketPath, "get_state"),
+      udsRequest(fixture.socketPath, "resolve_permission_request"),
+    ]);
+    assert.equal(snapshot.ok, true);
+    assert.equal(resolution.ok, true);
+    assert.ok(performance.now() - started < 1_000, "approval waits must not starve other requests");
+    assert.ok(snapshot.result.scheduler_passes > 0, "scheduler must also advance while approvals wait");
+    for (const result of await allApprovals) {
+      assert.equal(result.status, "fulfilled");
+      assert.equal(result.value.ok, true);
+    }
+  } finally {
+    await fixture.close();
+    await Promise.allSettled(requests);
   }
 });
 
@@ -2136,6 +2338,130 @@ test("UDS admission is capped and oversized input cannot kill the server", async
     assert.equal(recovered.result.fixture, "ok");
   } finally {
     for (const socket of holding) socket.destroy();
+    await fixture.close();
+  }
+});
+
+test("partial UDS requests leave the cooperative executor available for complete requests", async () => {
+  const fixture = await startFixtureTransportServer({
+    environment: { LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1" },
+  });
+  const holding = [];
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      holding.push(await openHoldingConnection(fixture.socketPath));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const started = performance.now();
+    const response = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(response.ok, true);
+    assert.equal(response.result.fixture, "ok");
+    assert.ok(performance.now() - started < 1_000, "partial reads must not starve complete requests");
+    assert.ok(response.result.scheduler_passes > 0, "scheduler must advance while partial requests wait");
+  } finally {
+    for (const socket of holding) socket.destroy();
+    await fixture.close();
+  }
+});
+
+test("slow UDS response reader resumes before the deadline and receives one complete frame", async () => {
+  const fixture = await startFixtureTransportServer({
+    environment: { LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1" },
+  });
+  const socket = net.createConnection(fixture.socketPath);
+  const chunks = [];
+  let readTimeout;
+  let resumeTimer;
+  let paused = false;
+  try {
+    const received = await new Promise((resolve, reject) => {
+      socket.once("error", reject);
+      socket.once("connect", () => {
+        socket.write(`${JSON.stringify({
+          request_id: "request_resuming_reader",
+          runtime_identity: fixtureRuntimeIdentity,
+          type: `${runtimeRequestTypePrefix}get_state`,
+          payload: { fixture_response_bytes: 900_000 },
+        })}\n`);
+      });
+      socket.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+        if (!paused) {
+          paused = true;
+          // Fill the receive buffer, then make room before the deadline.
+          // EAGAIN must retry; closing the partial response is not recovery.
+          socket.pause();
+          resumeTimer = setTimeout(() => socket.resume(), 200);
+        }
+      });
+      socket.once("end", () => resolve(Buffer.concat(chunks)));
+      readTimeout = setTimeout(() => reject(new Error("resumed response did not finish")), 5_000);
+    });
+    assert.equal(paused, true);
+    assert.equal(received.indexOf(0x0a), received.length - 1, "the complete frame must end with one newline");
+    assert.equal(received.lastIndexOf(0x0a), received.length - 1, "no additional frame may be appended");
+    const response = JSON.parse(received.subarray(0, -1).toString("utf8"));
+    assert.equal(response.request_id, "request_resuming_reader");
+    assert.equal(response.runtime_identity, fixtureRuntimeIdentity);
+    assert.equal(response.ok, true);
+    assert.equal(response.result.fixture_padding, "x".repeat(900_000));
+  } finally {
+    clearTimeout(readTimeout);
+    clearTimeout(resumeTimer);
+    socket.destroy();
+    await fixture.close();
+  }
+});
+
+test("slow UDS response readers time out without blocking other requests or appending a second frame", async () => {
+  const fixture = await startFixtureTransportServer({
+    environment: { LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1" },
+  });
+  const socket = net.createConnection(fixture.socketPath);
+  const chunks = [];
+  let readTimeout;
+  try {
+    await new Promise((resolve, reject) => {
+      socket.once("error", reject);
+      socket.once("connect", () => {
+        socket.write(`${JSON.stringify({
+          request_id: "request_slow_reader",
+          runtime_identity: fixtureRuntimeIdentity,
+          type: `${runtimeRequestTypePrefix}get_state`,
+          payload: { fixture_response_bytes: 900_000 },
+        })}\n`);
+      });
+      socket.once("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+        socket.pause();
+        resolve();
+      });
+      readTimeout = setTimeout(() => reject(new Error("large response did not start")), 2_000);
+    });
+    clearTimeout(readTimeout);
+    const started = performance.now();
+    const response = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(response.ok, true);
+    assert.ok(performance.now() - started < 1_000, "slow response writes must not starve complete requests");
+
+    // Leave the receive buffer full past the server's five-second deadline.
+    // A blocking write would finish the entire frame as soon as we resume.
+    await new Promise((resolve) => setTimeout(resolve, 5_600));
+    const received = await new Promise((resolve, reject) => {
+      readTimeout = setTimeout(() => reject(new Error("timed-out writer did not close")), 2_000);
+      socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      socket.once("end", () => resolve(Buffer.concat(chunks)));
+      socket.once("error", reject);
+      socket.resume();
+    });
+    clearTimeout(readTimeout);
+    assert.ok(received.length > 0 && received.length < 900_000, "the timed-out response must remain partial");
+    assert.equal(received.includes(0x0a), false, "no complete or appended error frame may follow a partial response");
+    const recovered = await udsRequest(fixture.socketPath, "get_state");
+    assert.equal(recovered.ok, true);
+  } finally {
+    clearTimeout(readTimeout);
+    socket.destroy();
     await fixture.close();
   }
 });

@@ -15,7 +15,7 @@ run_hook_fail_open() {
   case "$hook_event" in
     SessionStart|UserPromptSubmit) hook_deadline_seconds=7 ;;
     Stop) hook_deadline_seconds=5 ;;
-    PermissionRequest) hook_deadline_seconds=57 ;;
+    PermissionRequest) hook_deadline_seconds=315 ;;
     *) hook_deadline_seconds=5 ;;
   esac
 

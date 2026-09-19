@@ -165,7 +165,7 @@ public enum ExternalStorageKeyStore {
     }
 }
 
-struct SidecarAuthenticator: Sendable {
+package struct SidecarAuthenticator: Sendable {
     static let eventDomain = "blabee.runtime-event.v1"
     static let eventAnchorDomain = "blabee.runtime-event-anchor.v1"
     static let packetDomain = "blabee.packet-document.v1"
@@ -174,16 +174,16 @@ struct SidecarAuthenticator: Sendable {
 
     private let key: SymmetricKey
 
-    init(storageKey: StorageKey) {
+    package init(storageKey: StorageKey) {
         key = SymmetricKey(data: storageKey.bytes)
     }
 
-    func authenticationCode(domain: String, identity: String, canonicalJSON: Data) -> Data {
+    package func authenticationCode(domain: String, identity: String, canonicalJSON: Data) -> Data {
         let message = authenticatedMessage(domain: domain, identity: identity, payload: canonicalJSON)
         return Data(HMAC<SHA256>.authenticationCode(for: message, using: key))
     }
 
-    func verify(
+    package func verify(
         _ code: Data,
         domain: String,
         identity: String,

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Blabee 계정에 로그인하세요." />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="dark" />
+    <title>계정 · Blabee</title>
+    <link rel="icon" href="/blabee-menu-bar.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="https://blabee.com" aria-label="Blabee 홈페이지">
+        <span class="brand-mark"><img src="/blabee-menu-bar.svg" width="28" height="24" alt="" /></span>
+        <span>Blabee</span>
+      </a>
+      <span class="header-label">계정</span>
+    </header>
+    <main>
+      <section class="account" aria-labelledby="account-heading">
+        <h1 id="account-heading">Blabee에 로그인</h1>
+        <p id="intro" class="intro">사용 중인 계정으로 간편하게 시작하세요.<br />처음이라면 Blabee 계정이 만들어집니다.</p>
+        <p id="loading" class="loading" role="status">로그인 상태를 확인하고 있습니다.</p>
+        <div id="login-options" class="login-options" role="group" aria-label="로그인 방법" hidden>
+          <button id="sign-in-google" class="button social google" type="button">
+            <img src="/google-g.png" width="200" height="204" alt="" />
+            <span id="google-label">Google로 계속하기</span>
+          </button>
+          <button id="sign-in-github" class="button social github" type="button">
+            <img src="/github-mark-white.svg" width="98" height="96" alt="" />
+            <span id="github-label">GitHub로 계속하기</span>
+          </button>
+        </div>
+        <div id="signed-in" hidden>
+          <dl class="account-details"><div><dt>로그인한 이메일</dt><dd id="account-email"></dd></div></dl>
+          <button id="sign-out" class="button secondary" type="button">이 브라우저에서 로그아웃</button>
+        </div>
+        <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+        <p id="problem" class="problem" role="alert" hidden></p>
+        <button id="retry" class="text-button" type="button" hidden>연결 다시 확인</button>
+        <a class="back-link" href="https://blabee.com">← Blabee 홈으로</a>
+      </section>
+    </main>
+    <footer>Blabee</footer>
+    <noscript>로그인하려면 브라우저에서 JavaScript를 켜주세요.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

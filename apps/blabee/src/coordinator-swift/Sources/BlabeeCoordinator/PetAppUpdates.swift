@@ -42,9 +42,33 @@ struct PetAppUpdateVersion: Equatable, Sendable, Comparable {
     }
 }
 
+struct PetAppUpdateAsset: Equatable, Sendable {
+    let name: String
+    let url: URL
+    let size: Int64
+}
+
+struct PetAppUpdateInstallerAssets: Equatable, Sendable {
+    let dmg: PetAppUpdateAsset
+    let checksum: PetAppUpdateAsset
+}
+
 struct PetAppUpdateRelease: Equatable, Sendable {
     let version: PetAppUpdateVersion
     let releaseURL: URL
+    let installerAssets: PetAppUpdateInstallerAssets?
+    let installerUnavailableReason: String?
+
+    init(
+        version: PetAppUpdateVersion, releaseURL: URL,
+        installerAssets: PetAppUpdateInstallerAssets? = nil,
+        installerUnavailableReason: String? = nil
+    ) {
+        self.version = version
+        self.releaseURL = releaseURL
+        self.installerAssets = installerAssets
+        self.installerUnavailableReason = installerUnavailableReason
+    }
 }
 
 enum PetAppUpdateState: Equatable, Sendable {
@@ -77,7 +101,11 @@ enum PetAppUpdateState: Equatable, Sendable {
         case .noPublishedRelease:
             "이 저장소의 GitHub Releases에 공개된 정식 Blabee 배포 버전이 아직 없습니다."
         case let .available(release):
-            "\(release.version.displayLabel) 버전이 있습니다. 릴리스 페이지에서 변경 내용과 설치본을 확인하세요."
+            if release.installerAssets != nil {
+                "업데이트를 누르면 설치 파일을 다운로드하고 검증합니다. 설치 전 종료·복원할 작업을 확인할 수 있습니다."
+            } else {
+                "\(release.version.displayLabel) 버전이 있지만 앱에서 설치할 수 있는 배포 파일을 확인하지 못했습니다. 릴리스 페이지에서 설치본을 확인하세요."
+            }
         case let .unavailable(reason):
             reason
         }
@@ -95,7 +123,10 @@ enum PetAppUpdateState: Equatable, Sendable {
     }
 
     var latestVersionDisplay: String? { availableRelease?.version.displayLabel }
-    var locationActionTitle: String? { availableRelease == nil ? nil : "릴리스 페이지 열기" }
+    var locationActionTitle: String? {
+        guard let release = availableRelease, release.installerAssets == nil else { return nil }
+        return "릴리스 페이지 열기"
+    }
     var isChecking: Bool { self == .checking }
     var isFailure: Bool {
         if case .unavailable = self { return true }
@@ -212,9 +243,15 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
                         return .unavailable("GitHub에 게시된 Blabee 배포 버전 표기가 올바르지 않습니다. 릴리스 정보를 확인하세요.")
                     }
                     if latest.map({ version > $0.version }) ?? true {
+                        let installer = Self.installerAssets(
+                            release.assets ?? [], version: version,
+                            repository: repository, tag: release.tagName
+                        )
                         latest = PetAppUpdateRelease(
                             version: version,
-                            releaseURL: Self.releaseURL(repository: repository, tag: release.tagName)
+                            releaseURL: Self.releaseURL(repository: repository, tag: release.tagName),
+                            installerAssets: installer.assets,
+                            installerUnavailableReason: installer.reason
                         )
                     }
                 }
@@ -243,11 +280,50 @@ struct PetGitHubAppUpdateChecker: PetAppUpdateChecking {
         let tagName: String
         let draft: Bool
         let prerelease: Bool
+        let assets: [GitHubAsset]?
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
-            case draft, prerelease
+            case draft, prerelease, assets
         }
+    }
+
+    private struct GitHubAsset: Decodable {
+        let name: String
+        let state: String
+        let size: Int64
+        let browserDownloadURL: String
+
+        enum CodingKeys: String, CodingKey {
+            case name, state, size
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+
+    private static func installerAssets(
+        _ assets: [GitHubAsset], version: PetAppUpdateVersion,
+        repository: String, tag: String
+    ) -> (assets: PetAppUpdateInstallerAssets?, reason: String?) {
+        let name = AppUpdateDownloadPolicy.diskImageName(version)
+        let images = assets.filter { $0.name == name }
+        let checksums = assets.filter { $0.name == name + ".sha256" }
+        guard !images.isEmpty, !checksums.isEmpty else {
+            return (nil, "자동 업데이트용 DMG 또는 SHA-256 파일이 이 릴리스에 등록되지 않았습니다.")
+        }
+        guard images.count == 1, checksums.count == 1 else {
+            return (nil, "자동 업데이트 파일 이름이 중복되어 설치본을 확인할 수 없습니다.")
+        }
+        func validated(_ asset: GitHubAsset, limit: Int64) -> PetAppUpdateAsset? {
+            guard asset.state == "uploaded", (1...limit).contains(asset.size),
+                  let url = URL(string: asset.browserDownloadURL),
+                  AppUpdateDownloadPolicy.isAssetURL(url, repository: repository, tag: tag, name: asset.name)
+            else { return nil }
+            return PetAppUpdateAsset(name: asset.name, url: url, size: asset.size)
+        }
+        guard let dmg = validated(images[0], limit: AppUpdateDownloadPolicy.maximumDiskImageBytes),
+              let checksum = validated(checksums[0], limit: AppUpdateDownloadPolicy.maximumChecksumBytes)
+        else { return (nil, "자동 업데이트 파일의 업로드 상태, 크기 또는 GitHub 주소를 확인할 수 없습니다.") }
+        return (PetAppUpdateInstallerAssets(dmg: dmg, checksum: checksum), nil)
     }
 
     private static func validatedRepository(_ value: String) -> String? {

@@ -35,9 +35,9 @@ enum AppInstallationPlatformError: Error, Equatable, Sendable, LocalizedError {
         case .launchTimedOut:
             return "앱 실행 확인 시간이 초과되었습니다. 설치된 앱은 유지됩니다. macOS 확인 창을 확인하거나 Finder에서 직접 열어 주세요."
         case .launchedApplicationMismatch:
-            return "설치된 위치의 Blabee가 열렸는지 확인할 수 없습니다. Finder에서 설치된 앱을 직접 열어 주세요."
+            return "설치된 앱의 실행 위치를 확인하지 못했습니다. 아래 Finder 설치 복구 안내를 확인해 주세요."
         case .launchedProcessExited:
-            return "Blabee가 실행 확인 전에 종료되었습니다. 설치된 앱을 다시 열어 주세요."
+            return "Blabee가 실행 확인 전에 종료되었습니다. 아래 설치 복구 안내와 macOS가 표시한 오류를 확인해 주세요."
         case .folderOpenFailed:
             return "Finder에서 폴더를 열지 못했습니다. 응용 프로그램 폴더를 직접 열어 주세요."
         }
@@ -261,6 +261,16 @@ struct AppInstallationRunningApplication: Sendable {
         let executableURL: URL?
         let isTerminated: Bool
         let isFinishedLaunching: Bool
+
+        /// A conservative presence check only. Either matching path prevents
+        /// forcing a duplicate; full path/identity checks still follow launch.
+        func mayUseInstalledLocation(_ applicationURL: URL) -> Bool {
+            guard !isTerminated, applicationURL.isFileURL else { return false }
+            let destination = applicationURL.resolvingSymlinksInPath().standardizedFileURL
+            let executable = destination.appendingPathComponent("Contents/MacOS/blabee-coordinator")
+            return bundleURL?.resolvingSymlinksInPath().standardizedFileURL == destination
+                || executableURL?.resolvingSymlinksInPath().standardizedFileURL == executable
+        }
     }
 
     let snapshot: @MainActor @Sendable () -> Snapshot
@@ -268,6 +278,7 @@ struct AppInstallationRunningApplication: Sendable {
 
 @MainActor
 protocol AppInstallationWorkspaceOpening {
+    func hasRunningApplication(at applicationURL: URL) -> Bool
     func openApplication(
         at applicationURL: URL,
         configuration: NSWorkspace.OpenConfiguration,
@@ -280,6 +291,20 @@ protocol AppInstallationWorkspaceOpening {
 
 @MainActor
 private struct AppInstallationLiveWorkspace: AppInstallationWorkspaceOpening {
+    func hasRunningApplication(at applicationURL: URL) -> Bool {
+        // This only decides whether to force a new instance. It is not evidence
+        // that the existing process is trusted; openInstalled still verifies it.
+        return NSWorkspace.shared.runningApplications.contains { application in
+            AppInstallationRunningApplication.Snapshot(
+                processID: application.processIdentifier,
+                bundleURL: application.bundleURL,
+                executableURL: application.executableURL,
+                isTerminated: application.isTerminated,
+                isFinishedLaunching: application.isFinishedLaunching
+            ).mayUseInstalledLocation(applicationURL)
+        }
+    }
+
     func openApplication(
         at applicationURL: URL,
         configuration: NSWorkspace.OpenConfiguration,
@@ -354,6 +379,11 @@ final class AppInstallationApplicationOpener {
         try requireIdentity(expectedIdentity, executable: executable)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.allowsRunningApplicationSubstitution = false
+        // The installer has the same bundle identifier. Do not let Launch
+        // Services return that instance instead of starting the installed app.
+        // Conversely, never force a duplicate when an installed app is present.
+        // A new instance does not promise to clear macOS path randomisation.
+        configuration.createsNewApplicationInstance = !workspace.hasRunningApplication(at: destination)
         configuration.activates = true
         configuration.arguments = ["installed-pet"]
         let clock = ContinuousClock()

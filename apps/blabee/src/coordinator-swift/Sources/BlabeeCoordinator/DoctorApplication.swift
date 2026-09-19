@@ -11,24 +11,52 @@ enum DoctorStatus: String {
     case fail
 }
 
+enum DoctorProfile: String {
+    case plugin
+    case managed
+}
+
+struct DoctorCodexSelection {
+    let sourceURL: URL?
+    let canonicalURL: URL?
+    let explicit: Bool
+    var pluginInspection: DoctorCodexPluginInspection? = nil
+
+    var jsonObject: [String: Any] {
+        [
+            "source_path": sourceURL?.path as Any? ?? NSNull(),
+            "resolved_path": canonicalURL?.path as Any? ?? NSNull(),
+            "origin": explicit ? "explicit" : "discovery",
+            "evidence": "static_only",
+        ]
+    }
+}
+
 struct DoctorCheck: Equatable {
     let id: String
     let status: DoctorStatus
     let code: String
     let summary: String
+    var blockedBy: String? = nil
+    var detail: String? = nil
 
     var jsonObject: [String: Any] {
-        [
+        var object: [String: Any] = [
             "id": id,
             "status": status.rawValue,
             "code": code,
             "summary": summary,
         ]
+        if let blockedBy { object["blocked_by"] = blockedBy }
+        if let detail { object["detail"] = detail }
+        return object
     }
 }
 
 struct DoctorReport {
     let checks: [DoctorCheck]
+    let profile: DoctorProfile
+    let codexSelection: DoctorCodexSelection
 
     var overallStatus: DoctorStatus {
         if checks.contains(where: { $0.status == .fail }) { return .fail }
@@ -41,6 +69,8 @@ struct DoctorReport {
             "schema_version": "1.0",
             "kind": "blabee_doctor_report",
             "overall_status": overallStatus.rawValue,
+            "profile": profile.rawValue,
+            "codex_selection": codexSelection.jsonObject,
             "checks": checks.map(\.jsonObject),
         ], options: [.sortedKeys, .withoutEscapingSlashes])
         data.append(0x0A)
@@ -55,6 +85,9 @@ struct DoctorReport {
         case .fail: overall = "실패"
         }
         var lines = ["Blabee Doctor: \(overall)"]
+        lines.append("Codex 검사 기준: \(profile.rawValue) · 정적 검사")
+        lines.append("Codex 검사 경로: \(doctorSingleLine(codexSelection.sourceURL?.path ?? "찾지 못함"))")
+        lines.append("Codex 해석 경로: \(doctorSingleLine(codexSelection.canonicalURL?.path ?? "확인하지 못함"))")
         lines.append(contentsOf: checks.map { check in
             let label: String
             switch check.status {
@@ -62,10 +95,28 @@ struct DoctorReport {
             case .actionRequired: label = "조치 필요"
             case .fail: label = "실패"
             }
-            return "[\(label)] \(check.summary)"
+            var line = "[\(label)] \(doctorSingleLine(check.summary))"
+            if let blockedBy = check.blockedBy { line += " (선행 확인: \(blockedBy))" }
+            if let detail = check.detail {
+                line += " — \(doctorSingleLine(detail))"
+            }
+            return line
         })
         return Data((lines.joined(separator: "\n") + "\n").utf8)
     }
+}
+
+/// Keep filesystem names and error details from injecting terminal lines or
+/// controls. JSON retains the original strings with JSON escaping.
+private func doctorSingleLine(_ value: String) -> String {
+    value.unicodeScalars.prefix(4_096).map { scalar in
+        if CharacterSet.controlCharacters.contains(scalar)
+            || scalar.value == 0x2028 || scalar.value == 0x2029
+        {
+            return "\\u{\(String(scalar.value, radix: 16))}"
+        }
+        return String(scalar)
+    }.joined()
 }
 
 struct DoctorExecution {
@@ -87,6 +138,7 @@ struct DoctorExecution {
 
 struct DoctorArguments: Equatable {
     let json: Bool
+    let profile: DoctorProfile
     let codexURL: URL?
     let appURL: URL
     let pluginURL: URL?
@@ -99,6 +151,7 @@ struct DoctorArguments: Equatable {
         currentDirectoryPath: String = FileManager.default.currentDirectoryPath
     ) throws {
         var json = false
+        var profile: DoctorProfile?
         var paths: [String: String] = [:]
         let pathFlags = Set(["--codex", "--app", "--plugin", "--socket", "--project"])
         var index = 0
@@ -108,6 +161,14 @@ struct DoctorArguments: Equatable {
                 guard !json else { throw CoordinatorError("invalid_arguments") }
                 json = true
                 index += 1
+                continue
+            }
+            if flag == "--profile" {
+                guard profile == nil, index + 1 < values.count,
+                      let value = DoctorProfile(rawValue: values[index + 1])
+                else { throw CoordinatorError("invalid_arguments") }
+                profile = value
+                index += 2
                 continue
             }
             guard pathFlags.contains(flag), paths[flag] == nil,
@@ -125,6 +186,7 @@ struct DoctorArguments: Equatable {
             throw CoordinatorError("invalid_arguments")
         }
         self.json = json
+        self.profile = profile ?? .plugin
         codexURL = paths["--codex"].map(URL.init(fileURLWithPath:))
         appURL = URL(fileURLWithPath: paths["--app"] ?? "/Applications/Blabee.app", isDirectory: true)
         pluginURL = paths["--plugin"].map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -158,10 +220,25 @@ enum DoctorCodexRuntimeBuildQualification: Equatable {
 
 enum DoctorCodexRuntimeBundleInspection: Equatable {
     case validated(DoctorCodexRuntimeBundleSummary)
-    case invalidLayout
-    case invalidIdentity
-    case versionMismatch
-    case unavailable
+    case invalidLayout(reason: String)
+    case invalidIdentity(reason: String)
+    case versionMismatch(reason: String)
+    case unavailable(reason: String?)
+
+    var failureReason: String? {
+        switch self {
+        case .validated: return nil
+        case let .invalidLayout(reason), let .invalidIdentity(reason),
+             let .versionMismatch(reason): return reason
+        case let .unavailable(reason): return reason
+        }
+    }
+}
+
+enum DoctorCodexPluginInspection {
+    case validated(CodexPluginSetupStaticExecutable)
+    case rejected(code: String, reason: String)
+    case unavailable(reason: String)
 }
 
 struct DoctorDependencies {
@@ -180,6 +257,11 @@ struct DoctorDependencies {
         _ timeoutMilliseconds: Int
     ) throws -> Data
     var daemonRequester: (_ socketPath: String) throws -> Data
+    var codexPluginInspector: (_ source: URL) -> DoctorCodexPluginInspection =
+        DoctorDependencies.inspectCodexPlugin
+    var codexPluginCandidates: (_ environment: [String: String]) -> [URL] = {
+        CodexPluginSetupExecutableResolver.candidateURLs(environment: $0)
+    }
 
     static func live() -> DoctorDependencies {
         DoctorDependencies(
@@ -231,7 +313,7 @@ struct DoctorDependencies {
                     buildQualification = .fingerprintMismatch
                 }
             } catch {
-                return .unavailable
+                return .unavailable(reason: error.localizedDescription)
             }
             return .validated(DoctorCodexRuntimeBundleSummary(
                 manifestVersion: inspection.manifestVersion,
@@ -241,14 +323,36 @@ struct DoctorDependencies {
         } catch let error as ManagedCodexRuntimeBundleError {
             switch error {
             case .layout, .bounds:
-                return .invalidLayout
+                return .invalidLayout(reason: error.localizedDescription)
             case .identity, .changed, .targetMismatch:
-                return .invalidIdentity
+                return .invalidIdentity(reason: error.localizedDescription)
             case .versionMismatch:
-                return .versionMismatch
+                return .versionMismatch(reason: error.localizedDescription)
             }
         } catch {
-            return .unavailable
+            return .unavailable(reason: error.localizedDescription)
+        }
+    }
+
+    static func inspectCodexPlugin(_ sourceURL: URL) -> DoctorCodexPluginInspection {
+        do {
+            return .validated(try CodexPluginSetupProductionTrust.inspectStatically(
+                sourceURL: sourceURL
+            ))
+        } catch let error as CodexRuntimeTrustError {
+            return .rejected(
+                code: CodexNativeDiagnostic.normalize(error).code,
+                reason: error.localizedDescription
+            )
+        } catch let error as CoordinatorError
+            where error.code == "codex_plugin_setup_signature_invalid"
+        {
+            return .rejected(
+                code: CodexNativeDiagnostic.signatureInvalid.rawValue,
+                reason: "공식 서명 또는 등록된 Plugin CLI 해시를 확인하지 못했습니다. 공식 native Codex 경로를 확인하세요."
+            )
+        } catch {
+            return .unavailable(reason: error.localizedDescription)
         }
     }
 }
@@ -256,10 +360,10 @@ struct DoctorDependencies {
 struct DoctorApplication {
     static var alphaBaselineVersion: String { CodexCompatibility.alphaBaselineVersion }
     static var supportedVersions: Set<String> { CodexCompatibility.supportedVersions }
-    static let pluginManifestSHA256 = "bd79518e44c26997fef395fea055420f968d9e09de9a7a8bd8f6b5f24dde66f3"
+    static let pluginManifestSHA256 = "6fed830c68e16fd711af291616b6fcc2bcced5e5d9ca4d0104e96cb5cbd3ed48"
     static let skillSHA256 = "496b602b57ed0bb9c07f96500dd993c89dba43ba70bfd54ecce7365faa732197"
     static let skillAgentSHA256 = "6a57a7eea07b13f0053208de1075dbdaf8ee708f83357d5029498ff2e0a7b1a6"
-    static let launcherSHA256 = "152c94f24b5813af499a784ebb09d349931618c19d3231c3a44dd3d8cad3769a"
+    static let launcherSHA256 = "f50318516b52b9e099669fdc1cf9c0bd82891be0da5253c50a941f1f1c1f2ec2"
     static func expectedHookCommand(event: String) -> String {
         #"if [ -n "${PLUGIN_ROOT:-}" ] && [ -d "$PLUGIN_ROOT" ] && [ ! -L "$PLUGIN_ROOT" ] && [ -d "$PLUGIN_ROOT/scripts" ] && [ ! -L "$PLUGIN_ROOT/scripts" ] && [ -f "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ ! -L "$PLUGIN_ROOT/scripts/blabee-launcher" ] && [ -x "$PLUGIN_ROOT/scripts/blabee-launcher" ]; then exec "$PLUGIN_ROOT/scripts/blabee-launcher" hook \#(event); fi; exit 0"#
     }
@@ -267,6 +371,58 @@ struct DoctorApplication {
 
     init(dependencies: DoctorDependencies = .live()) {
         self.dependencies = dependencies
+    }
+
+    /// Explicit settings action only. The default doctor remains static and
+    /// never enters this path. Its caller must qualify and revalidate Codex
+    /// before each injected subprocess operation.
+    func inspectPluginHookReadiness(
+        codexURL: URL,
+        projectURL: URL
+    ) -> DoctorCheck {
+        let installation = inspectPluginInstallation(at: codexURL)
+        guard installation.check.status == .pass else { return installation.check }
+        guard installation.pluginID == CodexPluginSetupManager.pluginSelector,
+              let source = installation.sourceURL
+        else {
+            return DoctorCheck(
+                id: "hook_trust", status: .actionRequired,
+                code: "hook_plugin_identity_mismatch",
+                summary: "앱에서 설치한 Blabee Plugin인지 확인하지 못했습니다."
+            )
+        }
+        let layout = checkPluginLayout(
+            source, installedSourceURL: source, requireInstalledSourceMatch: true
+        )
+        guard layout.status == .pass else { return layout }
+        let hookFile = source.appendingPathComponent("hooks/hooks.json")
+        guard let before = boundedFileData(hookFile) else {
+            return hookTrustUnavailableCheck()
+        }
+        let trust = checkHookTrust(
+            codexURL: codexURL, pluginInspection: installation, projectURL: projectURL
+        )
+        guard trust.status == .pass else { return trust }
+
+        // Installing/disabling/replacing a plugin while the app-server was
+        // queried must not leave a successful result for an obsolete snapshot.
+        let after = inspectPluginInstallation(at: codexURL)
+        guard after.check.status == .pass,
+              after.pluginID == installation.pluginID,
+              after.sourceURL == source,
+              boundedFileData(hookFile) == before,
+              checkPluginLayout(
+                source, installedSourceURL: after.sourceURL,
+                requireInstalledSourceMatch: true
+              ).status == .pass
+        else {
+            return DoctorCheck(
+                id: "hook_trust", status: .actionRequired,
+                code: "hook_plugin_changed_during_check",
+                summary: "검사 중 Plugin이 변경되었습니다. 다시 확인하세요."
+            )
+        }
+        return trust
     }
 
     func run(arguments: DoctorArguments) -> DoctorExecution {
@@ -279,33 +435,23 @@ struct DoctorApplication {
         checks.append(checkAppBundle(arguments.appURL))
         checks.append(checkEmbeddedCoordinator(arguments.appURL))
 
-        let codexURL: URL?
-        if let explicitCodex = arguments.codexURL {
-            codexURL = resolvedExecutable(explicitCodex)
-        } else {
-            codexURL = resolveExecutable(
-                named: "codex",
-                path: dependencies.environment["PATH"]
-            )
+        let codexSelection = selectCodex(arguments: arguments)
+        let executableCheck = checkCodexExecutable(codexSelection.canonicalURL)
+        checks.append(executableCheck)
+        switch arguments.profile {
+        case .plugin:
+            checks.append(contentsOf: checkCodexPlugin(
+                codexSelection.pluginInspection,
+                executableCheck: executableCheck
+            ))
+        case .managed:
+            let inspection = codexSelection.canonicalURL
+                .map(dependencies.codexRuntimeInspector)
+                ?? .unavailable(reason: nil)
+            checks.append(contentsOf: checkManagedCodex(
+                inspection, executableCheck: executableCheck
+            ))
         }
-        checks.append(checkCodexExecutable(codexURL))
-
-        let runtimeInspection = codexURL.map(dependencies.codexRuntimeInspector)
-            ?? .unavailable
-        checks.append(checkCodexRuntimeLayout(runtimeInspection))
-        checks.append(checkCodexRuntimeIdentity(runtimeInspection))
-
-        let manifestVersion: String? = {
-            guard case let .validated(summary) = runtimeInspection else { return nil }
-            return summary.manifestVersion
-        }()
-        checks.append(checkCodexVersion(manifestVersion))
-        let runtimeVersionCheck = checkCodexRuntimeVersion(runtimeInspection)
-        checks.append(runtimeVersionCheck)
-        checks.append(checkCodexCodeModeCompatibility(
-            runtimeInspection,
-            runtimeVersionCheck: runtimeVersionCheck
-        ))
 
         let pluginInspection = inspectPluginStatically(
             explicitPluginURL: arguments.pluginURL
@@ -337,11 +483,196 @@ struct DoctorApplication {
         checks.append(daemonInspection.reconciliationCheck)
         checks.append(checkProjectScope(arguments.projectURL, projects: daemonInspection.projects))
 
-        return DoctorExecution(report: DoctorReport(checks: checks), json: arguments.json)
+        return DoctorExecution(report: DoctorReport(
+            checks: checks,
+            profile: arguments.profile,
+            codexSelection: codexSelection
+        ), json: arguments.json)
     }
 }
 
 private extension DoctorApplication {
+    func selectCodex(arguments: DoctorArguments) -> DoctorCodexSelection {
+        if arguments.profile == .managed {
+            let source = arguments.codexURL ?? resolveExecutableSource(
+                named: "codex", path: dependencies.environment["PATH"]
+            )
+            return DoctorCodexSelection(
+                sourceURL: source,
+                canonicalURL: source.flatMap(resolvedExecutable),
+                explicit: arguments.codexURL != nil
+            )
+        }
+
+        let candidates = arguments.codexURL.map { [$0] }
+            ?? dependencies.codexPluginCandidates(dependencies.environment)
+        var firstFailure: DoctorCodexSelection?
+        // Match the native integration's candidate order and bounded fallback,
+        // while retaining the source path for its ancestor/shim trust checks.
+        // An explicit --codex produces exactly one candidate.
+        for source in candidates.prefix(256) {
+            var info = stat()
+            if arguments.codexURL == nil,
+               stat(source.path, &info) != 0 || info.st_mode & mode_t(S_IFMT) != mode_t(S_IFREG)
+            { continue }
+            let canonical = resolvedExecutable(source)
+            let inspection = canonical.map { _ in dependencies.codexPluginInspector(source) }
+            let selection = DoctorCodexSelection(
+                sourceURL: source,
+                canonicalURL: canonical,
+                explicit: arguments.codexURL != nil,
+                pluginInspection: inspection
+            )
+            if case let .validated(evidence) = inspection {
+                return DoctorCodexSelection(
+                    sourceURL: source,
+                    canonicalURL: evidence.canonicalURL,
+                    explicit: arguments.codexURL != nil,
+                    pluginInspection: inspection
+                )
+            }
+            firstFailure = firstFailure ?? selection
+        }
+        return firstFailure ?? DoctorCodexSelection(
+            sourceURL: arguments.codexURL,
+            canonicalURL: nil,
+            explicit: arguments.codexURL != nil
+        )
+    }
+
+    func checkCodexPlugin(
+        _ inspection: DoctorCodexPluginInspection?,
+        executableCheck: DoctorCheck
+    ) -> [DoctorCheck] {
+        var identity: DoctorCheck
+        var pinnedVersion: String?
+        switch inspection {
+        case let .validated(evidence):
+            pinnedVersion = evidence.pinnedVersion
+            identity = DoctorCheck(
+                id: "codex_plugin_identity", status: .pass,
+                code: "codex_plugin_identity_ok",
+                summary: "Plugin CLI 경로와 공식 서명 또는 등록된 해시를 정적으로 확인했습니다."
+            )
+        case let .rejected(code, reason):
+            identity = DoctorCheck(
+                id: "codex_plugin_identity", status: .fail, code: code,
+                summary: "Plugin CLI의 정적 신뢰 검사를 통과하지 못했습니다. 공식 native Codex 경로를 --codex로 지정해 확인하세요.",
+                detail: reason
+            )
+        case let .unavailable(reason):
+            identity = DoctorCheck(
+                id: "codex_plugin_identity", status: .actionRequired,
+                code: "codex_plugin_identity_unverified",
+                summary: "Plugin CLI 정적 신뢰 검사가 미확인 상태입니다. 검사 경로와 접근 권한을 확인하세요.",
+                detail: reason
+            )
+        case nil:
+            identity = DoctorCheck(
+                id: "codex_plugin_identity", status: .actionRequired,
+                code: "codex_plugin_identity_unverified",
+                summary: "실행 파일을 확인한 뒤 Plugin CLI 신뢰 검사를 진행할 수 있습니다.",
+                blockedBy: "codex_executable"
+            )
+        }
+        if executableCheck.status != .pass {
+            identity.blockedBy = executableCheck.id
+        }
+
+        var version = DoctorCheck(
+            id: "codex_version", status: .actionRequired,
+            code: "codex_plugin_version_unverified",
+            summary: "정적 검사로 Plugin CLI 실행 버전을 확정하지 않았습니다. 앱의 Codex 연결 검사로 확인하세요."
+        )
+        if identity.status != .pass {
+            version.blockedBy = identity.blockedBy ?? identity.id
+        } else if let pinnedVersion {
+            let supported = CodexCompatibility.pluginCLISupportedVersions.contains(pinnedVersion)
+            version = DoctorCheck(
+                id: "codex_version", status: supported ? .pass : .fail,
+                code: supported ? "codex_plugin_version_supported" : "codex_plugin_version_not_allowlisted",
+                summary: supported
+                    ? "등록된 실행 파일 해시의 버전이 Plugin CLI 지원 목록에 있습니다."
+                    : "등록된 실행 파일 해시의 버전이 Plugin CLI 지원 목록에 없습니다.",
+                detail: "version=\(pinnedVersion)"
+            )
+        }
+        var live = DoctorCheck(
+            id: "codex_plugin_live_qualification", status: .actionRequired,
+            code: "codex_plugin_live_qualification_required",
+            summary: "실제 Codex 실행 버전과 공증·연결 상태는 앱의 Codex 연결 검사에서 별도로 확인해야 합니다."
+        )
+        if identity.status != .pass {
+            live.blockedBy = identity.blockedBy ?? identity.id
+        } else if version.status == .fail {
+            live.blockedBy = version.id
+        }
+        return [identity, version, live]
+    }
+
+    func checkManagedCodex(
+        _ inspection: DoctorCodexRuntimeBundleInspection,
+        executableCheck: DoctorCheck
+    ) -> [DoctorCheck] {
+        let manifestVersion: String? = {
+            guard case let .validated(summary) = inspection else { return nil }
+            return summary.manifestVersion
+        }()
+        let runtimeVersion = checkCodexRuntimeVersion(inspection)
+        var checks = [
+            checkCodexRuntimeLayout(inspection),
+            checkCodexRuntimeIdentity(inspection),
+            checkCodexVersion(manifestVersion),
+            runtimeVersion,
+            checkCodexCodeModeCompatibility(inspection, runtimeVersionCheck: runtimeVersion),
+        ]
+        func blocked(_ check: DoctorCheck, by primary: String) -> DoctorCheck {
+            DoctorCheck(
+                id: check.id, status: .actionRequired, code: check.code,
+                summary: "\(primary) 항목을 먼저 확인해야 하므로 이 항목은 미확인입니다.",
+                blockedBy: primary
+            )
+        }
+        let primary: String
+        if executableCheck.status != .pass {
+            primary = executableCheck.id
+        } else {
+            switch inspection {
+            case .invalidLayout, .unavailable: primary = "codex_runtime_layout"
+            case .invalidIdentity: primary = "codex_runtime_identity"
+            case .versionMismatch: primary = "codex_runtime_version"
+            case let .validated(summary):
+                // Version support and a build fingerprint are independent once
+                // the manifest is known. Keep both primary findings visible.
+                let dependency: String?
+                if summary.buildQualification == .fingerprintMismatch {
+                    dependency = "codex_runtime_identity"
+                } else if checks[2].status == .fail {
+                    dependency = "codex_version"
+                } else if summary.buildQualification == .required {
+                    dependency = "codex_runtime_identity"
+                } else {
+                    dependency = nil
+                }
+                guard let dependency else { return checks }
+                return checks.map { check in
+                    ["codex_runtime_version", "codex_code_mode_compatibility"].contains(check.id)
+                        ? blocked(check, by: dependency) : check
+                }
+            }
+        }
+        checks = checks.map { check in
+            guard check.status != .pass else { return check }
+            if check.id == primary {
+                var result = check
+                result.detail = inspection.failureReason
+                return result
+            }
+            return blocked(check, by: primary)
+        }
+        return checks
+    }
+
     struct PluginInspection {
         let check: DoctorCheck
         let sourceURL: URL?
@@ -456,7 +787,7 @@ private extension DoctorApplication {
             return DoctorCheck(
                 id: "codex_runtime_layout", status: .fail,
                 code: "codex_runtime_layout_invalid",
-                summary: "Codex package manifest 또는 필수 runtime 구조가 올바르지 않습니다."
+                summary: "관리형 Codex package 구조가 올바르지 않습니다. 전체 공식 패키지의 bin/codex를 --codex로 지정하세요."
             )
         case .invalidIdentity, .versionMismatch:
             return DoctorCheck(
@@ -466,7 +797,7 @@ private extension DoctorApplication {
             )
         case .unavailable:
             return DoctorCheck(
-                id: "codex_runtime_layout", status: .fail,
+                id: "codex_runtime_layout", status: .actionRequired,
                 code: "codex_runtime_layout_unavailable",
                 summary: "Codex package runtime 구조를 안전하게 확인하지 못했습니다."
             )
@@ -753,7 +1084,7 @@ private extension DoctorApplication {
                 summary: "Codex의 Blabee 플러그인이 비활성화되어 있습니다."
             ), sourceURL: sourceURL)
         }
-        guard entry["version"] as? String == "0.1.0" else {
+        guard entry["version"] as? String == "0.1.1" else {
             return PluginInspection(check: DoctorCheck(
                 id: "plugin_installation", status: .fail,
                 code: "plugin_version_mismatch",
@@ -1053,7 +1384,7 @@ private extension DoctorApplication {
             "name", "version", "description", "author", "skills", "interface", "mcpServers",
         ]),
         manifest["name"] as? String == "blabee",
-        manifest["version"] as? String == "0.1.0",
+        manifest["version"] as? String == "0.1.1",
         (manifest["description"] as? String)?.isEmpty == false,
         manifest["skills"] as? String == "./skills/",
         manifest["mcpServers"] as? String == "./.mcp.json",
@@ -1136,7 +1467,7 @@ private extension DoctorApplication {
             statusMessage: "Blabee 결정 저장 중", additionalContextLimit: nil
         ) && validateHook(
             hooks["PermissionRequest"], event: "PermissionRequest",
-            matcher: nil, timeout: 60,
+            matcher: nil, timeout: 320,
             statusMessage: "Blabee에서 권한 요청 확인 중", additionalContextLimit: nil
         )
     }
@@ -1352,7 +1683,7 @@ private extension DoctorApplication {
         return (object as? NSNumber)?.boolValue
     }
 
-    func resolveExecutable(named name: String, path: String?) -> URL? {
+    func resolveExecutableSource(named name: String, path: String?) -> URL? {
         guard let path else { return nil }
         for directory in path.split(separator: ":", omittingEmptySubsequences: false) {
             let rawDirectory = String(directory)
@@ -1360,7 +1691,7 @@ private extension DoctorApplication {
             let candidate = URL(fileURLWithPath: rawDirectory, isDirectory: true)
                 .appendingPathComponent(name)
                 .standardizedFileURL
-            if let resolved = resolvedExecutable(candidate) { return resolved }
+            if resolvedExecutable(candidate) != nil { return candidate }
         }
         return nil
     }

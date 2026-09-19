@@ -18,7 +18,8 @@ struct PetSettingsStatusToneTests {
             serviceIssue: serviceIssue,
             configuredProjectPaths: configuredProjectPaths,
             activeProjectPaths: ["/projects/gannet"],
-            receivedCardProjectPaths: receivedCardProjectPaths
+            receivedCardProjectPaths: receivedCardProjectPaths,
+            hookReadiness: .trusted
         )
     }
 
@@ -30,6 +31,7 @@ struct PetSettingsStatusToneTests {
             (.starting, .neutral),
             (.ready, .confirmed),
             (.reconnecting, .neutral),
+            (.unresponsive, .actionNeeded),
             (.stopping, .neutral),
             (.blocked, .actionNeeded),
             (.failed("app_service_connection_timeout"), .error),

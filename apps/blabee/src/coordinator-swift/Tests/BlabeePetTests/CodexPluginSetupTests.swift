@@ -2323,6 +2323,98 @@ func codexPluginSetupPinnedExecutableCatalogIsExact() throws {
     ) == nil)
 }
 
+@Test("Static Plugin inspection preserves an unknown version for an official signature")
+func codexPluginSetupStaticInspectionKeepsSignedVersionUnknown() throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("signed-static-codex")
+    try Data("inert signed fixture".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let trustSnapshot = try codexPluginSetupTrustSnapshot(at: executable)
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: try #require(CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first),
+        trustSnapshot: trustSnapshot
+    )
+
+    let evidence = try CodexPluginSetupProductionTrust.inspectStatically(
+        sourceURL: executable,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.acceptSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    )
+
+    #expect(evidence.sourceURL == executable)
+    #expect(evidence.canonicalURL.path == trustSnapshot.canonicalPath)
+    #expect(evidence.pinnedVersion == nil)
+    let calls = probe.snapshot()
+    #expect(calls.inspectedPaths == [executable.path, executable.path])
+    #expect(calls.signaturePaths == [trustSnapshot.canonicalPath])
+    #expect(calls.pinnedCalls.isEmpty)
+    #expect(calls.processInvocations.isEmpty)
+}
+
+@Test("Static Plugin inspection propagates the exact pinned artifact version")
+func codexPluginSetupStaticInspectionPropagatesPinnedVersion() throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("pinned-static-codex")
+    try Data("inert pinned fixture".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let artifact = try #require(CodexPluginSetupPinnedExecutableTrust.officialArtifacts.first)
+    let trustSnapshot = try codexPluginSetupTrustSnapshot(at: executable)
+    let probe = CodexPluginSetupFallbackTrustProbe(
+        artifact: artifact, trustSnapshot: trustSnapshot
+    )
+
+    let evidence = try CodexPluginSetupProductionTrust.inspectStatically(
+        sourceURL: executable,
+        trustInspector: probe.inspect,
+        signatureValidator: probe.rejectSignature,
+        pinnedExecutableValidator: probe.acceptPinned
+    )
+
+    #expect(evidence.sourceURL == executable)
+    #expect(evidence.canonicalURL.path == trustSnapshot.canonicalPath)
+    #expect(evidence.pinnedVersion == artifact.version)
+    let calls = probe.snapshot()
+    #expect(calls.inspectedPaths == [executable.path, executable.path])
+    #expect(calls.signaturePaths == [trustSnapshot.canonicalPath])
+    #expect(calls.pinnedCalls == [CodexPluginSetupPinnedValidationCall(
+        executable: trustSnapshot.canonicalPath,
+        expectedIdentity: trustSnapshot.targetIdentity,
+        expectedVersion: nil
+    )])
+    #expect(calls.processInvocations.isEmpty)
+}
+
+@Test("Static Plugin inspection rejects a changed second trust snapshot")
+func codexPluginSetupStaticInspectionRejectsChangedSnapshot() throws {
+    let fixture = try CodexPluginSetupFixture()
+    let executable = fixture.root.appendingPathComponent("changing-static-codex")
+    try Data("inert before".utf8).write(to: executable)
+    #expect(chmod(executable.path, mode_t(0o700)) == 0)
+    let inspections = CodexPluginSetupProcessProbe()
+    let signatures = CodexPluginSetupProcessProbe()
+
+    #expect(throws: CodexRuntimeTrustError.changedDuringInspection) {
+        try CodexPluginSetupProductionTrust.inspectStatically(
+            sourceURL: executable,
+            trustInspector: { source in
+                inspections.record()
+                return try codexPluginSetupTrustSnapshot(at: source)
+            },
+            signatureValidator: { canonical in
+                signatures.record()
+                try Data("inert changed during static signature inspection".utf8)
+                    .write(to: canonical)
+            },
+            pinnedExecutableValidator: { _, _, _ in
+                throw CoordinatorError("unexpected_pinned_fallback")
+            }
+        )
+    }
+    #expect(inspections.snapshot() == 2)
+    #expect(signatures.snapshot() == 1)
+}
+
 @Test("Production trust binds one pinned hash to a stable qualification snapshot")
 func codexPluginSetupProductionTrustOrchestratesPinnedFallback() throws {
     let root = URL(fileURLWithPath: "/tmp", isDirectory: true)

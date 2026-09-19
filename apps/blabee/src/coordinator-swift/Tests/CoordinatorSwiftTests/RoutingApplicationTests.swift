@@ -596,7 +596,7 @@ func routingIndependentReminderAndExpiry() throws {
     #expect(notices.count == 1)
     #expect(notices[0]["interaction_id"] as? String == packetB["interaction_id"] as? String)
 
-    clock.advance(seconds: 30)
+    clock.advance(seconds: 510)
     notices = try app.processTime().map(routingObject)
     #expect(notices.count == 1)
     #expect(notices[0]["kind"] as? String == "interaction_expired")
@@ -930,17 +930,20 @@ func routingFormatRepairRestartFailsClosed() throws {
     #expect(try journal.load().journalSequence == baseline)
 }
 
-@Test("restart expires ambiguous pending state and never restores foreground")
-func routingRestartPendingFailsClosed() throws {
+@Test("restart expires old and current pending packets without extending their recorded lifetime", arguments: [120, 600])
+func routingRestartPendingFailsClosed(lifetimeSeconds: UInt64) throws {
     let journal = RoutingMemoryJournal()
     let semantic = CoordinatorSemanticApplication(journal: journal)
     let binding = routingBinding(suffix: "restart_pending")
-    let packet = try routingPacket(
+    var packet = try routingPacket(
         binding: binding,
         validAfter: 2,
         suffix: "restart_pending",
         sealedAt: "2026-08-21T06:00:00Z"
     )
+    let originalExpiry = try RFC3339Instant("2026-08-21T06:00:00Z")
+        .adding(nanoseconds: lifetimeSeconds * 1_000_000_000).rawValue
+    packet["expires_at"] = originalExpiry
     _ = try semantic.execute(
         command: routingOpen(binding: binding, suffix: "restart_pending", occurredAt: "2026-08-21T05:59:59Z")
     )
@@ -949,12 +952,45 @@ func routingRestartPendingFailsClosed() throws {
     let app = try routingApplication(journal: journal, clock: RoutingFakeClock())
     let state = try CoordinatorSemanticReplay.replay(journal.load())
     #expect(state.pendingInteractions.isEmpty)
-    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: binding))?.expired == true)
+    let boundary = try #require(state.boundary(for: try CoordinatorBinding(jsonObject: binding)))
+    #expect(boundary.expired)
+    #expect(boundary.packet?.expiresAt.rawValue == originalExpiry)
+    let expiryEvent = try #require(try journal.load().events.last)
+    #expect(try routingObject(expiryEvent)["occurred_at"] as? String == originalExpiry)
     let snapshot = try routingObject(app.snapshot().canonicalJSON)
     #expect(snapshot["selection_enabled"] as? Bool == false)
     #expect((snapshot["pending"] as? [Any])?.isEmpty == true)
     let notices = try app.processTime().map(routingObject)
     #expect(notices.first?["reason"] as? String == "restart_elapsed_ambiguous")
+}
+
+@Test("decision cards remain selectable after two minutes and immediately before ten minutes", arguments: [120, 599])
+func routingDecisionSelectionBeforeTenMinutes(elapsedSeconds: UInt64) throws {
+    let journal = RoutingMemoryJournal()
+    let clock = RoutingFakeClock()
+    let app = try routingApplication(journal: journal, clock: clock)
+    let suffix = "extended_decision_wait"
+    let binding = routingBinding(suffix: suffix)
+    let packet = try routingPacket(
+        binding: binding,
+        validAfter: 2,
+        suffix: suffix,
+        sealedAt: "2026-08-21T06:00:00Z"
+    )
+    try routingSetup(app, suffix: suffix, binding: binding, packet: packet,
+                     openedAt: "2026-08-21T05:59:59Z")
+    _ = try app.setForeground(routingTarget(packet: packet, binding: binding))
+    clock.advance(seconds: elapsedSeconds)
+    let snapshot = try routingObject(app.snapshot().canonicalJSON)
+    let pending = try #require(snapshot["pending"] as? [[String: Any]])
+    #expect(pending.count == 1)
+    #expect(pending.first?["milliseconds_until_expiry"] as? Int64 == Int64((600 - elapsedSeconds) * 1_000))
+    #expect(snapshot["selection_enabled"] as? Bool == true)
+    _ = try routingEnvelope(app.routeSelection(
+        routingSelection(packet: packet, binding: binding, suffix: suffix)
+    ))
+    let state = try CoordinatorSemanticReplay.replay(journal.load())
+    #expect(state.boundary(for: try CoordinatorBinding(jsonObject: binding))?.selection != nil)
 }
 
 @Test("atomic activation recovery rejects a changed packet under the same event ids")
@@ -1003,7 +1039,7 @@ func routingAtomicActivationUsesFreshAnchor() throws {
     let journal = RoutingMemoryJournal()
     let clock = RoutingFakeClock()
     let app = try routingApplication(journal: journal, clock: clock)
-    clock.advance(seconds: 119)
+    clock.advance(seconds: 599)
 
     let suffix = "atomic_fresh_anchor"
     let binding = routingBinding(suffix: suffix)
@@ -1020,7 +1056,7 @@ func routingAtomicActivationUsesFreshAnchor() throws {
         occurredAt: "2026-08-21T06:20:00Z"
     ))
 
-    clock.advance(seconds: 119)
+    clock.advance(seconds: 599)
     let beforeExpiry = try app.processTime().map(routingObject)
     #expect(beforeExpiry.contains { $0["kind"] as? String == "interaction_reminder_due" })
     var state = try CoordinatorSemanticReplay.replay(journal.load())
@@ -1155,7 +1191,7 @@ func routingLateSelectionNoMutation() throws {
     )
     try routingSetup(app, suffix: "late", binding: binding, packet: packet, openedAt: "2026-08-21T06:59:59Z")
     _ = try app.setForeground(routingTarget(packet: packet, binding: binding))
-    clock.advance(seconds: 120)
+    clock.advance(seconds: 600)
     _ = try app.processTime()
     let expiredSequence = try journal.load().journalSequence
     routingExpectCode("routing_interaction_not_pending") {
@@ -1190,7 +1226,7 @@ func routingClearForegroundProcessesDueExpiry() throws {
     )
     _ = try app.setForeground(routingTarget(packet: packet, binding: binding))
     let beforeExpiry = try journal.load().journalSequence
-    clock.advance(seconds: 120)
+    clock.advance(seconds: 600)
 
     let snapshot = try routingObject(app.clearForeground().canonicalJSON)
     #expect(snapshot["selection_enabled"] as? Bool == false)

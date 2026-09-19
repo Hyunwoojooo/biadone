@@ -10,6 +10,46 @@ private let hookEvents: [String: String] = [
 ]
 private let supportedMCPProtocolVersion = "2025-06-18"
 
+enum HookThreadRoutingPolicy {
+    /// Codex 0.154.0 shares `session_id` with the root thread and reports a
+    /// spawned thread's own ID in `agent_id` (hook_runtime.rs). Coordinator
+    /// sessions and `codex queue` targets must instead identify the thread:
+    /// otherwise one child prompt replaces its parent's active turn.
+    ///
+    /// This is routing identity only, never permission authority. Keep the
+    /// command, cwd, turn and metadata byte-exact; qualification and the bound
+    /// response checks below still decide whether an allow can be returned.
+    static func routedPayload(
+        eventName: String, input: [String: Any]
+    ) throws -> [String: Any] {
+        guard hookEvents[eventName] != nil,
+              input["hook_event_name"] as? String == eventName
+        else { throw CoordinatorError("hook_thread_event_invalid") }
+        _ = try routingIdentifier(input["session_id"])
+        guard let agentID = input["agent_id"] else {
+            // A partial subagent identity must not silently address the root.
+            guard input["agent_type"] == nil else {
+                throw CoordinatorError("hook_thread_identity_invalid")
+            }
+            return input
+        }
+        var payload = input
+        payload["session_id"] = try routingIdentifier(agentID)
+        return payload
+    }
+
+    private static func routingIdentifier(_ value: Any?) throws -> String {
+        guard let value = value as? String,
+              !value.isEmpty, value.utf8.count <= 512,
+              value.utf8.allSatisfy({ byte in
+                  (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
+                      || (0x30...0x39).contains(byte) || byte == 0x2D || byte == 0x5F
+              })
+        else { throw CoordinatorError("hook_thread_identity_invalid") }
+        return value
+    }
+}
+
 struct HookRequestAttempt: Equatable, Sendable {
     let connectTimeoutMilliseconds: Int32
     let responseTimeoutMilliseconds: Int32
@@ -39,18 +79,22 @@ enum HookRequestPolicy {
     static func perform(
         eventName: String,
         payload: [String: Any],
+        onPermissionFailure: (HookPermissionDiagnostics.FailureCode) -> Void = { _ in },
         request: (HookRequestAttempt) throws -> [String: Any]
     ) -> HookRequestOutcome {
         guard isExactQueuedPromptSubmit(eventName: eventName, payload: payload) else {
             let attempt = HookRequestAttempt(
                 connectTimeoutMilliseconds: 2_000,
                 responseTimeoutMilliseconds: eventName == "PermissionRequest"
-                    ? 55_000
+                    ? HookPermissionTimingPolicy.socketResponseTimeoutMilliseconds
                     : 5_000
             )
             do {
                 return .response(try request(attempt))
             } catch {
+                if eventName == "PermissionRequest" {
+                    onPermissionFailure(HookPermissionDiagnostics.failureCode(for: error))
+                }
                 return .unavailable
             }
         }
@@ -145,37 +189,55 @@ func runHookCommand(arguments: [String]) {
     // Ordinary Hooks are deliberately fail-open. Only an exact Blabee queued
     // prompt gets one bounded response-loss retry and a safe no-action context
     // when both attempts fail.
+    let isPermissionRequest = arguments.first == "PermissionRequest"
     do {
         guard let eventName = arguments.first,
               let requestType = hookEvents[eventName]
         else { return }
+        if isPermissionRequest {
+            HookPermissionDiagnostics.record(.received)
+        }
         // A managed App Server broker owns command approval request IDs and
         // responses. Its child Codex process marks that ownership explicitly
         // so the Hook path cannot race a second approval decision.
         if eventName == "PermissionRequest",
            ProcessInfo.processInfo.environment["BLABEE_MANAGED_APPROVALS"] == "1"
         {
+            HookPermissionDiagnostics.record(.managedOwnershipBypass)
             return
         }
         let socketFlag = try optionalSocketFlag(Array(arguments.dropFirst()))
         let socketPath = try OperationalSocketPath.resolve(explicitPath: socketFlag)
         let inputData = try readStandardInput(maximumBytes: 1_048_576)
-        var payload = try StrictJSONTransport.object(
+        let input = try StrictJSONTransport.object(
             from: inputData,
             limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
+        )
+        // Use the same effective thread for admission, response validation and
+        // delivery ACK. Native Hook output has no session field to rewrite.
+        var payload = try HookThreadRoutingPolicy.routedPayload(
+            eventName: eventName, input: input
         )
         // The coordinator may expose Hook allow-once only after attesting the
         // live Codex ancestry. Never trust a caller-supplied marker; derive it
         // locally and omit it when the attestation cannot be established.
         if eventName == "PermissionRequest" {
+            let qualification = CodexHookApprovalQualification.currentQualification()
             payload = HookPermissionOutputPolicy.qualifiedPayload(
-                payload, qualification: CodexHookApprovalQualification.currentQualification()
+                payload, qualification: qualification
+            )
+            HookPermissionDiagnostics.record(
+                HookPermissionPolicy.allowsOnce(qualification: qualification)
+                    ? .callerQualified : .callerUnqualified
             )
         }
         let client = try UnixDomainSocketClient(socketPath: socketPath)
         let outcome = HookRequestPolicy.perform(
             eventName: eventName,
-            payload: payload
+            payload: payload,
+            onPermissionFailure: { code in
+                HookPermissionDiagnostics.recordFailure(.requestFailed, code: code)
+            }
         ) { attempt in
             try client.request(
                 type: requestType,
@@ -199,11 +261,20 @@ func runHookCommand(arguments: [String]) {
         case .unavailable:
             return
         }
-        guard result["enabled"] as? Bool != false else { return }
+        guard result["enabled"] as? Bool != false else {
+            if isPermissionRequest {
+                HookPermissionDiagnostics.record(.coordinatorDisabled)
+            }
+            return
+        }
 
         if eventName == "PermissionRequest" {
             if Set(result.keys) == ["decision"] {
-                guard result["decision"] as? String == "defer_to_codex" else { return }
+                guard result["decision"] as? String == "defer_to_codex" else {
+                    HookPermissionDiagnostics.record(.responseInvalid)
+                    return
+                }
+                HookPermissionDiagnostics.record(.coordinatorDeferred)
                 return
             }
             guard let decision = result["decision"] as? String,
@@ -212,7 +283,10 @@ func runHookCommand(arguments: [String]) {
                       currentQualification: decision == "allow_once"
                           ? CodexHookApprovalQualification.currentQualification() : nil
                   )
-            else { return }
+            else {
+                HookPermissionDiagnostics.record(.responseInvalid)
+                return
+            }
             let deliveryToken = try permissionDeliveryToken(
                 result["delivery_token"]
             )
@@ -247,13 +321,18 @@ func runHookCommand(arguments: [String]) {
                     ],
                 ])
             case "defer_to_codex":
-                break
+                HookPermissionDiagnostics.record(.coordinatorDeferred)
             default:
                 return
             }
             // Finish adapter output before ACK. The launcher buffers this until
             // exit; this does not prove native consumption or command execution.
             try FileHandle.standardOutput.close()
+            if decision == "allow_once" {
+                HookPermissionDiagnostics.record(.allowOnceOutputPrepared)
+            } else if decision == "deny" {
+                HookPermissionDiagnostics.record(.denyOutputPrepared)
+            }
             let acknowledgement = try client.request(
                 type: "ack_permission_request_delivery",
                 payload: [
@@ -267,7 +346,11 @@ func runHookCommand(arguments: [String]) {
                 connectTimeoutMilliseconds: 2_000,
                 responseTimeoutMilliseconds: 5_000
             )
-            guard acknowledgement.isEmpty else { return }
+            guard acknowledgement.isEmpty else {
+                HookPermissionDiagnostics.record(.deliveryAcknowledgementInvalid)
+                return
+            }
+            HookPermissionDiagnostics.record(.deliveryAcknowledgementReceived)
             return
         }
         if eventName == "Stop" {
@@ -292,6 +375,11 @@ func runHookCommand(arguments: [String]) {
             ])
         }
     } catch {
+        if isPermissionRequest {
+            HookPermissionDiagnostics.recordFailure(
+                .failed, code: HookPermissionDiagnostics.failureCode(for: error)
+            )
+        }
         return
     }
 }
@@ -402,7 +490,9 @@ private func handleMCPMessage(
                 type: "emit_decision",
                 payload: arguments,
                 connectTimeoutMilliseconds: 5_000,
-                responseTimeoutMilliseconds: 5_000
+                // Durable acceptance can finish before the reply reaches MCP.
+                // Give this write one bounded wait; never resend on a lost ACK.
+                responseTimeoutMilliseconds: 15_000
             )
             try messageSecretCorpus.assertNoKnownSecret(inJSONObject: forwarded)
             try writeMCPResult(id: message["id"], value: [
@@ -416,11 +506,16 @@ private func handleMCPMessage(
             let failure = publicEmitDecisionFailure(error)
             let errorCode = failure["error_code"] as? String ?? "coordinator_unavailable_or_rejected"
             let retryable = failure["retryable"] as? Bool ?? false
+            let explanation = errorCode == "decision_delivery_unconfirmed"
+                ? "Blabee did not receive a decision acknowledgement. The proposal may already "
+                    + "be stored; a missing acknowledgement does not mean rejection. "
+                    + "Do not automatically retry or submit a new proposal. "
+                : "Blabee coordinator unavailable or rejected the proposal. "
             try writeMCPResult(id: message["id"], value: [
                 "isError": true,
                 "content": [[
                     "type": "text",
-                    "text": "Blabee coordinator unavailable or rejected the proposal. "
+                    "text": explanation
                         + "error_code=\(errorCode); retryable=\(retryable).",
                 ]],
                 "structuredContent": failure,
@@ -439,6 +534,16 @@ private func handleMCPMessage(
 private func publicEmitDecisionFailure(_ error: Error) -> [String: Any] {
     let code = error.coordinatorError.code
     switch code {
+    case "operational_response_timeout",
+         "operational_transport_closed",
+         "operational_transport_failed":
+        return [
+            // Kept for envelope compatibility: acceptance was not confirmed,
+            // which is not evidence that the durable write was rejected.
+            "accepted": false,
+            "error_code": "decision_delivery_unconfirmed",
+            "retryable": false,
+        ]
     case "proposal_source_prompt_mismatch":
         return [
             "accepted": false,

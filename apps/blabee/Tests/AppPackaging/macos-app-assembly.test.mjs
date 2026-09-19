@@ -32,14 +32,24 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 const assemblyScript = join(repositoryRoot, "scripts", "build-macos-app.mjs");
 const execFile = promisify(execFileCallback);
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
+const appIconFileName = "Blabee.icns";
 const menuBarIconFileName = "BlabeeMenuBar.svg";
 const codexMarketplaceFileName = "CodexMarketplace.json";
+const entitlementsFileName = "Blabee.entitlements";
+const canonicalEntitlements = join(repositoryRoot, "Packaging", "macos", entitlementsFileName);
 const canonicalLaunchAgent = join(
   repositoryRoot,
   "Packaging",
   "macos",
   "LaunchAgents",
   launchAgentFileName,
+);
+const canonicalAppIcon = join(
+  repositoryRoot,
+  "Packaging",
+  "macos",
+  "Resources",
+  appIconFileName,
 );
 const canonicalMenuBarIcon = join(
   repositoryRoot,
@@ -134,8 +144,10 @@ async function makeWorkspace(t) {
       'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
       `  identity='${defaultInspectedRuntimeIdentity}'`,
       '  if [ -f "$3/runtime-identity.txt" ]; then identity=$(/bin/cat "$3/runtime-identity.txt"); fi',
+      '  if [ -f "$3/Contents/Resources/runtime-identity.txt" ]; then identity=$(/bin/cat "$3/Contents/Resources/runtime-identity.txt"); fi',
       `  manifest_digest='${defaultInspectedManifestDigest}'`,
       '  if [ -f "$3/manifest-digest.txt" ]; then manifest_digest=$(/bin/cat "$3/manifest-digest.txt"); fi',
+      '  if [ -f "$3/Contents/Resources/manifest-digest.txt" ]; then manifest_digest=$(/bin/cat "$3/Contents/Resources/manifest-digest.txt"); fi',
       '  printf \'{"assembly_manifest_sha256":"%s","runtime_identity":"%s","schema_version":"blabee.runtime-identity-inspection.v2"}\\n\' "$manifest_digest" "$identity"',
       "  exit 0",
       "fi",
@@ -163,24 +175,53 @@ async function makePreviousApp(root, parentName, runtimeIdentity) {
 }
 
 async function makeLeasePreviousApp(root, parentName, runtimeIdentity, {
-  coordinatorScript = `#!/bin/sh\n${protocolQueryShell}\nexit 1\n`,
+  probeBody = `puts("${runtimeUseLeaseProtocol}"); return 0;`,
   protocol = runtimeUseLeaseProtocol,
 } = {}) {
-  const app = await makePreviousApp(root, parentName, runtimeIdentity);
+  const app = join(root, parentName, "Blabee.app");
   const macOS = join(app, "Contents", "MacOS");
-  const pluginScripts = join(app, "Contents", "Resources", "Plugin", "blabee", "scripts");
+  const resources = join(app, "Contents", "Resources");
+  const pluginScripts = join(resources, "Plugin", "blabee", "scripts");
   await mkdir(macOS, { recursive: true });
   await mkdir(pluginScripts, { recursive: true });
-  await writeFile(join(macOS, "blabee-coordinator"), coordinatorScript, { mode: 0o700 });
+  await writeFile(join(resources, "runtime-identity.txt"), `${runtimeIdentity}\n`);
+  const source = join(root, `${parentName}-lease-probe.c`);
+  await writeFile(source, [
+    "#include <errno.h>",
+    "#include <limits.h>",
+    "#include <stdio.h>",
+    "#include <stdlib.h>",
+    "#include <string.h>",
+    "#include <unistd.h>",
+    "#include <sys/stat.h>",
+    "#include <sys/socket.h>",
+    "#include <sys/wait.h>",
+    "#include <netinet/in.h>",
+    "#include <spawn.h>",
+    "#include <mach/mach.h>",
+    "#include <servers/bootstrap.h>",
+    "int main(int argc, char **argv) {",
+    '  if (argc != 2 || strcmp(argv[1], "runtime-use-lease-protocol") != 0) return 2;',
+    probeBody,
+    "}",
+    "",
+  ].join("\n"));
+  await execFile("/usr/bin/clang", [source, "-o", join(macOS, "blabee-coordinator")], { timeout: 30_000 });
   await copyFile(
     join(repositoryRoot, "Plugin", "blabee", "scripts", "blabee-launcher"),
     join(pluginScripts, "blabee-launcher"),
   );
   await chmod(join(pluginScripts, "blabee-launcher"), 0o755);
-  await writeFile(join(app, "Contents", "Info.plist"), JSON.stringify({
-    ...(protocol === undefined ? {} : { BlabeeRuntimeUseLeaseProtocol: protocol }),
-    BlabeeRuntimeUseLeasePreviousIdentities: [`sha256:${"0".repeat(64)}`],
-  }));
+  await copyFile(join(repositoryRoot, "Packaging", "macos", "Info.plist"), join(app, "Contents", "Info.plist"));
+  const info = await readAppInfo(app);
+  if (protocol === null || protocol === undefined) delete info.BlabeeRuntimeUseLeaseProtocol;
+  else info.BlabeeRuntimeUseLeaseProtocol = protocol;
+  info.BlabeeRuntimeUseLeasePreviousIdentities = [`sha256:${"0".repeat(64)}`];
+  await writeFile(join(app, "Contents", "Info.plist"), JSON.stringify(info));
+  await execFile("/usr/bin/plutil", ["-convert", "xml1", join(app, "Contents", "Info.plist")]);
+  await execFile("/usr/bin/codesign", [
+    "--force", "--sign", "-", "--timestamp=none", "--options", "runtime", app,
+  ]);
   return app;
 }
 
@@ -217,12 +258,29 @@ async function waitForStagingPath(root) {
   throw new Error(`timed out waiting for a staging directory in ${root}`);
 }
 
+async function assembleWithPrivateProbeScratch(fixture, options, directoryName = "private-probe-temporary") {
+  const scratch = join(fixture.root, directoryName);
+  await mkdir(scratch);
+  fixture.output = join(scratch, "Blabee.app");
+  const previousTMPDIR = process.env.TMPDIR;
+  process.env.TMPDIR = scratch;
+  try {
+    return await assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output, ...options });
+  } finally {
+    if (previousTMPDIR === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTMPDIR;
+    assert.deepEqual((await readdir(scratch)).filter((entry) => entry.includes("blabee-runtime-use-lease-")), []);
+  }
+}
+
 async function copyCanonicalPackagingSupport(sourceRoot) {
   const directory = join(sourceRoot, "Packaging", "macos", "LaunchAgents");
   await mkdir(directory, { recursive: true });
   await copyFile(canonicalLaunchAgent, join(directory, launchAgentFileName));
+  await copyFile(canonicalEntitlements, join(sourceRoot, "Packaging", "macos", entitlementsFileName));
   const resources = join(sourceRoot, "Packaging", "macos", "Resources");
   await mkdir(resources, { recursive: true });
+  await copyFile(canonicalAppIcon, join(resources, appIconFileName));
   await copyFile(canonicalMenuBarIcon, join(resources, menuBarIconFileName));
   await copyFile(
     canonicalCodexMarketplace,
@@ -297,7 +355,9 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   const executable = join(contents, "MacOS", "blabee-coordinator");
   const infoPlist = join(contents, "Info.plist");
   const launchAgent = join(contents, "Library", "LaunchAgents", launchAgentFileName);
+  const appIcon = join(contents, "Resources", appIconFileName);
   const menuBarIcon = join(contents, "Resources", menuBarIconFileName);
+  const entitlements = join(contents, "Resources", entitlementsFileName);
   const codexMarketplace = join(
     contents,
     "Resources",
@@ -326,7 +386,9 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     executable,
     infoPlist,
     launchAgent,
+    appIcon,
     menuBarIcon,
+    entitlements,
     codexMarketplace,
     contract,
     plugin,
@@ -341,7 +403,9 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(await mode(join(contents, "Library")), 0o755);
   assert.equal(await mode(join(contents, "Library", "LaunchAgents")), 0o755);
   assert.equal(await mode(launchAgent), 0o644);
+  assert.equal(await mode(appIcon), 0o644);
   assert.equal(await mode(menuBarIcon), 0o644);
+  assert.equal(await mode(entitlements), 0o644);
   assert.equal(await mode(codexMarketplace), 0o644);
   assert.equal(await mode(contract), 0o644);
   assert.equal(await mode(plugin), 0o644);
@@ -359,6 +423,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     Object.fromEntries([
       "CFBundleDisplayName",
       "CFBundleExecutable",
+      "CFBundleIconFile",
       "CFBundleIdentifier",
       "CFBundleName",
       "CFBundlePackageType",
@@ -367,11 +432,13 @@ test("assembler creates the required Blabee.app payload and deterministic manife
       "LSMinimumSystemVersion",
       "LSUIElement",
       "NSHighResolutionCapable",
+      "NSAppleEventsUsageDescription",
       "NSPrincipalClass",
     ].map((key) => [key, plist[key]])),
     {
       CFBundleDisplayName: "Blabee",
       CFBundleExecutable: "blabee-coordinator",
+      CFBundleIconFile: appIconFileName,
       CFBundleIdentifier: "com.biadone.blabee",
       CFBundleName: "Blabee",
       CFBundlePackageType: "APPL",
@@ -380,6 +447,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
       LSMinimumSystemVersion: "13.0",
       LSUIElement: true,
       NSHighResolutionCapable: true,
+      NSAppleEventsUsageDescription: "Codex 관리 세션을 시작하거나 복원할 때 Terminal의 새 창을 엽니다.",
       NSPrincipalClass: "NSApplication",
     },
   );
@@ -401,7 +469,11 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   assert.equal(launchTargetMetadata.isFile(), true);
   assert.notEqual(launchTargetMetadata.mode & 0o111, 0);
   assert.equal(await digest(launchAgent), await digest(canonicalLaunchAgent));
+  assert.equal(await digest(appIcon), await digest(canonicalAppIcon));
   assert.equal(await digest(menuBarIcon), await digest(canonicalMenuBarIcon));
+  assert.equal(await digest(entitlements), await digest(canonicalEntitlements));
+  const { stdout: entitlementsJSON } = await execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-", entitlements]);
+  assert.deepEqual(JSON.parse(entitlementsJSON), { "com.apple.security.automation.apple-events": true });
   assert.equal(
     await digest(codexMarketplace),
     await digest(canonicalCodexMarketplace),
@@ -427,7 +499,9 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     `Contents/Library/LaunchAgents/${launchAgentFileName}`,
     "Contents/MacOS/blabee-coordinator",
     "Contents/Resources/.agents/plugins/marketplace.json",
+    `Contents/Resources/${appIconFileName}`,
     `Contents/Resources/${menuBarIconFileName}`,
+    `Contents/Resources/${entitlementsFileName}`,
     "Contents/Resources/assembly-manifest.json",
     ...contractFiles.map((path) => `Contents/Resources/Contracts/v1/${path}`),
     ...pluginFiles.map((path) => `Contents/Resources/Plugin/blabee/${path}`),
@@ -475,6 +549,15 @@ test("assembler creates the required Blabee.app payload and deterministic manife
     path: `Contents/Library/LaunchAgents/${launchAgentFileName}`,
     sha256: await digest(launchAgent),
     size: (await lstat(launchAgent)).size,
+    mode: "0644",
+  });
+  const appIconEntry = manifest.files.find(
+    (entry) => entry.path === `Contents/Resources/${appIconFileName}`,
+  );
+  assert.deepEqual(appIconEntry, {
+    path: `Contents/Resources/${appIconFileName}`,
+    sha256: await digest(appIcon),
+    size: (await lstat(appIcon)).size,
     mode: "0644",
   });
   for (const entry of manifest.files) {
@@ -634,44 +717,145 @@ test("assembler probes its staged executable before populating Info.plist with a
 test("assembler admits only explicit verified previous lease identities using a private copy", async (t) => {
   const fixture = await makeWorkspace(t);
   const identities = ["1", "2"].map((digit) => `sha256:${digit.repeat(64)}`);
-  const probeRecord = join(fixture.root, "previous-probe-record");
   const first = await makeLeasePreviousApp(fixture.root, "lease-first", identities[0], {
-    coordinatorScript: [
-      "#!/bin/sh",
-      `printf '%s\\n' "$0" > '${probeRecord}'`,
-      `/usr/bin/stat -f '%Lp' "${"${0%/*}"}" >> '${probeRecord}'`,
-      protocolQueryShell,
-      "exit 1",
-      "",
+    probeBody: [
+      'if (strstr(argv[0], "/blabee-runtime-use-lease-") == NULL) return 3;',
+      'const char *suffix = strstr(argv[0], "/Blabee.app/Contents/MacOS/blabee-coordinator");',
+      "if (suffix == NULL) return 4;",
+      "char scratch[PATH_MAX];",
+      'snprintf(scratch, sizeof scratch, "%.*s", (int)(suffix - argv[0]), argv[0]);',
+      "struct stat metadata;",
+      "if (lstat(scratch, &metadata) != 0 || (metadata.st_mode & 0777) != 0700) return 5;",
+      'if (getenv("HOME") != NULL || getenv("BLABEE_COORDINATOR_BINARY") != NULL) return 6;',
+      `puts("${runtimeUseLeaseProtocol}"); return 0;`,
     ].join("\n"),
   });
   const second = await makeLeasePreviousApp(fixture.root, "lease-second", identities[1]);
   const originalFiles = await regularFiles(first);
   const originalDigests = await Promise.all(originalFiles.map((path) => digest(join(first, path))));
-  const result = await assembleMacOSApp({
-    binaryPath: fixture.binary,
-    outputPath: fixture.output,
+  const result = await assembleWithPrivateProbeScratch(fixture, {
     compatiblePreviousApps: [second, first],
   });
   const info = await readAppInfo(result.output);
   assert.deepEqual(info.BlabeeRuntimeUseLeasePreviousIdentities, identities);
   assert.equal(info.BlabeeRuntimeUseLeasePreviousIdentities.includes(`sha256:${"0".repeat(64)}`), false);
   assert.deepEqual(result.manifest.compatible_previous_runtimes.map((entry) => entry.runtime_identity), identities);
-  const [copyPath, directoryMode] = (await readFile(probeRecord, "utf8")).trim().split("\n");
-  assert.notEqual(copyPath, join(first, "Contents", "MacOS", "blabee-coordinator"));
-  assert.equal(directoryMode, "700");
-  await assert.rejects(lstat(dirname(copyPath)), { code: "ENOENT" });
   assert.deepEqual(await regularFiles(first), originalFiles);
   assert.deepEqual(await Promise.all(originalFiles.map((path) => digest(join(first, path)))), originalDigests);
   assert.equal(result.manifest.files.find((entry) => entry.path === "Contents/Info.plist").sha256,
     await digest(join(result.output, "Contents", "Info.plist")));
 });
 
+test("previous lease probe preserves the signed Mach-O bundle context", {
+  skip: process.platform !== "darwin" ? "requires macOS codesign and clang" : false,
+}, async (t) => {
+  const fixture = await makeWorkspace(t);
+  const identity = `sha256:${"7".repeat(64)}`;
+  const previous = await makeLeasePreviousApp(fixture.root, "signed-previous", identity, {
+    probeBody: [
+      'if (strstr(argv[0], "/blabee-runtime-use-lease-") == NULL) return 3;',
+      'if (strstr(argv[0], "/Blabee.app/Contents/MacOS/blabee-coordinator") == NULL) return 4;',
+      'if (access("../Info.plist", R_OK) != 0) return 5;',
+      'if (access("../_CodeSignature/CodeResources", R_OK) != 0) return 6;',
+      'if (access("../Resources/runtime-identity.txt", R_OK) != 0) return 7;',
+      `puts("${runtimeUseLeaseProtocol}"); return 0;`,
+    ].join("\n"),
+  });
+  const previousCoordinator = join(previous, "Contents", "MacOS", "blabee-coordinator");
+  await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", previous]);
+
+  const detached = join(fixture.root, "detached-coordinator");
+  await copyFile(previousCoordinator, detached);
+  await chmod(detached, 0o700);
+  await assert.rejects(
+    execFile("/usr/bin/codesign", ["--verify", "--strict", detached]),
+    (error) => {
+      assert.match(error.stderr, /invalid Info\.plist/u);
+      return true;
+    },
+  );
+
+  const originalFiles = await regularFiles(previous);
+  const originalDigests = await Promise.all(originalFiles.map((path) => digest(join(previous, path))));
+  const result = await assembleWithPrivateProbeScratch(fixture, {
+    compatiblePreviousApps: [previous],
+  });
+  assert.deepEqual((await readAppInfo(result.output)).BlabeeRuntimeUseLeasePreviousIdentities, [identity]);
+  assert.deepEqual(await regularFiles(previous), originalFiles);
+  assert.deepEqual(await Promise.all(originalFiles.map((path) => digest(join(previous, path)))), originalDigests);
+  await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", previous]);
+});
+
+test("a previous probe cannot write, fork, spawn, use network or contact Mach services", async (t) => {
+  const fixture = await makeWorkspace(t);
+  const identity = `sha256:${"8".repeat(64)}`;
+  const forbiddenWrite = join(fixture.root, "probe-must-not-write");
+  const previous = await makeLeasePreviousApp(fixture.root, "confined-previous", identity, {
+    probeBody: [
+      `FILE *output = fopen(${JSON.stringify(forbiddenWrite)}, "w");`,
+      "if (output != NULL) { fclose(output); return 3; }",
+      "if (errno != EPERM && errno != EACCES) return 4;",
+      'output = fopen("../Resources/runtime-identity.txt", "w");',
+      "if (output != NULL) { fclose(output); return 5; }",
+      "if (errno != EPERM && errno != EACCES) return 6;",
+      "pid_t child = fork();",
+      "if (child == 0) _exit(7);",
+      "if (child > 0) { waitpid(child, NULL, 0); return 8; }",
+      "if (errno != EPERM && errno != EACCES) return 9;",
+      'char *arguments[] = { argv[0], "unexpected-command", NULL };',
+      "char *environment[] = { NULL };",
+      "int spawned = posix_spawn(&child, argv[0], NULL, NULL, arguments, environment);",
+      "if (spawned == 0) { waitpid(child, NULL, 0); return 10; }",
+      "if (spawned != EPERM && spawned != EACCES) return 11;",
+      'arguments[0] = "/usr/bin/true";',
+      "spawned = posix_spawn(&child, arguments[0], NULL, NULL, arguments, environment);",
+      "if (spawned == 0) { waitpid(child, NULL, 0); return 12; }",
+      "if (spawned != EPERM && spawned != EACCES) return 13;",
+      "int connection = socket(AF_INET, SOCK_STREAM, 0);",
+      "if (connection >= 0) {",
+      "  struct sockaddr_in destination = {0};",
+      "  destination.sin_family = AF_INET;",
+      "  destination.sin_port = htons(9);",
+      "  destination.sin_addr.s_addr = htonl(INADDR_LOOPBACK);",
+      "  int connected = connect(connection, (struct sockaddr *)&destination, sizeof destination);",
+      "  int failure = errno;",
+      "  close(connection);",
+      "  if (connected == 0 || (failure != EPERM && failure != EACCES)) return 14;",
+      "} else if (errno != EPERM && errno != EACCES) return 15;",
+      "mach_port_t service = MACH_PORT_NULL;",
+      'if (bootstrap_look_up(bootstrap_port, "com.apple.cfprefsd.agent", &service) != BOOTSTRAP_NOT_PRIVILEGED) return 16;',
+      `puts("${runtimeUseLeaseProtocol}"); return 0;`,
+    ].join("\n"),
+  });
+  const result = await assembleWithPrivateProbeScratch(fixture, {
+    compatiblePreviousApps: [previous],
+  }, 'scratch "with\\quotes"');
+  assert.deepEqual((await readAppInfo(result.output)).BlabeeRuntimeUseLeasePreviousIdentities, [identity]);
+  await assert.rejects(lstat(forbiddenWrite), { code: "ENOENT" });
+  await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", previous]);
+});
+
+test("a stuck previous protocol query is bounded and its private bundle is removed", { timeout: 12_000 }, async (t) => {
+  const fixture = await makeWorkspace(t);
+  const identity = `sha256:${"9".repeat(64)}`;
+  const previous = await makeLeasePreviousApp(fixture.root, "stuck-previous", identity, {
+    probeBody: "for (;;) sleep(30);",
+  });
+  const started = Date.now();
+  const result = await assembleWithPrivateProbeScratch(fixture, {
+    compatiblePreviousApps: [previous],
+  });
+  assert.ok(Date.now() - started < 10_000);
+  assert.deepEqual((await readAppInfo(result.output)).BlabeeRuntimeUseLeasePreviousIdentities, []);
+  assert.deepEqual(result.manifest.compatible_previous_runtimes.map((entry) => entry.runtime_identity), [identity]);
+  await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", previous]);
+});
+
 test("a previous protocol marker alone cannot approve lease admission", async (t) => {
   const cases = [
     ["legacy marker", { protocol: null }],
-    ["wrong output", { coordinatorScript: "#!/bin/sh\nprintf 'wrong\\n'\n" }],
-    ["oversized output", { coordinatorScript: "#!/bin/sh\n/usr/bin/head -c 4097 /dev/zero\n" }],
+    ["wrong output", { probeBody: 'puts("wrong"); return 0;' }],
+    ["oversized output", { probeBody: "char bytes[4097] = {0}; fwrite(bytes, 1, sizeof bytes, stdout); return 0;" }],
     ["extra executable", {}],
     ["different launcher", {}],
     ["symlink asset", {}],
@@ -692,9 +876,7 @@ test("a previous protocol marker alone cannot approve lease admission", async (t
         await writeFile(join(previous, "Contents", "Resources", `asset-${index}`), "");
       }
     }
-    const result = await assembleMacOSApp({
-      binaryPath: fixture.binary,
-      outputPath: fixture.output,
+    const result = await assembleWithPrivateProbeScratch(fixture, {
       compatiblePreviousApps: [previous],
     });
     assert.deepEqual((await readAppInfo(result.output)).BlabeeRuntimeUseLeasePreviousIdentities, [], label);
@@ -702,20 +884,24 @@ test("a previous protocol marker alone cannot approve lease admission", async (t
   }
 });
 
-test("assembler rejects a previous identity or manifest digest changing during its copied probe", async (t) => {
+test("assembler rejects a previous identity or manifest digest changing across its copied probe", async (t) => {
   for (const changedFile of ["runtime-identity.txt", "manifest-digest.txt"]) {
     const fixture = await makeWorkspace(t);
     const identity = `sha256:${"4".repeat(64)}`;
-    const previous = join(fixture.root, "previous", "Blabee.app");
-    await makeLeasePreviousApp(fixture.root, "previous", identity, {
-      coordinatorScript: [
-        "#!/bin/sh",
-        `printf 'sha256:${"5".repeat(64)}\\n' > '${join(previous, changedFile)}'`,
-        protocolQueryShell,
-        "exit 1",
-        "",
-      ].join("\n"),
-    });
+    const previous = await makeLeasePreviousApp(fixture.root, "previous", identity);
+    const inspectionRecord = join(fixture.root, "previous-inspection-started");
+    const inspector = await readFile(fixture.binary, "utf8");
+    await writeFile(fixture.binary, inspector.replace("#!/bin/sh\n", [
+      "#!/bin/sh",
+      'if [ "${1-}" = runtime-identity ]; then',
+      `  if [ -f '${inspectionRecord}' ]; then`,
+      `    printf 'sha256:${"5".repeat(64)}\\n' > '${join(previous, "Contents", "Resources", changedFile)}'`,
+      "  else",
+      `    printf 'inspected\\n' > '${inspectionRecord}'`,
+      "  fi",
+      "fi",
+      "",
+    ].join("\n")));
     await assert.rejects(
       assembleMacOSApp({
         binaryPath: fixture.binary,
@@ -1596,7 +1782,7 @@ test("final payload entry budget reserves the assembly manifest", async (t) => {
   const acceptedSource = await makeBoundarySource(
     acceptedFixture,
     "source-final-entry-boundary-accepted",
-    1005,
+    1003,
   );
   await assembleMacOSApp({
     binaryPath: acceptedFixture.binary,
@@ -1609,7 +1795,7 @@ test("final payload entry budget reserves the assembly manifest", async (t) => {
   const rejectedSource = await makeBoundarySource(
     rejectedFixture,
     "source-final-entry-boundary-rejected",
-    1006,
+    1004,
   );
   await assert.rejects(
     assembleMacOSApp({
@@ -1642,7 +1828,7 @@ test("post-signing entry budget includes generated code-signature entries", {
     join(infoDirectory, "Info.plist"),
   );
   await writeFile(join(contracts, "manifest.json"), "{}\n");
-  for (let index = 0; index < 1005; index += 1) {
+  for (let index = 0; index < 1003; index += 1) {
     await mkdir(join(plugin, `empty-${String(index).padStart(4, "0")}`));
   }
 
@@ -1733,4 +1919,19 @@ test("an ad-hoc signed app rejects a mutated bundled LaunchAgent", {
     "/usr/bin/codesign",
     ["--verify", "--deep", "--strict", "--verbose=2", fixture.output],
   ));
+});
+
+test("ad-hoc Mach-O app signing embeds only the Terminal automation entitlement", {
+  skip: process.platform !== "darwin" ? "requires macOS codesign and clang" : false,
+}, async (t) => {
+  const fixture = await makeWorkspace(t);
+  const source = join(fixture.root, "lease-probe.c");
+  await writeFile(source, 'int main(void) { __builtin_printf("blabee.runtime-use-lease.v1\\n"); return 0; }\n');
+  await execFile("/usr/bin/clang", [source, "-o", fixture.binary], { timeout: 30_000 });
+  await assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output, adhocSign: true });
+  const { stdout } = await execFile("/usr/bin/codesign", ["--display", "--entitlements", "-", "--xml", fixture.output]);
+  const decoded = join(fixture.root, "signed-entitlements.plist");
+  await writeFile(decoded, stdout);
+  const { stdout: json } = await execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-", decoded]);
+  assert.deepEqual(JSON.parse(json), { "com.apple.security.automation.apple-events": true });
 });

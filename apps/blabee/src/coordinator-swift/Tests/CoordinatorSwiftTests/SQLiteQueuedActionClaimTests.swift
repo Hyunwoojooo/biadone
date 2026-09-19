@@ -246,10 +246,11 @@ private func sqliteClaimBinding(_ suffix: String) -> [String: Any] {
 private func sqliteClaimPacket(
     suffix: String,
     binding: [String: Any],
-    validAfterEventSequence: Int64 = 2
+    validAfterEventSequence: Int64 = 2,
+    rankedActions: Bool = false
 ) throws -> [String: Any] {
     let source = sqliteClaimRepositoryRoot.appendingPathComponent(
-        "Fixtures/v1/contracts/valid/decision-packet-rollback-disabled.json"
+        "Fixtures/v1/contracts/valid/decision-packet-\(rankedActions ? "ranked-actions" : "rollback-disabled").json"
     )
     guard var packet = try JSONSerialization.jsonObject(
         with: Data(contentsOf: source)
@@ -814,4 +815,149 @@ func sqliteReceiptCompletionBatchPreservesQueuedClaim() throws {
 )
 func sqliteReceiptCompletionBenchmarkWithClosedHistory() throws {
     try sqliteReceiptCompare(closedHistoryPairs: 600)
+}
+
+/// Synthetic history is validated in memory and seeded in one SQLite batch.
+/// No production database, storage key, or Keychain item is consulted.
+private func sqliteDismissalHistory(packetCount: Int, closedOnlyCount: Int) throws -> JournalSnapshot {
+    var events: [Data] = []
+    var documents: [Data] = []
+    for index in 0..<(packetCount + closedOnlyCount) {
+        let suffix = "dismiss_history_\(index)"
+        let binding = sqliteClaimBinding(suffix)
+        var event = binding
+        event["schema_version"] = "1.0"
+        event["kind"] = "blabee_runtime_event"
+        event["event_category"] = "decision_lifecycle"
+        event["event_id"] = "event_\(suffix)_open"
+        event["event_sequence"] = events.count + 1
+        event["event_type"] = "decision_boundary_opened"
+        event["occurred_at"] = "2026-08-21T12:00:00Z"
+        event["payload"] = ["proposal_id": "proposal_\(suffix)"]
+        events.append(try sqliteClaimData(event))
+        if index < packetCount {
+            let packet = try sqliteClaimPacket(
+                suffix: suffix, binding: binding,
+                validAfterEventSequence: Int64(events.count) + 1, rankedActions: true
+            )
+            documents.append(try sqliteClaimData(packet))
+            event["event_id"] = "event_\(suffix)_seal"
+            event["event_sequence"] = events.count + 1
+            event["event_type"] = "decision_packet_sealed"
+            event["occurred_at"] = packet["sealed_at"]
+            event["payload"] = [
+                "interaction_id": packet["interaction_id"]!,
+                "packet_id": packet["packet_id"]!, "revision": packet["revision"]!,
+                "expires_at": packet["expires_at"]!,
+            ]
+            events.append(try sqliteClaimData(event))
+        }
+        event["event_id"] = "event_\(suffix)_close"
+        event["event_sequence"] = events.count + 1
+        event["event_type"] = "decision_boundary_closed"
+        event["occurred_at"] = "2026-08-21T12:00:02Z"
+        event["payload"] = ["close_reason": "user_dismissed"]
+        events.append(try sqliteClaimData(event))
+    }
+    let snapshot = JournalSnapshot(
+        events: events, documents: documents, verificationRecords: [],
+        journalSequence: Int64(events.count)
+    )
+    _ = try CoordinatorSemanticReplay.replay(snapshot)
+    return snapshot
+}
+
+@Test("SQLite dismissal uses one authenticated projection with 2000 events and 320 packets", arguments: [0, 320])
+func sqliteDismissalJournalBudgetWithAuthenticatedHistory(packetHistoryCount: Int) throws {
+    let directory = try sqliteClaimTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let meter = SQLiteClaimIOMeter()
+    let freshness = SQLiteClaimFreshnessStore(meter: meter)
+    let journal = try SQLiteJournal(
+        databaseURL: directory.appendingPathComponent("journal.sqlite"),
+        keyURL: directory.appendingPathComponent("journal.key"), freshnessStore: freshness
+    )
+    let history = try sqliteDismissalHistory(
+        packetCount: packetHistoryCount, closedOnlyCount: packetHistoryCount == 0 ? 0 : 520
+    )
+    if !history.events.isEmpty {
+        _ = try journal.append(
+            expectedSequence: 0, events: history.events, documents: history.documents
+        )
+    }
+    let routing = try CoordinatorRoutingApplication(
+        journal: SQLiteClaimMeteredJournal(journal: journal, meter: meter),
+        clock: SQLiteClaimClock(), eventIDGenerator: SQLiteClaimIDs(prefix: "dismiss_budget").next
+    )
+    var samples: [(String, SQLiteReceiptPhaseSample)] = []
+    for optimized in [false, true] {
+        let mode = optimized ? "single_projection" : "previous_read_close_read"
+        let suffix = "dismiss_\(mode)"
+        let binding = sqliteClaimBinding(suffix)
+        let sequenceBefore = try journal.load().journalSequence
+        let packet = try sqliteClaimPacket(
+            suffix: suffix, binding: binding,
+            validAfterEventSequence: sequenceBefore + 2, rankedActions: true
+        )
+        _ = try routing.executeCommand(sqliteClaimData([
+            "type": "open_boundary", "event_id": "event_\(suffix)_open",
+            "occurred_at": "2026-08-21T12:00:00Z", "binding": binding,
+            "proposal_id": "proposal_\(suffix)",
+        ]))
+        _ = try routing.executeCommand(sqliteClaimData([
+            "type": "seal_packet", "event_id": "event_\(suffix)_seal", "packet": packet,
+        ]))
+        var request = binding
+        request["interaction_id"] = packet["interaction_id"]
+        request["packet_id"] = packet["packet_id"]
+        request["revision"] = packet["revision"]
+        let requestData = try sqliteClaimData(request)
+        let close = try sqliteClaimData([
+            "type": "close_boundary", "event_id": "event_\(suffix)_close",
+            "occurred_at": "2026-08-21T12:00:02Z", "binding": binding,
+            "close_reason": "user_dismissed",
+        ])
+        let sample = try sqliteReceiptMeasure(meter) {
+            if optimized {
+                try routing.dismissInteraction(requestData, closingWith: close, allowNonHead: false) {}
+            } else {
+                // Reproduce the previous verified read/close/read sequence
+                // for comparison, outside the production dismissal entrypoint.
+                _ = try routing.authoritativeState()
+                _ = try routing.executeCommand(close)
+                _ = try routing.authoritativeState()
+            }
+        }
+        samples.append((mode, sample))
+        #expect(sample.counts == SQLiteClaimIOCounts(
+            publicLoads: optimized ? 1 : 5, publicAppends: 1, appendedEventCounts: [1],
+            freshnessLoads: optimized ? 3 : 7, freshnessCAS: 2
+        ))
+        let snapshot = try journal.load()
+        #expect(snapshot.journalSequence == sequenceBefore + 3)
+        #expect(snapshot.documents.count == history.documents.count + (optimized ? 2 : 1))
+        let state = try CoordinatorSemanticReplay.replay(snapshot)
+        let boundary = try #require(state.boundary(for: CoordinatorBinding(jsonObject: binding)))
+        #expect(boundary.closed && boundary.closeReason == "user_dismissed" && boundary.selection == nil)
+        #expect(state.continuations.isEmpty)
+        if optimized {
+            let retry = try sqliteReceiptMeasure(meter) {
+                try routing.dismissInteraction(requestData, closingWith: close, allowNonHead: false) {
+                    Issue.record("An exact committed retry must not require a new pending card")
+                }
+            }
+            samples.append(("exact_retry", retry))
+            #expect(retry.counts == SQLiteClaimIOCounts(publicLoads: 1, freshnessLoads: 1))
+            #expect(try journal.load() == snapshot)
+        }
+    }
+    for (mode, sample) in samples {
+        print(
+            "SQLITE_DISMISS_BENCHMARK mode=\(mode) history_events=\(history.events.count)"
+                + " history_packets=\(history.documents.count) freshness_backend=in_memory"
+                + " elapsed_ms=\(String(format: "%.3f", sample.elapsedSeconds * 1_000))"
+                + " public_loads=\(sample.counts.publicLoads) public_appends=\(sample.counts.publicAppends)"
+                + " freshness_loads=\(sample.counts.freshnessLoads) freshness_cas=\(sample.counts.freshnessCAS)"
+        )
+    }
 }

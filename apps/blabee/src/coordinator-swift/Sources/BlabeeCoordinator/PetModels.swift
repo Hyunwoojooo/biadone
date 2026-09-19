@@ -404,18 +404,42 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
     let commandPreview: String
     let allowOnceAvailable: Bool
     let deliveryPending: Bool
+    let isNativeSubagent: Bool
+    let remainingMilliseconds: Int64?
 
     var id: String { requestID }
 
     init(jsonObject: [String: Any]) throws {
+        var permissionKeys: Set<String> = [
+            "arrival_sequence", "request_id", "project_id", "session_id", "turn_id", "cwd",
+            "tool_name", "description", "command_preview", "allow_once_available", "delivery_pending",
+        ]
+        if jsonObject["binding_source"] != nil { permissionKeys.insert("binding_source") }
+        if jsonObject["remaining_milliseconds"] != nil { permissionKeys.insert("remaining_milliseconds") }
         try petExactKeys(
             jsonObject,
-            [
-                "arrival_sequence", "request_id", "project_id", "session_id", "turn_id", "cwd",
-                "tool_name", "description", "command_preview", "allow_once_available", "delivery_pending",
-            ],
+            permissionKeys,
             "permission_request"
         )
+        if jsonObject["binding_source"] != nil {
+            try petRequire(
+                jsonObject["binding_source"] as? String == "native_subagent",
+                "permission_request.binding_source"
+            )
+            isNativeSubagent = true
+        } else {
+            isNativeSubagent = false
+        }
+        if jsonObject["remaining_milliseconds"] != nil {
+            let remaining = try petInteger(jsonObject, "remaining_milliseconds", minimum: 0)
+            try petRequire(
+                remaining <= HookPermissionTimingPolicy.userDecisionTimeoutMilliseconds,
+                "permission_request.remaining_milliseconds"
+            )
+            remainingMilliseconds = remaining
+        } else {
+            remainingMilliseconds = nil
+        }
         arrivalSequence = try petInteger(
             jsonObject,
             "arrival_sequence",
@@ -442,9 +466,37 @@ struct PetPermissionRequest: Sendable, Equatable, Identifiable {
             maximum: Self.maximumCommandScalars
         )
         try petRequire(
+            !isNativeSubagent || allowOnceAvailable,
+            "permission_request.native_subagent_qualification"
+        )
+        try petRequire(
             HookPermissionPolicy.isValidCommand(commandPreview),
             "permission_request.command_preview"
         )
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Polling updates presentation time without changing selection authority.
+        lhs.arrivalSequence == rhs.arrivalSequence
+            && lhs.requestID == rhs.requestID
+            && lhs.projectID == rhs.projectID
+            && lhs.sessionID == rhs.sessionID
+            && lhs.turnID == rhs.turnID
+            && lhs.cwd == rhs.cwd
+            && lhs.toolName == rhs.toolName
+            && lhs.requestDescription == rhs.requestDescription
+            && lhs.commandPreview == rhs.commandPreview
+            && lhs.allowOnceAvailable == rhs.allowOnceAvailable
+            && lhs.deliveryPending == rhs.deliveryPending
+            && lhs.isNativeSubagent == rhs.isNativeSubagent
+    }
+
+    var approvalWaitMessage: String? {
+        guard !deliveryPending, let remainingMilliseconds else { return nil }
+        let seconds = (remainingMilliseconds + 999) / 1_000
+        let minutes = seconds / 60
+        let secondComponent = String(format: "%02d", Int(seconds % 60))
+        return "남은 시간 \(minutes):\(secondComponent) · 시간이 지나면 Codex에서 직접 선택"
     }
 
     var displaySummary: String {
@@ -1016,19 +1068,38 @@ struct PetSnapshot: Sendable, Equatable {
     let permissionNoticeCount: Int64
     let managedCommandApprovals: [PetManagedCommandApproval]
     let managedCommandApprovalNoticeCount: Int64
+    var eventNavigation: PetEventNavigationSnapshot? = nil
+    var providerStatus: PetProviderStatus? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.projects == rhs.projects
+            && lhs.sessions == rhs.sessions
+            && lhs.routing == rhs.routing
+            && lhs.interactions == rhs.interactions
+            && lhs.permissionRequests == rhs.permissionRequests
+            // Countdown changes refresh the snapshot without replacing the request's authority.
+            && lhs.permissionRequests.map(\.remainingMilliseconds)
+                == rhs.permissionRequests.map(\.remainingMilliseconds)
+            && lhs.permissionNoticeCount == rhs.permissionNoticeCount
+            && lhs.managedCommandApprovals == rhs.managedCommandApprovals
+            && lhs.managedCommandApprovalNoticeCount == rhs.managedCommandApprovalNoticeCount
+            && lhs.eventNavigation == rhs.eventNavigation
+            && lhs.providerStatus == rhs.providerStatus
+    }
 
     static func parse(_ data: Data) throws -> PetSnapshot {
         let object = try StrictJSONTransport.object(
             from: data,
             limits: StrictJSONLimits(maximumBytes: 1_048_576, maximumDepth: 72)
         )
+        let snapshotKeys: Set<String> = [
+            "schema_version", "kind", "routing", "projects", "sessions", "interactions",
+            "permission_requests", "permission_notice_count",
+            "managed_command_approvals", "managed_command_approval_notice_count",
+        ]
         try petExactKeys(
             object,
-            [
-                "schema_version", "kind", "routing", "projects", "sessions", "interactions",
-                "permission_requests", "permission_notice_count",
-                "managed_command_approvals", "managed_command_approval_notice_count",
-            ],
+            object["event_navigation"] == nil ? snapshotKeys : snapshotKeys.union(["event_navigation"]),
             "snapshot"
         )
         let schemaVersion = try petString(object, "schema_version", maximum: 16)
@@ -1074,16 +1145,13 @@ struct PetSnapshot: Sendable, Equatable {
                 route.millisecondsUntilExpiry == interaction.millisecondsUntilExpiry,
                 "interactions.milliseconds_until_expiry"
             )
-            guard let session = sessions.first(where: {
+            // Sessions describe the latest prompt. A verified queued delivery can
+            // advance that prompt while its successor retains the original binding.
+            // The exact active route above owns the card's turn/prompt/episode.
+            try petRequire(sessions.contains(where: {
                 $0.projectID == interaction.identity.binding.projectID
                     && $0.sessionID == interaction.identity.binding.sessionID
-            }) else { throw PetModelError.invalid("interactions.session_id") }
-            try petRequire(
-                session.sourceTurnID == interaction.identity.binding.sourceTurnID
-                    && session.sourcePromptID == interaction.identity.binding.sourcePromptID
-                    && session.episodeID == interaction.identity.binding.episodeID,
-                "interactions.session_join"
-            )
+            }), "interactions.session_id")
             return interaction
         }
         try petRequire(
@@ -1123,13 +1191,38 @@ struct PetSnapshot: Sendable, Equatable {
         )
         for request in permissionRequests {
             let projectPath = URL(fileURLWithPath: request.cwd).standardizedFileURL.path
+            if request.isNativeSubagent {
+                if request.deliveryPending {
+                    // Once selected, ACK uses the stored binding even if a prompt
+                    // registers the child session or project configuration changes.
+                    guard let project = projectByID[request.projectID],
+                          projectPath == project.cwd || projectPath.hasPrefix(project.cwd + "/")
+                    else { throw PetModelError.invalid("permission_requests.binding") }
+                    continue
+                }
+                // Native child turns have no prompt-bound session authority. Match
+                // the coordinator's most-specific project, including disabled roots.
+                let project = projects
+                    .filter { projectPath == $0.cwd || projectPath.hasPrefix($0.cwd + "/") }
+                    .max { $0.cwd.count < $1.cwd.count }
+                try petRequire(
+                    project?.projectID == request.projectID
+                        && project?.enabled == true
+                        && !sessions.contains(where: { $0.sessionID == request.sessionID }),
+                    "permission_requests.binding"
+                )
+                continue
+            }
             guard let project = projectByID[request.projectID],
                   project.cwd.utf8.elementsEqual(projectPath.utf8),
                   let session = sessions.first(where: {
                       $0.projectID == request.projectID
                           && $0.sessionID == request.sessionID
                   }),
-                  session.sourceTurnID == request.turnID
+                  // A selected request awaits ACK on its stored turn even after
+                  // the same session receives a new prompt. Waiting requests still
+                  // require the current turn and cannot approve a superseded one.
+                  request.deliveryPending || session.sourceTurnID == request.turnID
             else { throw PetModelError.invalid("permission_requests.binding") }
         }
         let managedCommandApprovals = try rawManagedCommandApprovals.map(
@@ -1159,6 +1252,20 @@ struct PetSnapshot: Sendable, Equatable {
             "managed_command_approvals.transport_binding"
         )
 
+        let eventNavigation: PetEventNavigationSnapshot?
+        if let rawNavigation = object["event_navigation"] as? [String: Any] {
+            eventNavigation = try PetEventNavigationSnapshot(
+                jsonObject: rawNavigation,
+                availableEvents: interactions.filter { $0.state == .waiting }.map(PetQueuedEvent.decision)
+                    + permissionRequests.map(PetQueuedEvent.permission)
+                    + managedCommandApprovals.map(PetQueuedEvent.managed)
+            )
+        } else if object["event_navigation"] != nil {
+            throw PetModelError.invalid("event_navigation")
+        } else {
+            eventNavigation = nil
+        }
+
         return PetSnapshot(
             projects: projects,
             sessions: sessions,
@@ -1175,7 +1282,8 @@ struct PetSnapshot: Sendable, Equatable {
                 object,
                 "managed_command_approval_notice_count",
                 minimum: 0
-            )
+            ),
+            eventNavigation: eventNavigation
         )
     }
 
@@ -1264,6 +1372,35 @@ struct PetFocusRequest: Sendable, Equatable {
     }
 
     func data() throws -> Data { try StrictJSONTransport.data(forJSONObject: jsonObject) }
+}
+
+/// Discards one offered decision without choosing an action or queuing a prompt.
+struct PetDismissRequest: Sendable, Equatable {
+    let identity: PetInteractionIdentity
+
+    var jsonObject: [String: Any] {
+        var result = identity.jsonObject
+        result["schema_version"] = "1.0"
+        result["kind"] = "blabee_pet_dismiss_request"
+        return result
+    }
+
+    func data() throws -> Data { try StrictJSONTransport.data(forJSONObject: jsonObject) }
+
+    func requireDismissed(_ data: Data) throws {
+        let object = try StrictJSONTransport.object(from: data)
+        try petExactKeys(
+            object, ["dismissed", "interaction_id", "packet_id", "revision"],
+            "dismiss_response"
+        )
+        try petRequire(
+            petStrictBooleanValue(object["dismissed"]) == true
+                && object["interaction_id"] as? String == identity.interactionID
+                && object["packet_id"] as? String == identity.packetID
+                && ExactJSONInteger.int64(object["revision"], minimum: 1) == identity.revision,
+            "dismiss_response"
+        )
+    }
 }
 
 struct PetSelectionRequest: Sendable, Equatable {

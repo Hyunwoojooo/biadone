@@ -2,29 +2,30 @@ import CoreGraphics
 import Testing
 @testable import BlabeeCoordinator
 
-@Test("BlabeePet panel height follows ready state and action count")
+@Test("BlabeePet Air panel height follows the ready artwork and two-column choice rows")
 func blabeePetPanelHeightFollowsContent() {
-    #expect(preferredPanelSize(actionCount: nil) == CGSize(width: 460, height: 240))
-    #expect(preferredPanelSize(actionCount: 1) == CGSize(width: 460, height: 300))
-    #expect(preferredPanelSize(actionCount: 2) == CGSize(width: 460, height: 354))
-    #expect(preferredPanelSize(actionCount: 3) == CGSize(width: 460, height: 424))
-    #expect(preferredPanelSize(actionCount: 4) == CGSize(width: 460, height: 494))
+    #expect(preferredPanelSize(actionCount: nil) == CGSize(width: 460, height: 480))
+    #expect(preferredPanelSize(actionCount: 1) == CGSize(width: 460, height: 500))
+    #expect(preferredPanelSize(actionCount: 2) == CGSize(width: 460, height: 500))
+    #expect(preferredPanelSize(actionCount: 3) == CGSize(width: 460, height: 650))
+    #expect(preferredPanelSize(actionCount: 4) == CGSize(width: 460, height: 650))
+    #expect(preferredPanelSize(actionCount: 20) == preferredPanelSize(actionCount: 4))
 }
 
 @Test("BlabeePet panel uses a fixed permission screen and bounded supplementary rows")
 func blabeePetPanelHeightIncludesSupplementaryRows() {
     #expect(preferredPanelSize(actionCount: nil, hasPermissionNotice: true).height == 520)
-    #expect(preferredPanelSize(actionCount: 3, fifoQueueCount: 2).height == 468)
+    #expect(preferredPanelSize(actionCount: 3, fifoQueueCount: 2).height == 680)
     #expect(preferredPanelSize(
         actionCount: 3,
         fifoQueueCount: 2,
         hasPermissionNotice: true
-    ).height == 520)
+    ).height == 564)
     #expect(preferredPanelSize(
         actionCount: 20,
         fifoQueueCount: 2,
         hasPermissionNotice: true
-    ).height == 520)
+    ).height == 564)
     #expect(preferredPanelSize(
         actionCount: nil,
         isEditingShortcuts: true,
@@ -35,16 +36,22 @@ func blabeePetPanelHeightIncludesSupplementaryRows() {
         isShowingOnboarding: true,
         hasPermissionNotice: true
     ).height == 520)
-    #expect(preferredPanelSize(actionCount: nil, hasStatusMessage: true).height == 288)
-    #expect(preferredPanelSize(actionCount: 3, hasStatusMessage: true).height == 472)
+    #expect(preferredPanelSize(actionCount: nil, hasStatusMessage: true).height == 528)
+    #expect(preferredPanelSize(actionCount: 3, hasStatusMessage: true).height == 680)
+    #expect(preferredPanelSize(
+        actionCount: 4,
+        fifoQueueCount: 2,
+        hasStatusMessage: true
+    ).height == 680)
     #expect(preferredPanelSize(
         actionCount: 4,
         fifoQueueCount: 2,
         hasPermissionNotice: true,
         hasStatusMessage: true
-    ).height == 568)
+    ) == CGSize(width: 460, height: 612))
     #expect(
         PetPanelSizePolicy.permissionRequestHeight
+            + PetPanelSizePolicy.fifoQueueHeight
             + PetPanelSizePolicy.statusMessageHeight
             < PetPanelSizePolicy.expandedHeight
     )
@@ -53,7 +60,7 @@ func blabeePetPanelHeightIncludesSupplementaryRows() {
 @Test("BlabeePet reserves full height only for visible expanded content")
 func blabeePetPanelHeightHonorsExpandedModes() {
     #expect(preferredPanelSize(actionCount: 3, isExpanded: true).height == 680)
-    #expect(preferredPanelSize(actionCount: nil, isExpanded: true).height == 240)
+    #expect(preferredPanelSize(actionCount: nil, isExpanded: true).height == 480)
     #expect(preferredPanelSize(actionCount: nil, isEditingShortcuts: true).height == 680)
     #expect(preferredPanelSize(actionCount: nil, isShowingOnboarding: true).height == 680)
 }
@@ -63,7 +70,7 @@ func blabeePetScrollPolicyIsBoundedToVariableContent() {
     #expect(!PetPanelContentPolicy.allowsScrolling(in: .ready))
     #expect(PetPanelContentPolicy.allowsScrolling(in: .permission))
     for actionCount in 1 ... 4 {
-        #expect(!PetPanelContentPolicy.allowsScrolling(
+        #expect(PetPanelContentPolicy.allowsScrolling(
             in: .decision(actionCount: actionCount)
         ))
     }
@@ -77,11 +84,11 @@ func blabeePetScrollPolicyIsBoundedToVariableContent() {
     ) == CGSize(width: 460, height: 520))
 }
 
-@Test("BlabeePet compact screens use fixed text truncation limits")
+@Test("BlabeePet Air choices wrap full titles while supporting text stays bounded")
 func blabeePetCompactTextPolicyIsFixed() {
     #expect(PetPanelContentPolicy.projectNameLineLimit == 1)
     #expect(PetPanelContentPolicy.summaryLineLimit == 2)
-    #expect(PetPanelContentPolicy.actionTitleLineLimit == 1)
+    #expect(PetPanelContentPolicy.actionTitleLineLimit == nil)
     #expect(PetPanelContentPolicy.disabledReasonLineLimit == 1)
     #expect(PetPanelContentPolicy.statusMessageLineLimit == 2)
 }
@@ -96,7 +103,6 @@ func blabeePetChoicePreviewPanelSize(actionCount: Int) {
     )
     #expect(previewSize.width == ordinarySize.width)
     #expect(previewSize.height == 640)
-    #expect(previewSize.height > ordinarySize.height)
     #expect(preferredPanelSize(
         actionCount: actionCount,
         fifoQueueCount: 2,

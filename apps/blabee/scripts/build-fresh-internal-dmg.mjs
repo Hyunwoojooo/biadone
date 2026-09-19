@@ -34,6 +34,7 @@ import {
   requireInternalBuildNumber,
   requireInternalDMGOutputBuildSuffix,
 } from "./internal-build-number.mjs";
+import { normalizeReleaseSigning } from "./release-signing.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -933,10 +934,12 @@ export async function buildFreshInternalDMG({
   outputPath,
   buildNumber,
   compatiblePreviousApps = [],
+  releaseSigning = null,
   sourceRoot = defaultSourceRoot,
   platform = process.platform,
 } = {}, dependencies = {}) {
   requireDarwin(platform);
+  const signing = normalizeReleaseSigning(releaseSigning);
   const normalizedBuildNumber = requireInternalBuildNumber(
     buildNumber,
     "build number",
@@ -1015,6 +1018,7 @@ export async function buildFreshInternalDMG({
       outputPath: output,
       buildNumber: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
+      ...(signing === null ? {} : { releaseSigning: signing }),
       platform,
       sourceRoot: snapshotSource,
       prePublishValidation: async () => {

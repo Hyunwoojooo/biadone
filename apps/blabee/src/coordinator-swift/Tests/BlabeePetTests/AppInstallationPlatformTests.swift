@@ -264,6 +264,30 @@ struct AppInstallationApplicationOpenerTests {
         application.appendingPathComponent("Contents/MacOS/blabee-coordinator")
     }
 
+    @Test("presence distinguishes the installed app from its installer and ignores terminated instances")
+    func installedApplicationPresence() {
+        let installer = URL(fileURLWithPath: "/Volumes/Blabee/Blabee.app")
+        let installerExecutable = installer.appendingPathComponent("Contents/MacOS/blabee-coordinator")
+        for (bundle, binary, terminated, expected) in [
+            (application, executable, false, true),
+            (application, executable, true, false),
+            (installer, installerExecutable, false, false),
+            (application, installerExecutable, false, true),
+            (installer, executable, false, true),
+        ] {
+            let snapshot = AppInstallationRunningApplication.Snapshot(
+                processID: 42, bundleURL: bundle, executableURL: binary,
+                isTerminated: terminated, isFinishedLaunching: true
+            )
+            #expect(snapshot.mayUseInstalledLocation(application) == expected)
+        }
+        let unknown = AppInstallationRunningApplication.Snapshot(
+            processID: 42, bundleURL: nil, executableURL: nil,
+            isTerminated: false, isFinishedLaunching: false
+        )
+        #expect(!unknown.mayUseInstalledLocation(application))
+    }
+
     @Test("opens the exact installed app with substitution disabled and verifies it twice")
     func exactLaunch() async throws {
         let workspace = InstallationWorkspaceStub()
@@ -283,10 +307,40 @@ struct AppInstallationApplicationOpenerTests {
         try await opener.openInstalled(applicationURL: application, expectedIdentity: identity)
         #expect(workspace.openedURLs == [application])
         #expect(workspace.configuration?.allowsRunningApplicationSubstitution == false)
+        #expect(workspace.configuration?.createsNewApplicationInstance == true)
         #expect(workspace.configuration?.activates == true)
         #expect(workspace.configuration?.arguments == ["installed-pet"])
         #expect(identityReads == [executable, executable])
         #expect(workspace.shownFolders.isEmpty)
+    }
+
+    @Test("an installed app already running is not forced into a duplicate instance")
+    func installedAppAlreadyRunning() async throws {
+        let workspace = InstallationWorkspaceStub()
+        workspace.installedAppIsRunning = true
+        workspace.application = runningApplication()
+        try await makeOpener(workspace: workspace).openInstalled(
+            applicationURL: application, expectedIdentity: identity
+        )
+        #expect(workspace.configuration?.createsNewApplicationInstance == false)
+        #expect(workspace.configuration?.allowsRunningApplicationSubstitution == false)
+    }
+
+    @Test("an existing installed instance must still pass dynamic identity checks")
+    func existingAppStillRequiresIdentity() async {
+        let workspace = InstallationWorkspaceStub()
+        workspace.installedAppIsRunning = true
+        workspace.application = runningApplication()
+        let executable = executable
+        let opener = AppInstallationApplicationOpener(
+            workspace: workspace, installedIdentity: { _ in identity },
+            runningIdentity: { _, _ in nil },
+            processObservation: { _ in .running(executableURL: executable) }
+        )
+        await #expect(throws: AppInstallationPlatformError.runningIdentityMismatch) {
+            try await opener.openInstalled(applicationURL: application, expectedIdentity: identity)
+        }
+        #expect(workspace.configuration?.createsNewApplicationInstance == false)
     }
 
     @Test("changed identity before opening prevents any launch")
@@ -523,6 +577,7 @@ private final class InstallationLockedSequence<Value: Sendable>: @unchecked Send
 
 @MainActor
 private final class InstallationWorkspaceStub: AppInstallationWorkspaceOpening {
+    var installedAppIsRunning = false
     var openedURLs: [URL] = []
     var shownFolders: [URL] = []
     var configuration: NSWorkspace.OpenConfiguration?
@@ -531,6 +586,8 @@ private final class InstallationWorkspaceStub: AppInstallationWorkspaceOpening {
     var completion: (@MainActor @Sendable (
         Result<AppInstallationRunningApplication, AppInstallationPlatformError>
     ) -> Void)?
+
+    func hasRunningApplication(at applicationURL: URL) -> Bool { installedAppIsRunning }
 
     func openApplication(
         at applicationURL: URL,

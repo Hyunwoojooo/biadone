@@ -7,6 +7,7 @@ enum PetAppServiceState: Equatable, Sendable {
     case starting
     case ready
     case reconnecting
+    case unresponsive
     case stopping
     case blocked
     case failed(String)
@@ -18,6 +19,7 @@ enum PetAppServiceState: Equatable, Sendable {
         case .starting: "서비스 시작 중"
         case .ready: "서비스 연결됨"
         case .reconnecting: "서비스 연결 확인 중"
+        case .unresponsive: "서비스 응답 지연"
         case .stopping: "서비스 종료 중"
         case .blocked: "기존 서비스 등록 해제 필요"
         case .failed: "서비스 실행 확인 필요"
@@ -36,6 +38,8 @@ enum PetAppServiceState: Equatable, Sendable {
             "이 앱이 시작한 서비스에 연결되었습니다. 패널을 닫아도 유지되고 Blabee 종료 시 함께 종료됩니다."
         case .reconnecting:
             "응답을 확인할 때까지 선택을 중지합니다. 기존 작업을 자동으로 다시 보내지 않습니다."
+        case .unresponsive:
+            "서비스 응답이 늦어지고 있습니다. 실행 중인 서비스를 유지하며 연결을 다시 확인합니다. 응답을 확인할 때까지 선택을 중지하고, 기존 작업을 자동으로 다시 보내지 않습니다. 계속 지연되면 설정에서 서비스 다시 시작을 선택하세요."
         case .stopping:
             "이 앱이 시작한 서비스만 종료하고 있습니다. Codex 세션은 종료하지 않습니다."
         case .blocked:
@@ -54,7 +58,9 @@ enum PetAppServiceState: Equatable, Sendable {
             "앱 실행 파일을 확인할 수 없습니다. 앱을 완전히 종료하고 설치된 Blabee를 다시 여세요."
         case "freshness_anchor_unavailable":
             "Keychain에 접근하지 못했습니다. macOS의 접근 요청과 잠금 상태를 확인한 뒤 다시 시도하세요."
-        case "freshness_anchor_missing", "freshness_anchor_corrupt", "freshness_storage_missing",
+        case "freshness_storage_missing":
+            "이전 검증 기록에 대응하는 저장 파일이 없습니다. 설정의 저장소 복구에서 상태를 확인하세요. 데이터나 Keychain 항목을 직접 삭제하지 마세요."
+        case "freshness_anchor_missing", "freshness_anchor_corrupt",
              "freshness_transition_pending", "freshness_transition_mismatch", "database_integrity_failed":
             "저장 정보 검증에 실패했습니다. 데이터나 Keychain 항목을 삭제하지 말고 진단 코드를 전달해 주세요."
         case "app_service_connection_timeout":
@@ -102,6 +108,7 @@ final class PetAppServiceController {
     private var stopTask: Task<Void, Never>?
     private var transitionInProgress = false
     private var shuttingDown = false
+    private let errorDiagnostics: PetErrorDiagnostics?
 
     private(set) var enabled: Bool
     private(set) var state: PetAppServiceState
@@ -113,13 +120,15 @@ final class PetAppServiceController {
         preference: any PetAppServicePreferenceStoring,
         registration: @escaping @MainActor () -> PetServiceRegistrationState,
         readinessTimeoutNanoseconds: UInt64 = 12_000_000_000,
-        startupTimeoutNanoseconds: UInt64 = 120_000_000_000
+        startupTimeoutNanoseconds: UInt64 = 120_000_000_000,
+        errorDiagnostics: PetErrorDiagnostics? = nil
     ) {
         self.launcher = launcher
         self.preference = preference
         self.registration = registration
         self.readinessTimeoutNanoseconds = readinessTimeoutNanoseconds
         self.startupTimeoutNanoseconds = startupTimeoutNanoseconds
+        self.errorDiagnostics = errorDiagnostics
         enabled = preference.enabled
         state = preference.enabled ? .stopped : .disabled
         PetStartupDiagnostics.preference(enabled: enabled)
@@ -134,7 +143,9 @@ final class PetAppServiceController {
     var mayQueryCoordinator: Bool {
         guard !shuttingDown, !transitionInProgress else { return false }
         if !enabled { return child == nil }
-        guard state == .starting || state == .ready || state == .reconnecting else { return false }
+        guard state == .starting || state == .ready || state == .reconnecting || state == .unresponsive else {
+            return false
+        }
         return child?.isRunning == true && child?.hasPublishedService == true
     }
 
@@ -185,6 +196,7 @@ final class PetAppServiceController {
               let child, !child.isRunning else { return }
         let summary = child.terminationSummary ?? "app_service_exited"
         PetStartupDiagnostics.recordFailure(.serviceChildExited, code: summary)
+        if !Task.isCancelled { errorDiagnostics?.record(code: .appServiceExited) }
         generation &+= 1
         deadline?.cancel()
         deadline = nil
@@ -223,17 +235,24 @@ final class PetAppServiceController {
             update(.blocked)
             return
         case .unknown:
+            if !Task.isCancelled { errorDiagnostics?.record(code: .appServiceFailed) }
             update(.failed("service_registration_unknown"))
             return
         }
         update(.starting)
+        let errorContext = errorDiagnostics?.captureContext()
         do {
             child = try launcher.launch()
             PetStartupDiagnostics.record(.serviceChildSpawned)
             // Initial storage access can wait for a user to answer macOS's
-            // Keychain prompt. Reconnects retain their shorter health budget.
+            // Keychain prompt. Once verified, a delayed response can be durable
+            // work still running; the shorter reconnect budget is diagnostic.
             armDeadline(timeoutNanoseconds: startupTimeoutNanoseconds)
         } catch {
+            if !Task.isCancelled, !(error is CancellationError),
+               (error as? URLError)?.code != .cancelled, let errorContext {
+                errorDiagnostics?.record(code: .appServiceFailed, context: errorContext)
+            }
             // Never surface subprocess output, local paths, tokens or prompts.
             let code = (error as? CoordinatorError)?.code ?? "app_service_launch_failed"
             PetStartupDiagnostics.recordFailure(.serviceLaunchFailed, code: code)
@@ -244,12 +263,30 @@ final class PetAppServiceController {
     private func armDeadline(timeoutNanoseconds: UInt64) {
         deadline?.cancel()
         let expectedGeneration = generation
+        let errorContext = errorDiagnostics?.captureContext()
         deadline = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: timeoutNanoseconds) } catch { return }
-            guard let self, self.generation == expectedGeneration,
+            guard let self, !Task.isCancelled, !self.shuttingDown,
+                  self.generation == expectedGeneration,
                   self.state == .starting || self.state == .reconnecting else { return }
             self.deadline = nil
+            // A missing response is not process-exit evidence. Check the child
+            // separately before classifying a live service as slow.
+            self.checkChildBeforePolling()
+            guard self.generation == expectedGeneration,
+                  self.state == .starting || self.state == .reconnecting else { return }
             PetStartupDiagnostics.record(.serviceReadinessTimeout)
+            if let errorContext {
+                self.errorDiagnostics?.record(code: .appServiceTimeout, context: errorContext)
+            }
+            if self.state == .reconnecting {
+                // Do not interrupt a transaction merely because its response
+                // missed the health budget. Existing snapshot polling (with
+                // bounded backoff) can recover this same generation. Only the
+                // user may restart it; no action is replayed here.
+                self.update(.unresponsive)
+                return
+            }
             await self.stopOwnedChild()
             guard !self.shuttingDown else { return }
             if self.child == nil { self.update(.failed("app_service_connection_timeout")) }

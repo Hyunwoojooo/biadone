@@ -41,13 +41,20 @@ actor FixtureTransportHandler: CoordinatorOperationalHandling {
         if let delay = object["fixture_delay_ms"] as? Int, delay > 0 {
             try await Task.sleep(for: .milliseconds(Int64(min(delay, 2_000))))
         }
-        return try StrictJSONTransport.data(forJSONObject: [
+        var result: [String: Any] = [
             "fixture": "ok",
             "handled_type": type,
             "scheduler_attempts": schedulerAttempts,
             "scheduler_failures": schedulerFailures,
             "scheduler_passes": schedulerPasses,
-        ])
+        ]
+        if let responseBytes = object["fixture_response_bytes"] as? Int {
+            guard (0...900_000).contains(responseBytes) else {
+                throw CoordinatorError("fixture_response_size_invalid")
+            }
+            result["fixture_padding"] = String(repeating: "x", count: responseBytes)
+        }
+        return try StrictJSONTransport.data(forJSONObject: result)
     }
 
     func doctorStatus(payload: Data) async throws -> Data {

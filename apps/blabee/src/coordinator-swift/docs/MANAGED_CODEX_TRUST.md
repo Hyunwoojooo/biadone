@@ -104,7 +104,9 @@ unknown third entry, ACL·link·type drift가 있으면 삭제하지 않는다. 
 
 ## Doctor와 버전 자격
 
-정적 Doctor는 read-only다. private pin이나 영속 파일을 만들지 않고 관리형 child도
+이 절은 `doctor --profile managed`의 정적 검사 기준을 설명한다. 기본 `plugin`
+진단과 출력 필드는 [Doctor 진단 기준과 출력](DOCTOR_DIAGNOSTICS.md)을 참고한다.
+관리형 정적 Doctor는 read-only다. private pin이나 영속 파일을 만들지 않고 관리형 child도
 시작하지 않는다. `codex --version`, `codex plugin list`, App Server
 `hooks/list`를 호출하지 않고 launcher와 같은 runtime inspector의 파일 검사와
 daemon의 읽기 전용 `doctor_status` UDS만 사용한다. 다음 결과를 분리한다.
@@ -116,7 +118,7 @@ daemon의 읽기 전용 `doctor_status` UDS만 사용한다. 다음 결과를 �
 - `blabee_build_identity`: 실행 중인 앱·service·Plugin locator가 실제로 확인된 경우의
   build 일치 여부. 표준 `/Applications` fallback만으로 Plugin 일치를 추정하지 않는다.
 
-정적 Doctor는 manifest 버전이 allowlist에 있어도 production fingerprint가 미등록이면
+`doctor --profile managed`는 manifest 버전이 allowlist에 있어도 production fingerprint가 미등록이면
 `action_required`로 분리하고, 등록 fingerprint와 다르면 실패한다. catalog가 일치해도 실제 binary 버전 일치,
 Plugin 설치·활성, Hook 신뢰, code-mode compatibility를 통과로 추정하지
 않는다. 이 항목은 `action_required`로 보고하고 새 Codex 버전

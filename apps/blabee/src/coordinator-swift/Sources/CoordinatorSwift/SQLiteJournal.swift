@@ -115,6 +115,11 @@ public final class SQLiteJournal: @unchecked Sendable {
 
     private let validator: V1IngressValidator
     private let freshnessStore: any FreshnessAnchorStore
+    /// Optional caller-owned admission at the durable append boundary. Parsing,
+    /// replay, lock acquisition and pending freshness preparation occur first.
+    /// Rejection rolls back SQLite and leaves pending freshness fail-closed.
+    public typealias AppendCommitGate = @Sendable (_ commit: () throws -> Void) throws -> Void
+    private let appendCommitGate: AppendCommitGate?
     private let storageProcessLock: StorageProcessLock
     private var authenticator: SidecarAuthenticator!
     private let lock = NSLock()
@@ -126,13 +131,15 @@ public final class SQLiteJournal: @unchecked Sendable {
         freshnessStore: any FreshnessAnchorStore,
         busyTimeoutMilliseconds: Int32 = 5_000,
         validator: V1IngressValidator = V1IngressValidator(),
-        secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus()
+        secretCorpus: RuntimeSecretCorpus = RuntimeSecretCorpus(),
+        appendCommitGate: AppendCommitGate? = nil
     ) throws {
         self.databaseURL = databaseURL.standardizedFileURL
         self.keyURL = keyURL.standardizedFileURL
         self.validator = validator
         self.secretCorpus = secretCorpus
         self.freshnessStore = freshnessStore
+        self.appendCommitGate = appendCommitGate
         let allowLockParentCreation = try Self.preflightFreshnessStorage(
             databaseURL: self.databaseURL,
             keyURL: self.keyURL,
@@ -387,7 +394,11 @@ public final class SQLiteJournal: @unchecked Sendable {
                 _exit(crashPoint == .beforeCommit ? 85 : 87)
             }
             do {
-                try execute("COMMIT")
+                if let appendCommitGate {
+                    try appendCommitGate { try execute("COMMIT") }
+                } else {
+                    try execute("COMMIT")
+                }
             } catch {
                 throw CoordinatorError(
                     "freshness_commit_ambiguous",

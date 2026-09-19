@@ -44,6 +44,7 @@ struct PetAppUpdateViewTests {
     @MainActor
     func rendersUpdateStates() throws {
         let update = try availableRelease()
+        let installableUpdate = try availableRelease(installable: true)
         let longDetail = String(
             repeating: "새 버전 정보를 확인하지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요. ",
             count: 12
@@ -60,6 +61,7 @@ struct PetAppUpdateViewTests {
                     ("checking", .checking),
                     ("up-to-date", .upToDate),
                     ("available", .available(update)),
+                    ("installable", .available(installableUpdate)),
                     ("no-published-release", .noPublishedRelease),
                     ("unavailable", .unavailable(longDetail)),
                 ] {
@@ -98,10 +100,16 @@ struct PetAppUpdateViewTests {
         #expect(narrow.fittingSize.height > wide.fittingSize.height + 20)
     }
 
-    private func availableRelease() throws -> PetAppUpdateRelease {
-        PetAppUpdateRelease(
+    private func availableRelease(installable: Bool = false) throws -> PetAppUpdateRelease {
+        let name = "Blabee-0.1.0-arm64-r30.dmg"
+        let base = try #require(URL(string: "https://github.com/Hyunwoojooo/biadone/releases/download/blabee-v0.1.0%2Bbuild.30/"))
+        return PetAppUpdateRelease(
             version: try #require(PetAppUpdateVersion(version: "0.1.0", build: "30")),
-            releaseURL: try #require(URL(string: "https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.30"))
+            releaseURL: try #require(URL(string: "https://github.com/Hyunwoojooo/biadone/releases/tag/blabee-v0.1.0%2Bbuild.30")),
+            installerAssets: installable ? .init(
+                dmg: .init(name: name, url: base.appendingPathComponent(name), size: 12_345),
+                checksum: .init(name: name + ".sha256", url: base.appendingPathComponent(name + ".sha256"), size: 100)
+            ) : nil
         )
     }
 

@@ -477,6 +477,310 @@ async function readStorageArtifacts(databasePath) {
   return Buffer.concat(values);
 }
 
+test("shared-root subagent Hooks preserve parent decisions and isolate concurrent approval delivery", async () => {
+  const server = await startOperationalServer();
+  const hookChildren = [];
+  const rootID = "01a0949b-0000-7000-8000-000000000001";
+  const threads = [rootID,
+    "01a0949b-0000-7000-8000-000000000002",
+    "01a0949b-0000-7000-8000-000000000003",
+  ];
+  const turns = threads.map((_, index) => `01a0949c-0000-7000-8000-00000000000${index + 1}`);
+  const rawHook = (event, index, fields = {}) => hookPayload(event, {
+    session_id: rootID,
+    ...(index === 0 ? {} : { agent_id: threads[index], agent_type: "worker" }),
+    cwd: server.enabledProjectPath,
+    turn_id: turns[index],
+    ...fields,
+  });
+  const callHook = (event, payload) => runBuiltBinary(server.build,
+    ["hook", event, "--socket", server.socketPath],
+    { input: JSON.stringify(payload) });
+  const idsFrom = (output) => {
+    assert.equal(output.code, 0);
+    assert.equal(output.stderr, "");
+    const context = JSON.parse(output.stdout).hookSpecificOutput.additionalContext;
+    return Object.fromEntries([
+      "project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
+      "episode_root_prompt_id", "episode_baseline_checkpoint_id", "correlation_token",
+    ].map((key) => [key, contextValue(context, key)]));
+  };
+  const snapshotUntil = async (predicate) => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const response = await udsRequest(server.socketPath, "pet_snapshot", {
+        schema_version: "1.0", kind: "blabee_pet_snapshot_request", consumer_heartbeat: true,
+      });
+      assert.equal(response.ok, true);
+      if (predicate(response.result)) return response.result;
+      await delay(20);
+    }
+    assert.fail("concurrent Hook state did not become available");
+  };
+  try {
+    const identities = [];
+    for (let index = 0; index < threads.length; index += 1) {
+      const ids = idsFrom(await callHook("UserPromptSubmit", rawHook("UserPromptSubmit", index, {
+        prompt: `Synthetic concurrent task ${index}`,
+      })));
+      assert.equal(ids.session_id, threads[index], "the effective thread must not be the shared root");
+      identities.push(ids);
+    }
+    // Both child prompts already ran: the parent's original authority must remain valid.
+    const offered = proposal(identities[0], "parent_after_children");
+    const emitted = await udsRequest(server.socketPath, "emit_decision",
+      proposalWrapper(identities[0], offered));
+    assert.equal(emitted.ok, true, JSON.stringify(emitted.error));
+    await callHook("Stop", rawHook("Stop", 0, {
+      stop_hook_active: false, last_assistant_message: "Synthetic root result",
+    }));
+    const waiting = await waitForInteraction(server.socketPath, 1);
+    assert.equal(waiting.interaction.session_id, rootID);
+
+    // Start real Hook adapter processes; only their synthetic requests are resolved.
+    await snapshotUntil(() => true);
+    for (let index = 0; index < threads.length; index += 1) {
+      const child = spawnBuiltBinary(server.build,
+        ["hook", "PermissionRequest", "--socket", server.socketPath], {
+          input: JSON.stringify(rawHook("PermissionRequest", index, {
+            tool_name: "Bash", tool_input: { command: `fictional-concurrent-command-${index}` },
+          })),
+        });
+      // Attach a rejection handler immediately, retaining the actual result for assertions.
+      child.completion.catch(() => {});
+      hookChildren.push(child);
+      await snapshotUntil((state) => state.permission_requests.length === index + 1);
+    }
+    const pending = await snapshotUntil((state) => state.permission_requests.length === 3);
+    assert.deepEqual(pending.permission_requests.map((request) => request.session_id), threads);
+    assert.equal(pending.interactions[0].session_id, rootID);
+    for (let index = 0; index < threads.length; index += 1) {
+      const head = pending.permission_requests[index];
+      const decision = index === 1 ? "deny" : "defer_to_codex";
+      const resolution = {
+        schema_version: "1.0", kind: "blabee_permission_resolution_request",
+        request_id: head.request_id, response_id: `response_concurrent_${index}`,
+        project_id: head.project_id, session_id: head.session_id, turn_id: head.turn_id, decision,
+      };
+      const wrongThread = await udsRequest(server.socketPath, "resolve_permission_request", {
+        ...resolution, session_id: threads[(index + 1) % threads.length],
+      });
+      assert.equal(wrongThread.ok, false);
+      assert.equal(wrongThread.error.code, "permission_request_binding_mismatch");
+      const resolved = await udsRequest(server.socketPath, "resolve_permission_request", resolution);
+      assert.equal(resolved.ok, true, JSON.stringify(resolved.error));
+      const completion = await hookChildren[index].completion;
+      assert.equal(completion.code, 0);
+      assert.equal(completion.stderr, "");
+      if (decision === "deny") {
+        assert.equal(JSON.parse(completion.stdout).hookSpecificOutput.decision.behavior, "deny");
+      } else {
+        assert.equal(completion.stdout, "");
+      }
+      await snapshotUntil((state) => state.permission_requests.length === threads.length - index - 1);
+    }
+
+    // A queued reference delivered to a sibling cannot consume the parent's action.
+    const focused = await udsRequest(server.socketPath, "focus_interaction", focusRequest(waiting.interaction));
+    assert.equal(focused.ok, true);
+    const selected = await udsRequest(server.socketPath, "select", selection(waiting.interaction, "root_isolated"));
+    assert.equal(selected.ok, true, JSON.stringify(selected.error));
+    const message = queuedPrompt(selected.result.outcome.continuation_id, server.enabledProjectPath);
+    const misplaced = await callHook("UserPromptSubmit", rawHook("UserPromptSubmit", 1, {
+      turn_id: "turn_wrong_child_delivery", prompt: message,
+    }));
+    assert.equal(misplaced.code, 0);
+    assert.equal(misplaced.stdout.includes(QUEUED_ACTION_CONTEXT_MARKER), false);
+    const delivered = await callHook("UserPromptSubmit", rawHook("UserPromptSubmit", 0, {
+      turn_id: "turn_right_parent_delivery", prompt: message,
+    }));
+    const deliveredContext = JSON.parse(delivered.stdout).hookSpecificOutput.additionalContext;
+    assert.equal(deliveredContext.includes(QUEUED_ACTION_CONTEXT_MARKER), true);
+    assert.equal(deliveredContext.includes(offered.next_actions[0].title), true);
+    assert.equal(contextValue(deliveredContext, "session_id"), rootID);
+  } finally {
+    // This fixture's graceful shutdown audit expects the separate two-dispatch scenario.
+    await server.abort();
+    await Promise.allSettled(hookChildren.map((child) => child.completion));
+    await rm(server.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("event navigation selects the third project first and preserves the other sessions", async () => {
+  const productBuild = await buildProductCoordinator();
+  const server = await startOperationalServer();
+  const hookChildren = [];
+  const names = ["blabee", "blabase", "biadone"];
+  const sessions = names.map((name) => `session_navigation_${name}`);
+  const directories = names.map((name) => path.join(server.enabledProjectPath, name));
+  const readSnapshot = async () => {
+    const response = await udsRequest(server.socketPath, "pet_snapshot", {
+      schema_version: "1.0", kind: "blabee_pet_snapshot_request", consumer_heartbeat: true,
+    });
+    assert.equal(response.ok, true, JSON.stringify(response.error));
+    return response.result;
+  };
+  const callHook = (event, index, fields) => runBuiltBinary(server.build,
+    ["hook", event, "--socket", server.socketPath], {
+      input: JSON.stringify(hookPayload(event, {
+        session_id: sessions[index], cwd: directories[index],
+        turn_id: `turn_navigation_${names[index]}`, ...fields,
+      })),
+    });
+  const waitForPermissions = async (count) => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const snapshot = await readSnapshot();
+      if (snapshot.permission_requests.length === count) return snapshot;
+      await delay(20);
+    }
+    assert.fail(`expected ${count} pending permissions`);
+  };
+  const resolvePermission = async (request, index, decision) => {
+    const target = {
+      schema_version: "1.0", kind: "blabee_permission_resolution_request",
+      request_id: request.request_id, project_id: request.project_id,
+      session_id: request.session_id, turn_id: request.turn_id,
+    };
+    const focused = await udsRequest(server.socketPath, "focus_event", {
+      schema_version: "1.0", kind: "blabee_pet_event_focus_request", event_kind: "permission", target,
+    });
+    assert.equal(focused.ok, true, JSON.stringify(focused.error));
+    const resolved = await udsRequest(server.socketPath, "resolve_permission_request", {
+      ...target, response_id: `response_navigation_${index}`, decision,
+    });
+    assert.equal(resolved.ok, true, JSON.stringify(resolved.error));
+    const completion = await hookChildren[index].completion;
+    assert.equal(completion.code, 0, completion.stderr);
+    if (decision === "deny") {
+      assert.equal(JSON.parse(completion.stdout).hookSpecificOutput.decision.behavior, "deny");
+    } else {
+      assert.equal(completion.stdout, "");
+    }
+  };
+  try {
+    const offers = [];
+    for (let index = 0; index < names.length; index += 1) {
+      await mkdir(directories[index], { mode: 0o700 });
+      const enabled = await udsRequest(server.socketPath, "enable_project", {
+        cwd: directories[index], enabled: true,
+      });
+      assert.equal(enabled.ok, true);
+      const submitted = await callHook("UserPromptSubmit", index, {
+        prompt: `Synthetic ${names[index]} task`,
+      });
+      assert.equal(submitted.code, 0, submitted.stderr);
+      const context = JSON.parse(submitted.stdout).hookSpecificOutput.additionalContext;
+      const ids = Object.fromEntries([
+        "project_id", "session_id", "source_turn_id", "source_prompt_id", "episode_id",
+        "episode_root_prompt_id", "episode_baseline_checkpoint_id", "correlation_token",
+      ].map((key) => [key, contextValue(context, key)]));
+      const offered = proposal(ids, `navigation_${names[index]}`);
+      offers.push(offered);
+      await emitDecision(productBuild, server.socketPath, proposalWrapper(ids, offered));
+      const stopped = await callHook("Stop", index, {
+        stop_hook_active: false, last_assistant_message: `Synthetic ${names[index]} result`,
+      });
+      assert.equal(stopped.code, 0, stopped.stderr);
+      const deadline = Date.now() + 5_000;
+      let ready = false;
+      while (Date.now() < deadline) {
+        const snapshot = await readSnapshot();
+        if (snapshot.interactions.some((entry) => entry.session_id === sessions[index]
+            && entry.state === "waiting")) {
+          ready = true;
+          break;
+        }
+        await delay(20);
+      }
+      assert.equal(ready, true, `${names[index]} event did not become ready`);
+    }
+    const before = await readSnapshot();
+    const events = sessions.map((session) => before.interactions.find((entry) => entry.session_id === session));
+    assert.equal(new Set(events.map((entry) => entry.project_id)).size, 3);
+    assert.deepEqual(before.event_navigation.events, events.map((entry) => ({
+      event_kind: "decision", event_id: entry.interaction_id,
+    })));
+
+    // Navigation only changes focus; it cannot consume or execute an event.
+    const focused = await udsRequest(server.socketPath, "focus_event", {
+      schema_version: "1.0", kind: "blabee_pet_event_focus_request", event_kind: "decision",
+      target: focusRequest(events[2]),
+    });
+    assert.equal(focused.ok, true, JSON.stringify(focused.error));
+    assert.equal(focused.result.focused, true);
+    const browsing = await readSnapshot();
+    assert.deepEqual(browsing.event_navigation.focused, {
+      event_kind: "decision", event_id: events[2].interaction_id,
+    });
+    assert.equal(browsing.interactions.filter((entry) => entry.state === "waiting").length, 3);
+
+    // New approvals cannot steal browsed focus. Resolve the third Hook first,
+    // then select its ordinary decision while the earlier two Hooks still wait.
+    for (let index = 0; index < names.length; index += 1) {
+      const child = spawnBuiltBinary(server.build,
+        ["hook", "PermissionRequest", "--socket", server.socketPath], {
+          input: JSON.stringify(hookPayload("PermissionRequest", {
+            session_id: sessions[index], cwd: directories[index],
+            turn_id: `turn_navigation_${names[index]}`,
+            tool_name: "Bash", tool_input: { command: `fictional-navigation-command-${index}` },
+          })),
+        });
+      child.completion.catch(() => {});
+      hookChildren.push(child);
+      await waitForPermissions(index + 1);
+    }
+    const withApprovals = await readSnapshot();
+    assert.deepEqual(withApprovals.event_navigation.focused, browsing.event_navigation.focused);
+    assert.equal(withApprovals.event_navigation.events.length, 6);
+    const permissions = withApprovals.permission_requests;
+    await resolvePermission(permissions[2], 2, "deny");
+    const remainingApprovals = await waitForPermissions(2);
+    assert.deepEqual(remainingApprovals.permission_requests.map((entry) => entry.request_id),
+      permissions.slice(0, 2).map((entry) => entry.request_id));
+    assert.equal(remainingApprovals.event_navigation.focused, null);
+    const refocused = await udsRequest(server.socketPath, "focus_event", {
+      schema_version: "1.0", kind: "blabee_pet_event_focus_request", event_kind: "decision",
+      target: focusRequest(events[2]),
+    });
+    assert.equal(refocused.ok, true, JSON.stringify(refocused.error));
+    const stale = await udsRequest(server.socketPath, "select", selection(events[0], "navigation_stale"));
+    assert.equal(stale.ok, false);
+    assert.equal(stale.error.code, "event_focus_mismatch");
+
+    const selected = await udsRequest(server.socketPath, "select", selection(events[2], "navigation_third"));
+    assert.equal(selected.ok, true, JSON.stringify(selected.error));
+    const afterSelection = await readSnapshot();
+    assert.equal(afterSelection.permission_requests.length, 2);
+    for (const earlier of events.slice(0, 2)) {
+      assert.equal(afterSelection.interactions.find((entry) => entry.interaction_id === earlier.interaction_id)?.state,
+        "waiting", "selecting the third project must not consume an earlier project");
+    }
+    await resolvePermission(permissions[0], 0, "defer_to_codex");
+    await waitForPermissions(1);
+    await resolvePermission(permissions[1], 1, "defer_to_codex");
+    await waitForPermissions(0);
+    const message = queuedPrompt(selected.result.outcome.continuation_id, directories[2]);
+    const misplaced = await callHook("UserPromptSubmit", 0, {
+      turn_id: "turn_navigation_wrong_session", prompt: message,
+    });
+    assert.equal(misplaced.code, 0, misplaced.stderr);
+    assert.equal(misplaced.stdout.includes(QUEUED_ACTION_CONTEXT_MARKER), false);
+    const delivered = await callHook("UserPromptSubmit", 2, {
+      turn_id: "turn_navigation_correct_session", prompt: message,
+    });
+    assert.equal(delivered.code, 0, delivered.stderr);
+    const deliveredContext = JSON.parse(delivered.stdout).hookSpecificOutput.additionalContext;
+    assert.equal(deliveredContext.includes(QUEUED_ACTION_CONTEXT_MARKER), true);
+    assert.equal(deliveredContext.includes(offers[2].next_actions[0].title), true);
+    assert.equal(contextValue(deliveredContext, "session_id"), sessions[2]);
+  } finally {
+    await server.abort();
+    await Promise.allSettled(hookChildren.map((child) => child.completion));
+    await rm(server.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("managed Codex live trust pins once, execs fallback exactly, and reaps the inherited pin", async () => {
   const build = await buildCoordinator();
   const canonicalTemporaryDirectory = await realpath(tmpdir());
@@ -645,6 +949,16 @@ test("real Hook, MCP, Pet, UDS, SQLite flow late-attaches and queues two next tu
     productBinary.includes(Buffer.from("operational-roundtrip-test-server")),
     false,
     "the integration server mode must be compiled out of the product binary",
+  );
+  assert.equal(
+    productBinary.includes(Buffer.from("claude-bridge-roundtrip-test-server")),
+    false,
+    "the Claude ingress fixture must be compiled out of the product binary",
+  );
+  assert.equal(
+    productBinary.includes(Buffer.from("claude-session-host-test")),
+    false,
+    "the Claude native-session fixture must be compiled out of the product binary",
   );
   assert.equal(
     productBinary.includes(Buffer.from("managed-codex-fallback-test")),

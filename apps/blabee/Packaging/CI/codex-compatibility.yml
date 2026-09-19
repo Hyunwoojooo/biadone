@@ -1,0 +1,134 @@
+# Installation template: copy to the repository's .github/workflows/ only as a
+# separately reviewed workflow change. This location does not activate Actions.
+name: Codex compatibility evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable Codex version (empty selects latest stable release)
+        type: string
+        required: false
+  schedule:
+    - cron: '23 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blabee-codex-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    # Native architecture must match codex-package target. Never use a personal
+    # self-hosted runner or a runner holding a Codex account or signing secrets.
+    runs-on: macos-15
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/blabee
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run account-free qualification regressions
+        run: node --test Tests/RuntimeQualification/codex-compatibility-qualification.test.mjs
+      - name: Download the complete official release and verify asset digest
+        env:
+          CANDIDATE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { mkdir, realpath, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          const requested = process.env.CANDIDATE_VERSION || '';
+          if (requested && !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(requested)) throw Error('Expected an exact stable version');
+          if (!['arm64', 'x64'].includes(process.arch)) throw Error('Unsupported runner architecture');
+          const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`;
+          const endpoint = `https://api.github.com/repos/openai/codex/releases/${requested ? `tags/rust-v${requested}` : 'latest'}`;
+          const metadataResponse = await fetch(endpoint, { signal: AbortSignal.timeout(30000), headers: { Accept: 'application/vnd.github+json' } });
+          if (!metadataResponse.ok) throw Error(`Official release lookup failed: ${metadataResponse.status}`);
+          const metadata = await metadataResponse.json();
+          const version = /^rust-v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/.exec(metadata.tag_name)?.[1];
+          if (!version || metadata.draft || metadata.prerelease || (requested && requested !== version)) throw Error('Release identity mismatch');
+          const assetName = `codex-package-${target}.tar.gz`;
+          const assets = metadata.assets.filter(asset => asset.name === assetName);
+          if (assets.length !== 1) throw Error('Complete official runtime asset missing or ambiguous');
+          const asset = assets[0];
+          const expectedURL = `https://github.com/openai/codex/releases/download/rust-v${version}/${assetName}`;
+          if (asset.browser_download_url !== expectedURL || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '')) throw Error('Official URL or SHA256 metadata missing');
+          if (!(asset.size > 0 && asset.size <= 536870912)) throw Error('Asset exceeds download budget');
+          const response = await fetch(expectedURL, { signal: AbortSignal.timeout(120000) });
+          if (!response.ok) throw Error(`Official asset download failed: ${response.status}`);
+          const chunks = [];
+          const hash = createHash('sha256');
+          let size = 0;
+          for await (const chunk of response.body) {
+            size += chunk.length;
+            if (size > asset.size || size > 536870912) throw Error('Download exceeds declared size');
+            chunks.push(chunk);
+            hash.update(chunk);
+          }
+          const digest = hash.digest('hex');
+          if (size !== asset.size || `sha256:${digest}` !== asset.digest) throw Error('Official asset digest or size mismatch');
+          const directory = join(await realpath(process.env.RUNNER_TEMP), 'codex-compatibility');
+          await mkdir(directory, { mode: 0o700 });
+          await writeFile(join(directory, 'runtime.tar.gz'), Buffer.concat(chunks), { flag: 'wx', mode: 0o600 });
+          await writeFile(join(directory, 'release.json'), JSON.stringify({ repository: 'openai/codex', releaseId: metadata.id, tag: metadata.tag_name, version, target, assetId: asset.id, assetName, url: expectedURL, sha256: digest, bytes: size, verifiedAt: new Date().toISOString() }, null, 2), { flag: 'wx', mode: 0o600 });
+          NODE
+      - name: Extract only regular package entries in isolated storage
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, tarfile
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']).resolve() / 'codex-compatibility'
+          destination = directory / 'runtime'
+          destination.mkdir(mode=0o700)
+          with tarfile.open(directory / 'runtime.tar.gz', 'r:gz') as archive:
+              members = archive.getmembers()
+              if len(members) > 128 or sum(m.size for m in members) > 1073741824:
+                  raise RuntimeError('Expanded package exceeds budget')
+              names = set()
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir()):
+                      raise RuntimeError('Unsafe archive member')
+                  if str(path) in names:
+                      raise RuntimeError('Duplicate archive member')
+                  names.add(str(path))
+              # Python's data filter additionally rejects escaping paths and
+              # strips unsafe ownership/mode metadata in the temporary copy.
+              archive.extractall(destination, members=members, filter='data')
+          PY
+      - name: Qualify signature, CLI, isolated plugin lifecycle and Hook contracts
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, realpath, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { qualifyCodexCompatibility } from './scripts/qualify-codex-compatibility.mjs';
+          const directory = join(await realpath(process.env.RUNNER_TEMP), 'codex-compatibility');
+          const provenance = JSON.parse(await readFile(join(directory, 'release.json'), 'utf8'));
+          const report = await qualifyCodexCompatibility({ runtimeDir: join(directory, 'runtime'), expectedVersion: provenance.version, releaseEvidence: provenance, sourceRevision: process.env.GITHUB_SHA, pluginLifecycle: true, hookTests: true });
+          await writeFile(join(directory, 'qualification.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+          process.stdout.write(`${report.status}: ${report.failure?.code || 'account-free smoke only'}\n`);
+          process.exitCode = report.status === 'smoke_passed' ? 0 : 1;
+          NODE
+      - name: Preserve versioned evidence even when qualification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/codex-compatibility/release.json
+            ${{ runner.temp }}/codex-compatibility/qualification.json
+          if-no-files-found: warn
+          retention-days: 30
+          # Evidence publication does not create a PR, update a production
+          # allowlist/catalog, replace Codex, or publish a Blabee release.

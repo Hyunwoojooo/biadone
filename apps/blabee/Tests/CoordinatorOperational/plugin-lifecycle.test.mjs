@@ -100,18 +100,19 @@ test("Codex can install, cache-bust update, remove, and forget an isolated Blabe
 
     const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
     assert.equal(containsJSONValue(installed, "blabee"), true);
-    assert.equal(containsJSONValue(installed, "0.1.0"), true);
+    assert.equal(containsJSONValue(installed, "0.1.1"), true);
 
     const manifestPath = path.join(marketplacePlugin, ".codex-plugin/plugin.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest.version = "0.1.0+codex.local-t011test";
+    const updatedVersion = `${manifest.version}+codex.local-t011test`;
+    manifest.version = updatedVersion;
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
     const updateInstall = await expectCodexJSON(["plugin", "add", selector, "--json"], env);
     assert.equal(containsJSONValue(updateInstall, "blabee"), true);
 
     const updated = await expectCodexJSON(["plugin", "list", "--json"], env);
-    assert.equal(containsJSONValue(updated, "0.1.0+codex.local-t011test"), true);
+    assert.equal(containsJSONValue(updated, updatedVersion), true);
 
     const removePlugin = await expectCodexJSON(["plugin", "remove", selector, "--json"], env);
     assert.equal(containsJSONValue(removePlugin, "blabee"), true);
@@ -180,7 +181,7 @@ test("Codex accepts the packaged Blabee Resources layout as a local marketplace"
 
     const pluginAdd = await expectCodexJSON(["plugin", "add", selector, "--json"], env);
     assert.equal(pluginAdd.pluginId, selector);
-    assert.equal(pluginAdd.version, "0.1.0");
+    assert.equal(pluginAdd.version, "0.1.1");
 
     const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
     const entry = installed.installed.find((value) => value.pluginId === selector);

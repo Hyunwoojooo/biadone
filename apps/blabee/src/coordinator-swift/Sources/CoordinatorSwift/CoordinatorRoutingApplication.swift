@@ -105,7 +105,7 @@ private struct RoutingAmbiguousSelection: Sendable {
 /// absence is treated as ambiguity, never as permission to restore a card.
 public final class CoordinatorRoutingApplication: @unchecked Sendable {
     public static let reminderAfterNanoseconds: UInt64 = 60_000_000_000
-    public static let expiryAfterNanoseconds: UInt64 = 120_000_000_000
+    public static let expiryAfterNanoseconds: UInt64 = 600_000_000_000
     public static let continuationValidityNanoseconds: UInt64 = 120_000_000_000
     public static let inFlightDeadlineNanoseconds: UInt64 = 300_000_000_000
 
@@ -391,6 +391,112 @@ public final class CoordinatorRoutingApplication: @unchecked Sendable {
         inFlight.removeValue(forKey: continuationID)
         let now = clock.nowNanoseconds()
         lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
+    }
+
+    /// Dismissal validates and closes against one authenticated journal
+    /// projection. Operational supplies its actor-local delivery/approval
+    /// gates; they are not required for an exact already-committed retry.
+    func dismissInteraction(
+        _ requestData: Data,
+        closingWith closeData: Data,
+        allowNonHead: Bool,
+        validatePending: () throws -> Void
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try requireRestartRecoveryWritableLocked()
+        let request = try StrictJSONTransport.object(from: requestData)
+        let binding = try CoordinatorBinding(jsonObject: request)
+        let target = try selectionIdentity(request: request, binding: binding)
+        let close = try StrictJSONTransport.object(from: closeData)
+        let closeType = try requiredCommandType(close)
+        let closeBinding = try commandBinding(close)
+        try require(
+            closeType == "close_boundary"
+                && closeBinding == binding
+                && close["close_reason"] as? String == "user_dismissed",
+            "dismiss_commands_invalid"
+        )
+
+        var conflicts = 0
+        while true {
+            try processDueLocked(reconcileTerminalRuntime: false)
+            let authority = try semantic.authorityProjection()
+            removeTerminalRuntimeEntriesLocked(using: authority.state)
+            guard let durable = authority.state.boundary(for: binding),
+                  durable.selection == nil
+            else { throw CoordinatorError("interaction_not_waiting") }
+            guard let packet = authority.state.packet(for: binding) else {
+                throw CoordinatorError("interaction_not_waiting")
+            }
+            try require(
+                IdentifierNormalization.isByteExact(packet.interactionID, target.interactionID)
+                    && IdentifierNormalization.isByteExact(packet.packetID, target.packetID)
+                    && packet.revision == target.revision,
+                "dismiss_binding_mismatch"
+            )
+            try require(
+                (2...4).contains(packet.choices.count)
+                    && packet.choices.allSatisfy(\.isPetAction),
+                "dismiss_interaction_not_ranked"
+            )
+            if durable.closed, durable.closeReason == "user_dismissed" {
+                // The durable packet above also validates a compacted retry.
+                // It never grants authority over the next pending card.
+                return
+            }
+            try require(durable.isPendingInteraction, "interaction_not_waiting")
+            try validatePending()
+            let current = allowNonHead ? pending[binding.fullKey] : pending.values.min { left, right in
+                if left.anchorNanoseconds != right.anchorNanoseconds {
+                    return left.anchorNanoseconds < right.anchorNanoseconds
+                }
+                return bindingOrder(left.identity.binding, right.identity.binding)
+            }
+            guard let current, current.identity.matches(target) else {
+                throw CoordinatorError("dismiss_interaction_not_head")
+            }
+            if let foreground {
+                try require(current.identity.matches(foreground), "foreground_interaction_mismatch")
+            }
+
+            // An authenticated replay may take time. Do not allow that work
+            // to carry a card past its monotonic expiry or clock regression.
+            let now = clock.nowNanoseconds()
+            if now < (lastClockNanoseconds ?? now)
+                || elapsedNanoseconds(from: current.anchorNanoseconds, to: now) >= Self.expiryAfterNanoseconds
+            {
+                try processDueLocked(reconcileTerminalRuntime: false)
+                throw CoordinatorError("interaction_not_waiting")
+            }
+            do {
+                // Generic close permits other terminal reasons. A conflict
+                // must recheck dismissal's narrower pending/identity guards,
+                // not silently retry just that generic semantic command.
+                _ = try semantic.execute(
+                    command: closeData, using: authority, maxSequenceConflicts: 0
+                )
+            } catch let error as CoordinatorError where error.code == "journal_sequence_conflict" {
+                guard conflicts < 2 else { throw error }
+                conflicts += 1
+                continue
+            } catch let ambiguity as CoordinatorSemanticAppendOutcomeUnknown {
+                guard let recovered = try? authoritativeStateLocked(),
+                      let closed = recovered.boundary(for: binding),
+                      closed.closed, closed.closeReason == "user_dismissed", closed.selection == nil,
+                      let packet = recovered.packet(for: binding),
+                      IdentifierNormalization.isByteExact(packet.interactionID, target.interactionID),
+                      IdentifierNormalization.isByteExact(packet.packetID, target.packetID),
+                      packet.revision == target.revision
+                else { throw ambiguity.underlying }
+            }
+            // Only a committed close (or its authenticated recovery) removes
+            // this target. No extra full-journal scan follows a known commit.
+            pending.removeValue(forKey: binding.fullKey)
+            if foreground?.matches(target) == true { foreground = nil }
+            lastClockNanoseconds = max(lastClockNanoseconds ?? now, now)
+            return
+        }
     }
 
     /// Returns one verified projection for the operational adapter to match a

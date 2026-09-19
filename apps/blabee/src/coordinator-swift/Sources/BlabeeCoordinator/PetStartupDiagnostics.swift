@@ -53,6 +53,7 @@ enum PetStartupDiagnostics {
         case .starting: "starting"
         case .ready: "ready"
         case .reconnecting: "reconnecting"
+        case .unresponsive: "unresponsive"
         case .stopping: "stopping"
         case .blocked: "blocked"
         case .failed: "failed"

@@ -268,6 +268,12 @@ test("internal DMG contains only the signed app, Applications link, and test not
     { expectedBuildNumber: testBuildNumber },
   );
   assert.deepEqual(mountedApp.architectures, result.app.architectures);
+  const mountedAppIcon = join(mounted.mountPoint, "Blabee.app", "Contents", "Resources", "Blabee.icns");
+  assert.equal((await lstat(mountedAppIcon)).isFile(), true);
+  assert.equal(
+    await digest(mountedAppIcon),
+    await digest(join(repositoryRoot, "Packaging", "macos", "Resources", "Blabee.icns")),
+  );
   await mounted.detach();
   assert.deepEqual(hiddenPackagingArtifacts(await readdir(fixture.root)), []);
 });
@@ -315,9 +321,13 @@ test("internal app verification rejects universal and non-arm64 executables", {
     x86Binary,
   ]);
   await chmod(x86Binary, 0o700);
+  const universalBinary = join(fixture.root, "coordinator-universal");
+  await execFile("/usr/bin/lipo", [
+    "-create", fixture.binary, x86Binary, "-output", universalBinary,
+  ]);
 
   for (const [name, binaryPath] of [
-    ["universal", "/usr/bin/true"],
+    ["universal", universalBinary],
     ["x86_64", x86Binary],
   ]) {
     const appPath = join(fixture.root, name, "Blabee.app");

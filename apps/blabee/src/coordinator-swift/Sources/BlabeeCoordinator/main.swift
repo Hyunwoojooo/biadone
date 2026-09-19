@@ -1,5 +1,6 @@
 import CoordinatorSwift
 import BlabeeProductSupport
+import AppKit
 import Darwin
 import Foundation
 #if BLABEE_JOURNAL_TEST_HARNESS
@@ -45,6 +46,7 @@ private struct DaemonArguments {
     let contracts: URL
     let socketPath: String
     let enabledProjectPaths: [String]
+    let claudeBridgeConfiguration: URL?
 
     init(_ values: [String]) throws {
         var databasePath: String?
@@ -52,6 +54,7 @@ private struct DaemonArguments {
         var contractsPath: String?
         var socketPath: String?
         var enabledProjectPaths: [String] = []
+        var claudeBridgeConfigurationPath: String?
         var index = 0
         while index < values.count {
             let flag = values[index]
@@ -79,6 +82,11 @@ private struct DaemonArguments {
                 let standardized = URL(fileURLWithPath: value, isDirectory: true)
                     .standardizedFileURL.path
                 enabledProjectPaths.append(standardized)
+            case "--claude-bridge-config":
+                guard claudeBridgeConfigurationPath == nil, value.hasPrefix("/") else {
+                    throw CoordinatorError("invalid_arguments")
+                }
+                claudeBridgeConfigurationPath = value
             default:
                 throw CoordinatorError("invalid_arguments", "unsupported daemon argument")
             }
@@ -95,6 +103,7 @@ private struct DaemonArguments {
         contracts = URL(fileURLWithPath: contractsPath)
         self.socketPath = try OperationalSocketPath.resolve(explicitPath: socketPath)
         self.enabledProjectPaths = Array(Set(enabledProjectPaths)).sorted()
+        claudeBridgeConfiguration = claudeBridgeConfigurationPath.map { URL(fileURLWithPath: $0) }
     }
 }
 
@@ -106,6 +115,8 @@ private struct DaemonRuntimeConfiguration {
     let enabledProjectPaths: [String]
     let suggestionMode: BlabeeSuggestionMode
     let freshnessEnvironment: [String: String]
+    let claudeBridgeConfiguration: URL?
+    let requiresClaudeBridgeConfiguration: Bool
 
     init(_ arguments: DaemonArguments) {
         database = arguments.database
@@ -115,6 +126,8 @@ private struct DaemonRuntimeConfiguration {
         enabledProjectPaths = arguments.enabledProjectPaths
         suggestionMode = .actionOnly
         freshnessEnvironment = ProcessInfo.processInfo.environment
+        claudeBridgeConfiguration = arguments.claudeBridgeConfiguration
+        requiresClaudeBridgeConfiguration = arguments.claudeBridgeConfiguration != nil
     }
 
     init(_ configuration: ProductServiceConfiguration) {
@@ -125,6 +138,9 @@ private struct DaemonRuntimeConfiguration {
         enabledProjectPaths = configuration.enabledProjectPaths
         suggestionMode = BlabeeSuggestionModeStore().load().mode
         freshnessEnvironment = [:]
+        claudeBridgeConfiguration = configuration.config.deletingLastPathComponent()
+            .appendingPathComponent("claude-bridge.json")
+        requiresClaudeBridgeConfiguration = false
     }
 }
 
@@ -848,12 +864,37 @@ private func runDaemon(
         enabledProjectPaths: arguments.enabledProjectPaths,
         suggestionMode: arguments.suggestionMode,
         secretCorpus: journal.secretCorpus,
-        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher
+        nextTurnDispatcher: CodexQueueNextTurnDispatcher.live().coordinatorDispatcher,
+        permissionLifecycleObserver: { event in HookPermissionDiagnostics.record(event) }
     )
+    let legacyApplication = try ClaudeBridgeCoordinator(
+        codex: operational,
+        configurationURL: arguments.claudeBridgeConfiguration,
+        configurationRequired: arguments.requiresClaudeBridgeConfiguration,
+        secretCorpus: journal.secretCorpus
+    )
+    let application: ClaudeProductServiceCoordinator
+    if appLifetime != nil {
+        do {
+            application = try ClaudeProductServiceCoordinator.start(
+                codex: legacyApplication, parentURL: arguments.database.deletingLastPathComponent(),
+                socketPath: URL(fileURLWithPath: arguments.socketPath).deletingLastPathComponent()
+                    .appendingPathComponent("claude-owner.sock").path,
+                runtimeIdentity: OperationalRuntimeIdentity.requireCurrent(), secretCorpus: journal.secretCorpus
+            )
+        } catch {
+            // A private Claude endpoint/store failure must not disable Codex.
+            logError(CoordinatorError("claude_product_unavailable"), secretCorpus: journal.secretCorpus)
+            application = ClaudeProductServiceCoordinator(codex: legacyApplication)
+        }
+    } else {
+        application = ClaudeProductServiceCoordinator(codex: legacyApplication)
+    }
+    defer { application.stop() }
     try server.activate()
     try appLifetime?.publishReady()
     try withExtendedLifetime(authorityLease) {
-        try server.run(application: operational, secretCorpus: journal.secretCorpus)
+        try server.run(application: application, secretCorpus: journal.secretCorpus)
     }
 }
 
@@ -1480,6 +1521,8 @@ do {
     switch mode {
     case "daemon":
         try runDaemon(arguments: Array(commandLine.dropFirst(2)))
+    case "claude-session-host":
+        try runClaudeNativeHost(arguments: Array(commandLine.dropFirst(2)))
     case "service":
         try runProductService(arguments: Array(commandLine.dropFirst(2)))
     case "app-service":
@@ -1501,12 +1544,42 @@ do {
             environment: invocationEnvironment
         )
         try runPet(arguments: [])
+    case "managed-session", "managed-session-host":
+        exit(try UpdateManagedCodexCommand.run(arguments: Array(commandLine.dropFirst())))
+    case "update-helper":
+        let helperArguments = Array(commandLine.dropFirst(2))
+        let application = NSApplication.shared
+        application.setActivationPolicy(.prohibited)
+        Task { @MainActor in
+            let result = await AppUpdateHelper.run(arguments: helperArguments)
+            exit(result)
+        }
+        application.run()
+        exit(1)
     case "doctor":
         let rawArguments = Array(commandLine.dropFirst(2))
-        let arguments = try DoctorArguments(rawArguments)
-        let execution = DoctorApplication().run(arguments: arguments)
-        try FileHandle.standardOutput.write(contentsOf: execution.outputData())
-        if execution.exitCode != 0 { exit(execution.exitCode) }
+        if rawArguments == ["--help"] || rawArguments == ["-h"] {
+            let help = """
+            Usage: blabee-coordinator doctor [options]
+              --profile plugin|managed  Diagnostic profile (default: plugin)
+              --codex PATH              Inspect this exact Codex executable
+              --app PATH                Installed Blabee.app (default: /Applications/Blabee.app)
+              --plugin PATH             Inspect this Plugin directory
+              --project PATH            Project to inspect (default: current directory)
+              --socket PATH             Coordinator service socket
+              --json                    Print a structured diagnostic report
+
+            plugin checks the native CLI used by the Blabee Plugin.
+            managed checks the complete managed app-server package and code-mode resources.
+            Static checks do not prove Hook trust or a successful live selection roundtrip.
+            """
+            try FileHandle.standardOutput.write(contentsOf: Data((help + "\n").utf8))
+        } else {
+            let arguments = try DoctorArguments(rawArguments)
+            let execution = DoctorApplication().run(arguments: arguments)
+            try FileHandle.standardOutput.write(contentsOf: execution.outputData())
+            if execution.exitCode != 0 { exit(execution.exitCode) }
+        }
     case "hook":
         runHookCommand(arguments: Array(commandLine.dropFirst(2)))
     case "mcp":
@@ -1590,6 +1663,10 @@ do {
         try runTransportFixture(arguments: Array(commandLine.dropFirst(2)))
     case "operational-roundtrip-test-server":
         try runOperationalRoundTripFixture(arguments: Array(commandLine.dropFirst(2)))
+    case "claude-bridge-roundtrip-test-server":
+        try runClaudeBridgeRoundTripFixture(arguments: Array(commandLine.dropFirst(2)))
+    case "claude-session-host-test":
+        try runClaudeNativeHost(arguments: Array(commandLine.dropFirst(2)), testing: true)
     #endif
     default:
         try runLegacyCoordinator(arguments: commandLine)

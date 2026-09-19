@@ -1,0 +1,4042 @@
+{
+  "schema_version": "blabee.product-wire.fixtures.v1",
+  "cases": [
+    {
+      "name": "claude-owner.v1/claude/request/enroll",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/enroll/ok",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/enroll/error",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/request/renew",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "1"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/renew/ok",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/renew/error",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/request/end",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "end",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "reason": "owner_disconnected"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/end/ok",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "end",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "ended": true
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/claude/response/end/error",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "end",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/hook",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/hook/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/hook/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/bridge.open",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.open",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.open/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.open",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.open/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.open",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/bridge.poll",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.poll/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": null
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.poll/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/bridge.close",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.close",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.close/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.close",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "closed": true
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/bridge.close/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.close",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/readiness.begin",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.begin",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/readiness.begin/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.begin",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "probe_id": "00000014-0000-4000-8000-000000000014",
+          "expires_at_nanoseconds": "1",
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/readiness.begin/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.begin",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/readiness.ack",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.ack",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010",
+          "probe_id": "00000014-0000-4000-8000-000000000014",
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/readiness.ack/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.ack",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "acknowledged": true
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/readiness.ack/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.ack",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/proposal.emit",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "proposal.emit",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010",
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "proposal": {
+            "schema_version": "blabee.claude-proposal.v1",
+            "value": {
+              "proposal_id": "proposal-fixture",
+              "summary": "Opaque Claude proposal fixture."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/proposal.emit/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "proposal.emit",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/proposal.emit/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "proposal.emit",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/selection.claim",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.claim",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/selection.claim/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.claim",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "action": {
+            "schema_version": "blabee.claude-action.v1",
+            "value": {
+              "task": "Read fixture-a.txt"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/selection.claim/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.claim",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/request/selection.complete",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.complete",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "bridge_id": "00000010-0000-4000-8000-000000000010",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "outcome": "completed",
+          "note": "note-fixture"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/selection.complete/ok",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.complete",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "recorded": true,
+          "reported_by": "claude"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/claude/response/selection.complete/error",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.complete",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/request/snapshot",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/response/snapshot/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/response/snapshot/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/request/select",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "selection_id-fixture",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/response/select/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "selection": {
+            "packet_id": "packet_id-fixture",
+            "revision": 1,
+            "option_id": "option_id-fixture",
+            "selection_id": "selection_id-fixture",
+            "binding": {
+              "project_id": "project_id-fixture",
+              "session_id": "session_id-fixture",
+              "source_turn_id": "source_turn_id-fixture",
+              "source_prompt_id": "source_prompt_id-fixture",
+              "episode_id": "episode_id-fixture",
+              "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+              "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+              "decision_boundary_id": "decision_boundary_id-fixture",
+              "boundary_sequence": 1
+            }
+          },
+          "receipt": {
+            "schema_version": "blabee.pet.codex-receipt.v1",
+            "value": {
+              "status": "queued_next_turn",
+              "queue_id": "codex-queue-fixture",
+              "selection_id": "selection_id-fixture"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/codex/response/select/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/request/snapshot",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/snapshot/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.claude.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/snapshot/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/request/select",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/select/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "selection": {
+            "packet_id": "packet_id-fixture",
+            "revision": 1,
+            "option_id": "option_id-fixture",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "binding": {
+              "project_id": "project_id-fixture",
+              "session_id": "session_id-fixture",
+              "source_turn_id": "source_turn_id-fixture",
+              "source_prompt_id": "source_prompt_id-fixture",
+              "episode_id": "episode_id-fixture",
+              "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+              "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+              "decision_boundary_id": "decision_boundary_id-fixture",
+              "boundary_sequence": 1
+            }
+          },
+          "status": "awaiting_claude_claim"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/select/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/request/readiness.begin",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "readiness.begin",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/readiness.begin/ok",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "readiness.begin",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "probe_id": "00000014-0000-4000-8000-000000000014",
+          "expires_at_nanoseconds": "1",
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/claude/response/readiness.begin/error",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "readiness.begin",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "invalid_request"
+        }
+      }
+    },
+    {
+      "name": "uint64/max",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "18446744073709551615"
+        }
+      }
+    },
+    {
+      "name": "uint64/above-js-safe",
+      "contract": "claude-owner.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "9007199254740992"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-zero",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "0"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-overflow",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "18446744073709551616"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-leading-zero",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "01"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-plus",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "+1"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-negative",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "-1"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-exponent",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "1e3"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-fraction-text",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "1.0"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-newline",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "1\n"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-unicode",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": "١"
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-number",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": 1
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-boolean",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": true
+        }
+      }
+    },
+    {
+      "name": "uint64/reject-empty",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "renew",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "renewal_sequence": ""
+        }
+      }
+    },
+    {
+      "name": "owner/reject-client-assigned-authority",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        },
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        }
+      }
+    },
+    {
+      "name": "owner/reject-json-grant",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "grant": {
+            "hook_token": "synthetic-fixture-capability"
+          }
+        }
+      }
+    },
+    {
+      "name": "hook/variant-1",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "compact"
+        }
+      }
+    },
+    {
+      "name": "hook/variant-2",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "UserPromptSubmit",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "prompt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "hook/variant-3",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "Stop",
+          "prompt_id": "00000012-0000-4000-8000-000000000012"
+        }
+      }
+    },
+    {
+      "name": "hook/variant-4",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "StopFailure",
+          "failure_code": "api_error"
+        }
+      }
+    },
+    {
+      "name": "hook/variant-5",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionEnd"
+        }
+      }
+    },
+    {
+      "name": "hook/variant-6",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "ObservationUnavailable",
+          "reason": "invalid_prompt_id"
+        }
+      }
+    },
+    {
+      "name": "poll/variant-1",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "poll/variant-2",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "selection",
+            "selection_id": "00000013-0000-4000-8000-000000000013",
+            "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "1"
+          }
+        }
+      }
+    },
+    {
+      "name": "session/reject-nonce-in-ack",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.ack",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "acknowledged": true,
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "session/reject-ref-in-action",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.claim",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "prompt_id": "00000012-0000-4000-8000-000000000012",
+          "action": {
+            "schema_version": "blabee.claude-action.v1",
+            "value": {
+              "nested": {
+                "delivery_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-unknown-key",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        },
+        "unrecognized": true
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-unknown-payload-key",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude",
+          "unrecognized": true
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-legacy-version",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-wrong-role",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "control",
+        "operation": "enroll",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-unknown-operation",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "execute_anything",
+        "payload": {
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "challenge_id": "00000008-0000-4000-8000-000000000008",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009",
+          "cwd": "/fixture/project",
+          "channel_source": "blabee-claude"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-result-and-error",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009"
+        },
+        "error": {
+          "code": "unavailable"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-response-credential",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009"
+        },
+        "auth_token": "synthetic-fixture-capability"
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-error-message",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "ok": false,
+        "error": {
+          "code": "unavailable",
+          "message": "synthetic"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-unknown-key",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        },
+        "unrecognized": true
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-unknown-payload-key",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup",
+          "unrecognized": true
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-legacy-version",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-wrong-role",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "control",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-unknown-operation",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "execute_anything",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "cwd": "/fixture/project",
+          "event": "SessionStart",
+          "source": "startup"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-result-and-error",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        },
+        "error": {
+          "code": "unavailable"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-response-credential",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        },
+        "auth_token": "synthetic-fixture-capability"
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-error-message",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": false,
+        "error": {
+          "code": "unavailable",
+          "message": "synthetic"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-unknown-key",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {},
+        "unrecognized": true
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-unknown-payload-key",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {
+          "unrecognized": true
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-legacy-version",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-wrong-role",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "control",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-unknown-operation",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "execute_anything",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-result-and-error",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        },
+        "error": {
+          "code": "unavailable"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-response-credential",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        },
+        "auth_token": "synthetic-fixture-capability"
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-error-message",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": false,
+        "error": {
+          "code": "unavailable",
+          "message": "synthetic"
+        }
+      }
+    },
+    {
+      "name": "pet/reject-missing-authority-epoch",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-ui-generation-number",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": 1,
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-ui-generation-overflow",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "18446744073709551616",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-missing-binding-field",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-revision-boolean",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": true,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-revision-fraction",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1.25,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-revision-zero",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 0,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-revision-unsafe",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 9007199254740992,
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-revision-string",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": "1",
+          "option_id": "option_id-fixture",
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/codex-native-selection-id",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "codex-native-selection-id",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-codex-with-claude-epoch",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "select",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "payload": {
+          "packet_id": "packet_id-fixture",
+          "revision": 1,
+          "option_id": "option_id-fixture",
+          "selection_id": "selection_id-fixture",
+          "binding": {
+            "project_id": "project_id-fixture",
+            "session_id": "session_id-fixture",
+            "source_turn_id": "source_turn_id-fixture",
+            "source_prompt_id": "source_prompt_id-fixture",
+            "episode_id": "episode_id-fixture",
+            "episode_root_prompt_id": "episode_root_prompt_id-fixture",
+            "episode_baseline_checkpoint_id": "episode_baseline_checkpoint_id-fixture",
+            "decision_boundary_id": "decision_boundary_id-fixture",
+            "boundary_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pet/reject-codex-readiness-route",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "request",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "readiness.begin",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "payload": {}
+      }
+    },
+    {
+      "name": "opaque/reject-owner_handle",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "owner_handle": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-Ticket",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "Ticket": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-AuthToken",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "AuthToken": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-credential",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "credential": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-nonce",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "nonce": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-delivery_token",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "nested": [
+                {
+                  "delivery_token": "synthetic-fixture-value"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-unknown-version",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.claude.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/allow-provider-fields",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "cards": [],
+              "queue": {
+                "mode": "queued_next_turn"
+              },
+              "unknown_provider_field": "requires inner validator"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-numeric-ok-0",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": 0,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009"
+        }
+      }
+    },
+    {
+      "name": "claude-owner.v1/reject-numeric-ok-1",
+      "contract": "claude-owner.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-owner.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "owner",
+        "operation": "enroll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": 1,
+        "result": {
+          "core_session_id": "core_session_id-fixture",
+          "lease": {
+            "deadline_nanoseconds": "1",
+            "renewal_sequence": "0"
+          },
+          "grant_delivery": "private_pipe",
+          "grant_pipe_id": "00000009-0000-4000-8000-000000000009"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-numeric-ok-0",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": 0,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/reject-numeric-ok-1",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": 1,
+        "result": {
+          "observed": true,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-numeric-ok-0",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": 0,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pet-provider.v1/reject-numeric-ok-1",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": 1,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "summary": "Fixture projection; named inner validation remains required."
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "session/reject-numeric-acknowledged",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "readiness.ack",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "acknowledged": 1
+        }
+      }
+    },
+    {
+      "name": "session/reject-numeric-closed",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.close",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "closed": 1
+        }
+      }
+    },
+    {
+      "name": "session/reject-numeric-recorded",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "selection.complete",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "selection_id": "00000013-0000-4000-8000-000000000013",
+          "recorded": 1,
+          "reported_by": "claude"
+        }
+      }
+    },
+    {
+      "name": "session/reject-numeric-observed",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "hook",
+        "operation": "hook",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "observed": 1,
+          "boundary_id": "00000011-0000-4000-8000-000000000011",
+          "observation_status": "accepted"
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-fraction",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "number": 0.5
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-double-separator",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "auth__token": "synthetic"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-between-letter-separators",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "a_u_t_h_t_o_k_e_n": "synthetic"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/reject-leading-trailing-separators",
+      "contract": "pet-provider.v1",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "_OWNER--HANDLE_": "synthetic"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "opaque/ascii-pattern-only",
+      "contract": "pet-provider.v1",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.pet-provider.v1",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "codex",
+        "role": "selector",
+        "operation": "snapshot",
+        "target": {
+          "scope_id": "primary",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "ui_generation": "1"
+        },
+        "ok": true,
+        "result": {
+          "projection": {
+            "schema_version": "blabee.pet.codex.v1",
+            "value": {
+              "auth_toKen": "plain text; unknown inner field"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/maximum",
+      "contract": "claude-session.v2",
+      "valid": true,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "18446744073709551615"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/zero",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "0"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/overflow",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "18446744073709551616"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/leading-zero",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "01"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/number",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/boolean",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": true
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/negative",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "-1"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/decimal",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "1.0"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/newline",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude",
+            "delivery_sequence": "1\n"
+          }
+        }
+      }
+    },
+    {
+      "name": "claude-session.v2/poll/delivery-sequence/missing",
+      "contract": "claude-session.v2",
+      "valid": false,
+      "value": {
+        "schema_version": "blabee.claude-session.v2",
+        "kind": "response",
+        "request_id": "00000001-0000-4000-8000-000000000001",
+        "provider": "claude",
+        "role": "bridge",
+        "operation": "bridge.poll",
+        "authority": {
+          "scope_id": "00000002-0000-4000-8000-000000000002",
+          "native_session_id": "00000003-0000-4000-8000-000000000003",
+          "session_incarnation": "00000004-0000-4000-8000-000000000004",
+          "service_incarnation": "00000005-0000-4000-8000-000000000005",
+          "owner_connection_id": "00000006-0000-4000-8000-000000000006",
+          "authority_epoch": "00000007-0000-4000-8000-000000000007"
+        },
+        "ok": true,
+        "result": {
+          "event": {
+            "kind": "readiness_probe",
+            "probe_id": "00000014-0000-4000-8000-000000000014",
+            "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "expires_at_nanoseconds": "1",
+            "channel_source": "blabee-claude"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Blabee C4 L1 — 시스템 컨텍스트 (As-Is)",
+    "output": "docs/architecture/c4/system-context.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Hyunwoojooo/biadone.git",
+      "revision": "a352baa773e11a9be96c9d5b5aafca19aa5fb543"
+    },
+    "viewBox": [
+      1600,
+      820
+    ]
+  },
+  "components": [
+    {
+      "id": "developer",
+      "type": "external",
+      "label": "개발자",
+      "sublabel": "프롬프트·선택·권한 판단",
+      "pos": [
+        90,
+        330
+      ],
+      "size": [
+        170,
+        80
+      ]
+    },
+    {
+      "id": "codex",
+      "type": "external",
+      "label": "Codex",
+      "sublabel": "작업 실행·네이티브 권한 주체",
+      "pos": [
+        1040,
+        135
+      ],
+      "size": [
+        230,
+        90
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 59,
+          "end_line": 82,
+          "label": "Codex 경계"
+        }
+      ]
+    },
+    {
+      "id": "blabee",
+      "type": "backend",
+      "label": "Blabee",
+      "sublabel": "로컬 Decision Layer + Pet",
+      "tag": "System of Interest",
+      "pos": [
+        1035,
+        505
+      ],
+      "size": [
+        240,
+        110
+      ],
+      "sources": [
+        {
+          "path": "apps/blabee/TECH_SPEC.md",
+          "line": 59,
+          "end_line": 115,
+          "label": "제품 경계"
+        },
+        {
+          "path": "apps/blabee/CODEMAP.md",
+          "line": 465,
+          "end_line": 526,
+          "label": "운영 흐름"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "사용자 Mac의 로컬 실행 경계",
+      "wraps": [
+        "codex",
+        "blabee"
+      ],
+      "pad": 38
+    }
+  ],
+  "connections": [
+    {
+      "from": "developer",
+      "to": "codex",
+      "label": "프롬프트·권한 판단",
+      "labelAt": [
+        655,
+        245
+      ]
+    },
+    {
+      "from": "codex",
+      "to": "blabee",
+      "label": "Plugin Hook + local MCP",
+      "variant": "emphasis",
+      "labelAt": [
+        1320,
+        365
+      ]
+    },
+    {
+      "from": "blabee",
+      "to": "developer",
+      "label": "Pet 카드·다음 선택",
+      "variant": "emphasis",
+      "labelAt": [
+        650,
+        535
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "시스템 책임",
+      "items": [
+        "Blabee는 Codex의 결과와 다음 선택을 로컬에서 연결한다",
+        "Pet은 표시와 사용자 입력 표면이며 실행 권한 자체가 아니다"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "권한 경계",
+      "items": [
+        "일반 codex의 네이티브 권한 체계가 최종 권한 주체다",
+        "Blabee 장애가 기본 Codex 실행을 소유하거나 대체하지 않는다"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "데이터 경계",
+      "items": [
+        "MVP에는 Blabee 클라우드 추론 백엔드가 없다",
+        "소스 내용과 체크포인트 자료는 로컬 경계에 남는다"
+      ]
+    }
+  ]
+}

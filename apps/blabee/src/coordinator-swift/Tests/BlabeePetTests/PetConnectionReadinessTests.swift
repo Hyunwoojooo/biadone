@@ -14,7 +14,8 @@ struct PetConnectionReadinessTests {
         serviceIssueRequiresAction: Bool = false,
         configuredProjectPaths: [String]? = ["/projects/gannet"],
         activeProjectPaths: Set<String>? = ["/projects/gannet"],
-        receivedCardProjectPaths: Set<String> = []
+        receivedCardProjectPaths: Set<String> = [],
+        hookReadiness: PetHookReadinessState = .trusted
     ) -> PetConnectionReadiness {
         PetConnectionReadiness(
             pluginState: pluginState,
@@ -24,18 +25,20 @@ struct PetConnectionReadinessTests {
             serviceIssueRequiresAction: serviceIssueRequiresAction,
             configuredProjectPaths: configuredProjectPaths,
             activeProjectPaths: activeProjectPaths,
-            receivedCardProjectPaths: receivedCardProjectPaths
+            receivedCardProjectPaths: receivedCardProjectPaths,
+            hookReadiness: hookReadiness,
+            hookProjectPath: gannet
         )
     }
 
-    @Test("Installed Plugin is confirmed without automatically judging Hook operation or selection return")
+    @Test("Installed Plugin and trusted Hooks still require actual selection-return verification")
     func installationIsNotEndToEndVerification() {
         let model = readiness()
         #expect(model.status == .awaitingVerification)
         #expect(model.title == "설정 준비됨 · 동작 확인 필요")
         #expect(model.nextStep == .verifyInCodex)
-        #expect(model.checks.map(\.id) == ["service", "plugin", "projects", "card"])
-        #expect(model.checks.map(\.state) == [.confirmed, .confirmed, .confirmed, .pending])
+        #expect(model.checks.map(\.id) == ["service", "plugin", "projects", "card", "hooks"])
+        #expect(model.checks.map(\.state) == [.confirmed, .confirmed, .confirmed, .pending, .confirmed])
         #expect(model.checks[1].detail.contains("설치됨"))
         #expect(model.checks[3].detail.contains("이 앱에서 확인한 카드 수신 기록이 없습니다"))
         #expect(model.checks[3].detail.contains("Codex 반환은 자동 판정하지 않습니다"))
@@ -78,7 +81,7 @@ struct PetConnectionReadinessTests {
         #expect(model.status == .needsAttention)
         #expect(model.nextStep == .service)
         #expect(model.detail == "socket unavailable")
-        #expect(model.checks.count == 4)
+        #expect(model.checks.count == 5)
         #expect(model.checks[0].state == .failed)
         #expect(model.checks[3].state == .pending)
     }
@@ -138,7 +141,7 @@ struct PetConnectionReadinessTests {
             #expect(model.status == .needsSetup)
             #expect(model.nextStep == .installPlugin)
             #expect(model.checks[1].state == .attention)
-            #expect(model.checks.count == 4)
+            #expect(model.checks.count == 5)
         }
     }
 
@@ -227,5 +230,17 @@ struct PetConnectionReadinessTests {
         #expect(ready.checks[2].detail.contains("2개"))
         let sibling = readiness(configuredProjectPaths: ["/other/gannet"])
         #expect(sibling.status == .needsRestart)
+    }
+
+    @Test("Installed Plugin or a received card cannot hide missing Hook trust")
+    func independentHookEvidence() {
+        for state: PetHookReadinessState in [.unchecked, .reviewRequired, .unavailable(code: "offline")] {
+            let model = readiness(receivedCardProjectPaths: [gannet], hookReadiness: state)
+            #expect(model.checks.first(where: { $0.id == "plugin" })?.state == .confirmed)
+            #expect(model.checks.first(where: { $0.id == "card" })?.state == .confirmed)
+            #expect(model.checks.first(where: { $0.id == "hooks" })?.state != .confirmed)
+            #expect(model.nextStep == .checkHooks)
+            #expect(model.status != .receiving)
+        }
     }
 }

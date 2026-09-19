@@ -1,22 +1,35 @@
 import Darwin
 import Foundation
 
-final class StorageProcessLock: @unchecked Sendable {
+package final class StorageProcessLock: @unchecked Sendable {
     private static let registry = ProcessMutexRegistry()
 
     private let lockURL: URL
     private let processMutex: NSLock
     private let allowParentCreation: Bool
 
-    init(keyURL: URL, allowParentCreation: Bool) throws {
+    package init(keyURL: URL, allowParentCreation: Bool) throws {
         let parent = keyURL.standardizedFileURL.deletingLastPathComponent()
         lockURL = parent.appendingPathComponent(".blabee-coordinator-freshness.lock", isDirectory: false)
         processMutex = Self.registry.mutex(for: Self.normalizedSystemAlias(lockURL.path))
         self.allowParentCreation = allowParentCreation
     }
 
-    func withLock<T>(_ operation: () throws -> T) throws -> T {
-        processMutex.lock()
+    package func withLock<T>(_ operation: () throws -> T) throws -> T {
+        try withLock(wait: true) { _ in try operation() }
+    }
+
+    /// Interactive recovery must refuse an active writer rather than wait for it.
+    func withNonblockingLock<T>(_ operation: (Int32) throws -> T) throws -> T {
+        try withLock(wait: false, operation)
+    }
+
+    private func withLock<T>(wait: Bool, _ operation: (Int32) throws -> T) throws -> T {
+        if wait {
+            processMutex.lock()
+        } else if !processMutex.try() {
+            throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+        }
         defer { processMutex.unlock() }
 
         let parent = try Self.openSecureParent(
@@ -35,9 +48,25 @@ final class StorageProcessLock: @unchecked Sendable {
         }
         defer { close(descriptor) }
         try Self.verifyLockFile(descriptor)
-        try Self.acquire(descriptor)
+        if wait {
+            try Self.acquire(descriptor)
+        } else {
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                throw CoordinatorError("freshness_lock_busy", "freshness storage is in use")
+            }
+            var opened = stat()
+            var entry = stat()
+            guard fstat(descriptor, &opened) == 0,
+                  fstatat(parent, lockURL.lastPathComponent, &entry, AT_SYMLINK_NOFOLLOW) == 0,
+                  opened.st_dev == entry.st_dev,
+                  opened.st_ino == entry.st_ino,
+                  opened.st_nlink == 1
+            else {
+                throw CoordinatorError("freshness_lock_unavailable", "freshness lock identity changed")
+            }
+        }
         defer { _ = flock(descriptor, LOCK_UN) }
-        return try operation()
+        return try operation(parent)
     }
 
     private static func acquire(_ descriptor: Int32) throws {

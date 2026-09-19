@@ -88,6 +88,83 @@ func queuedPromptDoubleFailureSelectsSafeContext() throws {
     #expect(!QueuedPromptEnvelope.unavailableAdditionalContext.contains("sha256:"))
 }
 
+@Test("permission timeout uses the shared review budget and never retries")
+func permissionRequestTimeoutRemainsOneShot() {
+    var attempts: [HookRequestAttempt] = []
+    var failures: [HookPermissionDiagnostics.FailureCode] = []
+
+    let outcome = HookRequestPolicy.perform(
+        eventName: "PermissionRequest",
+        payload: ["hook_event_name": "PermissionRequest"],
+        onPermissionFailure: { failures.append($0) }
+    ) { attempt in
+        attempts.append(attempt)
+        throw CoordinatorError("operational_response_timeout")
+    }
+
+    guard case .unavailable = outcome else {
+        Issue.record("expected permission timeout to defer silently")
+        return
+    }
+    #expect(attempts == [HookRequestAttempt(
+        connectTimeoutMilliseconds: 2_000,
+        responseTimeoutMilliseconds: HookPermissionTimingPolicy.socketResponseTimeoutMilliseconds
+    )])
+    #expect(
+        Int64(attempts[0].responseTimeoutMilliseconds)
+            > HookPermissionTimingPolicy.userDecisionTimeoutMilliseconds
+    )
+    #expect(failures == [.responseTimeout])
+}
+
+@Test("permission failures report only a fixed diagnostic code", arguments: [
+    "permission_request_binding_invalid",
+    "permission_request_capacity_exceeded",
+    "operational_transport_closed",
+    "operational_response_timeout command=private-command token=private-token",
+])
+func permissionRequestFailuresAreBounded(code: String) {
+    var attempts = 0
+    var failures: [HookPermissionDiagnostics.FailureCode] = []
+
+    let outcome = HookRequestPolicy.perform(
+        eventName: "PermissionRequest",
+        payload: ["hook_event_name": "PermissionRequest"],
+        onPermissionFailure: { failures.append($0) }
+    ) { _ in
+        attempts += 1
+        throw CoordinatorError(code, "private error description")
+    }
+
+    guard case .unavailable = outcome else {
+        Issue.record("expected permission failure to defer silently")
+        return
+    }
+    #expect(attempts == 1)
+    #expect(failures == [HookPermissionDiagnostics.FailureCode(rawValue: code) ?? .unknown])
+}
+
+@Test("ordinary Hook failures do not emit permission diagnostics", arguments: [
+    "SessionStart", "UserPromptSubmit", "Stop",
+])
+func ordinaryHookFailuresDoNotEmitPermissionDiagnostics(eventName: String) {
+    var failures: [HookPermissionDiagnostics.FailureCode] = []
+
+    let outcome = HookRequestPolicy.perform(
+        eventName: eventName,
+        payload: ["hook_event_name": eventName],
+        onPermissionFailure: { failures.append($0) }
+    ) { _ in
+        throw CoordinatorError("operational_response_timeout")
+    }
+
+    guard case .unavailable = outcome else {
+        Issue.record("expected ordinary Hook failure to remain silent")
+        return
+    }
+    #expect(failures.isEmpty)
+}
+
 @Test("a nonambiguous queued prompt failure is not retried")
 func queuedPromptIdentityFailureIsNotRetried() throws {
     var attempts = 0

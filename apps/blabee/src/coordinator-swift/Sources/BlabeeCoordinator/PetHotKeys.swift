@@ -528,9 +528,11 @@ final class PetHotKeyRegistry {
     private let onIntent: @MainActor (PetShortcutIntent) -> Void
     private let previewHotKeys: PetChoicePreviewHotKeys
     private let approvalHotKeys: PetApprovalHotKeys
+    private let eventNavigationHotKeys: PetEventNavigationHotKeys
     var onPreviewRequested: (@MainActor (Int) -> Void)?
     var onApprovalRequested: (@MainActor (PetApprovalShortcutActivation) -> Void)?
     var onApprovalShortcutAvailabilityChanged: (@MainActor () -> Void)?
+    var onEventNavigationRequested: (@MainActor (PetEventNavigationActivation) -> Void)?
     var previewShortcutDiagnostic: String? { previewHotKeys.diagnostic }
     func isPreviewShortcutRegistered(for slot: Int) -> Bool {
         if case .registered? = previewHotKeys.statuses[slot] { return true }
@@ -553,24 +555,37 @@ final class PetHotKeyRegistry {
         approvalKeyIsPressed: @escaping @MainActor (UInt32) -> Bool = {
             CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0))
         },
+        eventNavigationKeyIsPressed: @escaping @MainActor (UInt32) -> Bool = {
+            CGEventSource.keyState(.combinedSessionState, key: CGKeyCode($0))
+        },
+        eventNavigationModifiers: @escaping @Sendable () -> UInt32 = {
+            PetEventNavigationHotKeys.currentModifiers()
+        },
         onIntent: @escaping @MainActor (PetShortcutIntent) -> Void
     ) throws {
         self.backend = backend
         previewHotKeys = PetChoicePreviewHotKeys(backend: backend)
         approvalHotKeys = PetApprovalHotKeys(backend: backend, keyIsPressed: approvalKeyIsPressed)
+        eventNavigationHotKeys = PetEventNavigationHotKeys(backend: backend, keyIsPressed: eventNavigationKeyIsPressed)
         self.configuration = configuration
         self.store = store
         self.onIntent = onIntent
         let approvalEventGate = approvalHotKeys.eventGate
+        let eventNavigationGate = eventNavigationHotKeys.eventGate
         approvalHotKeys.onAvailabilityChanged = { [weak self] in
             self?.onApprovalShortcutAvailabilityChanged?()
         }
         try backend.installHandler { [weak self] event in
             let approval = approvalEventGate.capture(event)
+            let navigation = event.signature == PetEventNavigationHotKeys.signature
+                ? eventNavigationGate.capture(event, modifiers: eventNavigationModifiers()) : nil
             Task { @MainActor in
                 if event.signature == PetApprovalHotKeys.signature {
                     guard let self, let activation = self.approvalHotKeys.receive(approval) else { return }
                     self.onApprovalRequested?(activation)
+                } else if event.signature == PetEventNavigationHotKeys.signature {
+                    guard let self, let activation = self.eventNavigationHotKeys.receive(navigation) else { return }
+                    self.onEventNavigationRequested?(activation)
                 } else {
                     self?.receive(event)
                 }
@@ -771,6 +786,22 @@ final class PetHotKeyRegistry {
     }
 
     func pollApprovalKeyRelease() { approvalHotKeys.pollRelease() }
+
+    func reconcileEventNavigation(contextID: String?) {
+        eventNavigationHotKeys.reconcile(contextID: contextID)
+    }
+
+    func isCurrentEventNavigationActivation(_ activation: PetEventNavigationActivation) -> Bool {
+        eventNavigationHotKeys.isCurrent(activation)
+    }
+
+    var eventNavigationShortcutDiagnostic: String? { eventNavigationHotKeys.diagnostic }
+
+    func eventNavigationShortcutLabel(for direction: PetEventNavigationDirection) -> String? {
+        eventNavigationHotKeys.label(for: direction)
+    }
+
+    func pollEventNavigationKeyRelease() { eventNavigationHotKeys.pollRelease() }
 
     private func previewRegistrationFailures(slots: Set<Int>) -> [PetShortcutApplyFailure] {
         slots.sorted().compactMap { slot in

@@ -71,6 +71,60 @@ private final class InstallationLegacyConfirmationRecorder: @unchecked Sendable 
     var values: [Bool] { lock.withLock { confirmations } }
 }
 
+@Test("an installed matching app is not described as missing") @MainActor
+func appInstallationExistingAppHasAccurateTitle() async throws {
+    let fixture = try InstallationFlowFixture(existingBuild: "19")
+    defer { fixture.remove() }
+    let service = fixture.service, source = fixture.source
+    let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+        install: { _, _, _ in Issue.record("Matching apps must not be recopied"); throw AppInstallationError(.copyFailed) },
+        openInstalled: { _, _ in Issue.record("Inspection must not launch") })
+    await model.refresh()
+    #expect(model.plan?.comparison == .sameIdentity)
+    #expect(model.title == "설치된 Blabee가 있습니다")
+    #expect(model.primaryTitle == "설치된 Blabee 열기")
+}
+
+@Test("unexpected location and early exit enter Finder recovery without repeating launch or copy",
+      arguments: [AppInstallationPlatformError.launchedApplicationMismatch, .launchedProcessExited, .launchFailed, .launchTimedOut])
+@MainActor
+func appInstallationLaunchFailureUsesFinderRecovery(_ failure: AppInstallationPlatformError) async throws {
+    for existingBuild in [String?.none, "19", "18"] {
+        let fixture = try InstallationFlowFixture(existingBuild: existingBuild)
+        defer { fixture.remove() }
+        let service = fixture.service, source = fixture.source
+        let installs = InstallationFlowCounter()
+        var opens = 0
+        var revealed: [URL] = []
+        let model = AppInstallationViewModel(sourceURL: source, inspect: { try service.inspect(source: source) },
+            install: { plan, approved, legacy in
+                installs.increment()
+                return try service.install(plan, replacementApproved: approved, legacyQuitConfirmed: legacy)
+            }, openInstalled: { _, _ in opens += 1; throw failure },
+            showInFinder: { revealed.append($0) })
+        await model.refresh()
+        await model.performPrimary()
+        if model.showsReplacementConfirmation { await model.confirmReplacement() }
+        #expect(model.phase == .failed && model.requiresFinderRecovery)
+        #expect(model.primaryTitle == "Finder에서 설치 복구")
+        #expect(model.title == "설치된 앱 실행을 확인해 주세요")
+        #expect(model.receipt != nil || model.plan?.existing != nil)
+        let receipt = model.receipt?.identity
+        let backup = model.receipt?.backupURL
+        if existingBuild == "18" { #expect(backup != nil && model.recoveryURL == backup) }
+        await model.refresh()
+        await model.performPrimary()
+        await model.performPrimary()
+        await model.confirmReplacement()
+        #expect(opens == 1)
+        #expect(installs.value == (existingBuild == "19" ? 0 : 1))
+        #expect(revealed == [fixture.target, fixture.target])
+        #expect(model.receipt?.identity == receipt)
+        #expect(model.receipt?.backupURL == backup)
+        #expect(FileManager.default.fileExists(atPath: fixture.target.path))
+    }
+}
+
 @Test("installed-only launch rejects translocation, aliases, extra arguments and identity mismatch")
 func appInstallationInstalledEntryIsStrict() throws {
     let app = URL(fileURLWithPath: "/Applications/Blabee.app", isDirectory: true)

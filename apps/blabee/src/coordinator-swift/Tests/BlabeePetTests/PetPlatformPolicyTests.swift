@@ -189,6 +189,76 @@ func blabeePetStatusItemUpdatePolicy() {
     ))
 }
 
+@MainActor
+private final class RecordingStatusItemButton: NSButton {
+    var imageWrites = 0
+    var titleWrites = 0
+    override var image: NSImage? { didSet { imageWrites += 1 } }
+    override var attributedTitle: NSAttributedString { didSet { titleWrites += 1 } }
+}
+
+@Test("BlabeePet appearance snapshots never rewrite an unchanged status icon or title")
+@MainActor
+func blabeePetStatusItemAppearanceDoesNotRedraw() async throws {
+    let button = RecordingStatusItemButton(frame: .zero)
+    let light = try #require(NSAppearance(named: .aqua))
+    let dark = try #require(NSAppearance(named: .darkAqua))
+    button.appearance = light
+    let presenter = PetStatusItemPresenter(button: button, baseImage: nil)
+    defer { presenter.stop() }
+    presenter.update(attention: false)
+    let titleWrites = button.titleWrites
+    let idleWrites = button.imageWrites
+    let idleImage = try #require(button.image)
+
+    for _ in 0..<100 {
+        button.appearance = dark
+        button.appearance = light
+        presenter.update(attention: false)
+    }
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(button.imageWrites == idleWrites)
+    #expect(button.image === idleImage)
+    #expect(button.titleWrites == titleWrites)
+
+    presenter.update(attention: true)
+    let attentionWrites = button.imageWrites
+    #expect(attentionWrites == idleWrites + 1)
+    #expect(button.image?.isTemplate == false)
+    #expect(button.toolTip == "Blabee · 결정 필요")
+    for _ in 0..<100 {
+        button.appearance = dark
+        button.appearance = light
+        presenter.update(attention: true)
+    }
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(button.imageWrites == attentionWrites)
+    #expect(button.titleWrites == titleWrites)
+
+    // A real final appearance change must still update the colored badge image.
+    button.appearance = dark
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(button.imageWrites == attentionWrites + 1)
+    #expect(button.titleWrites == titleWrites)
+
+    // An already queued appearance refresh must not resurrect attention.
+    button.appearance = light
+    presenter.update(attention: false)
+    let finalWrites = button.imageWrites
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(button.imageWrites == finalWrites)
+    #expect(button.image === idleImage)
+    #expect(button.toolTip == "Blabee")
+
+    presenter.update(attention: true)
+    button.appearance = dark
+    presenter.stop()
+    let stoppedWrites = button.imageWrites
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(button.imageWrites == stoppedWrites)
+    #expect(button.titleWrites == titleWrites)
+}
+
 @Test("BlabeePet auto-presentation is owned by the exact approval head")
 func blabeePetExactApprovalPresentationPolicy() {
     let first = PetApprovalHeadIdentity.permission(requestID: "permission_first")
@@ -248,7 +318,7 @@ func blabeePetPermissionContentCanScroll() {
     #expect(PetPanelContentPolicy.allowsScrolling(in: .shortcutSettings))
 }
 
-@Test("BlabeePet separates selection qualification from approval and polling deadlines")
+@Test("BlabeePet separates durable user actions from approval and polling deadlines")
 func blabeePetUserDecisionTimeoutPolicy() {
     #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
         for: "select",
@@ -263,6 +333,17 @@ func blabeePetUserDecisionTimeoutPolicy() {
         userDecisionTimeoutMilliseconds: 12_000,
         selectionTimeoutMilliseconds: 7_000
     ) == 7_000)
+    #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+        for: "dismiss_interaction",
+        defaultTimeoutMilliseconds: 2_000,
+        userDecisionTimeoutMilliseconds: 12_000
+    ) == 60_000)
+    #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
+        for: "dismiss_interaction",
+        defaultTimeoutMilliseconds: 2_000,
+        userDecisionTimeoutMilliseconds: 12_000,
+        dismissalTimeoutMilliseconds: 8_000
+    ) == 8_000)
     for requestType in [
         "resolve_permission_request",
         "resolve_managed_command_approval",
@@ -277,6 +358,7 @@ func blabeePetUserDecisionTimeoutPolicy() {
         "get_state",
         "focus_interaction",
         "select_extra",
+        "dismiss_interaction_extra",
         "resolve_managed_command_approval_extra",
     ] {
         #expect(PetTransportTimeoutPolicy.responseTimeoutMilliseconds(
@@ -287,22 +369,54 @@ func blabeePetUserDecisionTimeoutPolicy() {
     }
 }
 
-@Test("BlabeePet loads the bundled SVG and overlays attention inside the icon")
+@Test("BlabeePet loads the Air bee template and preserves a colored attention badge")
 @MainActor
 func blabeePetStatusItemIconAsset() throws {
     let asset = petRepositoryRoot
         .appendingPathComponent("Packaging/macos/Resources/BlabeeMenuBar.svg")
     let baseImage = try #require(PetStatusItemIcon.loadBaseImage(at: asset))
     #expect(baseImage.size == PetStatusItemIcon.size)
-    #expect(baseImage.isTemplate == false)
+    #expect(baseImage.isTemplate)
 
     let normal = PetStatusItemIcon.render(baseImage: baseImage, attention: false)
     let attention = PetStatusItemIcon.render(baseImage: baseImage, attention: true)
     #expect(normal.size == PetStatusItemIcon.size)
     #expect(attention.size == PetStatusItemIcon.size)
-    #expect(normal.isTemplate == false)
+    #expect(normal.isTemplate)
     #expect(attention.isTemplate == false)
     #expect(normal.tiffRepresentation != attention.tiffRepresentation)
+
+    for (sourceName, source) in [("asset", Optional(baseImage)), ("fallback", nil)] {
+        var brightness: [Double] = []
+        for (name, style) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let appearance = try #require(NSAppearance(named: style))
+            let rendered = PetStatusItemIcon.render(baseImage: source, attention: true, appearance: appearance)
+            let tiff = try #require(rendered.tiffRepresentation)
+            let bitmap = try #require(NSBitmapImageRep(data: tiff))
+            var redPixels = 0
+            var beeLuminance: [Double] = []
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                          color.alphaComponent > 0.5 else { continue }
+                    if color.redComponent > color.greenComponent + 0.2 {
+                        redPixels += 1
+                    } else {
+                        beeLuminance.append(Double(color.redComponent + color.greenComponent + color.blueComponent) / 3)
+                    }
+                }
+            }
+            #expect(redPixels > 0)
+            #expect(!beeLuminance.isEmpty)
+            brightness.append(beeLuminance.reduce(0, +) / Double(max(1, beeLuminance.count)))
+            if let directory = ProcessInfo.processInfo.environment["BLABEE_MENU_BAR_RENDER_DIRECTORY"] {
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: directory, isDirectory: true)
+                    .appendingPathComponent("bee-\(sourceName)-\(name).png"))
+            }
+        }
+        #expect(brightness[1] > brightness[0] + 0.4)
+    }
 }
 
 @Test("BlabeePet resizing preserves the lower-trailing anchor and round-trips")

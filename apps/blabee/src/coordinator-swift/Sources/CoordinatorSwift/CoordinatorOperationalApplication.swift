@@ -61,8 +61,15 @@ public actor CoordinatorOperationalApplication {
     private static let legacyQueuedPromptPrefix =
         "Blabee verified the selected action. Execute exactly this JSON action as a new user turn. A queued transport receipt is not proof that the work succeeded.\n"
     private static let maximumQueuedActionJSONBytes = 60_000
+    // There is no authoritative session-end signal in the Hook protocol.
+    // Keep current prompt authority and known-session fences for the lifetime
+    // of the service; at capacity, existing sessions keep working and new
+    // sessions fall back to Codex until the service is safely restarted.
+    private static let maximumRegisteredSessions = 1_024
+    private static let maximumRecentSnapshotSessions = 64
     private static let maximumUserPromptAdditionalContextBytes = 65_536
-    private static let maximumPermissionRequestWaitNanoseconds: UInt64 = 50_000_000_000
+    private static let maximumPermissionRequestWaitNanoseconds =
+        HookPermissionTimingPolicy.userDecisionTimeoutNanoseconds
     private static let maximumPermissionRequestDeliveryWaitNanoseconds: UInt64 =
         10_000_000_000
     private static let maximumPendingPermissionRequestLimit = 8
@@ -157,6 +164,10 @@ public actor CoordinatorOperationalApplication {
         case paused
         case closed
         case expired
+
+        var isTerminal: Bool {
+            self == .paused || self == .closed || self == .expired
+        }
     }
 
     private enum NextTurnDispatchPhase {
@@ -168,8 +179,7 @@ public actor CoordinatorOperationalApplication {
 
     private struct Boundary {
         let proposalID: String
-        let proposalCanonical: Data
-        let proposalObject: [String: Any]
+        var proposalObject: [String: Any]
         let binding: CoordinatorBinding
         var packet: Data?
         var phase: BoundaryPhase
@@ -182,10 +192,11 @@ public actor CoordinatorOperationalApplication {
         var openedAt: RFC3339Instant?
         var openedEventSequence: Int64?
         var sealEventID: String?
+        var payloadCompacted = false
     }
 
     private struct ProposalRegistration {
-        let canonical: Data
+        let canonicalDigest: Data
         let contextKey: String
         let boundaryKey: CoordinatorBindingKey
     }
@@ -205,10 +216,13 @@ public actor CoordinatorOperationalApplication {
         // Session lookup uses a normalized copy; approval displays and returns
         // the exact path sent by the suspended Hook.
         let sessionPath: String
+        let isNativeSubagent: Bool
         let toolName: String
         let description: String?
         let commandPreview: String?
         let allowOnceQualification: String?
+        let admittedAtNanoseconds: UInt64
+        let timeoutNanoseconds: UInt64
         let continuation: CheckedContinuation<Data, any Error>
         let timeoutTask: Task<Void, Never>
         var deliveryToken: String?
@@ -217,8 +231,14 @@ public actor CoordinatorOperationalApplication {
             HookPermissionPolicy.allowsOnce(qualification: allowOnceQualification)
         }
 
-        var snapshotObject: [String: Any] {
-            [
+        func remainingNanoseconds(at now: UInt64) -> UInt64 {
+            guard now >= admittedAtNanoseconds else { return 0 }
+            let elapsed = now - admittedAtNanoseconds
+            return elapsed < timeoutNanoseconds ? timeoutNanoseconds - elapsed : 0
+        }
+
+        func snapshotObject(at now: UInt64) -> [String: Any] {
+            var object: [String: Any] = [
                 "request_id": requestID,
                 "arrival_sequence": arrivalSequence,
                 "project_id": projectID,
@@ -230,7 +250,12 @@ public actor CoordinatorOperationalApplication {
                 "command_preview": commandPreview as Any? ?? NSNull(),
                 "allow_once_available": allowOnceAvailable,
                 "delivery_pending": deliveryToken != nil,
+                "remaining_milliseconds": CoordinatorOperationalApplication.ceilMilliseconds(
+                    remainingNanoseconds(at: now)
+                ),
             ]
+            if isNativeSubagent { object["binding_source"] = "native_subagent" }
+            return object
         }
     }
 
@@ -367,6 +392,18 @@ public actor CoordinatorOperationalApplication {
         let timeoutTask: Task<Void, Never>
     }
 
+    /// Navigation is process-local presentation authority. It never changes
+    /// either arrival queue or the immutable approval/decision bindings.
+    private struct PetEventIdentity: Hashable {
+        enum Kind: String { case decision, permission, managed }
+        let kind: Kind
+        let eventID: String
+
+        var jsonObject: [String: Any] {
+            ["event_kind": kind.rawValue, "event_id": eventID]
+        }
+    }
+
     private let routing: CoordinatorRoutingApplication
     private let suggestionMode: BlabeeSuggestionMode
     private let secretCorpus: RuntimeSecretCorpus
@@ -376,6 +413,7 @@ public actor CoordinatorOperationalApplication {
     private let stopObservationHMACKey: Data
     private let nextTurnDispatcher: CoordinatorNextTurnDispatcher
     private let permissionRequestTimeoutNanoseconds: UInt64
+    private let permissionLifecycleObserver: @Sendable (HookPermissionLifecycleEvent) -> Void
     private let permissionRequestDeliveryTimeoutNanoseconds: UInt64
     private let maximumPendingPermissionRequests: Int
     private let petConsumerLeaseDurationNanoseconds: UInt64
@@ -385,7 +423,9 @@ public actor CoordinatorOperationalApplication {
 
     private var projects: [String: Project] = [:]
     private var sessions: [String: Session] = [:]
+    private var recentSnapshotSessionIDs: [String] = []
     private var boundaries: [CoordinatorBindingKey: Boundary] = [:]
+    private var terminalPayloadCandidates: Set<CoordinatorBindingKey> = []
     private var activeByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     private var stagedByTurn: [CoordinatorTurnKey: CoordinatorBindingKey] = [:]
     private var registrations: [String: ProposalRegistration] = [:]
@@ -417,6 +457,11 @@ public actor CoordinatorOperationalApplication {
     private var reconciliationRetryNotBeforeNanoseconds: UInt64?
     private var lastReconciliationErrorCode: String?
     private var foregroundAuthorityRecoveryBinding: CoordinatorBindingKey?
+    private var pendingPetEventOrder: [PetEventIdentity] = []
+    private var explicitlyFocusedPetEvent: PetEventIdentity?
+    private var hasExplicitPetEventFocus = false
+    private var petEventNavigationRevision: Int64 = 0
+    private var lastPetEventNavigationProjection: Data?
 
     public init(
         routing: CoordinatorRoutingApplication,
@@ -429,7 +474,9 @@ public actor CoordinatorOperationalApplication {
         stopObservationHMACKey: Data? = nil,
         nextTurnDispatcher: CoordinatorNextTurnDispatcher? = nil,
         initialApprovalAdmissionSequence: Int64 = 0,
-        permissionRequestTimeoutNanoseconds: UInt64 = 50_000_000_000,
+        permissionRequestTimeoutNanoseconds: UInt64 =
+            HookPermissionTimingPolicy.userDecisionTimeoutNanoseconds,
+        permissionLifecycleObserver: @escaping @Sendable (HookPermissionLifecycleEvent) -> Void = { _ in },
         permissionRequestDeliveryTimeoutNanoseconds: UInt64 = 10_000_000_000,
         maximumPendingPermissionRequests: Int = 8,
         petConsumerLeaseDurationNanoseconds: UInt64 = 3_000_000_000,
@@ -451,6 +498,7 @@ public actor CoordinatorOperationalApplication {
             throw CoordinatorError("next_turn_dispatcher_unavailable")
         }
         self.approvalAdmissionSequence = max(0, initialApprovalAdmissionSequence)
+        self.permissionLifecycleObserver = permissionLifecycleObserver
         self.permissionRequestTimeoutNanoseconds = max(
             1,
             min(
@@ -546,6 +594,10 @@ public actor CoordinatorOperationalApplication {
     /// Handles only high-level operational requests. Low-level semantic
     /// commands are deliberately not exposed through this dispatch surface.
     public func handle(type: String, payload: Data) async throws -> Data {
+        defer { compactTerminalPayloads() }
+        // A delayed timer must not leave an expired card selectable. This is
+        // process-local cleanup and never advances the journal/freshness clock.
+        expireElapsedPermissionRequests(at: monotonicInstantGenerator())
         // Permission waiters and Pet reads are process-local coordination.
         // Keep them independent from journal reconciliation, cooldown, and
         // quarantine so a storage failure cannot strand an approval prompt.
@@ -562,6 +614,13 @@ public actor CoordinatorOperationalApplication {
             return try await resolveManagedCommandApproval(payload)
         case "ack_managed_command_approval_delivery":
             return try acknowledgeManagedCommandApprovalDelivery(payload)
+        case "focus_event":
+            // Approval navigation must remain available during a journal
+            // outage, just like approval admission and resolution.
+            let request = try StrictJSONTransport.object(from: payload)
+            if request["event_kind"] as? String != "decision" {
+                return try focusEvent(payload)
+            }
         case "pet_snapshot", "get_state":
             return try stateSnapshot(payload: payload)
         default:
@@ -639,6 +698,10 @@ public actor CoordinatorOperationalApplication {
             return try await stop(payload, generation: requestGeneration)
         case "focus_interaction":
             return try focusInteraction(payload)
+        case "focus_event":
+            return try focusEvent(payload)
+        case "dismiss_interaction":
+            return try dismissInteraction(payload)
         case "select":
             return try await select(payload)
         default:
@@ -647,6 +710,7 @@ public actor CoordinatorOperationalApplication {
     }
 
     public func processTime() async throws -> [Data] {
+        defer { compactTerminalPayloads() }
         guard !routing.recoveryStatus().isQuarantined else {
             throw CoordinatorError("routing_restart_unsealed_boundary_quarantined")
         }
@@ -854,7 +918,7 @@ public actor CoordinatorOperationalApplication {
             )
             let proposalID = try identifier(string(proposal, "proposal_id"), "proposal_id")
             guard let registration = registrations[proposalID],
-                  registration.canonical == canonical,
+                  registration.canonicalDigest == Data(SHA256.hash(data: canonical)),
                   quarantinedInitialActivations[registration.boundaryKey] != nil
             else { return nil }
             let contextKey = [
@@ -893,6 +957,68 @@ public actor CoordinatorOperationalApplication {
         try reconcilePendingTimeNotices()
     }
 
+    private func retainBoundary(_ boundary: Boundary, for key: CoordinatorBindingKey) {
+        boundaries[key] = boundary
+        if boundary.phase.isTerminal && !boundary.payloadCompacted {
+            terminalPayloadCandidates.insert(key)
+        }
+    }
+
+    private func compactTerminalPayloads() {
+        guard !terminalPayloadCandidates.isEmpty, pendingTimeNotices.isEmpty else { return }
+        let retainedKeys = Set(activeByTurn.values)
+            .union(stagedByTurn.values)
+            .union(pendingInitialActivations)
+            .union(pendingCompletionClosures)
+            .union(initialActivationFailures.keys)
+            .union(quarantinedInitialActivations.keys)
+        for key in Array(terminalPayloadCandidates) {
+            guard var boundary = boundaries[key], !boundary.payloadCompacted else {
+                terminalPayloadCandidates.remove(key)
+                continue
+            }
+            // UserPromptSubmit may close the boundary before the suspended
+            // dispatcher returns its receipt. Keep that recovery anchor and
+            // every still-referenced workflow intact until it has settled.
+            guard boundary.phase.isTerminal, !retainedKeys.contains(key),
+                  boundary.nextTurnDispatchPhase != .inFlight
+            else { continue }
+            boundary.proposalObject.removeAll(keepingCapacity: false)
+            boundary.packet = nil
+            boundary.acceptance = nil
+            boundary.payloadCompacted = true
+            boundaries[key] = boundary
+            terminalPayloadCandidates.remove(key)
+        }
+    }
+
+    private func recordRecentSnapshotSession(_ sessionID: String) {
+        recentSnapshotSessionIDs.removeAll { Self.byteExact($0, sessionID) }
+        recentSnapshotSessionIDs.append(sessionID)
+        if recentSnapshotSessionIDs.count > Self.maximumRecentSnapshotSessions {
+            recentSnapshotSessionIDs.removeFirst(
+                recentSnapshotSessionIDs.count - Self.maximumRecentSnapshotSessions
+            )
+        }
+    }
+
+    private func snapshotSessions() -> [Session] {
+        // The session list is a presentation join, not the authority store.
+        // Preserve every live decision/approval join even if its session is
+        // older than the recent history window; never evict its authority.
+        var sessionIDs = Set(recentSnapshotSessionIDs)
+        sessionIDs.formUnion(activeByTurn.keys.map(\.sessionID))
+        sessionIDs.formUnion(stagedByTurn.keys.map(\.sessionID))
+        sessionIDs.formUnion(pendingInitialActivations.map { $0.binding.sessionID })
+        sessionIDs.formUnion(pendingCompletionClosures.map { $0.binding.sessionID })
+        sessionIDs.formUnion(quarantinedInitialActivations.keys.map { $0.binding.sessionID })
+        sessionIDs.formUnion(pendingPermissionRequests.map(\.sessionID))
+        sessionIDs.formUnion(pendingPermissionRequestDeliveries.map(\.sessionID))
+        sessionIDs.formUnion(pendingManagedCommandApprovals.map { $0.binding.threadID })
+        sessionIDs.formUnion(pendingManagedCommandApprovalDeliveries.map { $0.binding.threadID })
+        return sessionIDs.compactMap { sessions[$0] }.sorted { $0.sessionID < $1.sessionID }
+    }
+
     private func reconcileTimeNotice(_ noticeData: Data) throws {
         let notice = try StrictJSONTransport.object(from: noticeData)
         let kind = notice["kind"] as? String
@@ -905,7 +1031,7 @@ public actor CoordinatorOperationalApplication {
             boundary.phase = .dispatched
             boundary.continuationID = continuationID
             boundary.nextTurnDispatchPhase = .failed
-            boundaries[key] = boundary
+            retainBoundary(boundary, for: key)
         } else if kind == "selection_pause_committed_response_lost" {
             let binding = try CoordinatorBinding(jsonObject: notice)
             let key = binding.fullKey
@@ -913,7 +1039,7 @@ public actor CoordinatorOperationalApplication {
                 throw CoordinatorError("selection_recovery_binding_missing")
             }
             boundary.phase = .paused
-            boundaries[key] = boundary
+            retainBoundary(boundary, for: key)
             activeByTurn.removeValue(forKey: binding.turnKey)
         } else if kind == "interaction_expired",
            let packetID = notice["packet_id"] as? String,
@@ -928,7 +1054,7 @@ public actor CoordinatorOperationalApplication {
             if boundary.phase != .expired && boundary.phase != .closed {
                 try closeTerminalBoundaryIdempotently(&boundary, reason: "interaction_expired")
                 boundary.phase = .expired
-                boundaries[key] = boundary
+                retainBoundary(boundary, for: key)
                 activeByTurn.removeValue(forKey: boundary.binding.turnKey)
             }
         } else if kind == "continuation_timed_out_unknown",
@@ -944,7 +1070,7 @@ public actor CoordinatorOperationalApplication {
                     reason: "transport_timed_out_unknown"
                 )
                 boundary.phase = .closed
-                boundaries[key] = boundary
+                retainBoundary(boundary, for: key)
             }
             try promoteStagedAfterRecoveredTerminal(
                 turnKey: boundary.binding.turnKey,
@@ -999,7 +1125,7 @@ public actor CoordinatorOperationalApplication {
             // `activate` retains the exact event and packet identities before
             // attempting the atomic append. Keep them so a retry never
             // regenerates authority after a failed or ambiguous response.
-            boundaries[boundaryKey] = boundary
+            retainBoundary(boundary, for: boundaryKey)
             let errorCode = reconciliationErrorCode(error)
             let maximumAttempts = Self.transientInitialActivationErrorCodes.contains(errorCode)
                 ? Self.maximumTransientInitialActivationAttempts
@@ -1021,7 +1147,7 @@ public actor CoordinatorOperationalApplication {
             }
             throw error
         }
-        boundaries[boundaryKey] = boundary
+        retainBoundary(boundary, for: boundaryKey)
         activeByTurn[boundary.binding.turnKey] = boundaryKey
         pendingInitialActivations.remove(boundaryKey)
         initialActivationFailures.removeValue(forKey: boundaryKey)
@@ -1049,14 +1175,15 @@ public actor CoordinatorOperationalApplication {
         } catch {
             // Preserve the retained activation identities and staged mapping
             // so the next scheduler tick resumes the exact same attempt.
-            boundaries[stagedKey] = staged
+            retainBoundary(staged, for: stagedKey)
             throw error
         }
         // The originating Codex answer has already finished. A promoted
         // successor therefore becomes selectable immediately instead of
         // waiting for another Stop invocation from that old turn.
         staged.phase = .waiting
-        boundaries[stagedKey] = staged
+        retainBoundary(staged, for: stagedKey)
+        registerPendingDecisionEvent(staged)
         activeByTurn[turnKey] = stagedKey
         stagedByTurn.removeValue(forKey: turnKey)
     }
@@ -1123,6 +1250,7 @@ private extension CoordinatorOperationalApplication {
             }
             current.enabled = enabled
             projects[path] = current
+            expireInvalidNativePermissionRequests()
             return try publicData([
                 "enabled": enabled,
                 "project_id": current.projectID,
@@ -1132,6 +1260,7 @@ private extension CoordinatorOperationalApplication {
         let projectID = try optionalIdentifier(payload, "project_id") ?? identifier(idGenerator("project"), "project_id")
         let project = Project(projectID: projectID, path: path, enabled: enabled)
         projects[path] = project
+        expireInvalidNativePermissionRequests()
         return try publicData([
             "enabled": enabled,
             "project_id": projectID,
@@ -1228,7 +1357,7 @@ private extension CoordinatorOperationalApplication {
                         if case .verified = resolution {
                             if var completed = boundaries[activeKey] {
                                 completed.phase = .closed
-                                boundaries[activeKey] = completed
+                                retainBoundary(completed, for: activeKey)
                             }
                             try promoteStagedAfterRecoveredTerminal(
                                 turnKey: key,
@@ -1314,6 +1443,7 @@ private extension CoordinatorOperationalApplication {
         session.queuedActionContext = queuedResolution.actionContext
         let response = try promptContext(session: session)
         sessions[sessionID] = session
+        recordRecentSnapshotSession(sessionID)
         return response
     }
 
@@ -1327,8 +1457,13 @@ private extension CoordinatorOperationalApplication {
                 Self.byteExact(current.projectID, project.projectID),
                 "session_project_conflict"
             )
+            recordRecentSnapshotSession(sessionID)
             return current
         }
+        try require(
+            sessions.count < Self.maximumRegisteredSessions,
+            "session_capacity_exceeded"
+        )
         let registered = Session(
             sessionID: sessionID,
             projectID: project.projectID,
@@ -1342,7 +1477,11 @@ private extension CoordinatorOperationalApplication {
             promptOrigin: "human",
             queuedActionContext: nil
         )
+        // A real session registration replaces any permission-only child
+        // binding. It must not leave an unresolvable card in the Pet snapshot.
+        expireSupersededPermissionRequests(sessionID: sessionID, currentTurnID: "")
         sessions[sessionID] = registered
+        recordRecentSnapshotSession(sessionID)
         return registered
     }
 
@@ -1407,8 +1546,19 @@ private extension CoordinatorOperationalApplication {
             sourceTurnID: turnID
         )
         if let existing = registrations[proposalID] {
-            try require(existing.canonical == canonical, "proposal_id_conflict")
+            try require(existing.canonicalDigest == Data(SHA256.hash(data: canonical)), "proposal_id_conflict")
             try require(existing.contextKey.utf8.elementsEqual(contextKey.utf8), "proposal_id_conflict")
+            if let terminal = boundaries[existing.boundaryKey], terminal.payloadCompacted {
+                // Exact retries remain byte-identical after compaction. Only
+                // this rare retry reads durable history; Pet polls stay local.
+                let durable = try routing.authoritativeState()
+                guard let packet = durable.packet(for: terminal.binding),
+                      Self.byteExact(durable.boundary(for: terminal.binding)?.proposalID, proposalID)
+                else { throw CoordinatorError("packet_missing") }
+                var replay = terminal
+                replay.packet = packet.canonicalJSON
+                return try acceptanceData(replay)
+            }
             if boundaries[existing.boundaryKey]?.acceptance == nil {
                 if let quarantined = quarantinedInitialActivations[
                     existing.boundaryKey
@@ -1458,7 +1608,6 @@ private extension CoordinatorOperationalApplication {
         let key = binding.fullKey
         var boundary = Boundary(
             proposalID: proposalID,
-            proposalCanonical: canonical,
             proposalObject: proposal,
             binding: binding,
             packet: nil,
@@ -1485,10 +1634,10 @@ private extension CoordinatorOperationalApplication {
             // Register the exact proposal and boundary identity before the
             // atomic open/seal transition. A failed or ambiguous response
             // retries the same packet instead of regenerating authority.
-            boundaries[key] = boundary
+            retainBoundary(boundary, for: key)
             activeByTurn[turnKey] = key
             registrations[proposalID] = ProposalRegistration(
-                canonical: canonical,
+                canonicalDigest: Data(SHA256.hash(data: canonical)),
                 contextKey: contextKey,
                 boundaryKey: key
             )
@@ -1499,9 +1648,9 @@ private extension CoordinatorOperationalApplication {
             }
             boundary = activated
         }
-        boundaries[key] = boundary
+        retainBoundary(boundary, for: key)
         registrations[proposalID] = ProposalRegistration(
-            canonical: canonical,
+            canonicalDigest: Data(SHA256.hash(data: canonical)),
             contextKey: contextKey,
             boundaryKey: key
         )
@@ -1572,14 +1721,31 @@ private extension CoordinatorOperationalApplication {
         let qualification = payload[HookPermissionPolicy.qualificationKey] as? String
         let allowOnceQualification = HookPermissionPolicy.allowsOnce(qualification: qualification)
             ? qualification : nil
-        guard let session = sessions[sessionID],
-              Self.byteExact(session.latestTurnID, turnID),
-              Self.byteExact(session.path, sessionPath),
-              projects.values.contains(where: {
-                  $0.enabled && Self.byteExact($0.projectID, session.projectID)
-              })
-        else {
-            throw CoordinatorError("permission_request_binding_invalid")
+        let projectID: String
+        let isNativeSubagent: Bool
+        if let session = sessions[sessionID] {
+            try require(
+                Self.byteExact(session.latestTurnID, turnID)
+                    && Self.byteExact(session.path, sessionPath)
+                    && projects.values.contains(where: {
+                        $0.enabled && Self.byteExact($0.projectID, session.projectID)
+                    }),
+                "permission_request_binding_invalid"
+            )
+            projectID = session.projectID
+            isNativeSubagent = false
+        } else {
+            // Codex's InterAgentCommunication turns (spawn/followup_task) do
+            // not emit UserPromptSubmit. A qualified, routed native child Hook
+            // can own this suspended request without inventing prompt/episode
+            // authority. Never use this fallback for a known but stale session.
+            guard allowOnceQualification != nil,
+                  let agentID = payload["agent_id"] as? String,
+                  Self.byteExact(agentID, sessionID),
+                  let project = project(containing: sessionPath), project.enabled
+            else { throw CoordinatorError("permission_request_binding_invalid") }
+            projectID = project.projectID
+            isNativeSubagent = true
         }
         let permissionAdmissionInstant = monotonicInstantGenerator()
         expireApprovalsWithoutLivePetConsumer(at: permissionAdmissionInstant)
@@ -1587,6 +1753,7 @@ private extension CoordinatorOperationalApplication {
             // A Hook must never wait for a UI that is not demonstrably alive.
             // This path does not allocate an id, advance notice counters, or
             // leave a card behind; native Codex remains the approval owner.
+            permissionLifecycleObserver(.noLiveConsumer)
             return try permissionHookResponse(decision: "defer_to_codex")
         }
         try require(
@@ -1630,19 +1797,24 @@ private extension CoordinatorOperationalApplication {
                 pendingPermissionRequests.append(PendingPermissionRequest(
                     requestID: requestID,
                     arrivalSequence: arrivalSequence,
-                    projectID: session.projectID,
+                    projectID: projectID,
                     sessionID: sessionID,
                     turnID: turnID,
                     cwd: cwd,
                     sessionPath: sessionPath,
+                    isNativeSubagent: isNativeSubagent,
                     toolName: toolName,
                     description: description,
                     commandPreview: commandPreview,
                     allowOnceQualification: allowOnceQualification,
+                    admittedAtNanoseconds: permissionAdmissionInstant,
+                    timeoutNanoseconds: timeoutNanoseconds,
                     continuation: continuation,
                     timeoutTask: timeoutTask,
                     deliveryToken: nil
                 ))
+                registerPendingPetEvent(.init(kind: .permission, eventID: requestID))
+                permissionLifecycleObserver(isNativeSubagent ? .admittedSubagent : .admittedRoot)
             }
         } onCancel: {
             Task { [weak self] in
@@ -1709,16 +1881,23 @@ private extension CoordinatorOperationalApplication {
             }),
             "permission_response_id_conflict"
         )
-        guard let head = pendingPermissionRequests.first else {
-            throw CoordinatorError("permission_request_not_found")
+        guard let index = pendingPermissionRequests.firstIndex(where: {
+            Self.byteExact($0.requestID, requestID)
+        }) else {
+            throw CoordinatorError(pendingPermissionRequests.isEmpty
+                ? "permission_request_not_found" : "permission_request_not_head")
         }
-        guard Self.byteExact(head.requestID, requestID) else {
-            throw CoordinatorError("permission_request_not_head")
+        let head = pendingPermissionRequests[index]
+        if hasExplicitPetEventFocus {
+            try requireExplicitPetEventFocus(.init(kind: .permission, eventID: requestID))
+        } else {
+            try require(index == 0, "permission_request_not_head")
+            try require(
+                isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
+                "permission_request_not_global_head"
+            )
         }
-        try require(
-            isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
-            "permission_request_not_global_head"
-        )
+        try require(!hasPendingPetEventDelivery, "event_delivery_pending")
         try byteExactRequire(head.projectID, projectID, "permission_request_binding_mismatch")
         try byteExactRequire(head.sessionID, sessionID, "permission_request_binding_mismatch")
         try byteExactRequire(head.turnID, turnID, "permission_request_binding_mismatch")
@@ -1726,13 +1905,10 @@ private extension CoordinatorOperationalApplication {
             decision != "allow_once" || head.allowOnceAvailable,
             "permission_allow_once_unqualified"
         )
-        guard let currentSession = sessions[head.sessionID],
-              Self.byteExact(currentSession.projectID, head.projectID),
-              Self.byteExact(currentSession.latestTurnID, head.turnID),
-              Self.byteExact(currentSession.path, head.sessionPath)
-        else {
-            pendingPermissionRequests.removeFirst()
+        guard permissionBindingIsCurrent(head) else {
+            pendingPermissionRequests.remove(at: index)
             head.timeoutTask.cancel()
+            permissionLifecycleObserver(.bindingInvalidated)
             head.continuation.resume(
                 returning: try permissionHookResponse(decision: "defer_to_codex")
             )
@@ -1789,7 +1965,7 @@ private extension CoordinatorOperationalApplication {
                     )
                 )
                 head.timeoutTask.cancel()
-                pendingPermissionRequests[0].deliveryToken = deliveryToken
+                pendingPermissionRequests[index].deliveryToken = deliveryToken
                 head.continuation.resume(returning: hookResponse)
             }
         } onCancel: {
@@ -1802,13 +1978,24 @@ private extension CoordinatorOperationalApplication {
         }
     }
 
-    func expirePermissionRequest(requestID: String) {
+    private func expireElapsedPermissionRequests(at now: UInt64) {
+        let expiredIDs = pendingPermissionRequests.filter {
+            $0.deliveryToken == nil && $0.remainingNanoseconds(at: now) == 0
+        }.map(\.requestID)
+        for requestID in expiredIDs { expirePermissionRequest(requestID: requestID) }
+    }
+
+    func expirePermissionRequest(
+        requestID: String,
+        reason: HookPermissionLifecycleEvent = .decisionDeadlineExpired
+    ) {
         guard let index = pendingPermissionRequests.firstIndex(where: {
             Self.byteExact($0.requestID, requestID)
         }), pendingPermissionRequests[index].deliveryToken == nil
         else { return }
         let request = pendingPermissionRequests.remove(at: index)
         request.timeoutTask.cancel()
+        permissionLifecycleObserver(reason)
         do {
             request.continuation.resume(
                 returning: try permissionHookResponse(decision: "defer_to_codex")
@@ -1848,6 +2035,7 @@ private extension CoordinatorOperationalApplication {
         }
         for request in expiredPermissionRequests {
             request.timeoutTask.cancel()
+            permissionLifecycleObserver(.consumerLeaseExpired)
             do {
                 request.continuation.resume(
                     returning: try permissionHookResponse(decision: "defer_to_codex")
@@ -1924,6 +2112,31 @@ private extension CoordinatorOperationalApplication {
         )
     }
 
+    private func expireInvalidNativePermissionRequests() {
+        let expired = pendingPermissionRequests.filter {
+            $0.isNativeSubagent && $0.deliveryToken == nil && !permissionBindingIsCurrent($0)
+        }.map(\.requestID)
+        for requestID in expired {
+            expirePermissionRequest(requestID: requestID, reason: .bindingInvalidated)
+        }
+    }
+
+    private func permissionBindingIsCurrent(_ request: PendingPermissionRequest) -> Bool {
+        if request.isNativeSubagent {
+            // The live Hook peer and exact pending request own this approval.
+            // A later real prompt registration must never inherit that authority.
+            guard sessions[request.sessionID] == nil,
+                  request.allowOnceAvailable,
+                  let project = project(containing: request.sessionPath), project.enabled
+            else { return false }
+            return Self.byteExact(project.projectID, request.projectID)
+        }
+        guard let session = sessions[request.sessionID] else { return false }
+        return Self.byteExact(session.projectID, request.projectID)
+            && Self.byteExact(session.latestTurnID, request.turnID)
+            && Self.byteExact(session.path, request.sessionPath)
+    }
+
     func cancelPermissionRequest(requestID: String) {
         guard let index = pendingPermissionRequests.firstIndex(where: {
             Self.byteExact($0.requestID, requestID)
@@ -1931,6 +2144,7 @@ private extension CoordinatorOperationalApplication {
         else { return }
         let request = pendingPermissionRequests.remove(at: index)
         request.timeoutTask.cancel()
+        permissionLifecycleObserver(.peerCancelled)
         request.continuation.resume(throwing: CancellationError())
     }
 
@@ -1940,16 +2154,17 @@ private extension CoordinatorOperationalApplication {
     ) {
         let expired = pendingPermissionRequests.filter {
             Self.byteExact($0.sessionID, sessionID)
-                && !Self.byteExact($0.turnID, currentTurnID)
+                && ($0.isNativeSubagent || !Self.byteExact($0.turnID, currentTurnID))
                 && $0.deliveryToken == nil
         }
         pendingPermissionRequests.removeAll {
             Self.byteExact($0.sessionID, sessionID)
-                && !Self.byteExact($0.turnID, currentTurnID)
+                && ($0.isNativeSubagent || !Self.byteExact($0.turnID, currentTurnID))
                 && $0.deliveryToken == nil
         }
         for request in expired {
             request.timeoutTask.cancel()
+            permissionLifecycleObserver(.superseded)
             do {
                 request.continuation.resume(
                     returning: try permissionHookResponse(decision: "defer_to_codex")
@@ -2080,6 +2295,7 @@ private extension CoordinatorOperationalApplication {
             )
         }
         delivery.continuation.resume(returning: resolutionReceipt)
+        permissionLifecycleObserver(.deliveryAcknowledged)
         return try permissionRequestDeliveryAckReceipt()
     }
 
@@ -2089,6 +2305,7 @@ private extension CoordinatorOperationalApplication {
         }) else { return }
         let delivery = pendingPermissionRequestDeliveries.remove(at: index)
         delivery.timeoutTask.cancel()
+        permissionLifecycleObserver(.deliveryTimedOut)
         removeSelectedPermissionRequest(
             requestID: delivery.requestID,
             deliveryToken: delivery.deliveryToken
@@ -2276,6 +2493,7 @@ private extension CoordinatorOperationalApplication {
                     timeoutTask: timeoutTask,
                     deliveryToken: nil
                 ))
+                registerPendingPetEvent(.init(kind: .managed, eventID: managedRequestID))
             }
         } onCancel: {
             Task { [weak self] in
@@ -2344,16 +2562,23 @@ private extension CoordinatorOperationalApplication {
             }),
             "managed_command_approval_response_id_conflict"
         )
-        guard let head = pendingManagedCommandApprovals.first else {
-            throw CoordinatorError("managed_command_approval_not_found")
+        guard let index = pendingManagedCommandApprovals.firstIndex(where: {
+            Self.byteExact($0.managedRequestID, managedRequestID)
+        }) else {
+            throw CoordinatorError(pendingManagedCommandApprovals.isEmpty
+                ? "managed_command_approval_not_found" : "managed_command_approval_not_head")
         }
-        guard Self.byteExact(head.managedRequestID, managedRequestID) else {
-            throw CoordinatorError("managed_command_approval_not_head")
+        let head = pendingManagedCommandApprovals[index]
+        if hasExplicitPetEventFocus {
+            try requireExplicitPetEventFocus(.init(kind: .managed, eventID: managedRequestID))
+        } else {
+            try require(index == 0, "managed_command_approval_not_head")
+            try require(
+                isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
+                "managed_command_approval_not_global_head"
+            )
         }
-        try require(
-            isGlobalApprovalHead(arrivalSequence: head.arrivalSequence),
-            "managed_command_approval_not_global_head"
-        )
+        try require(!hasPendingPetEventDelivery, "event_delivery_pending")
         try require(
             head.binding == binding,
             "managed_command_approval_binding_mismatch"
@@ -2390,7 +2615,7 @@ private extension CoordinatorOperationalApplication {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else {
-                    pendingManagedCommandApprovals.removeFirst()
+                    pendingManagedCommandApprovals.remove(at: index)
                     head.timeoutTask.cancel()
                     head.continuation.resume(throwing: CancellationError())
                     continuation.resume(throwing: CancellationError())
@@ -2415,7 +2640,7 @@ private extension CoordinatorOperationalApplication {
                     )
                 )
                 head.timeoutTask.cancel()
-                pendingManagedCommandApprovals[0].deliveryToken = deliveryToken
+                pendingManagedCommandApprovals[index].deliveryToken = deliveryToken
                 head.continuation.resume(returning: brokerOutcome)
             }
         } onCancel: {
@@ -2608,7 +2833,7 @@ private extension CoordinatorOperationalApplication {
         return globalHead == arrivalSequence
     }
 
-    /// Confirms that the Pet selection matched the FIFO head and the broker
+    /// Confirms that the Pet selection matched its exact selected request and the broker
     /// later acknowledged writing the response bytes. App Server processing
     /// and command execution remain separate downstream evidence.
     func managedCommandApprovalResolutionReceipt(
@@ -2887,10 +3112,10 @@ private extension CoordinatorOperationalApplication {
             lastAssistantMessage: message,
             generation: requestGeneration
         ) != nil else {
-            boundaries[key] = boundary
+            retainBoundary(boundary, for: key)
             return try publicData(["status": "duplicate_stop_observation"])
         }
-        boundaries[key] = boundary
+        retainBoundary(boundary, for: key)
 
         if boundary.phase == .dispatched {
             let status = boundary.nextTurnDispatchPhase == .failed
@@ -2906,11 +3131,162 @@ private extension CoordinatorOperationalApplication {
             return try publicData(["status": "decision_wait_already_active"])
         }
         boundary.phase = .waiting
-        boundaries[key] = boundary
+        retainBoundary(boundary, for: key)
+        registerPendingDecisionEvent(boundary)
         return try publicData(["status": "decision_available"])
     }
 
-    func focusInteraction(_ data: Data) throws -> Data {
+    private var hasPendingPetEventDelivery: Bool {
+        !pendingPermissionRequestDeliveries.isEmpty
+            || !pendingManagedCommandApprovalDeliveries.isEmpty
+    }
+
+    private func registerPendingPetEvent(_ identity: PetEventIdentity) {
+        if !pendingPetEventOrder.contains(identity) {
+            pendingPetEventOrder.append(identity)
+        }
+    }
+
+    private func registerPendingDecisionEvent(_ boundary: Boundary) {
+        guard let data = boundary.packet,
+              let packet = try? StrictJSONTransport.object(from: data),
+              let interactionID = packet["interaction_id"] as? String
+        else { return }
+        registerPendingPetEvent(.init(kind: .decision, eventID: interactionID))
+    }
+
+    private func requireExplicitPetEventFocus(_ identity: PetEventIdentity) throws {
+        try require(
+            hasExplicitPetEventFocus && explicitlyFocusedPetEvent == identity,
+            "event_focus_mismatch"
+        )
+    }
+
+    /// Grants presentation authority only after validating the complete
+    /// existing target binding. No response, command or continuation is sent.
+    func focusEvent(_ data: Data) throws -> Data {
+        let request = try StrictJSONTransport.object(from: data)
+        try exactKeys(request, required: ["schema_version", "kind", "event_kind", "target"])
+        try require(
+            request["schema_version"] as? String == "1.0"
+                && request["kind"] as? String == "blabee_pet_event_focus_request",
+            "event_focus_invalid"
+        )
+        guard let kindString = request["event_kind"] as? String,
+              let kind = PetEventIdentity.Kind(rawValue: kindString),
+              let target = request["target"] as? [String: Any]
+        else { throw CoordinatorError("event_focus_invalid") }
+        expireApprovalsWithoutLivePetConsumer(at: monotonicInstantGenerator())
+        try require(!hasPendingPetEventDelivery, "event_delivery_pending")
+
+        let identity: PetEventIdentity
+        switch kind {
+        case .decision:
+            _ = try focusInteraction(
+                StrictJSONTransport.data(forJSONObject: target),
+                fromEventNavigation: true
+            )
+            identity = .init(kind: .decision, eventID: try string(target, "interaction_id"))
+        case .permission:
+            try exactKeys(target, required: [
+                "schema_version", "kind", "request_id", "project_id", "session_id", "turn_id",
+            ])
+            try require(
+                target["schema_version"] as? String == "1.0"
+                    && target["kind"] as? String == "blabee_permission_resolution_request",
+                "event_focus_invalid"
+            )
+            let requestID = try identifier(string(target, "request_id"), "request_id")
+            guard let pending = pendingPermissionRequests.first(where: {
+                Self.byteExact($0.requestID, requestID)
+            }) else { throw CoordinatorError("permission_request_not_found") }
+            try byteExactRequire(pending.projectID, string(target, "project_id"), "permission_request_binding_mismatch")
+            try byteExactRequire(pending.sessionID, string(target, "session_id"), "permission_request_binding_mismatch")
+            try byteExactRequire(pending.turnID, string(target, "turn_id"), "permission_request_binding_mismatch")
+            guard permissionBindingIsCurrent(pending) else {
+                throw CoordinatorError("permission_request_binding_invalid")
+            }
+            identity = .init(kind: .permission, eventID: requestID)
+        case .managed:
+            try exactKeys(target, required: [
+                "schema_version", "kind", "managed_request_id", "broker_epoch", "connection_id",
+                "jsonrpc_request_id", "thread_id", "turn_id", "item_id", "approval_id",
+                "cwd", "command_preview", "environment_id", "allow_once_available", "decline_available",
+            ])
+            try require(
+                target["schema_version"] as? String == "1.0"
+                    && target["kind"] as? String == "blabee_managed_command_approval_resolution_request",
+                "event_focus_invalid"
+            )
+            let requestID = try identifier(string(target, "managed_request_id"), "managed_request_id")
+            guard let pending = pendingManagedCommandApprovals.first(where: {
+                Self.byteExact($0.managedRequestID, requestID)
+            }) else { throw CoordinatorError("managed_command_approval_not_found") }
+            let binding = try managedCommandApprovalBinding(target)
+            try require(
+                pending.binding == binding,
+                "managed_command_approval_binding_mismatch"
+            )
+            identity = .init(kind: .managed, eventID: requestID)
+        }
+        // Retain a removed selection as a tombstone. Until a fresh explicit
+        // focus request succeeds, a later queue head inherits no authority.
+        explicitlyFocusedPetEvent = identity
+        hasExplicitPetEventFocus = true
+        return try publicData(["focused": true])
+    }
+
+    private func petEventNavigationSnapshot(
+        interactions: [[String: Any]]
+    ) throws -> [String: Any] {
+        let decisions = interactions.filter { $0["state"] as? String == "waiting" }
+        let decisionIdentities = decisions.compactMap { object -> PetEventIdentity? in
+            guard let id = object["interaction_id"] as? String else { return nil }
+            return .init(kind: .decision, eventID: id)
+        }
+        let permissionIdentities = pendingPermissionRequests.map {
+            PetEventIdentity(kind: .permission, eventID: $0.requestID)
+        }
+        let managedIdentities = pendingManagedCommandApprovals.map {
+            PetEventIdentity(kind: .managed, eventID: $0.managedRequestID)
+        }
+        let live = Set(decisionIdentities + permissionIdentities + managedIdentities)
+        pendingPetEventOrder.removeAll { !live.contains($0) }
+        // Recovery may introduce a pending decision before this process saw
+        // its Stop. Existing queue order provides a deterministic fallback.
+        for identity in decisionIdentities + permissionIdentities + managedIdentities {
+            registerPendingPetEvent(identity)
+        }
+
+        let focused: PetEventIdentity?
+        if hasExplicitPetEventFocus {
+            focused = explicitlyFocusedPetEvent.flatMap { live.contains($0) ? $0 : nil }
+        } else if let permission = pendingPermissionRequests.first,
+                  isGlobalApprovalHead(arrivalSequence: permission.arrivalSequence) {
+            focused = .init(kind: .permission, eventID: permission.requestID)
+        } else if let managed = pendingManagedCommandApprovals.first {
+            focused = .init(kind: .managed, eventID: managed.managedRequestID)
+        } else if let foreground = decisions.first(where: { $0["foreground"] as? Bool == true }),
+                  let id = foreground["interaction_id"] as? String {
+            focused = .init(kind: .decision, eventID: id)
+        } else {
+            focused = decisionIdentities.first
+        }
+        var result: [String: Any] = [
+            "events": pendingPetEventOrder.map(\.jsonObject),
+            "focused": focused?.jsonObject as Any? ?? NSNull(),
+            "delivery_pending": hasPendingPetEventDelivery,
+        ]
+        let projection = try StrictJSONTransport.data(forJSONObject: result)
+        if lastPetEventNavigationProjection != projection {
+            petEventNavigationRevision = min(petEventNavigationRevision, Int64.max - 1) + 1
+            lastPetEventNavigationProjection = projection
+        }
+        result["revision"] = petEventNavigationRevision
+        return result
+    }
+
+    func focusInteraction(_ data: Data, fromEventNavigation: Bool = false) throws -> Data {
         let request = try StrictJSONTransport.object(from: data)
         try exactKeys(
             request,
@@ -2946,6 +3322,13 @@ private extension CoordinatorOperationalApplication {
               requestRevision == packetRevision
         else { throw CoordinatorError("focus_binding_mismatch") }
 
+        try require(!hasPendingPetEventDelivery, "event_delivery_pending")
+        if hasExplicitPetEventFocus && !fromEventNavigation {
+            try requireExplicitPetEventFocus(.init(
+                kind: .decision, eventID: try string(request, "interaction_id")
+            ))
+        }
+
         var target = binding.jsonObject
         target["expected_state"] = "pending"
         target["interaction_id"] = packet["interaction_id"]
@@ -2971,6 +3354,67 @@ private extension CoordinatorOperationalApplication {
             throw error
         }
         return try publicData(["focused": true])
+    }
+
+    func dismissInteraction(_ data: Data) throws -> Data {
+        let request = try StrictJSONTransport.object(from: data)
+        try exactKeys(
+            request,
+            required: [
+                "schema_version", "kind", "interaction_id", "packet_id", "revision",
+                "project_id", "session_id", "source_turn_id", "source_prompt_id",
+                "episode_id", "episode_root_prompt_id", "episode_baseline_checkpoint_id",
+                "decision_boundary_id", "boundary_sequence",
+            ]
+        )
+        try require(request["schema_version"] as? String == "1.0", "invalid_request")
+        try require(request["kind"] as? String == "blabee_pet_dismiss_request", "invalid_request")
+        let binding = try CoordinatorBinding(jsonObject: request)
+        guard var boundary = boundaries[binding.fullKey]
+        else { throw CoordinatorError("interaction_not_waiting") }
+        try require(binding == boundary.binding, "dismiss_binding_mismatch")
+        let interactionID = try identifier(string(request, "interaction_id"), "interaction_id")
+        let packetID = try identifier(string(request, "packet_id"), "packet_id")
+        guard let revision = ExactJSONInteger.int64(request["revision"], minimum: 1)
+        else { throw CoordinatorError("dismiss_binding_mismatch") }
+
+        let receipt: [String: Any] = [
+            "dismissed": true,
+            "interaction_id": interactionID,
+            "packet_id": packetID,
+            "revision": revision,
+        ]
+        // Routing shares one verified projection between exact packet/retry
+        // validation and the CAS close, including compacted terminal packets.
+        try routing.dismissInteraction(
+            data,
+            closingWith: StrictJSONTransport.data(forJSONObject: [
+                "type": "close_boundary",
+                "event_id": idGenerator("event_boundary_closed"),
+                "occurred_at": try wallInstantGenerator().rawValue,
+                "binding": binding.jsonObject,
+                "close_reason": "user_dismissed",
+            ]),
+            allowNonHead: hasExplicitPetEventFocus
+        ) {
+            try require(boundary.phase == .waiting, "interaction_not_waiting")
+            try require(!hasPendingPetEventDelivery, "event_delivery_pending")
+            if hasExplicitPetEventFocus {
+                try requireExplicitPetEventFocus(.init(kind: .decision, eventID: interactionID))
+            } else {
+                // Native approvals retain priority until explicit navigation.
+                try require(
+                    pendingPermissionRequests.isEmpty && pendingManagedCommandApprovals.isEmpty,
+                    "dismiss_approval_pending"
+                )
+            }
+        }
+        boundary.phase = .closed
+        retainBoundary(boundary, for: binding.fullKey)
+        if activeByTurn[binding.turnKey] == binding.fullKey {
+            activeByTurn.removeValue(forKey: binding.turnKey)
+        }
+        return try publicData(receipt)
     }
 
     func select(_ data: Data) async throws -> Data {
@@ -3015,6 +3459,17 @@ private extension CoordinatorOperationalApplication {
             throw CoordinatorError("selection_binding_mismatch")
         }
         try require(revision == packetRevision, "selection_binding_mismatch")
+        try require(!hasPendingPetEventDelivery, "event_delivery_pending")
+        if hasExplicitPetEventFocus {
+            try requireExplicitPetEventFocus(.init(
+                kind: .decision, eventID: try string(packet, "interaction_id")
+            ))
+        } else {
+            try require(
+                pendingPermissionRequests.isEmpty && pendingManagedCommandApprovals.isEmpty,
+                "selection_approval_pending"
+            )
+        }
         try require(choice["enabled"] as? Bool == true, "decision_option_disabled")
         guard ExactJSONInteger.int64(choice["slot"], minimum: 1) != nil,
               let choiceKind = choice["kind"] as? String
@@ -3052,7 +3507,7 @@ private extension CoordinatorOperationalApplication {
 
         if isPause {
             boundary.phase = .paused
-            boundaries[candidate.key] = boundary
+            retainBoundary(boundary, for: candidate.key)
             activeByTurn.removeValue(forKey: boundary.binding.turnKey)
             return try publicData(["accepted": true, "outcome": ["kind": "pause"]])
         }
@@ -3091,7 +3546,7 @@ private extension CoordinatorOperationalApplication {
             boundary.phase = .dispatched
             boundary.continuationID = continuationID
             boundary.nextTurnDispatchPhase = .failed
-            boundaries[candidate.key] = boundary
+            retainBoundary(boundary, for: candidate.key)
             throw error
         }
         guard let envelope, let continuationID,
@@ -3113,7 +3568,7 @@ private extension CoordinatorOperationalApplication {
         boundary.continuationID = continuationID
         boundary.nextTurnDispatchPhase = .inFlight
         boundary.expectedQueuedPromptDigest = Data(SHA256.hash(data: Data(message.utf8)))
-        boundaries[candidate.key] = boundary
+        retainBoundary(boundary, for: candidate.key)
 
         let receipt: CoordinatorNextTurnDispatchReceipt
         do {
@@ -3127,7 +3582,7 @@ private extension CoordinatorOperationalApplication {
         } catch {
             if var current = boundaries[candidate.key] {
                 current.nextTurnDispatchPhase = .failed
-                boundaries[candidate.key] = current
+                retainBoundary(current, for: candidate.key)
             }
             if let coordinatorError = error as? CoordinatorError {
                 throw coordinatorError
@@ -3137,7 +3592,7 @@ private extension CoordinatorOperationalApplication {
 
         if var current = boundaries[candidate.key] {
             current.nextTurnDispatchPhase = .accepted
-            boundaries[candidate.key] = current
+            retainBoundary(current, for: candidate.key)
             if current.phase == .dispatched {
                 try complete(boundaryKey: candidate.key)
                 try promoteStagedAfterRecoveredTerminal(
@@ -3184,7 +3639,7 @@ private extension CoordinatorOperationalApplication {
             ])
         )
         boundary.phase = .closed
-        boundaries[boundaryKey] = boundary
+        retainBoundary(boundary, for: boundaryKey)
     }
 
     private func supersedeUnselectedBoundaryForNewPrompt(
@@ -3208,7 +3663,7 @@ private extension CoordinatorOperationalApplication {
             else { throw originalError }
         }
         boundary.phase = .closed
-        boundaries[boundaryKey] = boundary
+        retainBoundary(boundary, for: boundaryKey)
         if activeByTurn[boundary.binding.turnKey] == boundaryKey {
             activeByTurn.removeValue(forKey: boundary.binding.turnKey)
         }
@@ -3434,7 +3889,7 @@ private extension CoordinatorOperationalApplication {
         let projectObjects = projects.values.sorted { $0.path < $1.path }.map { project in
             ["project_id": project.projectID, "cwd": project.path, "enabled": project.enabled] as [String: Any]
         }
-        let sessionObjects = sessions.values.sorted { $0.sessionID < $1.sessionID }.map { session in
+        let sessionObjects = snapshotSessions().map { session in
             [
                 "project_id": session.projectID,
                 "session_id": session.sessionID,
@@ -3493,12 +3948,15 @@ private extension CoordinatorOperationalApplication {
             "projects": projectObjects,
             "sessions": sessionObjects,
             "interactions": interactionObjects,
-            "permission_requests": pendingPermissionRequests.map(\.snapshotObject),
+            "permission_requests": pendingPermissionRequests.map {
+                $0.snapshotObject(at: monotonicInstantGenerator())
+            },
             "permission_notice_count": permissionNoticeCount,
             "managed_command_approvals": pendingManagedCommandApprovals.map(
                 \.snapshotObject
             ),
             "managed_command_approval_notice_count": managedCommandApprovalNoticeCount,
+            "event_navigation": try petEventNavigationSnapshot(interactions: interactionObjects),
         ])
         if recordsPetConsumerHeartbeat {
             // Record presence only after a complete snapshot was produced.

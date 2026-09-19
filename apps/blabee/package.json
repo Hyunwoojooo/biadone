@@ -18,6 +18,8 @@
     "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs",
     "build:internal-dmg": "node scripts/build-fresh-internal-dmg.mjs",
+    "build:release-dmg": "node scripts/build-release-dmg.mjs",
+    "notarize:dmg": "node scripts/notarize-dmg.mjs",
     "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
     "m1:qualify": "node spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
   },

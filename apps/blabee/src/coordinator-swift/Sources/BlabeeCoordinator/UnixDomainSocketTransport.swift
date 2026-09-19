@@ -718,7 +718,12 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         "pet_snapshot",
         "get_state",
         "focus_interaction",
+        "focus_event",
         "select",
+        "dismiss_interaction",
+        "claude_bridge_v1",
+        "claude_session_v1",
+        "claude_session_v2",
     ]
 
     private let socketPath: String
@@ -863,6 +868,13 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             }
             setCloseOnExec(descriptor)
             setNoSigPipe(descriptor)
+            do {
+                try setNonBlocking(descriptor)
+            } catch {
+                close(descriptor)
+                admissionGate.release()
+                continue
+            }
             let gate = admissionGate
             let serverRuntimeIdentity = runtimeIdentity
             let serverCompatiblePreviousRuntimes = compatiblePreviousRuntimes
@@ -923,7 +935,10 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         var responseRuntimeIdentity = runtimeIdentity
         let requestSecretCorpus = RuntimeSecretCorpus()
         do {
-            let line = try readOneLine(descriptor: descriptor, timeoutMilliseconds: 5_000)
+            let line = try await readOneLineAsync(
+                descriptor: descriptor,
+                deadline: monotonicDeadline(afterMilliseconds: 5_000)
+            )
             let request = try StrictJSONTransport.object(
                 from: line,
                 limits: StrictJSONLimits(
@@ -979,6 +994,12 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             // The application registers only tokens it validates or issues;
             // this request-local corpus still prevents an input secret echo.
             requestSecretCorpus.registerKnownSecrets(inJSONObject: payload)
+            // A Claude capability is an input only. Do not weaken the existing
+            // response guard or let an unauthenticated value poison other calls.
+            if [ClaudeBridgeCoordinator.requestType, "claude_session_v1", "claude_session_v2"].contains(type),
+               let token = payload["auth_token"] as? String {
+                requestSecretCorpus.register(token)
+            }
             let payloadData = try StrictJSONTransport.data(forJSONObject: payload)
             let resultData: Data
             if type == "doctor_status" {
@@ -1010,18 +1031,25 @@ final class UnixDomainSocketServer: @unchecked Sendable {
             try requestSecretCorpus.assertNoKnownSecret(in: resultData)
             try secretCorpus.assertNoKnownSecret(inJSONObject: result)
             try secretCorpus.assertNoKnownSecret(in: resultData)
-            try writeOperationalJSON([
+            let response = try operationalJSONData([
                 "request_id": requestID,
                 "runtime_identity": responseRuntimeIdentity,
                 "ok": true,
                 "result": result,
             ],
-            descriptor: descriptor,
             secretCorpus: secretCorpus,
             requestSecretCorpus: requestSecretCorpus)
+            // Once a response starts, an I/O failure may have left a partial
+            // frame on the wire. Close it instead of appending an error frame
+            // or starting another five-second write attempt.
+            try? await writeAllAsync(
+                response,
+                descriptor: descriptor,
+                deadline: monotonicDeadline(afterMilliseconds: 5_000)
+            )
         } catch {
             let failure = error.coordinatorError
-            try? writeOperationalJSON([
+            guard let response = try? operationalJSONData([
                 "request_id": requestID,
                 "runtime_identity": responseRuntimeIdentity,
                 "ok": false,
@@ -1030,9 +1058,13 @@ final class UnixDomainSocketServer: @unchecked Sendable {
                     "message": "request failed",
                 ],
             ],
-            descriptor: descriptor,
             secretCorpus: secretCorpus,
-            requestSecretCorpus: requestSecretCorpus)
+            requestSecretCorpus: requestSecretCorpus) else { return }
+            try? await writeAllAsync(
+                response,
+                descriptor: descriptor,
+                deadline: monotonicDeadline(afterMilliseconds: 5_000)
+            )
         }
     }
 
@@ -1124,12 +1156,24 @@ final class UnixDomainSocketServer: @unchecked Sendable {
         let intervalMilliseconds: Int32 = 100
         while !Task.isCancelled {
             var state = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-            let result = Darwin.poll(&state, 1, intervalMilliseconds)
+            // A pending approval can last for tens of seconds. Blocking poll
+            // in this async task used to occupy one cooperative executor
+            // thread per approval and starve Pet reads, resolutions and the
+            // deadline scheduler. Inspect readiness without blocking, then
+            // suspend so those tasks can make progress on the same executor.
+            let result = Darwin.poll(&state, 1, 0)
             if result < 0 {
                 if errno == EINTR { continue }
                 return .peerUnavailable
             }
-            if result == 0 { continue }
+            if result == 0 {
+                do {
+                    try await Task.sleep(for: .milliseconds(Int64(intervalMilliseconds)))
+                } catch {
+                    return .cancelled
+                }
+                continue
+            }
             if state.revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 {
                 return .peerUnavailable
             }
@@ -1403,26 +1447,52 @@ final class UnixDomainSocketServer: @unchecked Sendable {
 /// database parent, preserving SQLiteJournal's no-storage-mutation preflight.
 final class CoordinatorAuthorityLease: @unchecked Sendable {
     private let descriptor: Int32
+    private let primaryDescriptor: Int32?
 
-    init(databaseURL: URL) throws {
-        descriptor = try Self.acquire(
-            databaseURL: databaseURL,
-            authorityRootURL: Self.defaultAuthorityRootURL
-        )
+    convenience init(databaseURL: URL) throws {
+        try self.init(databaseURL: databaseURL, authorityRootURL: Self.defaultAuthorityRootURL,
+                      includesPrimaryNamespace: true)
+    }
+
+    /// The production Keychain slot is shared even by legacy custom-DB CLI
+    /// invocations. Hold its authority before the per-database authority so a
+    /// stopped default DB cannot be reset beneath a live writer at another path.
+    /// The injected root is an internal seam for isolated filesystem tests.
+    init(databaseURL: URL, authorityRootURL: URL, includesPrimaryNamespace: Bool) throws {
+        let primary: Int32?
+        if includesPrimaryNamespace {
+            let parent = try UnixDomainSocketServer.openSecureRuntimeDirectory(authorityRootURL)
+            defer { close(parent) }
+            primary = try UnixDomainSocketServer.openAndAcquireOwnerLease(
+                parentDescriptor: parent, name: "freshness-primary.lock"
+            )
+        } else { primary = nil }
+        do {
+            descriptor = try Self.acquire(databaseURL: databaseURL, authorityRootURL: authorityRootURL)
+            primaryDescriptor = primary
+        } catch {
+            if let primary {
+                _ = flock(primary, LOCK_UN)
+                close(primary)
+            }
+            throw error
+        }
     }
 
     #if BLABEE_JOURNAL_TEST_HARNESS
-    init(databaseURL: URL, testAuthorityRootURL: URL) throws {
-        descriptor = try Self.acquire(
-            databaseURL: databaseURL,
-            authorityRootURL: testAuthorityRootURL
-        )
+    convenience init(databaseURL: URL, testAuthorityRootURL: URL) throws {
+        try self.init(databaseURL: databaseURL, authorityRootURL: testAuthorityRootURL,
+                      includesPrimaryNamespace: false)
     }
     #endif
 
     deinit {
         _ = flock(descriptor, LOCK_UN)
         close(descriptor)
+        if let primaryDescriptor {
+            _ = flock(primaryDescriptor, LOCK_UN)
+            close(primaryDescriptor)
+        }
     }
 
     private static var defaultAuthorityRootURL: URL {
@@ -1516,12 +1586,11 @@ private func rejectRawTokenKeys(_ value: Any) throws {
     }
 }
 
-private func writeOperationalJSON(
+private func operationalJSONData(
     _ object: [String: Any],
-    descriptor: Int32,
     secretCorpus: RuntimeSecretCorpus,
     requestSecretCorpus: RuntimeSecretCorpus? = nil
-) throws {
+) throws -> Data {
     try requestSecretCorpus?.assertNoKnownSecret(inJSONObject: object)
     try secretCorpus.assertNoKnownSecret(inJSONObject: object)
     var data = try JSONSerialization.data(
@@ -1534,7 +1603,7 @@ private func writeOperationalJSON(
         throw CoordinatorError("operational_response_too_large")
     }
     data.append(0x0A)
-    try writeAll(data, descriptor: descriptor, timeoutMilliseconds: 5_000)
+    return data
 }
 
 private func connectUnixSocket(
@@ -1560,12 +1629,7 @@ private func connectUnixSocket(
     setCloseOnExec(descriptor)
     setNoSigPipe(descriptor)
     do {
-        let originalFlags = fcntl(descriptor, F_GETFL)
-        guard originalFlags >= 0,
-              fcntl(descriptor, F_SETFL, originalFlags | O_NONBLOCK) == 0
-        else {
-            throw CoordinatorError("operational_socket_unavailable")
-        }
+        try setNonBlocking(descriptor)
 
         let connectResult = try withUnixSocketAddress(path) { address, length in
             Darwin.connect(descriptor, address, length)
@@ -1597,9 +1661,9 @@ private func connectUnixSocket(
                 )
             }
         }
-        guard fcntl(descriptor, F_SETFL, originalFlags) == 0 else {
-            throw CoordinatorError("operational_socket_unavailable")
-        }
+        // Keep the socket nonblocking after connect. POLLOUT only guarantees
+        // some capacity; a blocking write of the whole frame can otherwise
+        // wait indefinitely inside write() after the deadline has expired.
         guard peerHasCurrentEffectiveUserID(descriptor) else {
             throw CoordinatorError("operational_peer_rejected")
         }
@@ -1608,14 +1672,6 @@ private func connectUnixSocket(
         close(descriptor)
         throw error
     }
-}
-
-private func readOneLine(
-    descriptor: Int32,
-    timeoutMilliseconds: Int32
-) throws -> Data {
-    let deadline = monotonicDeadline(afterMilliseconds: timeoutMilliseconds)
-    return try readOneLine(descriptor: descriptor, deadline: deadline)
 }
 
 private func readOneLine(
@@ -1632,37 +1688,52 @@ private func readOneLine(
             timeoutMilliseconds: remaining,
             timeoutCode: "operational_response_timeout"
         )
-        let count = buffer.withUnsafeMutableBytes { bytes in
-            Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-        }
-        if count < 0 {
-            if errno == EINTR { continue }
-            throw CoordinatorError("operational_transport_failed")
-        }
-        guard count > 0 else {
-            throw CoordinatorError("operational_transport_closed")
-        }
-        data.append(contentsOf: buffer.prefix(count))
-        guard data.count <= operationalMaximumMessageBytes else {
-            throw CoordinatorError("operational_message_too_large")
-        }
-        if let newline = data.firstIndex(of: 0x0A) {
-            let line = Data(data[..<newline])
-            guard newline == data.index(before: data.endIndex) else {
-                throw CoordinatorError("operational_message_invalid")
-            }
+        if let line = try readAvailableLine(
+            descriptor: descriptor, data: &data, buffer: &buffer
+        ) {
             return line
         }
     }
 }
 
-private func writeAll(
-    _ data: Data,
+private func readOneLineAsync(
     descriptor: Int32,
-    timeoutMilliseconds: Int32
-) throws {
-    let deadline = monotonicDeadline(afterMilliseconds: timeoutMilliseconds)
-    try writeAll(data, descriptor: descriptor, deadline: deadline)
+    deadline: UInt64
+) async throws -> Data {
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+    while true {
+        try await waitForDescriptorAsync(descriptor, events: Int16(POLLIN), deadline: deadline)
+        if let line = try readAvailableLine(
+            descriptor: descriptor, data: &data, buffer: &buffer
+        ) {
+            return line
+        }
+    }
+}
+
+private func readAvailableLine(
+    descriptor: Int32,
+    data: inout Data,
+    buffer: inout [UInt8]
+) throws -> Data? {
+    let count = buffer.withUnsafeMutableBytes { bytes in
+        Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+    }
+    if count < 0 {
+        if errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { return nil }
+        throw CoordinatorError("operational_transport_failed")
+    }
+    guard count > 0 else { throw CoordinatorError("operational_transport_closed") }
+    data.append(contentsOf: buffer.prefix(count))
+    guard data.count <= operationalMaximumMessageBytes else {
+        throw CoordinatorError("operational_message_too_large")
+    }
+    guard let newline = data.firstIndex(of: 0x0A) else { return nil }
+    guard newline == data.index(before: data.endIndex) else {
+        throw CoordinatorError("operational_message_invalid")
+    }
+    return Data(data[..<newline])
 }
 
 private func writeAll(
@@ -1679,21 +1750,63 @@ private func writeAll(
             timeoutMilliseconds: remaining,
             timeoutCode: "operational_response_timeout"
         )
-        let written = data.withUnsafeBytes { bytes in
-            Darwin.write(
-                descriptor,
-                bytes.baseAddress!.advanced(by: offset),
-                data.count - offset
-            )
-        }
-        if written < 0 {
+        try writeAvailableBytes(data, descriptor: descriptor, offset: &offset)
+    }
+}
+
+private func writeAllAsync(
+    _ data: Data,
+    descriptor: Int32,
+    deadline: UInt64
+) async throws {
+    var offset = 0
+    while offset < data.count {
+        try await waitForDescriptorAsync(descriptor, events: Int16(POLLOUT), deadline: deadline)
+        try writeAvailableBytes(data, descriptor: descriptor, offset: &offset)
+    }
+}
+
+private func writeAvailableBytes(
+    _ data: Data,
+    descriptor: Int32,
+    offset: inout Int
+) throws {
+    let written = data.withUnsafeBytes { bytes in
+        Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), data.count - offset)
+    }
+    if written < 0 {
+        if errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { return }
+        throw CoordinatorError("operational_transport_failed")
+    }
+    guard written > 0 else { throw CoordinatorError("operational_transport_closed") }
+    offset += written
+}
+
+/// Only server handlers use this wait. Incomplete requests and slow readers
+/// must suspend instead of occupying the cooperative threads used by the
+/// application actor, approval resolutions, and deadline scheduler.
+private func waitForDescriptorAsync(
+    _ descriptor: Int32,
+    events: Int16,
+    deadline: UInt64
+) async throws {
+    while true {
+        try Task.checkCancellation()
+        let remaining = remainingMilliseconds(until: deadline)
+        guard remaining > 0 else { throw CoordinatorError("operational_response_timeout") }
+        var state = pollfd(fd: descriptor, events: events, revents: 0)
+        let result = Darwin.poll(&state, 1, 0)
+        if result < 0 {
             if errno == EINTR { continue }
             throw CoordinatorError("operational_transport_failed")
         }
-        guard written > 0 else {
-            throw CoordinatorError("operational_transport_closed")
+        if result > 0 {
+            if state.revents & Int16(POLLNVAL | POLLERR) != 0 {
+                throw CoordinatorError("operational_transport_failed")
+            }
+            return
         }
-        offset += written
+        try await Task.sleep(for: .milliseconds(Int64(min(remaining, 20))))
     }
 }
 
@@ -1703,10 +1816,12 @@ private func waitForDescriptor(
     timeoutMilliseconds: Int32,
     timeoutCode: String
 ) throws {
-    guard timeoutMilliseconds > 0 else { throw CoordinatorError(timeoutCode) }
+    let deadline = monotonicDeadline(afterMilliseconds: timeoutMilliseconds)
     var descriptorState = pollfd(fd: descriptor, events: events, revents: 0)
     while true {
-        let result = poll(&descriptorState, 1, timeoutMilliseconds)
+        let remaining = remainingMilliseconds(until: deadline)
+        guard remaining > 0 else { throw CoordinatorError(timeoutCode) }
+        let result = poll(&descriptorState, 1, remaining)
         if result < 0 {
             if errno == EINTR { continue }
             throw CoordinatorError("operational_transport_failed")
@@ -1740,6 +1855,13 @@ private func peerHasCurrentEffectiveUserID(_ descriptor: Int32) -> Bool {
 private func setCloseOnExec(_ descriptor: Int32) {
     let flags = fcntl(descriptor, F_GETFD)
     if flags >= 0 { _ = fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) }
+}
+
+private func setNonBlocking(_ descriptor: Int32) throws {
+    let flags = fcntl(descriptor, F_GETFL)
+    guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+        throw CoordinatorError("operational_socket_unavailable")
+    }
 }
 
 private func setNoSigPipe(_ descriptor: Int32) {

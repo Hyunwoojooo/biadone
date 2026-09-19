@@ -15,7 +15,7 @@ enum PetSettingsStatusTone: Equatable, Sendable {
         switch state {
         case .ready: .confirmed
         case .failed: .error
-        case .blocked, .stopped: .actionNeeded
+        case .blocked, .stopped, .unresponsive: .actionNeeded
         case .disabled, .starting, .stopping, .reconnecting: .neutral
         }
     }
@@ -51,6 +51,14 @@ enum PetSettingsStatusTone: Equatable, Sendable {
         case .needsSetup, .needsRestart: .actionNeeded
         case .needsAttention:
             readiness.checks.contains { $0.state == .failed } ? .error : .actionNeeded
+        }
+    }
+
+    static func hookTrust(_ state: PetHookReadinessState) -> Self {
+        switch state {
+        case .trusted: .confirmed
+        case .unchecked, .checking: .neutral
+        case .reviewRequired, .unavailable: .actionNeeded
         }
     }
 
