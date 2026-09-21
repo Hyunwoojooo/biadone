@@ -76,6 +76,9 @@ codex --cd sites/biadone.com
 ```
 index.html          메인 페이지 (모든 섹션 포함)
 blabase/index.html      blabase 하위 페이지
+blabee/             Blabee 랜딩페이지와 공개 에셋 (시연 영상·자막·정책 초안 포함)
+_headers            /blabee/에만 적용되는 보안·캐시·검색 차단 헤더
+_redirects          /blabee → /blabee/ 정규화
 css/style.css        커스텀 스타일 (디자인 토큰, 카드, 애니메이션, 반응형)
 js/main.js           모바일 메뉴, 스크롤 reveal, 오디언스 탭 전환, 폼 처리
 reference/           원본 빌드 지침 마크다운 보관용(사이트에 노출되지 않음)
@@ -141,9 +144,38 @@ index.html
 css/
 js/
 blabase/
+blabee/
+_headers
+_redirects
 ```
 
 `README.md`, `reference/`, `.wrangler/` 같은 문서/로컬 캐시 파일은 공개 배포 대상에 포함하지 않습니다.
+
+### Blabee 하위 페이지
+
+- 공개 주소: `https://biadone.com/blabee/` (`/blabee`에서도 이동)
+- 2026-09-21 사용자 승인 후 Cloudflare Pages 운영 배포 완료: `https://98f166f7.biadone.pages.dev`.
+- 원본: [blabee-landing-page 브랜치](https://github.com/Hyunwoojooo/biadone/tree/blabee-landing-page/sites/blabee.com), 커밋 `cafbe8f8b2735b8592018c37ee4b01706134cba9`
+- 원본 `npm run build:public` 결과 중 HTML/CSS/JS/에셋/정책만 `blabee/`에 복사했습니다. 이 폴더는 공개 파일 전용이며 이후 갱신에도 내부 문서·스크립트·캐시를 넣지 않습니다.
+- 모든 사이트 내부 절대 경로와 canonical·OG URL을 `/blabee/` 기준으로 변경했습니다. 영문·한국어 정책 페이지와 `/blabee/liquid-glass/light/` 호환 경로를 포함합니다.
+- 원본의 베타 신청 API 미연결, 정책 초안 표시, `noindex` 설정을 유지합니다. 신청 정보는 저장되지 않습니다. 공개 접수와 검색 노출은 별도 작업입니다.
+- 랜딩페이지에 삽입된 36초 시연 MP4·영문 VTT 자막·포스터를 포함합니다. 원본 `media/promos/2026-09-21/`의 한·영 15초 홍보 MP4·SRT는 원본 공개 빌드와 동일하게 배포 대상에서 제외합니다.
+- GSAP Core / ScrollTrigger 3.15.0은 원본의 자체 호스팅 파일과 라이선스 배너를 유지합니다. [GSAP Standard License](https://gsap.com/standard-license/)가 적용됩니다.
+
+로컬에서는 별도 설치나 빌드 없이 사이트 루트에서 실행합니다.
+
+```bash
+python3 -m http.server 8000
+# http://localhost:8000/blabee/
+```
+
+실제 배포 파일만 먼저 준비하려면 아래 명령을 사용합니다. 네트워크 업로드 없이 임시 폴더 경로를 출력하며, 검토 후 해당 폴더는 직접 정리합니다.
+
+```bash
+./scripts/deploy-cloudflare.sh --prepare-only
+```
+
+단순 Python 서버는 Cloudflare `_headers`/`_redirects` 및 영상 byte-range 처리를 재현하지 않습니다. 실제 배포 후 `/blabee` 이동, 헤더, 영상 재생·탐색을 확인해야 합니다. 배포는 사용자 명시 승인 후 기존 배포 명령으로 실행합니다.
 
 ### DNS 설정
 

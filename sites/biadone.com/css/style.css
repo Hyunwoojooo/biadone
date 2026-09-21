@@ -175,6 +175,10 @@ body { overflow-x: hidden; }
   border-bottom: none;
 }
 
+.mobile-menu .btn-nav-primary {
+  color: var(--warmwhite);
+}
+
 .mobile-lang-item {
   padding: 0.8rem 0 0.2rem;
 }
