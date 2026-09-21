@@ -18,9 +18,14 @@ export async function buildReleaseDMG({
   outputPath,
   buildNumber,
   compatiblePreviousApps = [],
+  claudeRuntimeDirectory,
+  internalClaudeSigning,
   sourceRoot,
   platform = process.platform,
 } = {}, dependencies = {}) {
+  if (claudeRuntimeDirectory !== undefined || internalClaudeSigning !== undefined) {
+    throw new Error("public release cannot include development Channels or internal Claude signing");
+  }
   // Release builds always require an explicit certificate and team, even when
   // the caller accidentally omits every signing option.
   const releaseSigning = normalizeReleaseSigning({ identity, teamID });

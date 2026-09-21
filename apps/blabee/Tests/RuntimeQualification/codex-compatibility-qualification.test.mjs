@@ -1,11 +1,29 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { isolatedEnvironment, parseArguments, qualifyCodexCompatibility, runBounded } from "../../scripts/qualify-codex-compatibility.mjs";
 
-async function fixture(t) {
+const sourcePluginManifest = JSON.parse(await readFile(
+  new URL("../../bridges/codex/plugin/.codex-plugin/plugin.json", import.meta.url), "utf8",
+));
+
+const voiceRoot = "codex-resources/voice";
+const voiceFixtureFiles = [
+  "bin/codex-voice-host", "NOTICE.md", "runtime.json", "sources.json",
+  "lib/libffi.8.dylib", "lib/libgio-2.0.0.dylib", "lib/libglib-2.0.0.dylib", "lib/libgmodule-2.0.0.dylib",
+  "lib/libgobject-2.0.0.dylib", "lib/libgstapp-1.0.0.dylib", "lib/libgstaudio-1.0.0.dylib", "lib/libgstbase-1.0.0.dylib",
+  "lib/libgstnet-1.0.0.dylib", "lib/libgstpbutils-1.0.0.dylib", "lib/libgstreamer-1.0.0.dylib", "lib/libgstrtp-1.0.0.dylib",
+  "lib/libgsttag-1.0.0.dylib", "lib/libgstvideo-1.0.0.dylib", "lib/libintl.8.dylib", "lib/libopus.0.dylib",
+  "lib/libpcre2-8.0.dylib", "lib/libz.1.dylib", "plugins/libgstapp.dylib", "plugins/libgstaudioconvert.dylib",
+  "plugins/libgstaudioresample.dylib", "plugins/libgstcoreelements.dylib", "plugins/libgstopus.dylib",
+  "plugins/libgstrtp.dylib", "plugins/libgstrtpmanager.dylib", "licenses/LGPL-2.1.txt", "licenses/Opus.txt",
+  "licenses/PCRE2.md", "licenses/libffi.txt", "licenses/proxy-libintl.txt", "licenses/sljit.txt", "licenses/zlib.txt",
+].map((path) => `${voiceRoot}/${path}`);
+
+async function fixture(t, { voice = false, version = voice ? "0.155.1" : "0.153.4" } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "blabee-codex-qualification-fixture-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const runtimeDir = join(directory, "runtime");
@@ -15,25 +33,35 @@ async function fixture(t) {
     // Inert fixture bytes are never executed. Only the injected runner sees them.
     await writeFile(join(runtimeDir, name), `fixture:${name}`, { mode: 0o700 });
   }
-  const manifest = { layoutVersion: 1, version: "0.153.4", target: "aarch64-apple-darwin", variant: "codex", entrypoint: "bin/codex", resourcesDir: "codex-resources", pathDir: "codex-path" };
+  const manifest = { layoutVersion: 1, version, target: "aarch64-apple-darwin", variant: "codex", entrypoint: "bin/codex", resourcesDir: "codex-resources", pathDir: "codex-path" };
   await writeFile(join(runtimeDir, "codex-package.json"), JSON.stringify(manifest), { mode: 0o600 });
+  if (voice) {
+    for (const name of voiceFixtureFiles) {
+      await mkdir(dirname(join(runtimeDir, name)), { recursive: true, mode: 0o700 });
+      // runtime.json deliberately has executable bits; dylibs deliberately do not.
+      const mode = name.endsWith("/codex-voice-host") || name.endsWith("/runtime.json") ? 0o700 : 0o600;
+      await writeFile(join(runtimeDir, name), `fixture:${name}`, { mode });
+    }
+    const hashes = Object.fromEntries(await Promise.all(["bin/codex", ...voiceFixtureFiles].map(async (name) => [name, createHash("sha256").update(await readFile(join(runtimeDir, name))).digest("hex")])));
+    await writeFile(join(runtimeDir, voiceRoot, "manifest.json"), JSON.stringify({ schemaVersion: 1, appVersion: version, appTarget: manifest.target, voiceTarget: manifest.target, sha256: hashes }), { mode: 0o600 });
+  }
   const calls = [];
   let installed = false;
   const run = async (command, args, options) => {
     calls.push({ command, args, options });
     let stdout = "";
-    if (args[0] === "--version") stdout = "codex-cli 0.153.4\n";
+    if (args[0] === "--version") stdout = `codex-cli ${version}\n`;
     else if (args[0] === "queue") stdout = "Usage: codex queue [OPTIONS]\n";
     else if (args[0] === "plugin") {
       if (args[1] === "add") installed = true;
       if (args[1] === "remove") installed = false;
-      if (args[1] === "list") stdout = JSON.stringify({ installed: installed ? [{ name: "blabee", marketplaceName: "blabee-qualification", version: "0.1.0", installed: true, enabled: true, source: { source: "local", path: "/fixture" } }] : [] });
+      if (args[1] === "list") stdout = JSON.stringify({ installed: installed ? [{ name: "blabee", marketplaceName: "blabee-qualification", version: sourcePluginManifest.version, installed: true, enabled: true, source: { source: "local", path: "/fixture" } }] : [] });
       else if (args[1] === "marketplace" && args[2] === "list") stdout = '{"marketplaces":[]}';
       else stdout = "{}";
     }
     return { code: 0, signal: null, reason: null, error: null, stdout, stderr: "" };
   };
-  return { runtimeDir, manifest, calls, run, options: { runtimeDir, expectedVersion: "0.153.4" }, dependencies: { run, platform: "darwin", arch: "arm64" } };
+  return { runtimeDir, manifest, calls, run, options: { runtimeDir, expectedVersion: version }, dependencies: { run, platform: "darwin", arch: "arm64" } };
 }
 
 test("fixture evidence binds package contract checks without claiming real runtime or E2E approval", async (t) => {
@@ -57,6 +85,106 @@ test("fixture evidence binds package contract checks without claiming real runti
   assert.ok(env.CODEX_HOME.includes("blabee-codex-qualification-"));
   await assert.rejects(readFile(join(env.CODEX_HOME, "config.toml")), { code: "ENOENT" });
   assert.ok(f.calls.every((call) => call.options.env === env));
+});
+
+test("0.155.1 arm64 requires the complete voice layout and verifies every native resource before CLI execution", async (t) => {
+  const f = await fixture(t, { voice: true });
+  const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+  assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
+  assert.equal(report.package.files.length, 42);
+  assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
+  assert.ok(report.unverified.includes("voice capture and audio processing"));
+  const trustCalls = f.calls.filter((call) => call.command === "/usr/bin/codesign");
+  assert.equal(trustCalls.length, 60);
+  assert.ok(f.calls.slice(0, 60).every((call) => call.command === "/usr/bin/codesign"));
+  for (const path of voiceFixtureFiles.filter((name) => name.endsWith(".dylib") || name.endsWith("/codex-voice-host"))) {
+    const checks = trustCalls.filter((call) => call.args.at(-1) === join(f.runtimeDir, path));
+    assert.equal(checks.length, 2, path);
+    assert.ok(checks.some((call) => call.args.some((argument) => argument.includes('certificate leaf[subject.OU] = "2DC432GLL2"') && argument.includes('identifier "com.openai.codex.voice'))));
+    assert.ok(checks.some((call) => call.args.includes("-R=notarized") && call.args.includes("--check-notarization")));
+  }
+  assert.equal(trustCalls.some((call) => call.args.at(-1).endsWith("/runtime.json")), false);
+  assert.deepEqual(report.publication, { productionEligible: false, approvalRequired: true, catalogChanged: false });
+});
+
+test("0.155.0 uses the same complete voice contract with its own exact manifest version", async (t) => {
+  const f = await fixture(t, { voice: true, version: "0.155.0" });
+  const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+  assert.equal(report.status, "fixture_passed", JSON.stringify(report.failure));
+  assert.equal(report.package.manifest.version, "0.155.0");
+  assert.equal(report.package.files.length, 42);
+  assert.equal(f.calls.filter((call) => call.command === "/usr/bin/codesign").length, 60);
+  assert.ok(report.testedCapabilities.includes("voice-resource-manifest"));
+});
+
+test("voice layout rejects omitted resources, unknown files and unreviewed version or target combinations", async (t) => {
+  for (const kind of ["host", "library", "license", "manifest", "extra", "version", "target", "entire-voice-layout"]) {
+    const f = await fixture(t, { voice: kind !== "entire-voice-layout", version: kind === "version" ? "0.155.2" : "0.155.1" });
+    const missing = { host: "bin/codex-voice-host", library: "lib/libopus.0.dylib", license: "licenses/Opus.txt", manifest: "manifest.json" }[kind];
+    if (missing) await rm(join(f.runtimeDir, voiceRoot, missing));
+    if (kind === "extra") await writeFile(join(f.runtimeDir, voiceRoot, "plugins/unreviewed.dylib"), "extra");
+    if (kind === "target") f.dependencies.arch = "x64";
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, "package_layout_invalid", kind);
+    assert.equal(f.calls.length, 0, kind);
+  }
+});
+
+test("voice metadata must bind every declared resource hash to the exact version and target", async (t) => {
+  for (const kind of ["version", "target", "hash", "missing-hash", "extra-hash", "oversized"]) {
+    const f = await fixture(t, { voice: true });
+    const path = join(f.runtimeDir, voiceRoot, "manifest.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    if (kind === "version") manifest.appVersion = "0.155.2";
+    if (kind === "target") manifest.voiceTarget = "x86_64-apple-darwin";
+    if (kind === "hash") manifest.sha256[`${voiceRoot}/runtime.json`] = "0".repeat(64);
+    if (kind === "missing-hash") delete manifest.sha256[`${voiceRoot}/licenses/Opus.txt`];
+    if (kind === "extra-hash") manifest.sha256[`${voiceRoot}/extra`] = "0".repeat(64);
+    await writeFile(path, kind === "oversized" ? " ".repeat(16_385) : JSON.stringify(manifest));
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, kind === "oversized" ? "package_layout_invalid" : "package_manifest_mismatch", kind);
+    assert.equal(f.calls.length, 0, kind);
+  }
+});
+
+test("added native signature or notarization failures stop before candidate CLI execution", async (t) => {
+  for (const path of ["bin/codex-voice-host", "lib/libopus.0.dylib", "plugins/libgstopus.dylib"]) {
+    for (const notarization of [false, true]) {
+      const f = await fixture(t, { voice: true });
+      const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
+        const result = await f.run(...args);
+        return args[1].at(-1) === join(f.runtimeDir, voiceRoot, path) && args[1].includes("-R=notarized") === notarization ? { ...result, code: 1 } : result;
+      } });
+      assert.equal(report.failure.code, notarization ? "notarization_unverified" : "signature_invalid", path);
+      assert.equal(f.calls.some((call) => call.command.endsWith("/bin/codex")), false, path);
+    }
+  }
+});
+
+test("added voice resources retain link and write-permission protections", async (t) => {
+  for (const kind of ["symlink", "hardlink", "writable"]) {
+    const f = await fixture(t, { voice: true });
+    const path = join(f.runtimeDir, voiceRoot, "lib/libopus.0.dylib");
+    if (kind === "writable") await chmod(path, 0o666);
+    else {
+      await rm(path);
+      await (kind === "symlink" ? symlink : link)(join(f.runtimeDir, "bin/codex"), path);
+    }
+    const report = await qualifyCodexCompatibility(f.options, f.dependencies);
+    assert.equal(report.failure.code, "package_layout_invalid", kind);
+    assert.equal(f.calls.length, 0, kind);
+  }
+});
+
+test("voice data changes during trust checks invalidate the full package fingerprint", async (t) => {
+  const f = await fixture(t, { voice: true });
+  const report = await qualifyCodexCompatibility(f.options, { ...f.dependencies, run: async (...args) => {
+    const result = await f.run(...args);
+    await writeFile(join(f.runtimeDir, voiceRoot, "runtime.json"), "changed data");
+    return result;
+  } });
+  assert.equal(report.failure.code, "package_changed");
+  assert.equal(f.calls.length, 1);
 });
 
 test("isolated environment does not inherit secrets, loader settings, user home or session authority", () => {
@@ -148,6 +276,25 @@ test("optional plugin lifecycle and Hook harness remain isolated and explicitly 
   assert.match(report.hookHarness.scope, /no live Codex events/);
   assert.ok(f.calls.find((call) => call.args[0] === "--test").options.timeoutMs <= 60_000);
   assert.equal(f.calls.filter((call) => call.args[0] === "queue").length, 1);
+});
+
+test("plugin lifecycle rejects an installed version that differs from the source payload", async (t) => {
+  const f = await fixture(t);
+  const report = await qualifyCodexCompatibility({ ...f.options, pluginLifecycle: true }, {
+    ...f.dependencies,
+    run: async (...args) => {
+      const result = await f.run(...args);
+      if (args[1][0] === "plugin" && args[1][1] === "list") {
+        const value = JSON.parse(result.stdout);
+        for (const plugin of value.installed) plugin.version = `${sourcePluginManifest.version}-mismatch`;
+        return { ...result, stdout: JSON.stringify(value) };
+      }
+      return result;
+    },
+  });
+  assert.equal(report.status, "failed");
+  assert.equal(report.failure.code, "cli_contract_malformed");
+  assert.equal(report.publication.productionEligible, false);
 });
 
 test("CLI input requires explicit output and refuses runtime package writes and duplicate flags", () => {

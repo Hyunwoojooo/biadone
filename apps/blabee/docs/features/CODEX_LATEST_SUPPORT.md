@@ -1,0 +1,107 @@
+# Codex 최신 안정 버전 지원 — 2026-09-21
+
+대상은 macOS arm64와 공식 안정 버전이다. 확인 시점의 최신 버전은
+[Codex 0.155.1](https://github.com/openai/codex/releases/tag/rust-v0.155.1)이다.
+0.155.0·0.155.1의 일반 연결, Pet 일회성 승인, 관리형 App Server, 업데이트 시
+세션 저장·복원 지원을 소스에 반영했다. 이번 작업에서는 빌드하지 않았다.
+
+## 반영한 기능
+
+| 기능 | 0.155.0·0.155.1 변경 | 확인한 근거 |
+| --- | --- | --- |
+| Plugin·Hook·MCP·queue | Plugin CLI 버전 등록, Plugin 0.1.2, `SessionStart.source=fork` 등록 | 격리 Plugin 등록·조회·제거, queue CLI 표면, Hook fixture와 공식 소스 비교 |
+| Pet 일회성 승인 | 버전과 공식 arm64 CDHash 조합 추가 | 공식 PermissionRequest·승인 처리 소스 동일성, 기존 교차 조합 회귀에 새 profile 포함 |
+| 관리형 App Server | 버전 등록과 공식 42파일 runtime catalog 추가 | archive SHA-256, 파일별 digest, 30개 native 파일의 서명·공증, 승인 schema와 remote CLI 계약 |
+| 업데이트 저장·복원 | 독립 lifecycle profile에 두 버전 추가 | 격리 AppServer의 저장·정상 종료·동일 UUID/cwd 재개 |
+
+일반 Plugin 지원 목록에서 빠졌던 0.153.0·0.153.1·0.153.3도 추가했다.
+따라서 일반 연결은 0.151.0부터 0.155.1까지 발표된 안정 버전 11개를 명시적으로
+허용한다. 이전 버전의 관리형 실행·승인·업데이트 지원 범위는 별도로 유지한다.
+미발표 버전이나 prerelease를 범위 비교로 자동 허용하지 않는다.
+
+최신 패키지의 `codex-resources/voice/runtime.json`은 JSON이지만 archive에서 0755다.
+기존 관리형 검사는 이 권한만으로 native 실행 파일이라고 판단하여 거부했다.
+정확한 경로와 공식 파일 SHA-256이 모두 일치할 때만 데이터로 분류하도록 고쳤다.
+원본 bytes·권한은 보존하고 private 사본은 기존 정책에 따라 0400으로 봉인한다.
+전체 version/target catalog, 사본 digest, 파일 identity와 재검증은 유지한다.
+
+승인은 기존 native `default`/Bash 일회성 허용 범위를 유지한다. 세션·턴·명령·cwd
+결합, 호출자 재검증, 거부 우선순위와 지속 권한 확장 거부를 변경하지 않았다.
+관리형 승인 adapter의 요청·응답 schema는 0.151.0·0.155.0·0.155.1에서 동일하여
+프로토콜 변환 코드는 바꾸지 않았다.
+
+Doctor의 Codex 전용 Plugin 버전·manifest SHA-256·SessionStart matcher 계약도
+0.1.2에 맞췄다. 이전 계약을 남겨 새 Plugin이 진단에서 거부되는 문제를 방지한다.
+
+## 공식 패키지 식별
+
+| 버전 | 공식 arm64 archive SHA-256 | native CDHash |
+| --- | --- | --- |
+| 0.155.0 | `b1411ec00ac410467e05cf8fb5b063cf83632613530201cd4724ef8dd0e9c33f` | `0a319829ccc6ff89160ceee151f1c2e78030f296` |
+| 0.155.1 | `e6e08717da9e35b72332eff753527fe79a9ae876081033c5c6820a8e5f58b943` | `0fc5f92c54ae7e1d576cd1d7d8ce979daec5bee2` |
+
+각 catalog는 42개 파일과 10개 디렉터리를 포함한다. 전체 fingerprint는 각각
+`115a008c1ab06a4070b7078954189b192c8e1278cf8b49ba5d80920ec5dc6095`,
+`91948415ab606b4e7272b60b8f7d53cc10b5eef2d931591ae93e3a27c969856a`다.
+기존 0.151.0 fingerprint로 직렬화 방법을 먼저 대조했고, 별도 정적 검토에서도
+새 catalog의 파일 digest와 fingerprint를 다시 계산해 일치를 확인했다.
+
+## 이번 검증 결과
+
+- 빌드 없는 Node/Python 회귀 **41/41 통과**: Plugin·Hook 15개,
+  패키지 검사기 22개, lifecycle 검사기 4개.
+- 공식 0.155.1을 별도 임시 설정으로 실행한 Plugin lifecycle 회귀 **2/2 통과**:
+  캐시 갱신을 포함한 설치·업데이트·제거, 제품 Resources marketplace 경로 확인.
+  Doctor의 버전·matcher·manifest와 나머지 payload SHA-256도 소스와 대조해 일치했다.
+- 공식 Codex 실제 smoke **5개 버전 통과**: 0.153.0·0.153.1·0.153.3은 각 19개,
+  0.155.0·0.155.1은 각 71개 검사. 모든 실행에서 Plugin 0.1.2를 사용했다.
+  격리 Plugin 설치·조회·제거, 코드 서명·공증, 정확한 버전과 queue 도움말을 확인했다.
+- 최신 두 버전의 `--remote`, `--remote-auth-token-env`, `app-server --listen`을
+  실제 도움말과 공식 소스에서 확인했다.
+- 최신 두 버전의 AppServer lifecycle 통과: 새 테스트 세션 생성, metadata 작업으로
+  빈 대화 파일 저장, 구독 해제, `thread/closed`, stdout/stderr EOF와 exit 0,
+  새 프로세스에서 같은 UUID/cwd 재개. 네트워크와 사용자 홈 접근을 OS에서 막았고
+  모델 턴은 보내지 않았다. 실제 사용자 대화의 내용 보존 검증은 아니다.
+- Swift 회귀 소스에 허용·거부 버전, 공식 JSON의 private 복사·봉인·재검증,
+  변조·스크립트·다른 경로 거부를 추가했다. **Swift 컴파일과 테스트는 실행하지 않았다.**
+
+```sh
+node --test --test-concurrency=1 \
+  Tests/CoordinatorOperational/plugin-package.test.mjs \
+  Tests/RuntimeQualification/codex-compatibility-qualification.test.mjs \
+  Tests/RuntimeQualification/update-managed-codex-native.test.mjs
+```
+
+증거 사본은 `build/codex-tests/all-stable-20260921/`에 있다. 이 디렉터리는 검사
+보고서·로그 보관용이며 앱 빌드 산출물이 아니다. 원본 패키지와 격리 실행 폴더는
+`/private/tmp/blabee-codex-all-stable-9CoDxB/`, 0.155.1 원본은
+`/private/tmp/blabee-codex-01551-sh8bcb/`에 있다.
+
+## 변경 파일과 검증 경계
+
+- `bridges/codex/swift/setup/CodexCompatibility.swift`: capability별 버전 목록.
+- `bridges/codex/swift/core/HookPermissionPolicy.swift`: 공식 native 승인 profile.
+- `bridges/codex/swift/runtime/CodexRuntimeBundle.swift`: catalog·데이터 리소스 분류.
+- `bridges/codex/swift/update/UpdateManagedCodexObserver.swift`: lifecycle profile.
+- `bridges/codex/plugin/`: Plugin 버전과 fork Hook.
+- `app/service/DoctorApplication.swift`: Codex Plugin의 고정 진단 계약만 갱신.
+- `scripts/qualify-codex-compatibility.mjs`, `scripts/verify-update-managed-codex-native.py`:
+  공식 패키지와 lifecycle 검사기.
+- 관련 `Tests/`, `Fixtures/codex/0.155.1/` 및 호환성·업데이트 문서.
+
+소스 구현과 빌드 없는 검증을 완료했다. 설치된 build 62의 연결 문제가 해결됐다는
+실사용 판정은 아니다. 실행 중인 앱·Codex 세션·사용자 설정·운영 DB와 Engine·Claude
+구현은 변경하지 않았다. 빌드·패키징·서명·설치·commit·push는 수행하지 않았다.
+
+사용자가 빌드를 허용한 뒤에는 Swift 회귀 실행, 실제 관리형 private runtime 실행,
+Hook → Pet 승인/선택 → queue 왕복, 설치된 앱의 업데이트와 터미널 복원을 확인해야 한다.
+기존 실행 검사에서 거부된 버전·경로가 `unknown`으로 표시되는 진단 개선은 별도다.
+
+공식 근거: [0.155.0 release](https://github.com/openai/codex/releases/tag/rust-v0.155.0),
+[Hook 승인 처리](https://github.com/openai/codex/blob/be2951ea34f0d295ed0becf97079f92fa5f6950e/codex-rs/core/src/tools/approvals.rs#L492-L500),
+[AppServer 승인 schema](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server-protocol/schema/json/CommandExecutionRequestApprovalParams.json),
+[thread lifecycle](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server/src/request_processors/thread_lifecycle.rs).
+
+이전 Plugin 연결 단계의 증거는 [초기 0.155.1 검사 기록](CODEX_01551_QUALIFICATION.md),
+검사 방법은 [호환성 검사기](CODEX_COMPATIBILITY_QUALIFICATION.md)와
+[업데이트 저장·복원](../AUTOMATIC_UPDATES.md)에 있다.

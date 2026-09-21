@@ -22,7 +22,7 @@ import {
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const swiftPackageRoot = join(repositoryRoot, "src", "coordinator-swift");
+const swiftPackageRoot = repositoryRoot;
 
 async function buildRealCoordinator() {
   const moduleCache = join(

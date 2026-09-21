@@ -30,9 +30,11 @@
 
 ## 관리 세션 저장·종료 기준
 
-Codex 0.154.0의 native TUI에 종료 신호를 보내는 것만으로 저장 완료를 확인할 수 없다.
-기존 관리형 승인 프로필을 확대하는 대신 전용 lifecycle 프로필을 사용한다.
-현재 자동 종료·복원 대상으로 검증하는 버전은 `0.154.0`이며 다른 버전은 거부한다.
+Codex의 native TUI에 종료 신호를 보내는 것만으로 저장 완료를 확인할 수 없다.
+관리형 승인 프로필과 독립된 전용 lifecycle 프로필을 사용한다.
+현재 자동 종료·복원 대상으로 검증한 버전은 `0.154.0`, `0.155.0`, `0.155.1`이며
+목록에 없는 버전과 prerelease는 거부한다. Plugin 지원이나 승인 프로필 통과만으로
+자동 종료·복원 지원을 추정하지 않는다.
 
 - 전용 AppServer의 시작·재개·턴·요청·승인 상태를 관찰한다.
 - 정확한 UUID의 대화 파일이 이 세션의 `CODEX_HOME`에 저장됐는지 먼저 확인한다.
@@ -103,6 +105,28 @@ Blabee 종료 → 관리 세션 저장·종료 → 설치 교체 → 새 앱 실
 실제 Codex wire 기록: `/private/tmp/blabee-native-update-contract-6wul28d5/result.json`
 (SHA-256 `8dd7851612cfd01c31c23c8c23c628b0184dd7044e21dc81dcfd2cd398352b8f`).
 재현 스크립트: `scripts/verify-update-managed-codex-native.py`.
+
+### 2026-09-21 lifecycle 지원 확장 — 빌드 없이 검증
+
+공식 `0.155.0`·`0.155.1` macOS arm64 패키지에서 각각 시작 → 테스트 대화 저장 →
+구독 해제 → `thread/closed` → 두 출력 EOF와 종료 코드 0 → 새 AppServer에서 같은
+UUID/cwd로 writable 재개 → 정상 종료를 확인했다. 버전별 공식 모델 catalog와 임시
+`CODEX_HOME`을 사용했고 네트워크·사용자 홈 접근은 OS에서 차단했다. 모델 턴은 0개다.
+두 버전의 thread unload, persistence shutdown, AppServer lifecycle 공식 소스도
+파일별 SHA-256이 동일했다. 저장 완료 판단과 실패 시 거부 규칙은 변경하지 않았다.
+
+검증기는 `--expected-version`과 별도 검증한 공식 실행 파일의 `--expected-sha256`을
+명시적으로 요구한다. `--work-dir`은 새 private 증거 폴더를 둘 기존 절대 경로이며 기본은
+`/private/tmp`다. `--execute`, `--codex`, `--catalog`도 함께 지정한다. 실제 Codex를
+실행하지 않는 Node/Python 회귀 4개는 버전/해시 불일치, 명시적 실행 동의와 no-turn
+RPC 경계를 검사한다.
+
+실제 wire 증거는 `/private/tmp/blabee-codex-all-stable-9CoDxB/update-lifecycle-8zb21udx/`
+아래 `blabee-native-update-contract-3eykujz1/result.json`(0.155.0),
+`blabee-native-update-contract-xraf73qk/result.json`(0.155.1)에 있다.
+Swift 회귀 소스는 새 버전 허용과 미검증 버전 거부를 보완했지만 실행하지 않았다.
+이번 검증은 Swift 컴파일·앱 빌드·패키징·설치 교체·터미널 UI 복원을 수행하지 않았으며,
+설치된 제품의 전체 업데이트 왕복이나 실행 중 모델 작업의 저장·복원 증거는 별도로 필요하다.
 
 ### r41 배포 완료 — 2026-09-16
 
@@ -178,4 +202,8 @@ draft/prerelease 또는 자산이 누락된 릴리스는 자동 설치 대상으
 - [Codex 0.154.0 thread unload](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/app-server/src/request_processors/thread_lifecycle.rs)
 - [Codex persistence shutdown](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/session/handlers.rs)
 - [Codex app-server lifecycle](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/app-server/src/lib.rs)
-- [기존 배포용 빌드와 공증](../RELEASE_DMG_PACKAGING.md)
+- [Codex 0.155.0 thread unload](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/app-server/src/request_processors/thread_lifecycle.rs)
+- [Codex 0.155.1 thread unload](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server/src/request_processors/thread_lifecycle.rs)
+- [Codex 0.155.1 persistence shutdown](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/core/src/session/handlers.rs)
+- [Codex 0.155.1 app-server lifecycle](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server/src/lib.rs)
+- [기존 배포용 빌드와 공증](development/RELEASE_DMG_PACKAGING.md)

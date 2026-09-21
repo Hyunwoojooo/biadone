@@ -7,6 +7,7 @@ import {
   createPersistenceWorkspace,
   launchProductCoordinator,
   PROJECT_ROOT,
+  structuredLogCodes,
 } from "./runtime-harness.mjs";
 
 test("product adapter accepts semantic commands and rejects raw journal append", async (t) => {
@@ -17,6 +18,21 @@ test("product adapter accepts semantic commands and rejects raw journal append",
     await workspace.cleanup();
     await cleanupCoordinatorBuild();
   });
+
+  for (const [name, options] of [
+    ["missing isolated authority lease", {
+      environmentOverrides: { BLABEE_T011_ENABLE_AUTHORITY_TEST_LEASE: "0" },
+    }],
+    ["missing test Keychain namespace", { freshnessAccount: null }],
+    ["invalid authority root", {
+      environmentOverrides: { BLABEE_T011_AUTHORITY_TEST_ROOT: "/" },
+    }],
+  ]) {
+    client = await launchProductCoordinator(workspace, options);
+    assert.deepEqual(await client.exit, { code: 1, signal: null }, name);
+    assert.ok(structuredLogCodes(client.stderrText).includes("invalid_arguments"), name);
+    await client.close();
+  }
 
   client = await launchProductCoordinator(workspace);
   const binding = {
@@ -61,7 +77,7 @@ test("product adapter accepts semantic commands and rejects raw journal append",
     revision: 1,
     valid_after_event_sequence: 2,
     sealed_at: "2026-08-21T01:00:01Z",
-    expires_at: "2026-08-21T01:02:01Z",
+    expires_at: "2026-08-21T01:10:01Z",
   });
   packet.checkpoint.id = binding.episode_baseline_checkpoint_id;
 
@@ -73,7 +89,7 @@ test("product adapter accepts semantic commands and rejects raw journal append",
       packet,
     },
   });
-  assert.equal(sealed.ok, true);
+  assert.equal(sealed.ok, true, JSON.stringify(sealed.error));
   assert.equal(sealed.result.last_sequence, 2);
 
   const directSelection = await client.request({

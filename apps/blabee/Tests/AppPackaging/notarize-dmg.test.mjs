@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
-import { notarizeDMG, parseNotarizeArguments } from "../../scripts/notarize-dmg.mjs";
+import { notarizeDMG, parseNotarizeArguments, verifyPublicDMGPayload } from "../../scripts/notarize-dmg.mjs";
 
 const submissionID = "12345678-1234-1234-1234-123456789abc";
 const teamID = "VN7AMDG677";
@@ -73,7 +73,14 @@ async function fixture(t) {
     if (control.signatureError) throw new Error("invalid Developer ID signature");
     return { kind: "dmg", team_id: teamID, identifier: options.identifier, timestamp: "secure timestamp", hardened_runtime: false };
   };
-  const options = { dmgPath, teamID, platform: "darwin", keychainPath: join(root, "login.keychain-db"), runner, signatureVerifier };
+  const publicPayloadVerifier = async (path, options) => {
+    calls.push({ payload: path });
+    assert.equal(path, dmgPath);
+    assert.equal(options.teamID, teamID);
+    await control.beforePayload?.();
+    if (control.payloadError) throw control.payloadError;
+  };
+  const options = { dmgPath, teamID, platform: "darwin", keychainPath: join(root, "login.keychain-db"), runner, signatureVerifier, publicPayloadVerifier };
   return {
     root, dmgPath, control, calls, options, checksum,
     run: (overrides = {}) => notarizeDMG({ ...options, ...overrides }),
@@ -100,7 +107,7 @@ test("Accepted notarization validates the stapled candidate and publishes the fi
   assert.equal(result.pending, false);
   assert.equal(await readFile(`${f.dmgPath}.sha256`, "utf8"), `${result.final_sha256}  ${basename(f.dmgPath)}\n`);
   assert.equal((await f.state()).final_sha256, result.final_sha256);
-  assert.deepEqual(f.calls.map((call) => call.verify ? "verify" : call.args[0] === "notarytool" ? call.args[1] : call.args[0] === "stapler" ? `stapler ${call.args[1]}` : "Gatekeeper"), ["verify", "submit", "wait", "log", "stapler staple", "stapler validate", "verify", "Gatekeeper"]);
+  assert.deepEqual(f.calls.map((call) => call.verify ? "verify" : call.payload ? "qualify public payload" : call.args[0] === "notarytool" ? call.args[1] : call.args[0] === "stapler" ? `stapler ${call.args[1]}` : "Gatekeeper"), ["verify", "qualify public payload", "submit", "wait", "log", "stapler staple", "stapler validate", "verify", "Gatekeeper"]);
   assert.equal((await readdir(f.root)).some((name) => name.endsWith(".lock") || name.endsWith(".tmp")), false);
 });
 
@@ -250,7 +257,8 @@ test("mismatched team and submission ID cannot reuse stored state", async (t) =>
   f.control.status = "In Progress";
   await f.run();
   const before = await readFile(`${f.dmgPath}.notarization.json`, "utf8");
-  await assert.rejects(f.run({ resume: true, teamID: "AAAAAAAAAA", signatureVerifier: async () => ({}) }), /state does not match/);
+  await assert.rejects(f.run({ resume: true, teamID: "AAAAAAAAAA", signatureVerifier: async () => ({}),
+    publicPayloadVerifier: async () => {} }), /state does not match/);
   assert.equal(await readFile(`${f.dmgPath}.notarization.json`, "utf8"), before);
   await assert.rejects(f.run({ submissionID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }), /differs from the recorded/);
 });
@@ -332,4 +340,68 @@ test("strict CLI parsing supports resume and rejects credential-bearing or dupli
   assert.throws(() => parseNotarizeArguments(["--dmg", "/a.dmg", "--dmg", "/b.dmg"]), /duplicate/);
   assert.throws(() => parseNotarizeArguments(["--resume", "--resume"]), /duplicate/);
   assert.ok(Number.isNaN(parseNotarizeArguments(["--timeout", "45junk"]).timeout));
+});
+
+test("development Channels or uncertain payload qualification prevents every notary command and state write", async t => {
+  for (const message of ["development Channels payload cannot be notarized", "DMG detach state unknown"]) {
+    const f = await fixture(t);
+    f.control.payloadError = new Error(message);
+    await assert.rejects(f.run(), error => error.message === message);
+    assert.equal(f.calls.some(call => call.args), false);
+    await assert.rejects(f.state(), { code: "ENOENT" });
+    await f.assertOriginal();
+  }
+});
+
+test("DMG bytes are rebound after payload qualification before upload", async t => {
+  const f = await fixture(t);
+  f.control.beforePayload = () => appendFile(f.dmgPath, "changed during inspection");
+  await assert.rejects(f.run(), /DMG bytes changed/u);
+  assert.equal(f.submissions().length, 0);
+  await assert.rejects(f.state(), { code: "ENOENT" });
+});
+
+test("public payload inspection checks actual mounted tree and never enables internal Claude capability", async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "blabee-public-payload-test-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mounted = join(root, "mounted-fixture");
+  const app = join(mounted, "Blabee.app");
+  await mkdir(join(app, "Contents/Resources"), { recursive: true });
+  await symlink("/Applications", join(mounted, "Applications"));
+  await writeFile(join(mounted, "README.txt"), "public release\n");
+  const authority = `Developer ID Application: Test (${teamID})`;
+  let appCalls = 0;
+  let workRoot;
+  const dependencies = { teamID,
+    mountVerifier: async (_dmg, work, expected, options) => {
+      workRoot = work;
+      assert.equal(expected, null);
+      return options.verifyMounted(mounted);
+    },
+    runner: async (command, args, options) => {
+      assert.equal(command, "/usr/bin/plutil");
+      assert.equal(options.timeout, 120_000);
+      assert.deepEqual(args, ["-extract", "CFBundleVersion", "raw", "-o", "-", join(app, "Contents/Info.plist")]);
+      return { stdout: "62\n", stderr: "" };
+    },
+    appSignatureVerifier: async (path, options) => {
+      assert.equal(path, app);
+      assert.equal(options.identifier, "com.biadone.blabee");
+      return { authority };
+    },
+    appVerifier: async (path, options) => {
+      appCalls++;
+      assert.equal(path, app);
+      assert.deepEqual(options, { expectedBuildNumber: "62", releaseSigning: { identity: authority, teamID } });
+      return { bundleIdentifier: "com.biadone.blabee", build: "62" };
+    },
+  };
+  const result = await verifyPublicDMGPayload(join(root, "Blabee-r62.dmg"), dependencies);
+  assert.equal(result.bundleIdentifier, "com.biadone.blabee");
+  assert.equal(appCalls, 1);
+  await assert.rejects(lstat(workRoot), { code: "ENOENT" });
+  await mkdir(join(app, "Contents/Resources/claude"));
+  await assert.rejects(verifyPublicDMGPayload(join(root, "renamed-public.dmg"), dependencies), /development Channels payload/u);
+  assert.equal(appCalls, 1);
+  await assert.rejects(lstat(workRoot), { code: "ENOENT" });
 });

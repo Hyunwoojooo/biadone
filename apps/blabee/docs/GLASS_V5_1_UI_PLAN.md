@@ -262,6 +262,6 @@ npm run test:swift -- --filter 'blabeePet|PetEventNavigation|PetApprovalHotKey|P
 기존 동작을 넓히는 별도 항목이며 외형 이식에 묶어 자동 도입하지 않는다.
 
 관련 기존 문서:
-[대기 이벤트 이동](../src/coordinator-swift/docs/EVENT_NAVIGATION.md),
-[승인 라우팅과 선택 건너뛰기](../src/coordinator-swift/docs/APPROVAL_THREAD_ROUTING_AND_DISMISS.md),
+[대기 이벤트 이동](features/EVENT_NAVIGATION.md),
+[승인 라우팅과 선택 건너뛰기](features/APPROVAL_THREAD_ROUTING_AND_DISMISS.md),
 [자동 업데이트](AUTOMATIC_UPDATES.md).

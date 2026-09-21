@@ -38,7 +38,7 @@ async function packetFor(boundary, validAfterEventSequence, suffix) {
     revision: 1,
     valid_after_event_sequence: validAfterEventSequence,
     sealed_at: `2026-08-21T02:0${suffix}:00Z`,
-    expires_at: `2026-08-21T02:0${suffix + 2}:00Z`,
+    expires_at: `2026-08-21T02:${suffix + 10}:00Z`,
   });
   packet.checkpoint.id = boundary.episode_baseline_checkpoint_id;
   return packet;

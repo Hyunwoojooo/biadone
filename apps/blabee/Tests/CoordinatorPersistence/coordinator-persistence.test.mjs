@@ -6,6 +6,7 @@ import {
   chmod,
   cp,
   mkdir,
+  open,
   readFile,
   rm,
   symlink,
@@ -1423,6 +1424,31 @@ test("Keychain test operations fail closed outside the exact isolated oracle con
   } finally {
     await workspace.cleanup();
   }
+});
+
+test("Keychain test oracle rejects read-only and regular-file descriptors before reading", async (t) => {
+  const workspace = await createPersistenceWorkspace("keychain-oracle-channel");
+  t.after(async () => workspace.cleanup());
+  const outputPath = path.join(workspace.directory, "unexpected-anchor-output");
+  for (const [name, filePath, flags] of [
+    ["read-only descriptor", "/dev/null", "r"],
+    ["writable regular file", outputPath, "w"],
+  ]) {
+    const descriptor = await open(filePath, flags, 0o600);
+    let client;
+    try {
+      client = await launchCoordinator(workspace, {
+        oracleDescriptor: descriptor.fd,
+        environmentOverrides: { BLABEE_T007B_READ_KEYCHAIN_TEST_ANCHOR_FD: "3" },
+      });
+      assert.deepEqual(await client.exit, { code: 1, signal: null }, name);
+      assert.ok(structuredLogCodes(client.stderrText).includes("invalid_arguments"), name);
+    } finally {
+      await client?.close();
+      await descriptor.close();
+    }
+  }
+  assert.equal((await readFile(outputPath)).length, 0);
 });
 
 test("pending-before-commit blocks reads and permits only the exact batch retry", async () => {

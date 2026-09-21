@@ -35,6 +35,7 @@ import {
   requireInternalDMGOutputBuildSuffix,
 } from "./internal-build-number.mjs";
 import { normalizeReleaseSigning } from "./release-signing.mjs";
+import { verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -550,27 +551,29 @@ async function fingerprintTree(
 }
 
 export async function fingerprintSwiftPackageInputs(packageRoot) {
-  const fingerprint = await fingerprintTree(
-    packageRoot,
-    "Swift package root",
-    new Set([".build", ".swiftpm", "docs", ".gitignore", "README.md"]),
-  );
-  const packageManifest = join(requireAbsolutePath(packageRoot, "Swift package root"), "Package.swift");
-  const manifestMetadata = await lstat(packageManifest);
-  if (manifestMetadata.isSymbolicLink() || !manifestMetadata.isFile()) {
-    fail("Swift package root is missing a regular Package.swift");
-  }
-  return fingerprint;
+  const root = requireAbsolutePath(packageRoot, "Swift package root");
+  await requireDirectory(root, "Swift package root");
+  const canonicalRoot = await realpath(root);
+  return fingerprintSpecifiedInputs(swiftInputSpecifications(canonicalRoot), canonicalRoot);
+}
+
+// Keep the root manifest's inputs explicit: never traverse the repository root,
+// provider npm dependencies, development runtimes, or generated artifacts.
+function swiftInputSpecifications(sourceRoot) {
+  return [
+    { label: "Swift manifest", relativePath: "Package.swift", file: true },
+    ...["engine", "app", "bridges/codex/swift", "bridges/claude/swift", "Tests/swift"]
+      .map((relativePath) => ({ label: `Swift ${relativePath}`, relativePath })),
+  ].map((input) => ({
+    ...input,
+    path: join(sourceRoot, input.relativePath),
+    excluded: new Set(),
+  }));
 }
 
 function releaseInputSpecifications(sourceRoot) {
   return [
-    {
-      label: "Swift package",
-      relativePath: join("src", "coordinator-swift"),
-      path: join(sourceRoot, "src", "coordinator-swift"),
-      excluded: new Set([".build", ".swiftpm", "docs", ".gitignore", "README.md"]),
-    },
+    ...swiftInputSpecifications(sourceRoot),
     {
       label: "Contracts/v1",
       relativePath: join("Contracts", "v1"),
@@ -579,8 +582,8 @@ function releaseInputSpecifications(sourceRoot) {
     },
     {
       label: "Plugin/blabee",
-      relativePath: join("Plugin", "blabee"),
-      path: join(sourceRoot, "Plugin", "blabee"),
+      relativePath: join("bridges", "codex", "plugin"),
+      path: join(sourceRoot, "bridges", "codex", "plugin"),
       excluded: new Set(),
     },
     {
@@ -596,11 +599,35 @@ export async function fingerprintReleaseInputs(sourceRoot) {
   const requestedSource = requireAbsolutePath(sourceRoot, "source root");
   await requireDirectory(requestedSource, "source root");
   const canonicalSource = await realpath(requestedSource);
-  const inputs = releaseInputSpecifications(canonicalSource);
+  return fingerprintSpecifiedInputs(releaseInputSpecifications(canonicalSource), canonicalSource);
+}
+
+async function requireInputAncestors(sourceRoot, input) {
+  if (!isWithin(sourceRoot, input.path)) fail(`${input.label} escapes the source root`);
+  let current = sourceRoot;
+  const components = relative(sourceRoot, input.path).split(sep);
+  for (const component of components.slice(0, -1)) {
+    current = join(current, component);
+    const metadata = await lstat(current);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      fail(`${input.label} must not contain symlink or special path components`);
+    }
+  }
+}
+
+async function fingerprintSpecifiedInputs(inputs, sourceRoot) {
   const hash = createHash("sha256");
   let files = 0;
   const budget = { bytes: 0, entries: 0 };
   for (const input of inputs) {
+    await requireInputAncestors(sourceRoot, input);
+    if (input.file) {
+      const fileHash = createHash("sha256");
+      const bytes = await hashStableRegularFile(input.path, input.label, fileHash, budget);
+      hash.update(Buffer.from(`${input.label}:1:${bytes}:${fileHash.digest("hex")}\n`, "utf8"));
+      files += 1;
+      continue;
+    }
     const fingerprint = await fingerprintTree(
       input.path,
       input.label,
@@ -765,6 +792,16 @@ export async function snapshotReleaseInputs(sourceRoot, snapshotRoot) {
 
   const budget = { bytes: 0, entries: 0, traversalEntries: 0 };
   for (const input of releaseInputSpecifications(canonicalSource)) {
+    await requireInputAncestors(canonicalSource, input);
+    if (input.file) {
+      await copyStableRegularFile(
+        input.path,
+        join(canonicalSnapshot, input.relativePath),
+        input.label,
+        budget,
+      );
+      continue;
+    }
     const files = await collectTreeInputFiles(
       input.path,
       "",
@@ -935,11 +972,17 @@ export async function buildFreshInternalDMG({
   buildNumber,
   compatiblePreviousApps = [],
   releaseSigning = null,
+  internalClaudeSigning = null,
+  claudeRuntimeDirectory,
   sourceRoot = defaultSourceRoot,
   platform = process.platform,
 } = {}, dependencies = {}) {
   requireDarwin(platform);
   const signing = normalizeReleaseSigning(releaseSigning);
+  const internalSigning = normalizeReleaseSigning(internalClaudeSigning);
+  if (signing !== null && (internalSigning !== null || claudeRuntimeDirectory !== undefined)) fail("public release cannot include development Channels");
+  if ((internalSigning !== null) !== (claudeRuntimeDirectory !== undefined)) fail("internal Claude build requires runtime, identity and team together");
+  const runtimePath = claudeRuntimeDirectory === undefined ? null : requireAbsolutePath(claudeRuntimeDirectory, "--claude-runtime-directory");
   const normalizedBuildNumber = requireInternalBuildNumber(
     buildNumber,
     "build number",
@@ -956,9 +999,15 @@ export async function buildFreshInternalDMG({
   const previousApps = compatiblePreviousApps.map((path) => (
     requireAbsolutePath(path, "--compatible-previous-app")
   ));
+  const runtimeManifest = runtimePath === null ? null : await verifyClaudeRuntimeDirectory(runtimePath);
+  const verifyRuntimeUnchanged = async () => {
+    if (runtimeManifest !== null && (await verifyClaudeRuntimeDirectory(runtimePath)).payload_digest !== runtimeManifest.payload_digest) {
+      fail("Claude runtime changed during the fresh build; no DMG was published");
+    }
+  };
   await requireDirectory(source, "source root");
   const canonicalSource = await realpath(source);
-  const packageRoot = join(canonicalSource, "src", "coordinator-swift");
+  const packageRoot = canonicalSource;
   await requireDirectory(packageRoot, "Swift package root");
 
   const selectToolchain = dependencies.selectToolchain ?? selectFullXcodeToolchain;
@@ -996,7 +1045,7 @@ export async function buildFreshInternalDMG({
       await fingerprintInputs(canonicalSource),
       "while creating the private source snapshot",
     );
-    const snapshotPackageRoot = join(snapshotSource, "src", "coordinator-swift");
+    const snapshotPackageRoot = snapshotSource;
     const coordinator = await buildCoordinator({
       sourceRoot: snapshotSource,
       packageRoot: snapshotPackageRoot,
@@ -1013,15 +1062,18 @@ export async function buildFreshInternalDMG({
       await fingerprintInputs(canonicalSource),
       "in the live source during the fresh build",
     );
+    await verifyRuntimeUnchanged();
     result = await packageDMG({
       binaryPath: coordinator.binaryPath,
       outputPath: output,
       buildNumber: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
       ...(signing === null ? {} : { releaseSigning: signing }),
+      ...(internalSigning === null ? {} : { internalClaudeSigning: internalSigning, claudeRuntimeDirectory: runtimePath }),
       platform,
       sourceRoot: snapshotSource,
       prePublishValidation: async () => {
+        await verifyRuntimeUnchanged();
         requireMatchingReleaseFingerprint(
           snapshotBeforeBuild,
           await fingerprintInputs(snapshotSource),
@@ -1050,6 +1102,9 @@ export async function buildFreshInternalDMG({
 function parseCLIArguments(values) {
   let outputPath;
   let buildNumber;
+  let claudeRuntimeDirectory;
+  let internalIdentity;
+  let internalTeamID;
   let help = false;
   const compatiblePreviousApps = [];
   for (let index = 0; index < values.length; index += 1) {
@@ -1062,6 +1117,9 @@ function parseCLIArguments(values) {
       value !== "--output"
       && value !== "--build-number"
       && value !== "--compatible-previous-app"
+      && value !== "--claude-runtime-directory"
+      && value !== "--internal-signing-identity"
+      && value !== "--internal-signing-team-id"
     ) {
       fail(`unsupported argument: ${value}`);
     }
@@ -1076,6 +1134,15 @@ function parseCLIArguments(values) {
     } else if (value === "--build-number") {
       if (buildNumber !== undefined) fail("--build-number may be provided only once");
       buildNumber = requireInternalBuildNumber(argument, "--build-number");
+    } else if (value === "--claude-runtime-directory") {
+      if (claudeRuntimeDirectory !== undefined) fail("--claude-runtime-directory may be provided only once");
+      claudeRuntimeDirectory = argument;
+    } else if (value === "--internal-signing-identity") {
+      if (internalIdentity !== undefined) fail("--internal-signing-identity may be provided only once");
+      internalIdentity = argument;
+    } else if (value === "--internal-signing-team-id") {
+      if (internalTeamID !== undefined) fail("--internal-signing-team-id may be provided only once");
+      internalTeamID = argument;
     } else {
       compatiblePreviousApps.push(argument);
       if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
@@ -1087,7 +1154,11 @@ function parseCLIArguments(values) {
   if (!help && outputPath !== undefined) {
     requireInternalDMGOutputBuildSuffix(outputPath, buildNumber);
   }
-  return { outputPath, buildNumber, compatiblePreviousApps, help };
+  const includesClaude = claudeRuntimeDirectory !== undefined || internalIdentity !== undefined || internalTeamID !== undefined;
+  if (includesClaude && claudeRuntimeDirectory === undefined) fail("internal Claude build requires runtime, identity and team together");
+  const internalClaudeSigning = includesClaude ? normalizeReleaseSigning({ identity: internalIdentity, teamID: internalTeamID }) : null;
+  return { outputPath, buildNumber, compatiblePreviousApps, help,
+    ...(internalClaudeSigning === null ? {} : { internalClaudeSigning, claudeRuntimeDirectory }) };
 }
 
 function usage() {
@@ -1099,6 +1170,8 @@ function usage() {
     "A usable full Xcode toolchain is required; Command Line Tools alone are not used.",
     "Prebuilt --binary inputs are intentionally unsupported to prevent stale DMG contents.",
     "--build-number is a required canonical integer from 1 through 9999 and must match the output -rN.dmg suffix.",
+    "Optional internal Claude support is bundled into that same Blabee.app: provide --claude-runtime-directory, --internal-signing-identity and --internal-signing-team-id together.",
+    "Development Channels payloads cannot enter the public release or notarization route.",
   ].join("\n");
 }
 

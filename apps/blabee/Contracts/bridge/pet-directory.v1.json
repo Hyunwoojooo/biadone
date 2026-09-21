@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.blabee.local/contracts/bridge/pet-directory.v1.json",
+  "title": "Blabee authenticated app Pet directory",
+  "description": "Bounded process-local directory and scoped disconnection. Authenticated app-private UDS wrapper required; no capability in this envelope. Outer UDS provides errors. Syntax validation is not authentication or a current target check. Lists are paged by UUID scope and do not restore historical authority.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.pet-directory.v1"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "operation": {
+          "const": "list"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "after_scope_id"
+          ],
+          "properties": {
+            "after_scope_id": {
+              "anyOf": [
+                {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation",
+        "service_incarnation",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.pet-directory.v1"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "operation": {
+          "const": "list"
+        },
+        "service_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "codex_target",
+            "claude_available",
+            "sessions",
+            "next_cursor"
+          ],
+          "properties": {
+            "codex_target": {
+              "$ref": "#/$defs/codex_target"
+            },
+            "claude_available": {
+              "type": "boolean"
+            },
+            "sessions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/session"
+              }
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation",
+        "payload"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.pet-directory.v1"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "operation": {
+          "const": "disconnect"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target"
+          ],
+          "properties": {
+            "target": {
+              "$ref": "#/$defs/claude_target"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "request_id",
+        "operation",
+        "service_incarnation",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "blabee.pet-directory.v1"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "request_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "operation": {
+          "const": "disconnect"
+        },
+        "service_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "disconnected"
+          ],
+          "properties": {
+            "disconnected": {
+              "const": true
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "codex_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope_id",
+        "service_incarnation",
+        "session_incarnation",
+        "ui_generation"
+      ],
+      "properties": {
+        "scope_id": {
+          "const": "codex-primary"
+        },
+        "service_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "session_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "ui_generation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+        }
+      }
+    },
+    "claude_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope_id",
+        "service_incarnation",
+        "session_incarnation",
+        "authority_epoch",
+        "ui_generation"
+      ],
+      "properties": {
+        "scope_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "service_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "session_incarnation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "authority_epoch": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "ui_generation": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uint64"
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "target",
+        "project_id",
+        "session_id",
+        "native_session_id",
+        "cwd",
+        "state"
+      ],
+      "properties": {
+        "provider": {
+          "const": "claude"
+        },
+        "target": {
+          "$ref": "#/$defs/claude_target"
+        },
+        "project_id": {
+          "type": "string",
+          "pattern": "^claude_project_",
+          "maxLength": 4096
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^claude_session_",
+          "maxLength": 4096
+        },
+        "native_session_id": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/uuid"
+        },
+        "cwd": {
+          "$ref": "https://schemas.blabee.local/contracts/bridge/common.v1.json#/$defs/cwd"
+        },
+        "state": {
+          "enum": [
+            "starting",
+            "connected",
+            "disconnected"
+          ]
+        }
+      }
+    }
+  }
+}

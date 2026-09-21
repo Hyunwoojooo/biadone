@@ -10,6 +10,7 @@ import {
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildFreshInternalDMG,
   fingerprintReleaseInputs,
+  snapshotReleaseInputs,
   freshInternalDMGTesting,
   makeSwiftReleaseBuildArguments,
   selectFullXcodeToolchain,
@@ -34,18 +36,21 @@ const testBuildNumber = "2";
 async function makeSourceFixture(t) {
   const root = await mkdtemp(join(tmpdir(), "blabee-fresh-dmg-test-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
-  const packageRoot = join(root, "src", "coordinator-swift");
-  await mkdir(join(packageRoot, "Sources", "BlabeeCoordinator"), { recursive: true });
+  const packageRoot = root;
+  await mkdir(join(packageRoot, "app", "entrypoints"), { recursive: true });
+  for (const directory of ["engine", "bridges/codex/swift", "bridges/claude/swift", "Tests/swift"]) {
+    await mkdir(join(packageRoot, directory), { recursive: true });
+  }
   await mkdir(join(root, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(root, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(root, "bridges", "codex", "plugin"), { recursive: true });
   await mkdir(join(root, "Packaging", "macos"), { recursive: true });
   await writeFile(join(packageRoot, "Package.swift"), "// swift-tools-version: 6.0\n");
   await writeFile(
-    join(packageRoot, "Sources", "BlabeeCoordinator", "main.swift"),
+    join(packageRoot, "app", "entrypoints", "main.swift"),
     "print(\"test\")\n",
   );
   await writeFile(join(root, "Contracts", "v1", "contract.json"), "{}\n");
-  await writeFile(join(root, "Plugin", "blabee", "plugin.json"), "{}\n");
+  await writeFile(join(root, "bridges", "codex", "plugin", "plugin.json"), "{}\n");
   await writeFile(join(root, "Packaging", "macos", "Info.plist"), "plist\n");
   return { root, packageRoot, output: join(root, "Blabee-internal-r2.dmg") };
 }
@@ -57,6 +62,56 @@ async function makeExternalWorkRoot(t, name) {
   await mkdir(work, { mode: 0o700 });
   return work;
 }
+
+test("root package snapshot includes separated Swift inputs without developer or npm files", async (t) => {
+  const fixture = await makeSourceFixture(t);
+  for (const path of [
+    "engine/State.swift", "bridges/codex/swift/Hook.swift",
+    "bridges/claude/swift/Adapter.swift", "Tests/swift/Fixture.swift",
+  ]) {
+    await writeFile(join(fixture.root, path), "// included source\n");
+  }
+  const before = await fingerprintReleaseInputs(fixture.root);
+  for (const path of ["dev/private-runtime", "bridges/claude/node_modules", "build", "tmp"]) {
+    await mkdir(join(fixture.root, path), { recursive: true });
+    await writeFile(join(fixture.root, path, "ignored.txt"), "not a release input\n");
+  }
+  assert.deepEqual(await fingerprintReleaseInputs(fixture.root), before);
+  const workRoot = await makeExternalWorkRoot(t, "separated-snapshot");
+  const snapshot = await snapshotReleaseInputs(fixture.root, join(workRoot, "source"));
+  assert.deepEqual(await fingerprintReleaseInputs(snapshot), before);
+  assert.equal(await readFile(join(snapshot, "Package.swift"), "utf8"), "// swift-tools-version: 6.0\n");
+  await assert.rejects(lstat(join(snapshot, "dev")), { code: "ENOENT" });
+  await assert.rejects(lstat(join(snapshot, "bridges/claude/node_modules")), { code: "ENOENT" });
+  await writeFile(join(fixture.root, "bridges/claude/swift/Adapter.swift"), "// changed source\n");
+  assert.notEqual((await fingerprintReleaseInputs(fixture.root)).sha256, before.sha256);
+});
+
+test("root Swift manifest remains a regular authenticated input", async (t) => {
+  const fixture = await makeSourceFixture(t);
+  const manifest = join(fixture.root, "Package.swift");
+  const realManifest = join(fixture.root, "manifest-copy");
+  await rename(manifest, realManifest);
+  await symlink(realManifest, manifest);
+  await assert.rejects(fingerprintReleaseInputs(fixture.root), /regular file.*symlink/u);
+  const workRoot = await makeExternalWorkRoot(t, "manifest-symlink");
+  await assert.rejects(snapshotReleaseInputs(fixture.root, join(workRoot, "source")), /regular file.*symlink/u);
+});
+
+test("separated Swift trees reject symlinks in their provider ancestors", async (t) => {
+  for (const provider of ["claude", "codex"]) {
+    await t.test(provider, async (t) => {
+      const fixture = await makeSourceFixture(t);
+      const workRoot = await makeExternalWorkRoot(t, `provider-symlink-${provider}`);
+      const source = join(fixture.root, "bridges", provider);
+      const external = join(workRoot, "external-provider");
+      await rename(source, external);
+      await symlink(external, source);
+      await assert.rejects(fingerprintReleaseInputs(fixture.root), /symlink.*path components/u);
+      await assert.rejects(snapshotReleaseInputs(fixture.root, join(workRoot, "snapshot")), /symlink.*path components/u);
+    });
+  }
+});
 
 test("fresh internal DMG CLI documents source build and rejects prebuilt binary arguments", async () => {
   const { stdout, stderr } = await execFile(process.execPath, [buildScript, "--help"]);
@@ -231,12 +286,12 @@ test("toolchain selection fails clearly when only Command Line Tools are availab
 test("release build arguments pin package and output to the fresh scratch path", () => {
   const args = makeSwiftReleaseBuildArguments({
     sourceRoot: "/workspace/blabee",
-    packageRoot: "/workspace/blabee/src/coordinator-swift",
+    packageRoot: "/workspace/blabee",
     scratchPath: "/private/tmp/fresh/swift-build",
   });
   assert.deepEqual(args.slice(0, 4), ["--sdk", "macosx", "swift", "build"]);
   assert.deepEqual(args.slice(args.indexOf("--package-path"), args.indexOf("--package-path") + 2), [
-    "--package-path", "/workspace/blabee/src/coordinator-swift",
+    "--package-path", "/workspace/blabee",
   ]);
   assert.deepEqual(args.slice(args.indexOf("--scratch-path"), args.indexOf("--scratch-path") + 2), [
     "--scratch-path", "/private/tmp/fresh/swift-build",
@@ -416,7 +471,7 @@ test("pipeline packages only the binary produced inside its fresh build transact
       calls.push({
         ...options,
         packageManifest: await readFile(
-          join(options.sourceRoot, "src", "coordinator-swift", "Package.swift"),
+          join(options.sourceRoot, "Package.swift"),
           "utf8",
         ),
       });
@@ -442,10 +497,7 @@ test("transient live-source changes cannot affect the snapshotted artifact", asy
   const fixture = await makeSourceFixture(t);
   const liveSource = join(
     fixture.root,
-    "src",
-    "coordinator-swift",
-    "Sources",
-    "BlabeeCoordinator",
+    "app", "entrypoints",
     "main.swift",
   );
   const baseline = await readFile(liveSource, "utf8");
@@ -468,10 +520,7 @@ test("transient live-source changes cannot affect the snapshotted artifact", asy
         const snapshottedSource = await readFile(
           join(
             sourceRoot,
-            "src",
-            "coordinator-swift",
-            "Sources",
-            "BlabeeCoordinator",
+            "app", "entrypoints",
             "main.swift",
           ),
           "utf8",
@@ -595,7 +644,7 @@ test("pipeline detects packaged resource changes before publishing", async (t) =
       }),
       packageDMG: async (options) => {
         await writeFile(
-          join(fixture.root, "Plugin", "blabee", "plugin.json"),
+          join(fixture.root, "bridges", "codex", "plugin", "plugin.json"),
           "{\"changed\":true}\n",
         );
         await options.prePublishValidation();
@@ -697,7 +746,7 @@ test("release fingerprints reject excessive trees before hashing file contents",
   const fixture = await makeSourceFixture(t);
   for (let index = 0; index < 1_025; index += 1) {
     await writeFile(
-      join(fixture.root, "Plugin", "blabee", `entry-${String(index).padStart(4, "0")}.json`),
+      join(fixture.root, "bridges", "codex", "plugin", `entry-${String(index).padStart(4, "0")}.json`),
       "{}\n",
     );
   }

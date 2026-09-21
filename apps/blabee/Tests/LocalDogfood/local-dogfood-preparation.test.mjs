@@ -23,6 +23,10 @@ import { prepareLocalDogfood } from "../../scripts/prepare-local-dogfood.mjs";
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const preparationScript = join(repositoryRoot, "scripts", "prepare-local-dogfood.mjs");
+const sourcePluginManifest = JSON.parse(await readFile(
+  join(repositoryRoot, "bridges/codex/plugin/.codex-plugin/plugin.json"),
+  "utf8",
+));
 const defaultWireRuntimeIdentity = `sha256:${"d".repeat(64)}`;
 const defaultInspectedManifestDigest = `sha256:${"e".repeat(64)}`;
 
@@ -62,6 +66,10 @@ async function makeWorkspace(t, prefix = "blabee-local-dogfood-") {
     binary,
     [
       "#!/bin/sh",
+      'if [ "$#" -eq 1 ] && [ "${1-}" = runtime-use-lease-protocol ]; then',
+      "  printf 'blabee.runtime-use-lease.v1\\n'",
+      "  exit 0",
+      "fi",
       'if [ "${1-}" = runtime-identity ] && [ "${2-}" = --app ]; then',
       `  identity='${defaultWireRuntimeIdentity}'`,
       `  manifest_digest='${defaultInspectedManifestDigest}'`,
@@ -1192,7 +1200,7 @@ test("two prepared marketplaces coexist and complete the real Codex lifecycle in
   assert.equal(containsJSONValue(pluginAdd, "blabee"), true);
   const installed = await expectCodexJSON(["plugin", "list", "--json"], env);
   assert.equal(containsJSONValue(installed, "blabee"), true);
-  assert.equal(containsJSONValue(installed, "0.1.0"), true);
+  assert.equal(containsJSONValue(installed, sourcePluginManifest.version), true);
 
   const safeRotationScanner = join(fixture.root, "lifecycle-safe-ps");
   await writeFile(safeRotationScanner, [

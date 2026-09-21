@@ -15,7 +15,7 @@ import {
   packetForBoundary,
   replay,
   verifyTokenFingerprint,
-} from "../../src/coordinator-core/index.mjs";
+} from "../support/reference-engine/index.mjs";
 import {
   formatAjvErrors,
   loadV1ContractSuite,

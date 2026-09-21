@@ -3,12 +3,16 @@ import { constants as fileSystemConstants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
+import { verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { BLABEE_PROFILE } from "./distribution-profiles.mjs";
 
 const execFile = promisify(execFileCallback);
 const appIdentifier = "com.biadone.blabee";
 const dmgIdentifier = "com.biadone.blabee.dmg";
 const mainExecutable = "Contents/MacOS/blabee-coordinator";
 const resourceLauncher = "Contents/Resources/Plugin/blabee/scripts/blabee-launcher";
+export const claudeNodeRelativePath = "Contents/Resources/claude/node/bin/node";
+export const claudeNodeIdentifier = BLABEE_PROFILE.nodeIdentifier;
 export const appSigningEntitlementsFileName = "Blabee.entitlements";
 // Keep the signing policy narrower than arbitrary caller-provided entitlements.
 // The staged resource is part of the assembly manifest and the code seal.
@@ -125,7 +129,7 @@ export async function verifyDeveloperIDSignature(path, {
   requirePath(path);
   requireTeamID(teamID);
   requireRunner(runner);
-  if (kind !== "app" && kind !== "dmg") throw new Error("release signature kind must be app or dmg");
+  if (!["app", "dmg", "executable"].includes(kind)) throw new Error("release signature kind must be app, dmg or executable");
   if (typeof identifier !== "string" || !/^[A-Za-z0-9.-]+$/u.test(identifier)) {
     throw new Error("release signature identifier is invalid");
   }
@@ -159,7 +163,7 @@ export async function verifyDeveloperIDSignature(path, {
   const codeDirectory = lines.find((line) => line.startsWith("CodeDirectory "));
   const flags = codeDirectory?.match(/\bflags=0x([A-Fa-f0-9]+)\b/u)?.[1];
   const hardenedRuntime = flags !== undefined && (BigInt(`0x${flags}`) & 0x10000n) !== 0n;
-  if (kind === "app" && !hardenedRuntime) {
+  if ((kind === "app" || kind === "executable") && !hardenedRuntime) {
     throw new Error("release app signature must enable Hardened Runtime");
   }
   return {
@@ -172,9 +176,28 @@ export async function verifyDeveloperIDSignature(path, {
   };
 }
 
-async function validateReleaseAppCodeLayout(appPath) {
+// Decode only the two single-boolean entitlement policies used by this app.
+// Reject additional keys, duplicate keys, entities, and non-boolean values.
+export async function verifyEmbeddedSigningEntitlements(path, key, { runner = execFile } = {}) {
+  requirePath(path);
+  requireRunner(runner);
+  if (!["com.apple.security.cs.allow-jit", "com.apple.security.automation.apple-events"].includes(key)) {
+    throw new Error("unsupported embedded entitlement policy");
+  }
+  const result = await runner("/usr/bin/codesign", ["--display", "--entitlements", "-", "--xml", path], { ...commandOptions(), timeout: 30_000 });
+  const xml = String(result.stdout ?? "").trim()
+    .replace(/^<\?xml[^?]*\?>\s*/u, "")
+    .replace(/^<!DOCTYPE plist PUBLIC "[^"\r\n]*" "[^"\r\n]*">\s*/u, "");
+  const escapedKey = key.replaceAll(".", "\\.");
+  if (!new RegExp(`^<plist\\s+version="1\\.0"\\s*>\\s*<dict>\\s*<key>${escapedKey}</key>\\s*<true\\s*/>\\s*</dict>\\s*</plist>$`, "u").test(xml)) {
+    throw new Error(`embedded signing entitlements must contain only ${key}=true`);
+  }
+}
+
+async function validateReleaseAppCodeLayout(appPath, { internalClaude = false } = {}) {
   let entries = 0;
   let foundMain = false;
+  let foundClaudeNode = false;
   const inspect = async (directory, depth) => {
     const metadata = await lstat(directory);
     if (metadata.isSymbolicLink() || !metadata.isDirectory() || depth > 64) {
@@ -214,6 +237,11 @@ async function validateReleaseAppCodeLayout(appPath) {
           throw new Error("release app main executable must be executable Mach-O code");
         }
         foundMain = true;
+      } else if (internalClaude && pathInApp === claudeNodeRelativePath) {
+        if (!isMachO || (child.mode & 0o111) === 0) {
+          throw new Error("internal Claude Node must be executable Mach-O code");
+        }
+        foundClaudeNode = true;
       } else if (isMachO || ((child.mode & 0o111) !== 0 && pathInApp !== resourceLauncher)) {
         throw new Error(`release app contains unsupported executable code: ${path}`);
       } else if (pathInApp === resourceLauncher && prefix.subarray(0, 2).toString() !== "#!") {
@@ -223,6 +251,37 @@ async function validateReleaseAppCodeLayout(appPath) {
   };
   await inspect(appPath, 0);
   if (!foundMain) throw new Error("release app main executable is missing");
+  if (internalClaude && !foundClaudeNode) throw new Error("internal Claude Node is missing");
+}
+
+export async function validateInternalClaudeAppCodeLayout(path) {
+  requirePath(path);
+  const manifest = await verifyClaudeRuntimeDirectory(join(path, "Contents", "Resources", "claude"));
+  if (manifest.channel_mode !== "development-preview") throw new Error("internal Claude signing requires a development preview runtime");
+  await validateReleaseAppCodeLayout(path, { internalClaude: true });
+  return manifest;
+}
+
+// This route is intentionally separate from signReleaseApp: a Developer ID
+// signature enables peer authentication, not approved-plugin distribution.
+export async function signInternalClaudeApp(path, signing, { runner = execFile } = {}) {
+  requirePath(path);
+  requireRunner(runner);
+  const run = (command, args, options) => runner(command, args, { ...options, timeout: 30_000 });
+  const normalized = normalizeReleaseSigning(signing);
+  if (normalized === null) throw new Error("internal Claude signing requires an explicit Developer ID identity and Team ID");
+  const manifest = await validateInternalClaudeAppCodeLayout(path);
+  const node = join(path, claudeNodeRelativePath);
+  await verifyDeveloperIDSignature(node, { teamID: normalized.teamID, kind: "executable", identifier: claudeNodeIdentifier, runner: run });
+  await verifyEmbeddedSigningEntitlements(node, "com.apple.security.cs.allow-jit", { runner: run });
+  const entitlements = await validateAppSigningEntitlements(join(path, "Contents", "Resources", appSigningEntitlementsFileName));
+  await run("/usr/bin/codesign", ["--force", "--sign", normalized.identity, "--options", "runtime", "--timestamp",
+    "--entitlements", entitlements, path], commandOptions());
+  const signature = await verifyDeveloperIDSignature(path, { teamID: normalized.teamID, kind: "app", identifier: appIdentifier, runner: run });
+  await verifyEmbeddedSigningEntitlements(path, "com.apple.security.automation.apple-events", { runner: run });
+  const after = await validateInternalClaudeAppCodeLayout(path);
+  if (after.payload_digest !== manifest.payload_digest) throw new Error("Claude runtime changed during enclosing app signing");
+  return signature;
 }
 
 export async function signReleaseApp(path, signing, { runner = execFile } = {}) {
@@ -230,6 +289,11 @@ export async function signReleaseApp(path, signing, { runner = execFile } = {}) 
   requireRunner(runner);
   const normalized = normalizeReleaseSigning(signing);
   if (normalized === null) throw new Error("release app signing requires a Developer ID identity and Team ID");
+  const hasClaude = await lstat(join(path, "Contents", "Resources", "claude")).then(() => true, error => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  });
+  if (hasClaude) throw new Error("public release signing rejects development Channels payloads");
   // There is currently one Mach-O target, the main executable signed with its
   // enclosing bundle. New nested code must gain an explicit inside-out signing
   // plan; --deep signing would conceal omissions in that plan.
@@ -244,6 +308,7 @@ export async function signReleaseApp(path, signing, { runner = execFile } = {}) 
 
 export async function signReleaseDMG(path, signing, { runner = execFile } = {}) {
   requirePath(path);
+  if (path.includes("Blabee-Claude-Preview-")) throw new Error("production DMG signing rejects the Claude preview profile");
   requireRunner(runner);
   const normalized = normalizeReleaseSigning(signing);
   if (normalized === null) throw new Error("release DMG signing requires a Developer ID identity and Team ID");

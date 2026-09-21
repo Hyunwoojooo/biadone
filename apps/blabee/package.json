@@ -6,7 +6,7 @@
   "description": "Blabee contracts, Codex integration, and the macOS coordinator.",
   "scripts": {
     "test": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs Tests/CoordinatorCore/*.test.mjs Tests/CoordinatorOperational/*.test.mjs Tests/CoordinatorPersistence/*.test.mjs Tests/RuntimeQualification/*.test.mjs Tests/AppPackaging/*.test.mjs Tests/LocalDogfood/*.test.mjs",
-    "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path src/coordinator-swift --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
+    "test:swift": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer /usr/bin/lockf -t 0 -k -w /tmp/blabee-coordinator-swift-tests.lock /usr/bin/xcrun swift test --package-path . --scratch-path /tmp/blabee-coordinator-swift-build --experimental-maximum-parallelization-width 1",
     "test:contracts": "node --test --test-concurrency=1 Tests/Contracts/*.test.mjs",
     "test:codex-compatibility": "node --test --test-concurrency=1 Tests/RuntimeQualification/codex-compatibility-qualification.test.mjs",
     "qualify:codex-compatibility": "node scripts/qualify-codex-compatibility.mjs",
@@ -17,11 +17,12 @@
     "test:t012": "node --test --test-concurrency=1 Tests/AppPackaging/*.test.mjs",
     "test:dogfood": "node --test --test-concurrency=1 Tests/LocalDogfood/*.test.mjs",
     "build:macos-app": "node scripts/build-macos-app.mjs",
+    "prepare:claude-runtime": "node scripts/prepare-claude-runtime.mjs",
     "build:internal-dmg": "node scripts/build-fresh-internal-dmg.mjs",
     "build:release-dmg": "node scripts/build-release-dmg.mjs",
     "notarize:dmg": "node scripts/notarize-dmg.mjs",
     "prepare:dogfood": "node scripts/prepare-local-dogfood.mjs",
-    "m1:qualify": "node spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
+    "m1:qualify": "node dev/spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -1,0 +1,28 @@
+{
+  "name": "blabee-claude-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test:shared-engine": "node ../../Tests/bridges/claude/scripts/test-shared-engine.mjs",
+    "test:product-ingress": "node ../../Tests/bridges/claude/scripts/test-product-ingress.mjs",
+    "test:product-registration": "node ../../Tests/bridges/claude/scripts/test-product-registration.mjs",
+    "test:product-lifetime": "node ../../Tests/bridges/claude/scripts/test-product-registration.mjs && node ../../Tests/bridges/claude/scripts/test-shared-engine.mjs",
+    "test:product-lifecycle": "node ../../Tests/bridges/claude/scripts/test-product-registration.mjs && node ../../Tests/bridges/claude/scripts/test-shared-engine.mjs --lifecycle && node --test ../../Tests/bridges/claude/session-v2-lifecycle.test.mjs ../../Tests/bridges/claude/session-v2-channel-poller.test.mjs",
+    "test:installed-session": "node ../../Tests/bridges/claude/scripts/test-installed-session.mjs",
+    "test:native-session": "node ../../Tests/bridges/claude/scripts/test-native-session.mjs",
+    "test:common-pet": "node ../../Tests/bridges/claude/scripts/test-common-pet.mjs",
+    "test": "node --test ../../Tests/bridges/claude/*.test.mjs",
+    "check": "node ../../Tests/bridges/claude/scripts/check.mjs",
+    "claude:shared": "node launchers/claude-shared.mjs",
+    "claude:live": "node launchers/claude-shared.mjs --coordinator-bin ../../build/claude-tests/shared-pet-live/scratch/out/Products/Debug/blabee-coordinator --cwd ../../build/claude-tests/shared-pet-live/project --pet",
+    "test:product-pet": "node ../../Tests/bridges/claude/scripts/test-product-pet.mjs",
+    "test:runtime-payload": "node ../../Tests/bridges/claude/scripts/test-runtime-payload.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  }
+}

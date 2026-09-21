@@ -23,7 +23,7 @@ export const PROJECT_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
-export const SWIFT_PACKAGE_ROOT = path.join(PROJECT_ROOT, "src", "coordinator-swift");
+export const SWIFT_PACKAGE_ROOT = PROJECT_ROOT;
 export const CONTRACTS_ROOT = path.join(PROJECT_ROOT, "Contracts", "v1");
 
 let buildPromise;
@@ -155,7 +155,11 @@ export async function buildProductCoordinator() {
     const scratchPath = await mkdtemp(
       "/tmp/blabee-t007b-product-swift-build-",
     );
-    const environment = await swiftEnvironment(scratchPath);
+    const environment = {
+      ...await swiftEnvironment(scratchPath),
+      BLABEE_T011_ENABLE_AUTHORITY_TEST_LEASE: "1",
+      BLABEE_T011_AUTHORITY_TEST_ROOT: path.join(scratchPath, "authority"),
+    };
     const commonArguments = [
       "swift",
       "build",
@@ -166,6 +170,8 @@ export async function buildProductCoordinator() {
       scratchPath,
       "--configuration",
       "debug",
+      "-Xswiftc",
+      "-DBLABEE_PRODUCT_TEST_AUTHORITY",
     ];
     try {
       await execFileAsync(
@@ -416,6 +422,7 @@ export class CoordinatorClient {
     environmentOverrides,
     freshnessAccount,
     keyPath,
+    oracleDescriptor,
   }) {
     const arguments_ = ["--database", databasePath, "--key", keyPath];
     if (contractsPath !== null) arguments_.push("--contracts", contractsPath);
@@ -436,7 +443,9 @@ export class CoordinatorClient {
       {
         cwd: PROJECT_ROOT,
         env: childEnvironment,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: oracleDescriptor === undefined
+          ? ["pipe", "pipe", "pipe"]
+          : ["pipe", "pipe", "pipe", oracleDescriptor],
       },
     );
     this.exit = new Promise((resolve) => {
@@ -588,6 +597,7 @@ export async function launchCoordinator(
     environmentOverrides = {},
     freshnessAccount = workspace.freshnessAccount,
     keyPath = workspace.keyPath,
+    oracleDescriptor,
   } = {},
 ) {
   const build = await buildCoordinator();
@@ -599,6 +609,7 @@ export async function launchCoordinator(
     environmentOverrides,
     freshnessAccount,
     keyPath,
+    oracleDescriptor,
   });
 }
 

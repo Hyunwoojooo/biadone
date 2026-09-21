@@ -30,11 +30,16 @@ import {
 import { TextDecoder, promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BLABEE_PROFILE, verifyCompiledDistributionProfile } from "./distribution-profiles.mjs";
 import { requireInternalBuildNumber } from "./internal-build-number.mjs";
+import { verifyClaudeRuntimeDirectory } from "./prepare-claude-runtime.mjs";
+import { signClaudeRuntimeAdhoc, signClaudeRuntimeInternal } from "./sign-claude-runtime.mjs";
 import {
   appSigningEntitlementsFileName,
   normalizeReleaseSigning,
   signReleaseApp,
+  signInternalClaudeApp,
+  validateInternalClaudeAppCodeLayout,
   validateAppSigningEntitlements,
 } from "./release-signing.mjs";
 
@@ -46,12 +51,7 @@ const appIconFileName = "Blabee.icns";
 const menuBarIconFileName = "BlabeeMenuBar.svg";
 const codexMarketplaceFileName = "CodexMarketplace.json";
 const launchAgentFileName = "com.biadone.blabee.coordinator.plist";
-const launchAgentRelativePath = join(
-  "Contents",
-  "Library",
-  "LaunchAgents",
-  launchAgentFileName,
-);
+const unifiedAppleEventsUsageDescription = "Codex 또는 Claude Code 세션을 시작하거나 복원할 때 Terminal의 새 창을 엽니다.";
 const launcherRelativePath = join(
   "Contents",
   "Resources",
@@ -311,6 +311,7 @@ async function openStableRegularFile(
 export const macOSAppAssemblyTestSupport = Object.freeze({
   closeFileHandlesPreservingPrimary,
   openStableRegularFile,
+  parseCLIArguments,
 });
 
 async function verifyStableOpenFile(path, label, handle, expectedMetadata) {
@@ -463,6 +464,7 @@ async function validateInfoPlist(
   path,
   bundleVersion = requiredInfoPlistValues.CFBundleVersion,
   runtimeUseLeasePreviousIdentities = [],
+  includesClaude = false,
 ) {
   await execFile("/usr/bin/plutil", ["-lint", path], { maxBuffer: 1024 * 1024 });
   const { stdout } = await execFile(
@@ -479,7 +481,12 @@ async function validateInfoPlist(
   if (values === null || Array.isArray(values) || typeof values !== "object") {
     fail("Info.plist must contain a property list dictionary");
   }
-  for (const [key, defaultExpected] of Object.entries(requiredInfoPlistValues)) {
+  const expectedValues = { ...requiredInfoPlistValues };
+  if (includesClaude) expectedValues.NSAppleEventsUsageDescription = unifiedAppleEventsUsageDescription;
+  if (values.BlabeeDistributionProfile !== undefined && values.BlabeeDistributionProfile !== BLABEE_PROFILE.id) {
+    fail("Info.plist distribution profile mismatch");
+  }
+  for (const [key, defaultExpected] of Object.entries(expectedValues)) {
     const expected = key === "CFBundleVersion" ? bundleVersion : defaultExpected;
     if (typeof values[key] !== typeof expected || values[key] !== expected) {
       fail(`Info.plist ${key} must be ${JSON.stringify(expected)} (${typeof expected})`);
@@ -518,7 +525,8 @@ async function validateLaunchAgentPlist(path) {
     fail("LaunchAgent plist must contain exactly Label, BundleProgram, ProgramArguments, and RunAtLoad");
   }
   for (const key of ["Label", "BundleProgram"]) {
-    if (typeof values[key] !== "string" || values[key] !== requiredLaunchAgentValues[key]) {
+    const expected = requiredLaunchAgentValues[key];
+    if (typeof values[key] !== "string" || values[key] !== expected) {
       fail(`LaunchAgent plist ${key} must be ${JSON.stringify(requiredLaunchAgentValues[key])}`);
     }
   }
@@ -1015,7 +1023,7 @@ async function writeAssemblyManifest(bundleRoot, compatiblePreviousRuntimes) {
   );
   const manifest = {
     schema_version: "blabee.macos-app-assembly.v2",
-    bundle_identifier: "com.biadone.blabee",
+    bundle_identifier: BLABEE_PROFILE.bundleIdentifier,
     hash_phase: "assembled_payload_before_optional_code_signing",
     compatible_previous_runtimes: compatiblePreviousRuntimes,
     files: await collectManifestFiles(bundleRoot, bundleRoot, payloadBudget),
@@ -1420,16 +1428,23 @@ export async function assembleMacOSApp({
   sourceRoot = defaultSourceRoot,
   adhocSign = false,
   releaseSigning = null,
+  internalClaudeSigning = null,
   cleanupOnFailure = true,
   compatiblePreviousApps = [],
-  bundleVersion = requiredInfoPlistValues.CFBundleVersion,
-} = {}) {
+  bundleVersion,
+  claudeRuntimeDirectory,
+} = {}, { internalClaudeSigningRunner } = {}) {
   const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
-  if (adhocSign && normalizedReleaseSigning !== null) {
-    fail("ad-hoc signing and Developer ID release signing cannot be combined");
+  const normalizedInternalSigning = normalizeReleaseSigning(internalClaudeSigning);
+  const selectedLaunchAgentRelativePath = join("Contents", "Library", "LaunchAgents", launchAgentFileName);
+  if ([Boolean(adhocSign), normalizedReleaseSigning !== null, normalizedInternalSigning !== null].filter(Boolean).length > 1) {
+    fail("ad-hoc, Developer ID release, and internal Claude signing cannot be combined");
+  }
+  if (normalizedInternalSigning !== null && (claudeRuntimeDirectory === undefined || bundleVersion === undefined)) {
+    fail("internal Claude signing requires an explicit Claude runtime directory and bundle version");
   }
   const normalizedBundleVersion = requireInternalBuildNumber(
-    bundleVersion,
+    bundleVersion === undefined ? requiredInfoPlistValues.CFBundleVersion : bundleVersion,
     "bundle version",
   );
   const compatiblePreviousAppsSnapshot = snapshotCompatiblePreviousApps(
@@ -1438,6 +1453,16 @@ export async function assembleMacOSApp({
   const binary = requireAbsolutePath(binaryPath, "--binary");
   const requestedOutput = requireAbsolutePath(outputPath, "--output");
   const requestedSourceRoot = requireAbsolutePath(sourceRoot, "source root");
+  let claudeRuntime;
+  let claudeManifest;
+  if (claudeRuntimeDirectory !== undefined) {
+    const requestedRuntime = requireAbsolutePath(claudeRuntimeDirectory, "--claude-runtime-directory");
+    claudeManifest = await verifyClaudeRuntimeDirectory(requestedRuntime);
+    claudeRuntime = await realpath(requestedRuntime);
+    if (normalizedReleaseSigning !== null) {
+      fail("development-preview Claude runtime cannot be packaged in a Developer ID release; approved-plugin qualification is unavailable");
+    }
+  }
 
   if (basename(requestedOutput) !== bundleName) {
     fail(`--output must end with ${bundleName}`);
@@ -1481,7 +1506,7 @@ export async function assembleMacOSApp({
     codexMarketplaceFileName,
   );
   const sourceContracts = join(canonicalSourceRoot, "Contracts", "v1");
-  const sourcePlugin = join(canonicalSourceRoot, "Plugin", "blabee");
+  const sourcePlugin = join(canonicalSourceRoot, "bridges", "codex", "plugin");
   assertWithin(canonicalSourceRoot, sourceInfoPlist, "Info.plist");
   assertWithin(canonicalSourceRoot, sourceEntitlements, "app signing entitlements");
   assertWithin(canonicalSourceRoot, sourceLaunchAgent, "LaunchAgent plist");
@@ -1547,6 +1572,7 @@ export async function assembleMacOSApp({
     sourceCodexMarketplace,
     sourceContracts,
     sourcePlugin,
+    ...(claudeRuntime ? [claudeRuntime] : []),
   ]);
 
   const staging = join(
@@ -1586,6 +1612,7 @@ export async function assembleMacOSApp({
       true,
     );
     const stagedCoordinatorSnapshot = await requireRuntimeUseLeaseProtocol(stagedCoordinator);
+    await verifyCompiledDistributionProfile(stagedCoordinator, { requireExplicit: normalizedInternalSigning !== null });
     const compatiblePrevious = await resolveCompatiblePreviousRuntimes(
       stagedCoordinator,
       compatiblePreviousAppsSnapshot,
@@ -1616,7 +1643,14 @@ export async function assembleMacOSApp({
       );
       await chmod(stagedInfoPlist, 0o644);
     }
-    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion);
+    if (claudeRuntime) {
+      for (const [key, value] of Object.entries({ BlabeeDistributionProfile: BLABEE_PROFILE.id,
+        NSAppleEventsUsageDescription: unifiedAppleEventsUsageDescription })) {
+        await execFile("/usr/bin/plutil", ["-replace", key, "-string", value, stagedInfoPlist], { maxBuffer: 1024 * 1024 });
+      }
+      await chmod(stagedInfoPlist, 0o644);
+    }
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, [], Boolean(claudeRuntime));
     const stagedEntitlements = join(resources, appSigningEntitlementsFileName);
     await copyFileWithMode(
       sourceEntitlements,
@@ -1630,14 +1664,14 @@ export async function assembleMacOSApp({
     await validateAppSigningEntitlements(stagedEntitlements);
     await copyFileWithMode(
       sourceLaunchAgent,
-      join(staging, launchAgentRelativePath),
+      join(staging, selectedLaunchAgentRelativePath),
       0o644,
       maximumPackagedFileBytes,
       copiedPayloadBudget,
       false,
       canonicalSourceRoot,
     );
-    await validateLaunchAgentPlist(join(staging, launchAgentRelativePath));
+    await validateLaunchAgentPlist(join(staging, selectedLaunchAgentRelativePath));
     await copyFileWithMode(
       sourceAppIcon,
       join(resources, appIconFileName),
@@ -1684,6 +1718,26 @@ export async function assembleMacOSApp({
       join("Contents", "Resources", "Plugin", "blabee"),
       copiedPayloadBudget,
     );
+    if (claudeRuntime) {
+      const stagedClaude = join(resources, "claude");
+      await copyTreeStrict(claudeRuntime, claudeRuntime, stagedClaude,
+        join("Contents", "Resources", "claude"), copiedPayloadBudget,
+        new Set([join("Contents", "Resources", "claude", "node", "bin", "node")]));
+      const copiedClaude = await verifyClaudeRuntimeDirectory(stagedClaude);
+      const currentSourceClaude = await verifyClaudeRuntimeDirectory(claudeRuntime);
+      if (copiedClaude.payload_digest !== claudeManifest.payload_digest
+          || currentSourceClaude.payload_digest !== claudeManifest.payload_digest) {
+        fail("Claude runtime changed during assembly");
+      }
+      // Sign nested executable first. Its final signed bytes must be indexed by
+      // both the Claude descriptor and the unchanged assembly-manifest.v2.
+      if (normalizedInternalSigning !== null) {
+        await validateInternalClaudeAppCodeLayout(staging);
+        await signClaudeRuntimeInternal(stagedClaude, normalizedInternalSigning, { runner: internalClaudeSigningRunner });
+      } else if (adhocSign) {
+        await signClaudeRuntimeAdhoc(stagedClaude);
+      }
+    }
     const runtimeUseLeasePreviousIdentities = await resolveRuntimeUseLeasePreviousIdentities(
       stagedCoordinator,
       compatiblePrevious.inspected,
@@ -1703,7 +1757,7 @@ export async function assembleMacOSApp({
       );
       await chmod(stagedInfoPlist, 0o644);
     }
-    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, runtimeUseLeasePreviousIdentities);
+    await validateInfoPlist(stagedInfoPlist, normalizedBundleVersion, runtimeUseLeasePreviousIdentities, Boolean(claudeRuntime));
     if (JSON.stringify(await inspectManifestFile(stagedCoordinator)) !== JSON.stringify(stagedCoordinatorSnapshot)) {
       fail("staged coordinator changed after its runtime use lease protocol probe");
     }
@@ -1713,6 +1767,8 @@ export async function assembleMacOSApp({
     );
     if (normalizedReleaseSigning !== null) {
       await signReleaseApp(staging, normalizedReleaseSigning);
+    } else if (normalizedInternalSigning !== null) {
+      await signInternalClaudeApp(staging, normalizedInternalSigning, { runner: internalClaudeSigningRunner });
     } else if (adhocSign) {
       await adhocSignAndVerify(staging);
     }
@@ -1756,7 +1812,7 @@ export async function assembleMacOSApp({
     outputReserved = false;
     return {
       output,
-      signed: adhocSign || normalizedReleaseSigning !== null,
+      signed: adhocSign || normalizedReleaseSigning !== null || normalizedInternalSigning !== null,
       bundleVersion: normalizedBundleVersion,
       manifest,
       compatiblePreviousApps: compatiblePrevious.apps,
@@ -1800,6 +1856,9 @@ export async function assembleMacOSApp({
 function parseCLIArguments(values) {
   let binaryPath;
   let outputPath;
+  let claudeRuntimeDirectory;
+  let internalIdentity;
+  let internalTeamID;
   let bundleVersion = requiredInfoPlistValues.CFBundleVersion;
   let bundleVersionProvided = false;
   const compatiblePreviousApps = [];
@@ -1821,6 +1880,9 @@ function parseCLIArguments(values) {
       && value !== "--output"
       && value !== "--bundle-version"
       && value !== "--compatible-previous-app"
+      && value !== "--claude-runtime-directory"
+      && value !== "--internal-signing-identity"
+      && value !== "--internal-signing-team-id"
     ) {
       fail(`unsupported argument: ${value}`);
     }
@@ -1839,6 +1901,15 @@ function parseCLIArguments(values) {
       if (bundleVersionProvided) fail("--bundle-version may be provided only once");
       bundleVersion = requireInternalBuildNumber(argument, "--bundle-version");
       bundleVersionProvided = true;
+    } else if (value === "--claude-runtime-directory") {
+      if (claudeRuntimeDirectory !== undefined) fail("--claude-runtime-directory may be provided only once");
+      claudeRuntimeDirectory = argument;
+    } else if (value === "--internal-signing-identity") {
+      if (internalIdentity !== undefined) fail("--internal-signing-identity may be provided only once");
+      internalIdentity = argument;
+    } else if (value === "--internal-signing-team-id") {
+      if (internalTeamID !== undefined) fail("--internal-signing-team-id may be provided only once");
+      internalTeamID = argument;
     } else {
       compatiblePreviousApps.push(argument);
       if (compatiblePreviousApps.length > maximumCompatiblePreviousApps) {
@@ -1846,6 +1917,11 @@ function parseCLIArguments(values) {
       }
     }
   }
+  const hasInternalSigning = internalIdentity !== undefined || internalTeamID !== undefined;
+  if (hasInternalSigning && (claudeRuntimeDirectory === undefined || !bundleVersionProvided || adhocSign)) {
+    fail("internal Claude signing requires runtime, identity, team and explicit --bundle-version without ad-hoc signing");
+  }
+  const internalClaudeSigning = hasInternalSigning ? normalizeReleaseSigning({ identity: internalIdentity, teamID: internalTeamID }) : null;
   return {
     binaryPath,
     outputPath,
@@ -1853,16 +1929,20 @@ function parseCLIArguments(values) {
     bundleVersion,
     help,
     compatiblePreviousApps,
+    claudeRuntimeDirectory,
+    ...(internalClaudeSigning === null ? {} : { internalClaudeSigning }),
   };
 }
 
 function usage() {
   return [
     "Usage:",
-    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--bundle-version 1] [--compatible-previous-app /absolute/path/to/Blabee.app] [--adhoc-sign]",
+    "  node scripts/build-macos-app.mjs --binary /absolute/path/to/blabee-coordinator --output /absolute/path/to/Blabee.app [--bundle-version 1] [--compatible-previous-app /absolute/path/to/Blabee.app] [--claude-runtime-directory /absolute/prepared-runtime] [--adhoc-sign]",
     "",
     "--bundle-version must be a canonical integer from 1 through 9999 and defaults to 1.",
     "--compatible-previous-app may be repeated at most twice; raw runtime identity values are not accepted.",
+    "--claude-runtime-directory explicitly includes a verified development preview; it is not eligible for Developer ID release packaging.",
+    "To sign that same Blabee.app for internal Claude testing, also pass --internal-signing-identity, --internal-signing-team-id and an explicit --bundle-version.",
     "The output parent must already exist. The script never writes to /Applications.",
   ].join("\n");
 }

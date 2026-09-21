@@ -3,13 +3,15 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from "node:fs/promises";
-import { homedir } from "node:os";
+import { copyFile, lstat, mkdir, mkdtemp, open, readdir, readlink, realpath, rename, rmdir, unlink } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { verifyDeveloperIDSignature } from "./release-signing.mjs";
+import { attachAndVerifyDMG, verifyInternalAppBundle } from "./build-internal-dmg.mjs";
+import { requireInternalBuildNumber } from "./internal-build-number.mjs";
 
 const execFile = promisify(execFileCallback);
 const schema = "blabee.dmg-notarization.v1";
@@ -162,6 +164,62 @@ function validateLog(log, state) {
   if (log.sha256 && String(log.sha256).toLowerCase() !== state.submitted_sha256) fail("Apple notarization log SHA-256 does not match the submitted DMG");
 }
 
+// A common product identifier is not evidence that an internal development
+// Channels payload is eligible for public distribution. Inspect sealed content
+// before any upload, using the same read-only attach/verified-detach lifecycle.
+export async function verifyPublicDMGPayload(dmgPath, {
+  teamID,
+  runner = execFile,
+  mountVerifier = attachAndVerifyDMG,
+  appVerifier = verifyInternalAppBundle,
+  appSignatureVerifier = verifyDeveloperIDSignature,
+} = {}) {
+  const workRoot = await realpath(await mkdtemp(join(tmpdir(), "blabee-notary-qualification-")));
+  const ownership = await lstat(workRoot);
+  const execute = (command, args, options) => runner(command, args, { ...options, timeout: 120_000 });
+  let primaryError;
+  let result;
+  try {
+    result = await mountVerifier(dmgPath, workRoot, null, { execute, verifyMounted: async mountPoint => {
+      const app = join(mountPoint, "Blabee.app");
+      for (const path of [app, join(app, "Contents"), join(app, "Contents", "Resources")]) {
+        const metadata = await lstat(path);
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail("public DMG app must contain real directories");
+      }
+      const hasClaude = await lstat(join(app, "Contents", "Resources", "claude")).then(() => true, error => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (hasClaude) fail("development Channels payload cannot be notarized for public distribution");
+      if (JSON.stringify((await readdir(mountPoint)).sort()) !== JSON.stringify(["Applications", "Blabee.app", "README.txt"])) {
+        fail("public DMG must contain exactly Applications, Blabee.app and README.txt");
+      }
+      const applications = join(mountPoint, "Applications");
+      if (!(await lstat(applications)).isSymbolicLink() || await readlink(applications) !== "/Applications") fail("public DMG Applications link is invalid");
+      const notice = await lstat(join(mountPoint, "README.txt"));
+      if (!notice.isFile() || notice.isSymbolicLink() || notice.nlink !== 1 || notice.size > 64 * 1024) fail("public DMG notice is invalid");
+      const signature = await appSignatureVerifier(app, { teamID, kind: "app", identifier: "com.biadone.blabee", runner: execute });
+      const version = await execute("/usr/bin/plutil", ["-extract", "CFBundleVersion", "raw", "-o", "-", join(app, "Contents", "Info.plist")], { encoding: "utf8", maxBuffer: 1024 });
+      if (version.stderr !== "") fail("public DMG app version wrote unexpected diagnostics");
+      const buildNumber = requireInternalBuildNumber(version.stdout.trim(), "public app build number");
+      return appVerifier(app, { expectedBuildNumber: buildNumber, releaseSigning: { identity: signature.authority, teamID } });
+    } });
+  } catch (error) {
+    primaryError = error;
+  }
+  if (!primaryError?.preservePackagingWork) {
+    try {
+      const after = await lstat(workRoot);
+      if (!sameFile(ownership, after) || !after.isDirectory() || after.isSymbolicLink()) fail("notarization inspection directory identity changed");
+      await rmdir(workRoot);
+    } catch (cleanupError) {
+      throw new AggregateError([...(primaryError ? [primaryError] : []), cleanupError], `notarization inspection cleanup failed; preserved ${workRoot}`, { cause: primaryError ?? cleanupError });
+    }
+  }
+  if (primaryError) throw primaryError;
+  return result;
+}
+
 export async function notarizeDMG({
   dmgPath,
   teamID,
@@ -172,9 +230,11 @@ export async function notarizeDMG({
   timeout = 45,
   runner = execFile,
   signatureVerifier = verifyDeveloperIDSignature,
+  publicPayloadVerifier = verifyPublicDMGPayload,
   platform = process.platform,
 } = {}) {
   if (platform !== "darwin") fail("DMG notarization is supported only on macOS");
+  if (typeof publicPayloadVerifier !== "function") fail("public payload verifier is required");
   dmgPath = absolute(dmgPath, "--dmg");
   if (!dmgPath.endsWith(".dmg")) fail("--dmg must end with .dmg");
   if (typeof teamID !== "string" || !/^[A-Z0-9]{10}$/.test(teamID)) fail("--team-id must be a 10-character Apple Team ID");
@@ -214,6 +274,8 @@ export async function notarizeDMG({
   try {
     const initialSHA = await digest(dmgPath);
     await verify(dmgPath);
+    await assertDigest(initialSHA);
+    await publicPayloadVerifier(dmgPath, { teamID, runner });
     await assertDigest(initialSHA);
     state = await readJSON(paths.state);
     if (state) {

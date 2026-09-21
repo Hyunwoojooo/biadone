@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in native 0.154.0 lifecycle contract; no turns, auth, user config or network.
+"""Opt-in native lifecycle contract; no turns, auth, user config or network.
 
 The expected executable digest must come from a separately verified official
 GitHub release asset. This test does not grant production runtime qualification.
@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import subprocess
@@ -127,7 +128,9 @@ def digest(path):
 def run(args):
     executable = Path(args.codex).resolve(strict=True)
     assert digest(executable) == args.expected_sha256, "native executable digest mismatch"
-    work = Path(tempfile.mkdtemp(prefix="blabee-native-update-contract-", dir="/private/tmp"))
+    work_root = Path(args.work_dir)
+    assert work_root.is_absolute() and work_root.is_dir(), "work directory must be an existing absolute directory"
+    work = Path(tempfile.mkdtemp(prefix="blabee-native-update-contract-", dir=work_root.resolve(strict=True)))
     work.chmod(0o700)
     home, cwd, temporary = [work / part for part in ["codex-home", "cwd", "tmp"]]
     for directory in [home, cwd, temporary]:
@@ -157,13 +160,14 @@ def run(args):
     prefix = ["/usr/bin/sandbox-exec", "-f", str(sandbox), str(executable)]
     version = subprocess.run(prefix + ["--version"], cwd=cwd, env=environment,
                              capture_output=True, timeout=10)
-    report = {"work": str(work), "executable_sha256": args.expected_sha256,
+    report = {"work": str(work), "expected_version": args.expected_version,
+              "executable_sha256": args.expected_sha256, "catalog_sha256": digest(catalog),
               "version_exit": version.returncode, "version_stdout": version.stdout.decode(errors="replace"),
               "version_stderr": version.stderr.decode(errors="replace"),
               "network": "OS-denied", "turns_submitted": 0, "passed": False, "transcript": []}
     output = work / "result.json"
     try:
-        assert version.returncode == 0 and version.stdout.decode().strip() == "codex-cli 0.154.0", "native version probe failed"
+        assert version.returncode == 0 and version.stdout.decode().strip() == f"codex-cli {args.expected_version}", "native version probe failed"
         root = None
         for phase in ["start", "cold_resume"]:
             wire = Wire(prefix + ["app-server", "--listen", "stdio://"], environment, cwd,
@@ -220,13 +224,31 @@ def run(args):
     return 0 if report["passed"] else 1
 
 
-if __name__ == "__main__":
+def stable_version(value):
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", value):
+        raise argparse.ArgumentTypeError("expected version must be an exact stable release")
+    return value
+
+
+def sha256_argument(value):
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError("expected SHA-256 must contain 64 lowercase hexadecimal characters")
+    return value
+
+
+def parse_arguments(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="explicit opt-in to test-owned native child launch")
     parser.add_argument("--codex", required=True)
-    parser.add_argument("--expected-sha256", required=True)
+    parser.add_argument("--expected-version", required=True, type=stable_version)
+    parser.add_argument("--expected-sha256", required=True, type=sha256_argument)
     parser.add_argument("--catalog", required=True)
-    options = parser.parse_args()
+    parser.add_argument("--work-dir", default="/private/tmp", help="existing absolute directory for a fresh private evidence folder")
+    options = parser.parse_args(arguments)
     if not options.execute:
         parser.error("--execute is required; no process was launched")
-    sys.exit(run(options))
+    return options
+
+
+if __name__ == "__main__":
+    sys.exit(run(parse_arguments()))

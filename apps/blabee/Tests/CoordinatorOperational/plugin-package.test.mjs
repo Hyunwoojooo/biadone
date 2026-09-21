@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
-const pluginRoot = path.join(repositoryRoot, "Plugin/blabee");
+const pluginRoot = path.join(repositoryRoot, "bridges/codex/plugin");
 const manifestPath = path.join(pluginRoot, ".codex-plugin/plugin.json");
 const mcpPath = path.join(pluginRoot, ".mcp.json");
 const hooksPath = path.join(pluginRoot, "hooks/hooks.json");
@@ -72,7 +72,7 @@ test("plugin manifest has production metadata and relies on default hook discove
 
   assert.equal(manifest.name, "blabee");
   assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  assert.equal(manifest.version, "0.1.1");
+  assert.equal(manifest.version, "0.1.2");
   assert.equal(manifest.author.name, "BiaDone");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -82,6 +82,17 @@ test("plugin manifest has production metadata and relies on default hook discove
   assert.match(manifest.interface.longDescription, /[가-힣]/);
 
   assert.ok(await readFile(hooksPath, "utf8"), "hooks/hooks.json must exist at the default discovery path");
+});
+
+test("SessionStart includes fork while preserving the existing lifecycle sources", async () => {
+  const hookDocument = await json(hooksPath);
+  const registrations = hookDocument.hooks.SessionStart;
+  for (const source of ["startup", "resume", "clear", "compact", "fork"]) {
+    const matching = registrations.filter(({ matcher }) => new RegExp(`^(?:${matcher})$`).test(source));
+    assert.equal(matching.length, 1, source);
+    assert.equal(matching[0].hooks[0].command, guardedHookCommand("SessionStart"));
+  }
+  assert.equal(registrations.some(({ matcher }) => new RegExp(`^(?:${matcher})$`).test("unknown-source")), false);
 });
 
 test("four supported hooks call the native coordinator through the plugin launcher", async () => {

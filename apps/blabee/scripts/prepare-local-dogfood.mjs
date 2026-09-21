@@ -802,6 +802,7 @@ export async function prepareLocalDogfood({
   outputPath,
   adhocSign = true,
   compatiblePreviousApps = [],
+  claudeRuntimeDirectory,
 } = {}) {
   if (adhocSign !== true) {
     fail("local dogfood must be ad-hoc signed");
@@ -817,6 +818,7 @@ export async function prepareLocalDogfood({
     adhocSign,
     cleanupOnFailure: false,
     compatiblePreviousApps,
+    claudeRuntimeDirectory,
   });
   const packagedCoordinator = join(outputRoot, coordinatorRelativePath);
   const inspectedRuntime = await inspectSignedRuntimeIdentity({
@@ -928,6 +930,7 @@ export async function prepareLocalDogfood({
 function parseCLIArguments(values) {
   let binaryPath;
   let outputPath;
+  let claudeRuntimeDirectory;
   const compatiblePreviousApps = [];
   const adhocSign = true;
   let adhocSignFlagSeen = false;
@@ -947,6 +950,7 @@ function parseCLIArguments(values) {
       value !== "--binary"
       && value !== "--output"
       && value !== "--compatible-previous-app"
+      && value !== "--claude-runtime-directory"
     ) {
       fail(`unsupported argument: ${value}`);
     }
@@ -961,6 +965,9 @@ function parseCLIArguments(values) {
     } else if (value === "--output") {
       if (outputPath !== undefined) fail("--output may be provided only once");
       outputPath = argument;
+    } else if (value === "--claude-runtime-directory") {
+      if (claudeRuntimeDirectory !== undefined) fail("--claude-runtime-directory may be provided only once");
+      claudeRuntimeDirectory = argument;
     } else {
       compatiblePreviousApps.push(argument);
       if (compatiblePreviousApps.length > 2) {
@@ -974,6 +981,7 @@ function parseCLIArguments(values) {
     adhocSign,
     help,
     compatiblePreviousApps,
+    claudeRuntimeDirectory,
   };
 }
 
@@ -985,6 +993,7 @@ function usage() {
     "--compatible-previous-app may be repeated at most twice; raw runtime identity values are not accepted.",
     "The output parent must already exist. Preparation only writes inside a new output root.",
     "Local dogfood is always ad-hoc signed; --adhoc-sign remains as a compatibility flag.",
+    "--claude-runtime-directory accepts an explicitly prepared development-preview runtime; it does not grant Channels release approval.",
     "It does not install a Codex plugin, start Blabee, touch Keychain, or register launchd.",
     "On failure it preserves the exact partial output root for inspection and manual cleanup.",
   ].join("\n");

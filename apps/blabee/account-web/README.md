@@ -84,7 +84,7 @@ Google은 현재 **Testing**이며 일반 고객을 위한 공개 전환은 아�
 - 운영 도메인 결정과 계정 웹 배포는 추후 진행합니다. 기존 GitHub 앱의 홈페이지 주소도 실제 운영 주소로 교체해야 합니다.
 - macOS 앱 로그인 구현을 위해 Supabase Redirect URLs에 `com.biadone.blabee://auth/callback`을 추가했고, 대시보드에서 기존 `http://127.0.0.1:4321/`과 함께 두 주소가 저장된 것을 확인했습니다. Site URL은 그대로입니다.
 - macOS 앱은 AuthenticationServices로 Supabase에 직접 연결합니다. 웹 로그인과 별도의 세션이며 로컬 Vite 서버나 운영 도메인이 필요하지 않습니다. Google/GitHub 쪽 callback은 기존 Supabase HTTPS 주소를 유지합니다.
-- 네이티브 구현과 실제 앱 검증 절차는 [ACCOUNT_LOGIN.md](../src/coordinator-swift/docs/ACCOUNT_LOGIN.md)에 있습니다.
+- 네이티브 구현과 실제 앱 검증 절차는 [ACCOUNT_LOGIN.md](../docs/features/ACCOUNT_LOGIN.md)에 있습니다.
 
 ## 로그인 흐름
 

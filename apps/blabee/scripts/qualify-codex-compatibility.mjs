@@ -3,13 +3,34 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { arch, platform, release, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const requiredFiles = ["bin/codex", "bin/codex-code-mode-host", "codex-package.json", "codex-path/rg", "codex-resources/zsh/bin/zsh"];
-const executableFiles = requiredFiles.filter((name) => name !== "codex-package.json");
+const legacyFiles = ["bin/codex", "bin/codex-code-mode-host", "codex-package.json", "codex-path/rg", "codex-resources/zsh/bin/zsh"];
+const legacyExecutables = legacyFiles.filter((name) => name !== "codex-package.json");
+const voiceRoot = "codex-resources/voice";
+const voiceHost = `${voiceRoot}/bin/codex-voice-host`;
+// Exact layout observed in the official 0.155.0 and 0.155.1 arm64 archives.
+// New versions/targets or additional resources require separate review.
+const voiceLibraries = [
+  "libffi.8.dylib", "libgio-2.0.0.dylib", "libglib-2.0.0.dylib", "libgmodule-2.0.0.dylib",
+  "libgobject-2.0.0.dylib", "libgstapp-1.0.0.dylib", "libgstaudio-1.0.0.dylib", "libgstbase-1.0.0.dylib",
+  "libgstnet-1.0.0.dylib", "libgstpbutils-1.0.0.dylib", "libgstreamer-1.0.0.dylib", "libgstrtp-1.0.0.dylib",
+  "libgsttag-1.0.0.dylib", "libgstvideo-1.0.0.dylib", "libintl.8.dylib", "libopus.0.dylib",
+  "libpcre2-8.0.dylib", "libz.1.dylib",
+].map((name) => `${voiceRoot}/lib/${name}`);
+const voicePlugins = [
+  "libgstapp.dylib", "libgstaudioconvert.dylib", "libgstaudioresample.dylib", "libgstcoreelements.dylib",
+  "libgstopus.dylib", "libgstrtp.dylib", "libgstrtpmanager.dylib",
+].map((name) => `${voiceRoot}/plugins/${name}`);
+const voiceNativeFiles = [voiceHost, ...voiceLibraries, ...voicePlugins];
+const voiceFiles = [
+  ...voiceNativeFiles,
+  ...["NOTICE.md", "manifest.json", "runtime.json", "sources.json"].map((name) => `${voiceRoot}/${name}`),
+  ...["LGPL-2.1.txt", "Opus.txt", "PCRE2.md", "libffi.txt", "proxy-libintl.txt", "sljit.txt", "zlib.txt"].map((name) => `${voiceRoot}/licenses/${name}`),
+];
 const expectedTeam = "2DC432GLL2";
 
 function fail(code, message) {
@@ -153,8 +174,12 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     if (hostPlatform !== "darwin" || !["arm64", "x64"].includes(hostArch)) fail("unsupported_host", "Qualification requires a native macOS runner");
     const runtimeRoot = resolve(options.runtimeDir);
     if (await realpath(runtimeRoot) !== runtimeRoot) fail("package_layout_invalid", "Runtime root or ancestor is a symlink; provide its canonical path");
+    const includesVoice = ["0.155.0", "0.155.1"].includes(options.expectedVersion) && expectedTarget === "aarch64-apple-darwin";
+    const requiredFiles = includesVoice ? [...legacyFiles, ...voiceFiles] : legacyFiles;
+    const executableFiles = includesVoice ? [...legacyExecutables, voiceHost] : legacyExecutables;
+    const nativeFiles = includesVoice ? [...legacyExecutables, ...voiceNativeFiles] : legacyExecutables;
     const files = await snapshotTree(runtimeRoot);
-    if (JSON.stringify(files.map((file) => file.path).sort()) !== JSON.stringify([...requiredFiles].sort())) fail("package_layout_invalid", "Expected the complete five-file official Codex package");
+    if (JSON.stringify(files.map((file) => file.path).sort()) !== JSON.stringify([...requiredFiles].sort())) fail("package_layout_invalid", `Expected the complete ${requiredFiles.length}-file official Codex package for the requested version and target`);
     if (files.some((file) => executableFiles.includes(file.path) && (file.mode & 0o111) === 0)) fail("package_layout_invalid", "A required executable is not executable");
     const manifestFile = files.find((file) => file.path === "codex-package.json");
     if (manifestFile.bytes > 16_384) fail("package_layout_invalid", "Package manifest is oversized");
@@ -163,6 +188,24 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     catch { fail("package_layout_invalid", "Package manifest is not valid JSON"); }
     const expectedManifest = { layoutVersion: 1, version: options.expectedVersion, target: expectedTarget, variant: "codex", entrypoint: "bin/codex", resourcesDir: "codex-resources", pathDir: "codex-path" };
     if (!manifest || Object.entries(expectedManifest).some(([key, value]) => manifest[key] !== value)) fail("package_manifest_mismatch", "Manifest version, target, or layout does not match the requested package");
+    if (includesVoice) {
+      const path = `${voiceRoot}/manifest.json`;
+      if (files.find((file) => file.path === path).bytes > 16_384) fail("package_layout_invalid", "Voice manifest is oversized");
+      let voiceManifest;
+      try { voiceManifest = JSON.parse(await readFile(join(runtimeRoot, path), "utf8")); }
+      catch { fail("package_layout_invalid", "Voice manifest is not valid JSON"); }
+      const identity = { schemaVersion: 1, appVersion: options.expectedVersion, appTarget: expectedTarget, voiceTarget: expectedTarget };
+      const hashes = voiceManifest?.sha256;
+      const hashedFiles = files.filter((file) => file.path === "bin/codex" || (file.path.startsWith(`${voiceRoot}/`) && file.path !== path));
+      if (!voiceManifest || Object.entries(identity).some(([key, value]) => voiceManifest[key] !== value)
+        || !hashes || typeof hashes !== "object" || Array.isArray(hashes)
+        || Object.keys(hashes).length !== hashedFiles.length
+        || hashedFiles.some((file) => hashes[file.path] !== file.sha256)) {
+        fail("package_manifest_mismatch", "Voice manifest identity or complete file hashes do not match the requested package");
+      }
+      report.testedCapabilities.push("voice-resource-manifest");
+      report.unverified.push("voice capture and audio processing");
+    }
     const originalFingerprint = fingerprint(files);
     report.package = { manifest, files, fingerprint: originalFingerprint, releaseProvenance: options.releaseEvidence ? { suppliedByCaller: true, record: options.releaseEvidence } : null };
     report.testedCapabilities.push("complete-package-layout", "code-mode-host-present");
@@ -180,9 +223,14 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
       await unchanged();
       return result;
     }
-    for (const file of executableFiles) {
+    // Dynamic libraries are native code even without an executable mode bit;
+    // conversely, voice/runtime.json is executable in the official archive.
+    for (const file of nativeFiles) {
       const executable = join(runtimeRoot, file);
-      const requirement = `anchor apple generic and certificate leaf[subject.OU] = "${expectedTeam}"${file.startsWith("bin/") ? ` and identifier "${file.slice(4)}"` : ""}`;
+      const identifier = file.startsWith("bin/") ? file.slice(4)
+        : file === voiceHost ? "com.openai.codex.voice-host"
+          : voiceNativeFiles.includes(file) ? `com.openai.codex.voice.${basename(file)}` : null;
+      const requirement = `anchor apple generic and certificate leaf[subject.OU] = "${expectedTeam}"${identifier ? ` and identifier "${identifier}"` : ""}`;
       try { await probe(`signature:${file}`, "/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", `-R=${requirement}`, executable]); }
       catch (error) { if (error.qualificationCode === "command_failed") error.qualificationCode = "signature_invalid"; throw error; }
       try { await probe(`notarization:${file}`, "/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", executable]); }
@@ -203,7 +251,7 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     report.testedCapabilities.push("queue-help-only");
     if (options.pluginLifecycle) {
       const marketplaceRoot = join(temporaryRoot, "marketplace");
-      const sourcePlugin = join(projectRoot, "Plugin/blabee");
+      const sourcePlugin = join(projectRoot, "bridges/codex/plugin");
       const pluginFiles = await snapshotTree(sourcePlugin);
       await mkdir(join(marketplaceRoot, ".agents/plugins"), { recursive: true });
       await cp(sourcePlugin, join(marketplaceRoot, "plugins/blabee"), { recursive: true });
@@ -227,7 +275,7 @@ export async function qualifyCodexCompatibility(options, dependencies = {}) {
     }
     if (options.hookTests) {
       const testPath = join(projectRoot, "Tests/CoordinatorOperational/plugin-package.test.mjs");
-      report.hookHarness = { path: relative(projectRoot, testPath), sha256: await sha256(testPath), pluginSourceFingerprint: fingerprint(await snapshotTree(join(projectRoot, "Plugin/blabee"))), scope: "repository Hook contracts with fixture coordinators; no live Codex events" };
+      report.hookHarness = { path: relative(projectRoot, testPath), sha256: await sha256(testPath), pluginSourceFingerprint: fingerprint(await snapshotTree(join(projectRoot, "bridges/codex/plugin"))), scope: "repository Hook contracts with fixture coordinators; no live Codex events" };
       await probe("hook-contract-unit-tests", process.execPath, ["--test", "--test-concurrency=1", testPath], { timeoutMs: 60_000, outputLimit: 262_144 });
       report.testedCapabilities.push("hook-contract-unit-tests");
     }

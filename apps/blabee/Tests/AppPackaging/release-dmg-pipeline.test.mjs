@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { buildFreshInternalDMG } from "../../scripts/build-fresh-internal-dmg.mjs";
 import { buildReleaseDMG, releaseDMGTesting } from "../../scripts/build-release-dmg.mjs";
+import { makeClaudeRuntimeFixture } from "./claude-runtime-fixtures.mjs";
+import { refreshClaudeRuntimeManifest } from "../../scripts/prepare-claude-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -24,6 +26,15 @@ const validArguments = [
   "--output", "/tmp/Blabee-0.1.0-r39.dmg",
 ];
 
+test("public release API rejects explicit Claude options before toolchain or packaging work", async () => {
+  for (const options of [{ claudeRuntimeDirectory: "/runtime" }, { internalClaudeSigning: signing },
+    { claudeRuntimeDirectory: "/runtime", internalClaudeSigning: signing }]) {
+    let calls = 0;
+    await assert.rejects(buildReleaseDMG({ ...signing, ...options }, { selectToolchain: async () => { calls++; } }), /public release cannot include/u);
+    assert.equal(calls, 0);
+  }
+});
+
 async function makePipelineFixture(t) {
   const sourceRoot = await mkdtemp(join(tmpdir(), "blabee-release-pipeline-source-"));
   const workRoot = await mkdtemp(join(tmpdir(), "blabee-release-pipeline-work-"));
@@ -31,15 +42,18 @@ async function makePipelineFixture(t) {
     await rm(sourceRoot, { recursive: true, force: true });
     await rm(workRoot, { recursive: true, force: true });
   });
-  const packageRoot = join(sourceRoot, "src", "coordinator-swift");
-  await mkdir(join(packageRoot, "Sources", "BlabeeCoordinator"), { recursive: true });
+  const packageRoot = sourceRoot;
+  await mkdir(join(packageRoot, "app", "entrypoints"), { recursive: true });
+  for (const directory of ["engine", "bridges/codex/swift", "bridges/claude/swift", "Tests/swift"]) {
+    await mkdir(join(packageRoot, directory), { recursive: true });
+  }
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await mkdir(join(sourceRoot, "Packaging", "macos"), { recursive: true });
   await writeFile(join(packageRoot, "Package.swift"), "// swift-tools-version: 6.0\n");
-  await writeFile(join(packageRoot, "Sources", "BlabeeCoordinator", "main.swift"), "print(\"release fixture\")\n");
+  await writeFile(join(packageRoot, "app", "entrypoints", "main.swift"), "print(\"release fixture\")\n");
   await writeFile(join(sourceRoot, "Contracts", "v1", "contract.json"), "{}\n");
-  await writeFile(join(sourceRoot, "Plugin", "blabee", "plugin.json"), "{}\n");
+  await writeFile(join(sourceRoot, "bridges", "codex", "plugin", "plugin.json"), "{}\n");
   await writeFile(join(sourceRoot, "Packaging", "macos", "Info.plist"), "plist fixture\n");
   return {
     sourceRoot,
@@ -58,13 +72,57 @@ async function makePipelineFixture(t) {
       buildCoordinator: async ({ workRoot, sourceRoot }) => {
         const binaryPath = join(workRoot, "swift-build", "blabee-coordinator");
         await mkdir(dirname(binaryPath), { recursive: true });
-        const source = await readFile(join(sourceRoot, "src", "coordinator-swift", "Sources", "BlabeeCoordinator", "main.swift"), "utf8");
+        const source = await readFile(join(sourceRoot, "app", "entrypoints", "main.swift"), "utf8");
         await writeFile(binaryPath, source, { mode: 0o700 });
         return { binaryPath };
       },
     },
   };
 }
+
+test("fresh internal pipeline forwards Claude into the same app without a public signing capability", async t => {
+  const fixture = await makePipelineFixture(t);
+  const runtime = await makeClaudeRuntimeFixture(t);
+  const result = await buildFreshInternalDMG({ ...fixture.options, internalClaudeSigning: signing,
+    claudeRuntimeDirectory: runtime.outputDirectory }, { ...fixture.dependencies, packageDMG: async options => {
+    assert.deepEqual(options.internalClaudeSigning, signing);
+    assert.equal(options.claudeRuntimeDirectory, runtime.outputDirectory);
+    assert.equal(Object.hasOwn(options, "releaseSigning"), false);
+    assert.equal(options.outputPath, fixture.options.outputPath);
+    await options.prePublishValidation();
+    return { artifact: options.outputPath };
+  } });
+  assert.equal(result.artifact, fixture.options.outputPath);
+});
+
+test("fresh internal runtime digest changes before packaging or publication are terminal", async t => {
+  for (const phase of ["build", "publish"]) await t.test(phase, async subtest => {
+    const fixture = await makePipelineFixture(subtest);
+    const runtime = await makeClaudeRuntimeFixture(subtest);
+    const changeRuntime = async () => {
+      const node = join(runtime.outputDirectory, "node/bin/node");
+      await writeFile(node, Buffer.concat([await readFile(node), Buffer.from("changed valid runtime")]));
+      await refreshClaudeRuntimeManifest(runtime.outputDirectory);
+    };
+    let packageCalls = 0;
+    await assert.rejects(buildFreshInternalDMG({ ...fixture.options, internalClaudeSigning: signing,
+      claudeRuntimeDirectory: runtime.outputDirectory }, { ...fixture.dependencies,
+      buildCoordinator: async options => {
+        const result = await fixture.dependencies.buildCoordinator(options);
+        if (phase === "build") await changeRuntime();
+        return result;
+      },
+      packageDMG: async options => {
+        packageCalls++;
+        await changeRuntime();
+        await options.prePublishValidation();
+        assert.fail("changed runtime must never be published");
+      },
+    }), /Claude runtime changed/u);
+    assert.equal(packageCalls, phase === "build" ? 0 : 1);
+    await assert.rejects(lstat(fixture.options.outputPath), { code: "ENOENT" });
+  });
+});
 
 test("release command documents explicit signing and remaining notarization", async () => {
   const { stdout, stderr } = await execFile(process.execPath, [

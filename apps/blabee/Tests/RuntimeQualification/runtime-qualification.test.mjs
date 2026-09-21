@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { NdjsonClient } from "../../spikes/m1/runtime-qualification/lib/ndjson-client.mjs";
+import { NdjsonClient } from "../../dev/spikes/m1/runtime-qualification/lib/ndjson-client.mjs";
 import {
   decideRuntime,
   runQualification,
-} from "../../spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs";
+} from "../../dev/spikes/m1/runtime-qualification/scripts/qualify-runtimes.mjs";
 
 test(
   "Node and Swift pass the same durable journal, restart, wait, load, and observability probes",
@@ -150,7 +150,7 @@ test("invalid qualification scales fail before any runtime is built", async () =
 test("a timed-out request kills the runtime and rejects queued requests without FIFO desync", async () => {
   const directory = await mkdtemp(join(tmpdir(), "blabee-t005-timeout-"));
   const runtime = resolve(
-    "spikes/m1/runtime-qualification/runtimes/node/coordinator.mjs",
+    "dev/spikes/m1/runtime-qualification/runtimes/node/coordinator.mjs",
   );
   const client = new NdjsonClient({
     command: process.execPath,

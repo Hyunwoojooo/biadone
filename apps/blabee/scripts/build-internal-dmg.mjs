@@ -31,10 +31,15 @@ import {
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { BLABEE_PROFILE, verifyCompiledDistributionProfile } from "./distribution-profiles.mjs";
 import { assembleMacOSApp } from "./build-macos-app.mjs";
 import {
   normalizeReleaseSigning,
   signReleaseDMG,
+  validateInternalClaudeAppCodeLayout,
+  verifyEmbeddedSigningEntitlements,
+  claudeNodeIdentifier,
+  claudeNodeRelativePath,
   verifyDeveloperIDSignature,
 } from "./release-signing.mjs";
 import {
@@ -52,7 +57,6 @@ const internalNoticeName = "INTERNAL_TESTING.txt";
 const releaseNoticeName = "README.txt";
 const releaseVolumeName = "Blabee";
 const schemaVersion = "blabee.internal-dmg.v1";
-const publishTransactionSchemaVersion = "blabee.internal-dmg-publish.v2";
 const requiredArchitecture = "arm64";
 const requiredArchitectures = Object.freeze([requiredArchitecture]);
 const maximumCompatiblePreviousApps = 2;
@@ -113,7 +117,20 @@ const releaseNotice = [
   "",
 ].join("\n");
 
-function distributionNotice(releaseSigning) {
+const internalClaudeNotice = [
+  "BLABEE — INTERNAL DEVELOPMENT CHANNELS BUILD", "",
+  "Blabee.app contains the common engine with Codex and Claude bridges.",
+  "The app and disk image are Developer ID signed. This image is not notarized.",
+  "Claude uses explicitly enabled development Channels; no approved-plugin or public-release qualification is claimed.", "",
+].join("\n");
+
+function requireUnifiedOutput(output, buildNumber) {
+  if (basename(output).startsWith("Blabee-Claude-Preview-")) fail("separate Claude preview artifacts are unsupported; package Blabee.app");
+  return requireInternalDMGOutputBuildSuffix(output, buildNumber);
+}
+
+function distributionNotice(releaseSigning, internalClaudeSigning = null) {
+  if (internalClaudeSigning !== null) return { name: internalNoticeName, text: internalClaudeNotice, maximumBytes: Buffer.byteLength(internalClaudeNotice, "utf8") };
   return releaseSigning === null
     ? { name: internalNoticeName, text: internalNotice, maximumBytes: maximumInternalNoticeBytes }
     : { name: releaseNoticeName, text: releaseNotice, maximumBytes: Buffer.byteLength(releaseNotice, "utf8") };
@@ -483,17 +500,21 @@ async function verifyAdHocSignature(appPath) {
 export async function verifyInternalAppBundle(appPath, {
   expectedBuildNumber = requiredPlistValues.CFBundleVersion,
   releaseSigning = null,
+  internalClaudeSigning = null,
 } = {}) {
-  const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
+  const release = normalizeReleaseSigning(releaseSigning);
+  const internal = normalizeReleaseSigning(internalClaudeSigning);
+  if (release !== null && internal !== null) fail("release and internal Claude signing cannot be combined");
+  const normalizedReleaseSigning = internal ?? release;
   const normalizedBuildNumber = requireInternalBuildNumber(
     expectedBuildNumber,
     "expected app build number",
   );
-  const requestedApp = requireAbsolutePath(appPath, "Blabee.app");
+  const requestedApp = requireAbsolutePath(appPath, bundleName);
   if (basename(requestedApp) !== bundleName) {
     fail(`app bundle must end with ${bundleName}`);
   }
-  await requireDirectory(requestedApp, "Blabee.app");
+  await requireDirectory(requestedApp, bundleName);
   const canonicalApp = await realpath(requestedApp);
   if (basename(canonicalApp) !== bundleName) {
     fail(`app bundle must resolve to ${bundleName}`);
@@ -501,7 +522,17 @@ export async function verifyInternalAppBundle(appPath, {
   const infoPlist = join(canonicalApp, "Contents", "Info.plist");
   await requireRegularFile(infoPlist, "Info.plist");
   const plist = await decodePlist(infoPlist);
-  for (const [key, defaultExpected] of Object.entries(requiredPlistValues)) {
+  const expectedValues = { ...requiredPlistValues };
+  if (plist.BlabeeDistributionProfile !== undefined && plist.BlabeeDistributionProfile !== BLABEE_PROFILE.id) fail("app distribution profile mismatch");
+  const hasClaude = await pathExistsWithoutFollowing(join(canonicalApp, "Contents", "Resources", "claude"));
+  if (hasClaude && internal === null) fail("development Channels payload requires explicit internal Claude qualification");
+  if (internal !== null) {
+    await validateInternalClaudeAppCodeLayout(canonicalApp);
+    const node = join(canonicalApp, claudeNodeRelativePath);
+    await verifyDeveloperIDSignature(node, { teamID: internal.teamID, kind: "executable", identifier: claudeNodeIdentifier });
+    await verifyEmbeddedSigningEntitlements(node, "com.apple.security.cs.allow-jit");
+  }
+  for (const [key, defaultExpected] of Object.entries(expectedValues)) {
     const expected = key === "CFBundleVersion"
       ? normalizedBuildNumber
       : defaultExpected;
@@ -525,13 +556,14 @@ export async function verifyInternalAppBundle(appPath, {
   }
   const architectures = await inspectArchitectures(executable);
   requireExactInternalArchitecture(architectures, "main executable");
+  await verifyCompiledDistributionProfile(executable, { requireExplicit: internal !== null });
   if (normalizedReleaseSigning === null) {
     await verifyAdHocSignature(canonicalApp);
   } else {
     await verifyDeveloperIDSignature(canonicalApp, {
       teamID: normalizedReleaseSigning.teamID,
       kind: "app",
-      identifier: requiredPlistValues.CFBundleIdentifier,
+      identifier: BLABEE_PROFILE.bundleIdentifier,
     });
   }
   return {
@@ -645,8 +677,8 @@ async function publishExclusive(source, destination, label) {
   return inspectLinkIdentity(source);
 }
 
-async function verifyMountedVolume(mountPoint, expectedApp, releaseSigning = null) {
-  const selectedNotice = distributionNotice(releaseSigning);
+async function verifyMountedVolume(mountPoint, expectedApp, releaseSigning = null, internalClaudeSigning = null) {
+  const selectedNotice = distributionNotice(releaseSigning, internalClaudeSigning);
   const names = (await readdir(mountPoint)).sort();
   const expectedNames = ["Applications", bundleName, selectedNotice.name].sort();
   if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {
@@ -670,7 +702,7 @@ async function verifyMountedVolume(mountPoint, expectedApp, releaseSigning = nul
   }
   const mountedApp = await verifyInternalAppBundle(
     join(mountPoint, bundleName),
-    { expectedBuildNumber: expectedApp.build, releaseSigning },
+    { expectedBuildNumber: expectedApp.build, releaseSigning, internalClaudeSigning },
   );
   if (
     mountedApp.bundleIdentifier !== expectedApp.bundleIdentifier
@@ -932,7 +964,7 @@ export async function preflightInternalDMGOutput(outputPath, {
     "build number",
   );
   const destination = await resolveOutput(outputPath);
-  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
+  requireUnifiedOutput(destination.output, normalizedBuildNumber);
   if (await pathExistsWithoutFollowing(destination.lock)) {
     const lock = await readOutputLock(destination);
     if (ownerIsAlive(lock.payload.pid, processKill)) {
@@ -1148,7 +1180,7 @@ function validateTransactionPayload(payload, destination, buildNumber) {
   if (payload === null || Array.isArray(payload) || typeof payload !== "object") {
     fail("interrupted publish transaction must contain a JSON object");
   }
-  if (payload.schema_version !== publishTransactionSchemaVersion) {
+  if (payload.schema_version !== BLABEE_PROFILE.transactionSchema) {
     if (payload.schema_version === "blabee.internal-dmg-publish.v1") {
       fail("legacy interrupted publish transactions cannot be recovered without current build and architecture evidence");
     }
@@ -1169,8 +1201,9 @@ function validateTransactionPayload(payload, destination, buildNumber) {
     "work_root",
     "work_root_identity",
   ].sort();
+  expectedKeys.sort();
   if (JSON.stringify(Object.keys(payload).sort()) !== JSON.stringify(expectedKeys)) {
-    fail("interrupted publish transaction contains unexpected fields");
+    fail("interrupted publish transaction contains unexpected fields or profile");
   }
   if (
     payload.output !== basename(destination.output)
@@ -1252,7 +1285,7 @@ export async function recoverInterruptedPublish(destination, lockOwnership, {
     buildNumber,
     "recovery build number",
   );
-  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
+  requireUnifiedOutput(destination.output, normalizedBuildNumber);
   if (!await pathExistsWithoutFollowing(destination.transaction)) return { recovered: false };
   const { payload, markerIdentity } = await readTransactionPayload(
     destination,
@@ -1389,7 +1422,7 @@ async function createPublishTransaction({
     buildNumber,
     "transaction build number",
   );
-  requireInternalDMGOutputBuildSuffix(destination.output, normalizedBuildNumber);
+  requireUnifiedOutput(destination.output, normalizedBuildNumber);
   await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
   await assertDirectoryIdentity(workRoot, workRootIdentity, "packaging work root");
   const dmgIdentity = statIdentity(await requireRegularFile(stagedDMG, "staged DMG"));
@@ -1403,7 +1436,7 @@ async function createPublishTransaction({
   try {
     transactionIdentity = statIdentity(await handle.stat());
     payload = {
-      schema_version: publishTransactionSchemaVersion,
+      schema_version: BLABEE_PROFILE.transactionSchema,
       build_number: normalizedBuildNumber,
       expected_architecture: requiredArchitecture,
       output: basename(destination.output),
@@ -1474,10 +1507,16 @@ export async function buildInternalDMG({
   prePublishValidation = null,
   sourceRoot = repositoryRoot,
   releaseSigning = null,
+  internalClaudeSigning = null,
+  claudeRuntimeDirectory,
 } = {}) {
+  if (releaseSigning !== null && (internalClaudeSigning !== null || claudeRuntimeDirectory !== undefined)) fail("public release cannot include development Channels");
+  if ((internalClaudeSigning !== null) !== (claudeRuntimeDirectory !== undefined)) fail("internal Claude DMG requires both its signing capability and runtime directory");
   requireDarwin(platform);
   const normalizedReleaseSigning = normalizeReleaseSigning(releaseSigning);
-  const selectedNotice = distributionNotice(normalizedReleaseSigning);
+  const normalizedInternalSigning = normalizeReleaseSigning(internalClaudeSigning);
+  const effectiveSigning = normalizedInternalSigning ?? normalizedReleaseSigning;
+  const selectedNotice = distributionNotice(normalizedReleaseSigning, normalizedInternalSigning);
   const selectedVolumeName = normalizedReleaseSigning === null ? volumeName : releaseVolumeName;
   const normalizedBuildNumber = requireInternalBuildNumber(
     buildNumber,
@@ -1498,10 +1537,7 @@ export async function buildInternalDMG({
   await requireDirectory(requestedSourceRoot, "source root");
   const canonicalSourceRoot = await realpath(requestedSourceRoot);
   const destination = await resolveOutput(outputPath);
-  requireInternalDMGOutputBuildSuffix(
-    destination.output,
-    normalizedBuildNumber,
-  );
+  requireUnifiedOutput(destination.output, normalizedBuildNumber);
   const outputLock = await acquireOutputLock(destination);
   const token = `${process.pid}-${randomUUID()}`;
   let workRoot = null;
@@ -1524,7 +1560,7 @@ export async function buildInternalDMG({
     }
     await assertOutputsAbsent(destination);
     await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
-    workRoot = await mkdtemp(join(destination.parent, `.blabee-internal-dmg-work-${token}-`));
+    workRoot = await mkdtemp(join(destination.parent, `${BLABEE_PROFILE.workPrefix}${token}-`));
     await chmod(workRoot, 0o700);
     workRootIdentity = await captureDirectoryIdentity(workRoot, "packaging work root");
     await assertDirectoryIdentity(destination.parent, destination.parentIdentity, "--output parent");
@@ -1539,14 +1575,16 @@ export async function buildInternalDMG({
       binaryPath: pinnedBinary.path,
       outputPath: join(volumeRoot, bundleName),
       sourceRoot: canonicalSourceRoot,
-      adhocSign: normalizedReleaseSigning === null,
+      adhocSign: effectiveSigning === null,
       releaseSigning: normalizedReleaseSigning,
+      ...(normalizedInternalSigning === null ? {} : { internalClaudeSigning: normalizedInternalSigning, claudeRuntimeDirectory }),
       bundleVersion: normalizedBuildNumber,
       compatiblePreviousApps: previousApps,
     });
     const assembledApp = await verifyInternalAppBundle(appResult.output, {
       expectedBuildNumber: normalizedBuildNumber,
       releaseSigning: normalizedReleaseSigning,
+      internalClaudeSigning: normalizedInternalSigning,
     });
     await symlink("/Applications", join(volumeRoot, "Applications"));
     const noticeHandle = await open(
@@ -1581,8 +1619,8 @@ export async function buildInternalDMG({
       { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
     );
     await requireRegularFile(stagedDMG, "created DMG");
-    if (normalizedReleaseSigning !== null) {
-      await signReleaseDMG(stagedDMG, normalizedReleaseSigning);
+    if (effectiveSigning !== null) {
+      await signReleaseDMG(stagedDMG, effectiveSigning);
     }
     await execFile(
       "/usr/bin/hdiutil",
@@ -1591,7 +1629,7 @@ export async function buildInternalDMG({
     );
     const mountedApp = await attachAndVerifyDMG(stagedDMG, workRoot, assembledApp, {
       verifyMounted: (mountPoint, expectedApp) => verifyMountedVolume(
-        mountPoint, expectedApp, normalizedReleaseSigning,
+        mountPoint, expectedApp, normalizedReleaseSigning, normalizedInternalSigning,
       ),
     });
     const sha256 = await streamSHA256(stagedDMG);
@@ -1620,7 +1658,7 @@ export async function buildInternalDMG({
       stagedDMG,
       stagedChecksum,
       sha256,
-    });
+      });
     transactionMarkerIdentity = transaction.markerIdentity;
     checksumPublishedIdentity = await publishExclusive(
       stagedChecksum,
@@ -1648,9 +1686,10 @@ export async function buildInternalDMG({
         minimum_system_version: mountedApp.minimumSystemVersion,
         architectures: mountedApp.architectures,
       },
-      app_signing: normalizedReleaseSigning === null ? "adhoc" : "developer-id",
-      dmg_signing: normalizedReleaseSigning === null ? "unsigned" : "developer-id",
-      ...(normalizedReleaseSigning === null ? {} : { signing_team_id: normalizedReleaseSigning.teamID }),
+      app_signing: effectiveSigning === null ? "adhoc" : "developer-id",
+      dmg_signing: effectiveSigning === null ? "unsigned" : "developer-id",
+      ...(effectiveSigning === null ? {} : { signing_team_id: effectiveSigning.teamID }),
+      ...(normalizedInternalSigning === null ? {} : { claude_channel_mode: "development-preview" }),
       notarized: false,
       public_distribution_ready: false,
     };
@@ -1733,6 +1772,7 @@ export async function buildInternalDMG({
 }
 
 export const internalDMGTesting = Object.freeze({
+  validateTransactionPayload,
   assertDirectoryIdentity,
   captureDirectoryIdentity,
   createPublishTransaction,

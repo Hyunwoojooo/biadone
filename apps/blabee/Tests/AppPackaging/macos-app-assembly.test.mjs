@@ -27,6 +27,8 @@ import {
   assembleMacOSApp,
   macOSAppAssemblyTestSupport,
 } from "../../scripts/build-macos-app.mjs";
+import { CLAUDE_NODE_ENTITLEMENTS, verifyClaudeRuntimeDirectory } from "../../scripts/prepare-claude-runtime.mjs";
+import { makeClaudeRuntimeFixture } from "./claude-runtime-fixtures.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const assemblyScript = join(repositoryRoot, "scripts", "build-macos-app.mjs");
@@ -73,6 +75,7 @@ const protocolQueryShell = [
   `  printf '${runtimeUseLeaseProtocol}\\n'`,
   "  exit 0",
   "fi",
+  'if [ "$#" -eq 1 ] && [ "${1-}" = distribution-profile ]; then exit 2; fi',
 ].join("\n");
 
 async function mode(path) {
@@ -208,7 +211,7 @@ async function makeLeasePreviousApp(root, parentName, runtimeIdentity, {
   ].join("\n"));
   await execFile("/usr/bin/clang", [source, "-o", join(macOS, "blabee-coordinator")], { timeout: 30_000 });
   await copyFile(
-    join(repositoryRoot, "Plugin", "blabee", "scripts", "blabee-launcher"),
+    join(repositoryRoot, "bridges", "codex", "plugin", "scripts", "blabee-launcher"),
     join(pluginScripts, "blabee-launcher"),
   );
   await chmod(join(pluginScripts, "blabee-launcher"), 0o755);
@@ -490,7 +493,7 @@ test("assembler creates the required Blabee.app payload and deterministic manife
   const sourceContracts = join(repositoryRoot, "Contracts", "v1");
   const bundledContracts = join(contents, "Resources", "Contracts", "v1");
   const contractFiles = await assertTreeParity(sourceContracts, bundledContracts);
-  const sourcePlugin = join(repositoryRoot, "Plugin", "blabee");
+  const sourcePlugin = join(repositoryRoot, "bridges", "codex", "plugin");
   const bundledPlugin = join(contents, "Resources", "Plugin", "blabee");
   const pluginFiles = await assertTreeParity(sourcePlugin, bundledPlugin);
   const allBundleFiles = await regularFiles(fixture.output);
@@ -1208,7 +1211,7 @@ test("assembler rejects Info.plist value type drift and cleans staging", async (
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await copyCanonicalPackagingSupport(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
@@ -1247,7 +1250,7 @@ test("assembler cleanup opt-out preserves its exact partial staging tree", async
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await copyCanonicalPackagingSupport(sourceRoot);
   const canonicalInfo = await readFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
@@ -1289,7 +1292,7 @@ test("assembler rejects LaunchAgent key, type, and service argv drift", async (t
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await copyFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),
@@ -1340,7 +1343,7 @@ test("assembler rejects Codex marketplace identity and plugin source drift", asy
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await copyFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),
@@ -1378,7 +1381,7 @@ test("assembler bounds and strictly decodes Codex marketplace JSON", async (t) =
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(join(sourceRoot, "Contracts", "v1"), { recursive: true });
-  await mkdir(join(sourceRoot, "Plugin", "blabee"), { recursive: true });
+  await mkdir(join(sourceRoot, "bridges", "codex", "plugin"), { recursive: true });
   await copyFile(
     join(repositoryRoot, "Packaging", "macos", "Info.plist"),
     join(infoDirectory, "Info.plist"),
@@ -1569,7 +1572,7 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
   const sourceRoot = join(fixture.root, "source");
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   const contracts = join(sourceRoot, "Contracts", "v1");
-  const plugin = join(sourceRoot, "Plugin", "blabee");
+  const plugin = join(sourceRoot, "bridges", "codex", "plugin");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(contracts, { recursive: true });
   await mkdir(plugin, { recursive: true });
@@ -1599,13 +1602,13 @@ test("resource symlinks fail closed and the exact staging directory is cleaned",
 });
 
 test("intermediate source path symlinks cannot import external packaging trees", async (t) => {
-  for (const component of ["Packaging", "Contracts", "Plugin"]) {
+  for (const component of ["Packaging", "Contracts", "bridges"]) {
     await t.test(component, async (t) => {
       const fixture = await makeWorkspace(t);
       const sourceRoot = join(fixture.root, `source-${component.toLowerCase()}`);
       const infoDirectory = join(sourceRoot, "Packaging", "macos");
       const contracts = join(sourceRoot, "Contracts", "v1");
-      const plugin = join(sourceRoot, "Plugin", "blabee");
+      const plugin = join(sourceRoot, "bridges", "codex", "plugin");
       await mkdir(infoDirectory, { recursive: true });
       await mkdir(contracts, { recursive: true });
       await mkdir(plugin, { recursive: true });
@@ -1646,7 +1649,7 @@ test("resource copies reject a file larger than the bounded descriptor snapshot"
   const sourceRoot = join(fixture.root, "source-oversized-resource");
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   const contracts = join(sourceRoot, "Contracts", "v1");
-  const plugin = join(sourceRoot, "Plugin", "blabee");
+  const plugin = join(sourceRoot, "bridges", "codex", "plugin");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(contracts, { recursive: true });
   await mkdir(plugin, { recursive: true });
@@ -1679,7 +1682,7 @@ test("source preflight bounds total payload entries and cumulative bytes", async
     const sourceRoot = join(fixture.root, suffix);
     const infoDirectory = join(sourceRoot, "Packaging", "macos");
     const contracts = join(sourceRoot, "Contracts", "v1");
-    const plugin = join(sourceRoot, "Plugin", "blabee");
+    const plugin = join(sourceRoot, "bridges", "codex", "plugin");
     await mkdir(infoDirectory, { recursive: true });
     await mkdir(contracts, { recursive: true });
     await mkdir(plugin, { recursive: true });
@@ -1762,7 +1765,7 @@ test("final payload entry budget reserves the assembly manifest", async (t) => {
     const sourceRoot = join(fixture.root, suffix);
     const infoDirectory = join(sourceRoot, "Packaging", "macos");
     const contracts = join(sourceRoot, "Contracts", "v1");
-    const plugin = join(sourceRoot, "Plugin", "blabee");
+    const plugin = join(sourceRoot, "bridges", "codex", "plugin");
     await mkdir(infoDirectory, { recursive: true });
     await mkdir(contracts, { recursive: true });
     await mkdir(plugin, { recursive: true });
@@ -1818,7 +1821,7 @@ test("post-signing entry budget includes generated code-signature entries", {
   const sourceRoot = join(fixture.root, "source-signed-entry-boundary");
   const infoDirectory = join(sourceRoot, "Packaging", "macos");
   const contracts = join(sourceRoot, "Contracts", "v1");
-  const plugin = join(sourceRoot, "Plugin", "blabee");
+  const plugin = join(sourceRoot, "bridges", "codex", "plugin");
   await mkdir(infoDirectory, { recursive: true });
   await mkdir(contracts, { recursive: true });
   await mkdir(plugin, { recursive: true });
@@ -1934,4 +1937,170 @@ test("ad-hoc Mach-O app signing embeds only the Terminal automation entitlement"
   await writeFile(decoded, stdout);
   const { stdout: json } = await execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-", decoded]);
   assert.deepEqual(JSON.parse(json), { "com.apple.security.automation.apple-events": true });
+});
+
+test("explicit Claude preview runtime is copied and indexed without changing assembly v2 schema", {
+  skip: process.platform !== "darwin" ? "app assembly requires macOS plutil" : false,
+}, async t => {
+  const fixture = await makeWorkspace(t);
+  const runtime = await makeClaudeRuntimeFixture(t);
+  const result = await assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output,
+    claudeRuntimeDirectory: runtime.outputDirectory });
+  const copied = join(fixture.output, "Contents", "Resources", "claude");
+  assert.deepEqual(await verifyClaudeRuntimeDirectory(copied), runtime.manifest);
+  assert.equal(result.manifest.schema_version, "blabee.macos-app-assembly.v2");
+  assert.deepEqual(Object.keys(result.manifest).sort(), ["bundle_identifier", "compatible_previous_runtimes", "files", "hash_phase", "schema_version"]);
+  const nodeEntry = result.manifest.files.find(file => file.path === "Contents/Resources/claude/node/bin/node");
+  assert.equal(nodeEntry.mode, "0755");
+  assert.equal(nodeEntry.sha256, await digest(join(copied, "node/bin/node")));
+  const claudeDescriptor = result.manifest.files.find(file => file.path === "Contents/Resources/claude/manifest.json");
+  assert.equal(claudeDescriptor.sha256, await digest(join(copied, "manifest.json")));
+  assert.ok(result.manifest.files.some(file => file.path === "Contents/Resources/Plugin/blabee/scripts/blabee-launcher"));
+});
+
+test("Developer ID assembly explicitly rejects unqualified Claude preview before publishing output", async t => {
+  const fixture = await makeWorkspace(t);
+  const runtime = await makeClaudeRuntimeFixture(t);
+  await assert.rejects(assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output,
+    claudeRuntimeDirectory: runtime.outputDirectory,
+    releaseSigning: { identity: "Developer ID Application: Blabee Test (ABCDEFGHIJ)", teamID: "ABCDEFGHIJ" },
+  }), /development-preview Claude runtime cannot be packaged in a Developer ID release/u);
+  await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+});
+
+const internalClaudeSigning = Object.freeze({ identity: "Developer ID Application: Blabee Test (ABCDEFGHIJ)", teamID: "ABCDEFGHIJ" });
+
+async function internalClaudeAssemblyRunner(onSign) {
+  const calls = [];
+  const appleEvents = await readFile(canonicalEntitlements, "utf8");
+  return { calls, async runner(command, args) {
+    calls.push({ command, args });
+    const target = args.at(-1);
+    const node = target.endsWith("/node/bin/node");
+    if (args.includes("--sign")) await onSign(target, node);
+    if (args.includes("--display") && args.includes("--entitlements")) {
+      return { stdout: node ? CLAUDE_NODE_ENTITLEMENTS : appleEvents, stderr: "" };
+    }
+    if (args.includes("--display")) {
+      return { stdout: "", stderr: [
+        `Identifier=${node ? "com.biadone.blabee.claude-node" : "com.biadone.blabee"}`,
+        "CodeDirectory v=20500 flags=0x10000(runtime) hashes=1+7 location=embedded",
+        `Authority=${internalClaudeSigning.identity}`, `TeamIdentifier=${internalClaudeSigning.teamID}`,
+        "Timestamp=Sep 21, 2026 at 12:00:00 PM",
+      ].join("\n") };
+    }
+    return { stdout: "", stderr: "" };
+  } };
+}
+
+async function internalClaudeAssemblyFixture(t) {
+  const fixture = await makeWorkspace(t);
+  fixture.output = join(fixture.root, "Blabee.app");
+  const runtime = await makeClaudeRuntimeFixture(t);
+  const source = join(fixture.root, "preview-lease-probe.c");
+  await writeFile(source, [
+    '#include <stdio.h>', '#include <string.h>',
+    'int main(int argc, char **argv) {',
+    'if (argc == 2 && strcmp(argv[1], "distribution-profile") == 0) {',
+    `puts(${JSON.stringify(JSON.stringify({ schema_version: "blabee.distribution-profile.v1", profile_id: "blabee",
+      bundle_identifier: "com.biadone.blabee" }))}); return 0; }`,
+    'puts("blabee.runtime-use-lease.v1"); return 0; }', '',
+  ].join("\n"));
+  await execFile("/usr/bin/clang", [source, "-o", fixture.binary], { timeout: 30_000 });
+  return { ...fixture, runtime };
+}
+
+test("unified internal Claude assembly signs only staged Node before both manifests and enclosing app", {
+  skip: process.platform !== "darwin" ? "requires macOS plutil and a tiny clang fixture" : false,
+}, async t => {
+  const fixture = await internalClaudeAssemblyFixture(t);
+  const sourceNode = await readFile(join(fixture.runtime.outputDirectory, "node/bin/node"));
+  const sourceDescriptor = await readFile(join(fixture.runtime.outputDirectory, "manifest.json"));
+  const sourceBinary = await readFile(fixture.binary);
+  const order = [];
+  const captured = await internalClaudeAssemblyRunner(async (target, node) => {
+    assert.notEqual(target, fixture.binary);
+    assert.equal(target.startsWith(fixture.runtime.outputDirectory), false);
+    order.push(node ? "node" : "app");
+    if (node) {
+      const resources = resolve(dirname(target), "../../..");
+      await assert.rejects(lstat(join(resources, "assembly-manifest.json")), { code: "ENOENT" });
+      await writeFile(target, Buffer.concat([await readFile(target), Buffer.from("signed-node-fixture")]));
+    } else {
+      const resources = join(target, "Contents", "Resources");
+      const descriptor = await verifyClaudeRuntimeDirectory(join(resources, "claude"));
+      assert.notEqual(descriptor.payload_digest, fixture.runtime.manifest.payload_digest);
+      const assembly = JSON.parse(await readFile(join(resources, "assembly-manifest.json"), "utf8"));
+      assert.equal(assembly.schema_version, "blabee.macos-app-assembly.v2");
+      assert.equal(assembly.bundle_identifier, "com.biadone.blabee");
+      assert.equal(assembly.files.find(file => file.path === "Contents/Resources/claude/node/bin/node").sha256,
+        await digest(join(resources, "claude/node/bin/node")));
+      assert.equal(assembly.files.find(file => file.path === "Contents/Resources/claude/manifest.json").sha256,
+        await digest(join(resources, "claude/manifest.json")));
+    }
+  });
+  const result = await assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output,
+    claudeRuntimeDirectory: fixture.runtime.outputDirectory, bundleVersion: "1", internalClaudeSigning: internalClaudeSigning },
+  { internalClaudeSigningRunner: captured.runner });
+  assert.equal(result.signed, true);
+  assert.equal(result.bundleVersion, "1");
+  const { stdout: plistJSON } = await execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-", join(result.output, "Contents/Info.plist")]);
+  const plist = JSON.parse(plistJSON);
+  assert.equal(plist.CFBundleIdentifier, "com.biadone.blabee");
+  assert.equal(plist.CFBundleName, "Blabee");
+  assert.equal(plist.CFBundleDisplayName, "Blabee");
+  assert.equal(plist.CFBundleShortVersionString, "0.1.0");
+  assert.equal(plist.CFBundleVersion, "1");
+  assert.equal(plist.BlabeeDistributionProfile, "blabee");
+  assert.equal(Object.hasOwn(plist, "BlabeeUpdateRepository"), true);
+  assert.match(plist.NSAppleEventsUsageDescription, /Claude Code/u);
+  assert.deepEqual(await readdir(join(result.output, "Contents/Library/LaunchAgents")), ["com.biadone.blabee.coordinator.plist"]);
+  const { stdout: agentJSON } = await execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-",
+    join(result.output, "Contents/Library/LaunchAgents/com.biadone.blabee.coordinator.plist")]);
+  assert.equal(JSON.parse(agentJSON).Label, "com.biadone.blabee.coordinator");
+  assert.deepEqual(order, ["node", "app"]);
+  assert.equal(captured.calls.filter(call => call.args.includes("--sign")).some(call => call.args.includes("--deep")), false);
+  assert.deepEqual(await readFile(join(fixture.runtime.outputDirectory, "node/bin/node")), sourceNode);
+  assert.deepEqual(await readFile(join(fixture.runtime.outputDirectory, "manifest.json")), sourceDescriptor);
+  assert.deepEqual(await readFile(fixture.binary), sourceBinary);
+});
+
+test("unified internal Claude signing failure publishes nothing and never changes input runtime or binary", {
+  skip: process.platform !== "darwin" ? "requires macOS plutil and a tiny clang fixture" : false,
+}, async t => {
+  for (const failAt of ["node", "app"]) {
+    await t.test(failAt, async subtest => {
+      const fixture = await internalClaudeAssemblyFixture(subtest);
+      const sourceNode = await readFile(join(fixture.runtime.outputDirectory, "node/bin/node"));
+      const sourceDescriptor = await readFile(join(fixture.runtime.outputDirectory, "manifest.json"));
+      const sourceBinary = await readFile(fixture.binary);
+      const captured = await internalClaudeAssemblyRunner(async (target, node) => {
+        if ((node ? "node" : "app") === failAt) throw new Error(`injected ${failAt} signing failure`);
+        if (node) await writeFile(target, Buffer.concat([await readFile(target), Buffer.from("signed-node-fixture")]));
+      });
+      await assert.rejects(assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output,
+        claudeRuntimeDirectory: fixture.runtime.outputDirectory, bundleVersion: "42", internalClaudeSigning: internalClaudeSigning },
+      { internalClaudeSigningRunner: captured.runner }), /injected .* signing failure/u);
+      await assert.rejects(lstat(fixture.output), { code: "ENOENT" });
+      assert.equal((await readdir(fixture.root)).some(name => name.startsWith(".Blabee.app.staging-")), false);
+      assert.deepEqual(await readFile(join(fixture.runtime.outputDirectory, "node/bin/node")), sourceNode);
+      assert.deepEqual(await readFile(join(fixture.runtime.outputDirectory, "manifest.json")), sourceDescriptor);
+      assert.deepEqual(await readFile(fixture.binary), sourceBinary);
+    });
+  }
+});
+
+test("unified internal Claude preserves a caller-owned existing output before any signer runs", async t => {
+  const fixture = await makeWorkspace(t);
+  fixture.output = join(fixture.root, "Blabee.app");
+  const runtime = await makeClaudeRuntimeFixture(t);
+  await mkdir(fixture.output);
+  const sentinel = join(fixture.output, "caller-owned.txt");
+  await writeFile(sentinel, "keep this output\n");
+  let calls = 0;
+  await assert.rejects(assembleMacOSApp({ binaryPath: fixture.binary, outputPath: fixture.output,
+    claudeRuntimeDirectory: runtime.outputDirectory, bundleVersion: "42", internalClaudeSigning: internalClaudeSigning },
+  { internalClaudeSigningRunner: async () => { calls++; throw new Error("must not sign"); } }), /output already exists/u);
+  assert.equal(calls, 0);
+  assert.equal(await readFile(sentinel, "utf8"), "keep this output\n");
 });

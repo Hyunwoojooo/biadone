@@ -1,0 +1,344 @@
+[
+  {
+    "old": "claude/.gitignore",
+    "new": "dev/claude-standalone/.gitignore",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/Plugin/.gitkeep",
+    "new": "docs/bridges/claude/Plugin/.gitkeep",
+    "role": "workflow-reference directory placeholder"
+  },
+  {
+    "old": "claude/build/.gitkeep",
+    "new": "dev/claude-standalone/build/.gitkeep",
+    "role": "development or validation directory placeholder"
+  },
+  {
+    "old": "claude/package-lock.json",
+    "new": "bridges/claude/package-lock.json",
+    "role": "product Claude bridge SDK package"
+  },
+  {
+    "old": "claude/package-lock.json",
+    "new": "dev/claude-standalone/package-lock.json",
+    "role": "standalone SDK package; preserves the original pinned dependency graph",
+    "operation": "copy"
+  },
+  {
+    "old": "claude/package.json",
+    "new": "bridges/claude/package.json",
+    "role": "product Claude bridge SDK package"
+  },
+  {
+    "old": "claude/package.json",
+    "new": "dev/claude-standalone/package.json",
+    "role": "standalone SDK package; preserves the original pinned dependency graph",
+    "operation": "copy"
+  },
+  {
+    "old": "claude/scripts/blabee-claude.mjs",
+    "new": "dev/claude-standalone/scripts/blabee-claude.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/scripts/build.mjs",
+    "new": "dev/claude-standalone/scripts/build.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/scripts/check.mjs",
+    "new": "dev/claude-standalone/scripts/check.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/scripts/claude-shared.mjs",
+    "new": "bridges/claude/launchers/claude-shared.mjs",
+    "role": "common engine development session CLI"
+  },
+  {
+    "old": "claude/scripts/test-common-pet.mjs",
+    "new": "Tests/bridges/claude/scripts/test-common-pet.mjs",
+    "role": "Claude qualification runner"
+  },
+  {
+    "old": "claude/scripts/test-native-session.mjs",
+    "new": "Tests/bridges/claude/scripts/test-native-session.mjs",
+    "role": "Claude qualification runner"
+  },
+  {
+    "old": "claude/scripts/test-product-ingress.mjs",
+    "new": "Tests/bridges/claude/scripts/test-product-ingress.mjs",
+    "role": "Claude qualification runner"
+  },
+  {
+    "old": "claude/scripts/test-product-registration.mjs",
+    "new": "Tests/bridges/claude/scripts/test-product-registration.mjs",
+    "role": "Claude qualification runner"
+  },
+  {
+    "old": "claude/scripts/test-shared-engine.mjs",
+    "new": "Tests/bridges/claude/scripts/test-shared-engine.mjs",
+    "role": "Claude qualification runner"
+  },
+  {
+    "old": "claude/shared-engine/Package.swift",
+    "new": "Tests/bridges/claude/shared-engine/Package.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Sources/ClaudeCoreFixture/main.swift",
+    "new": "Tests/bridges/claude/shared-engine/Sources/ClaudeCoreFixture/main.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/AdapterTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/AdapterTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/IngressTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/IngressTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/NativeSessionTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/NativeSessionTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductAuthorityIntegrationTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductAuthorityIntegrationTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductLifecycleTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductLifecycleTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductWireCodecTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/ProductWireCodecTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/shared-engine/Tests/ClaudeCoreAdapterTests/SessionAuthorityTests.swift",
+    "new": "Tests/bridges/claude/shared-engine/Tests/ClaudeCoreAdapterTests/SessionAuthorityTests.swift",
+    "role": "shared Swift engine integration fixture"
+  },
+  {
+    "old": "claude/src/.gitkeep",
+    "new": "dev/claude-standalone/src/.gitkeep",
+    "role": "development or validation directory placeholder"
+  },
+  {
+    "old": "claude/src/bridge/context.mjs",
+    "new": "dev/claude-standalone/src/bridge/context.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/bridge/hook.mjs",
+    "new": "dev/claude-standalone/src/bridge/hook.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/bridge/mcp.mjs",
+    "new": "dev/claude-standalone/src/bridge/mcp.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/bridge/native-session-client.mjs",
+    "new": "bridges/claude/src/native-session-client.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/product-context.mjs",
+    "new": "bridges/claude/src/product-context.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/product-core-client.mjs",
+    "new": "bridges/claude/src/product-core-client.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/product-hook.mjs",
+    "new": "bridges/claude/src/product-hook.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/product-mcp.mjs",
+    "new": "bridges/claude/src/product-mcp.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/product-tools.mjs",
+    "new": "bridges/claude/src/product-tools.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/session-v2-channel-poller.mjs",
+    "new": "bridges/claude/src/session-v2-channel-poller.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/session-v2-lifecycle.mjs",
+    "new": "bridges/claude/src/session-v2-lifecycle.mjs",
+    "role": "product Claude bridge"
+  },
+  {
+    "old": "claude/src/bridge/shared-core-client.mjs",
+    "new": "Tests/bridges/claude/support/shared-core-client.mjs",
+    "role": "Swift fixture subprocess client"
+  },
+  {
+    "old": "claude/src/bridge/shared-launcher.mjs",
+    "new": "bridges/claude/launchers/shared-launcher.mjs",
+    "role": "common engine development session launcher"
+  },
+  {
+    "old": "claude/src/bridge/tools.mjs",
+    "new": "dev/claude-standalone/src/bridge/tools.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/coordinator/service.mjs",
+    "new": "dev/claude-standalone/src/coordinator/service.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/pet/PetApplication.swift",
+    "new": "dev/claude-standalone/src/pet/PetApplication.swift",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/pet/Runtime.swift",
+    "new": "dev/claude-standalone/src/pet/Runtime.swift",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/pet/Transport.swift",
+    "new": "dev/claude-standalone/src/pet/Transport.swift",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/pet/main.swift",
+    "new": "dev/claude-standalone/src/pet/main.swift",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/shared/channel.mjs",
+    "new": "dev/claude-standalone/src/shared/channel.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/shared/client.mjs",
+    "new": "dev/claude-standalone/src/shared/client.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/src/shared/identity.mjs",
+    "new": "dev/claude-standalone/src/shared/identity.mjs",
+    "role": "standalone development runtime"
+  },
+  {
+    "old": "claude/tests/.gitkeep",
+    "new": "Tests/bridges/claude/.gitkeep",
+    "role": "development or validation directory placeholder"
+  },
+  {
+    "old": "claude/tests/bridge-mcp.test.mjs",
+    "new": "Tests/bridges/claude/standalone/bridge-mcp.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/bridge.test.mjs",
+    "new": "Tests/bridges/claude/standalone/bridge.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/coordinator.test.mjs",
+    "new": "Tests/bridges/claude/standalone/coordinator.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/fixtures/product-wire/cases.json",
+    "new": "Tests/bridges/claude/fixtures/product-wire/cases.json",
+    "role": "Claude wire fixtures"
+  },
+  {
+    "old": "claude/tests/launcher.test.mjs",
+    "new": "Tests/bridges/claude/standalone/launcher.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/pet-transport.swift",
+    "new": "Tests/bridges/claude/standalone/pet-transport.swift",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/pet-transport.test.mjs",
+    "new": "Tests/bridges/claude/standalone/pet-transport.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/pet.test.mjs",
+    "new": "Tests/bridges/claude/standalone/pet.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/product-bridge.test.mjs",
+    "new": "Tests/bridges/claude/product-bridge.test.mjs",
+    "role": "product bridge test"
+  },
+  {
+    "old": "claude/tests/roundtrip.test.mjs",
+    "new": "Tests/bridges/claude/standalone/roundtrip.test.mjs",
+    "role": "standalone development runtime test"
+  },
+  {
+    "old": "claude/tests/session-v2-channel-poller.test.mjs",
+    "new": "Tests/bridges/claude/session-v2-channel-poller.test.mjs",
+    "role": "product bridge test"
+  },
+  {
+    "old": "claude/tests/session-v2-lifecycle.test.mjs",
+    "new": "Tests/bridges/claude/session-v2-lifecycle.test.mjs",
+    "role": "product bridge test"
+  },
+  {
+    "old": "claude/tests/shared-engine/client.test.mjs",
+    "new": "Tests/bridges/claude/integration/client.test.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/native-session.test.mjs",
+    "new": "Tests/bridges/claude/integration/native-session.test.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/pet-window-qualification.mjs",
+    "new": "Tests/bridges/claude/integration/pet-window-qualification.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/product-ingress.test.mjs",
+    "new": "Tests/bridges/claude/integration/product-ingress.test.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/product-wire-schema.test.mjs",
+    "new": "Tests/bridges/claude/integration/product-wire-schema.test.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/roundtrip.test.mjs",
+    "new": "Tests/bridges/claude/integration/roundtrip.test.mjs",
+    "role": "common product bridge integration test"
+  },
+  {
+    "old": "claude/tests/shared-engine/shared-launcher.test.mjs",
+    "new": "Tests/bridges/claude/integration/shared-launcher.test.mjs",
+    "role": "common product bridge integration test"
+  }
+]

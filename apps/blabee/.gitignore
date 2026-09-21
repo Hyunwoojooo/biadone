@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+node_modules/
+build/
+tmp/
+output/
