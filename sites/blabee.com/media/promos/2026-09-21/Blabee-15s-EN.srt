@@ -1,0 +1,15 @@
+1
+00:00:00,200 --> 00:00:05,177
+Keep watching. When Codex finishes, your options appear automatically.
+
+2
+00:00:05,850 --> 00:00:07,050
+Option plus one.
+
+3
+00:00:08,650 --> 00:00:10,467
+Blabee closes automatically.
+
+4
+00:00:12,100 --> 00:00:14,662
+Stay focused. Blabee.

@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f6f8">
+    <meta name="color-scheme" content="light">
+    <meta name="robots" content="noindex, follow">
+    <title>Blabee — Keep Codex moving. From any window.</title>
+    <meta
+      name="description"
+      content="Choose Codex’s next step from your Mac menu bar with a shortcut. Continue the same conversation without switching windows. Request private beta access."
+    >
+    <link rel="canonical" href="https://blabee-real-demo.cada-official.chatgpt.site/">
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
+
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Blabee">
+    <meta property="og:url" content="https://blabee-real-demo.cada-official.chatgpt.site/">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="Blabee — Keep Codex moving. From any window.">
+    <meta
+      property="og:description"
+      content="Choose Codex’s next step from your Mac menu bar with a shortcut. Continue the same conversation without switching windows. Request private beta access."
+    >
+    <meta property="og:image" content="https://blabee-real-demo.cada-official.chatgpt.site/assets/og-blabee.png?v=20260921-ui">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta
+      property="og:image:alt"
+      content="Blabee for Codex on macOS, showing a terminal and a light Blabee panel with two suggestion cards."
+    >
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Blabee — Keep Codex moving. From any window.">
+    <meta
+      name="twitter:description"
+      content="Choose Codex’s next step from your Mac menu bar with a shortcut. Continue the same conversation without switching windows. Request private beta access."
+    >
+    <meta name="twitter:image" content="https://blabee-real-demo.cada-official.chatgpt.site/assets/og-blabee.png?v=20260921-ui">
+    <meta
+      name="twitter:image:alt"
+      content="Blabee for Codex on macOS, showing a terminal and a light Blabee panel with two suggestion cards."
+    >
+
+    <link rel="stylesheet" href="/css/style.css?v=20260831a">
+    <link rel="stylesheet" href="/css/liquid-glass.css?v=20260901b">
+    <link rel="stylesheet" href="/css/liquid-glass-light.css?v=20260910b">
+    <link rel="stylesheet" href="/css/signal-motion.css?v=20260910b">
+    <link rel="stylesheet" href="/css/panel-current.css?v=20260921a">
+    <link rel="stylesheet" href="/css/real-demo.css?v=20260911a">
+    <link rel="stylesheet" href="/css/policies.css?v=20260918a">
+    <script defer src="/js/vendor/gsap.min.js?v=3.15.0"></script>
+    <script defer src="/js/vendor/ScrollTrigger.min.js?v=3.15.0"></script>
+    <script type="module" src="/js/signal-motion.js?v=20260921a"></script>
+    <script type="module" src="/js/real-demo.js?v=20260911a"></script>
+  </head>
+  <body class="liquid-glass motion-landing">
+    <div class="scroll-progress" aria-hidden="true"></div>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header glass-header" data-site-header>
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="Blabee home">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="/assets/blabee-menu-bar.svg" width="28" height="24" alt="">
+          </span>
+          <span class="brand-wordmark">Blabee</span>
+        </a>
+
+        <div class="header-actions">
+          <a class="button button-small button-yellow header-cta" href="#beta">Request access</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="signal-dot" aria-hidden="true"></span><span>FOR CODEX · macOS</span></p>
+            <h1 id="hero-title">
+              <span>Keep Codex moving.</span>
+              <span>From any window.</span>
+            </h1>
+            <p class="hero-description">Blabee puts Codex’s next-step suggestions in your Mac menu bar. Choose with Option + 1–4 to continue the same conversation, without switching back.</p>
+            <div class="hero-actions">
+              <a class="button button-yellow" href="#beta">Request beta access ↗</a>
+              <a class="demo-watch-link" href="#real-demo"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m7 4 9 6-9 6Z"/></svg>Watch the 36-sec demo</a>
+              <span class="beta-note">macOS · Private beta</span>
+            </div>
+          </div>
+
+          <figure
+            class="product-demo"
+            tabindex="0"
+            data-product-demo
+            data-demo-state="decision"
+            aria-label="Interactive example of choosing one of two Codex suggestions in Blabee. This is an illustration, not a recording of the macOS app."
+          >
+            <div class="signal-scene">
+              <svg class="signal-orbits" viewBox="0 0 640 560" fill="none" aria-hidden="true">
+                <path class="orbit-track" d="M 34 340 C -26 175 479 24 603 183 C 754 378 115 552 34 340 Z"/>
+                <path class="orbit-track orbit-track-secondary" d="M 37 225 C 137 16 648 211 612 399 C 582 555 -31 369 37 225 Z"/>
+                <path class="orbit-trail" pathLength="100" d="M 34 340 C -26 175 479 24 603 183 C 754 378 115 552 34 340 Z"/>
+                <circle class="signal-particle" r="5" cx="34" cy="340"/>
+                <circle class="signal-particle signal-particle-small" r="3" cx="612" cy="399"/>
+                <path class="handoff-track" d="M 156 348 C 156 396 294 348 328 296"/>
+                <path class="handoff-signal" pathLength="100" d="M 156 348 C 156 396 294 348 328 296"/>
+                <circle class="handoff-dot" r="6" cx="156" cy="348"/>
+              </svg>
+              <div class="terminal-float">
+                <div class="demo-window glass-panel">
+                  <div class="window-chrome glass-inset glass-inset-section" aria-hidden="true">
+                    <div class="traffic-lights"><span></span><span></span><span></span></div>
+                    <span class="window-title" aria-hidden="true"></span>
+                    <span class="window-spacer"></span>
+                  </div>
+
+                  <div class="terminal" aria-live="off">
+                    <div class="terminal-context">
+                      <span class="terminal-context-label" aria-hidden="true"></span>
+                      <span class="terminal-context-agent">Codex</span>
+                    </div>
+                    <p class="terminal-prompt"><span aria-hidden="true">›</span> <span data-demo-prompt>Implement email login with secure sessions</span></p>
+                    <div class="terminal-log" data-demo-log>
+                      <p><span class="log-ok" aria-hidden="true">✓</span> Read app/api/auth/login/route.ts</p>
+                      <p><span class="log-ok" aria-hidden="true">✓</span> Edited lib/auth/session.ts</p>
+                      <p><span class="log-running" aria-hidden="true">→</span> pnpm test -- auth</p>
+                    </div>
+                    <div class="terminal-status">
+                      <span class="status-pulse" aria-hidden="true"></span>
+                      <span data-demo-status>Running 12 auth tests</span>
+                    </div>
+                    <button class="terminal-detail-button" type="button" data-demo-details hidden>View details</button>
+                    <div class="terminal-detail glass-inset glass-inset-section" data-demo-detail-panel hidden>
+                      <p><span class="log-warning" aria-hidden="true">⚠</span> Session cookie rotation is missing</p>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+              <div class="decision-float">
+                <div class="decision-panel glass-panel" aria-label="Blabee choices">
+                  <div class="decision-bar">
+                    <img src="/assets/blabee-panel-mark.svg" width="17" height="21" alt="">
+                    <span aria-hidden="true">blabee</span>
+                    <span class="panel-status" data-panel-status>Awaiting</span>
+                    <span class="panel-tools" aria-hidden="true">
+                      <span class="panel-tool"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h11v8H8l-3 3v-3H3z"/><path d="M7 2h11v8m-7 4h4l3 3v-5"/></svg></span><span class="panel-tool"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/><circle cx="7" cy="5" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="8" cy="15" r="2"/></svg></span><span class="panel-tool"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></span>
+                    </span>
+                  </div>
+                  <div class="panel-detail-row" aria-hidden="true"><span class="panel-detail"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg> Details</span></div>
+                  <p class="panel-summary">Email login is ready. All 12 auth tests passed. Choose what Codex does next.</p>
+                  <div class="decision-options" data-decision-options>
+                    <button class="decision-option" type="button" data-choice="1">
+                      <span>Implement logout</span>
+                      <small>Recommended</small>
+                      <kbd>⌥1</kbd>
+                    </button>
+                    <button class="decision-option" type="button" data-choice="2">
+                      <span>Review auth architecture</span>
+                      <kbd>⌥2</kbd>
+                    </button>
+                  </div>
+                  <div class="panel-footer" aria-hidden="true">
+                    <span><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 5v5H6"/></svg> Later</span><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 9 6-9 6ZM16 4v12"/></svg> Skip choice</span><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-5 5 5 5M3 9h9a5 5 0 0 1 0 10"/></svg> Previous</span>
+                  </div>
+                </div>
+              </div>
+              <div class="shortcut-float" aria-hidden="true">
+                <div class="shortcut-key"><span class="shortcut-label">option</span><span class="shortcut-combo">⌥<b data-motion-key>2</b></span></div>
+                <span class="shortcut-shadow"></span>
+              </div>
+            </div>
+            <figcaption>
+              <span class="demo-caption-text"><span class="caption-rule" aria-hidden="true"></span><span data-demo-feedback aria-live="polite">Interactive example · Option + 1 or 2</span></span>
+              <span class="demo-controls">
+                <button type="button" class="motion-control" data-motion-replay hidden aria-label="Replay interactive example"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 6a7 7 0 1 1-1 7M4 2v4h4"/></svg></button>
+                <button type="button" class="motion-control motion-toggle" data-motion-toggle hidden aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path class="pause-glyph" d="M7 5v10M13 5v10"/><path class="play-glyph" d="m7 4 9 6-9 6Z"/></svg><span data-motion-label>Pause motion</span></button>
+              </span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section section-real-demo" id="real-demo" aria-labelledby="real-demo-title">
+        <div class="container real-demo-container">
+          <div class="section-heading real-demo-heading">
+            <div>
+              <p class="eyebrow">SEE BLABEE IN ACTION</p>
+              <h2 id="real-demo-title">Your next task.<br>Without switching back.</h2>
+            </div>
+            <p class="section-intro">Keep watching or reading. Blabee brings Codex’s next options to you. One shortcut sends your choice back to the same conversation.</p>
+          </div>
+          <figure class="real-demo-figure">
+            <div class="real-demo-player">
+              <video
+                id="real-demo-video"
+                width="1920"
+                height="1200"
+                controls
+                playsinline
+                preload="none"
+                poster="/assets/demo/blabee-real-demo-en-poster.png?v=20260921-ui"
+                aria-label="Blabee on macOS: a 36-second demo with English narration"
+                aria-describedby="real-demo-caption"
+                tabindex="0"
+              >
+                <source src="/assets/demo/blabee-real-demo-en.mp4?v=20260921-ui" type="video/mp4">
+                <track kind="captions" src="/assets/demo/blabee-real-demo-en.vtt" srclang="en" label="English narration">
+                Your browser does not support embedded video. <a href="/assets/demo/blabee-real-demo-en.mp4?v=20260921-ui">Watch the demo as an MP4.</a>
+              </video>
+              <button class="real-demo-play" type="button" aria-controls="real-demo-video" hidden>
+                <span class="real-demo-play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m8 5 11 7-11 7Z"/></svg></span>
+                <span><strong data-video-play-label>Watch demo</strong><small>36 sec · Sound on</small></span>
+              </button>
+            </div>
+            <figcaption id="real-demo-caption">
+              <span>Real macOS footage <span aria-hidden="true">·</span> English narration &amp; captions</span>
+              <a href="#beta">Try the Mac beta <span aria-hidden="true">↗</span></a>
+            </figcaption>
+          </figure>
+          <p class="real-demo-error" role="status" hidden>Playback couldn’t start. Use the video controls or <a href="/assets/demo/blabee-real-demo-en.mp4?v=20260921-ui">open the video directly</a>.</p>
+        </div>
+      </section>
+
+      <section class="section section-benefits" aria-labelledby="benefits-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">LESS CONTEXT SWITCHING</p>
+            <h2 id="benefits-title">
+              <span>Stay in your flow.</span>
+              <span>Move the task forward.</span>
+            </h2>
+            <p class="section-intro">Let Codex work while you browse, write, or plan. When it suggests a useful next step, choose it from Blabee.</p>
+          </div>
+          <div class="editorial-list">
+            <article class="editorial-row">
+              <span class="row-number">01</span>
+              <div><h3>Stay in the app you’re using</h3><p>Choose Codex’s next step from your Mac menu bar, without leaving your browser or document.</p></div>
+            </article>
+            <article class="editorial-row">
+              <span class="row-number">02</span>
+              <div><h3>Pick a clear next step</h3><p>Read two to four suggestions from Codex and choose one with a shortcut or a click.</p></div>
+            </article>
+            <article class="editorial-row">
+              <span class="row-number">03</span>
+              <div><h3>Keep the same context</h3><p>Your selection goes back to the original Codex conversation, so you can continue where you left off.</p></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-how" aria-labelledby="how-title">
+        <div class="container">
+          <div class="section-heading section-heading-wide">
+            <p class="eyebrow">HOW IT WORKS</p>
+            <h2 id="how-title">From suggestion to action in three steps.</h2>
+            <p class="section-intro">Codex suggests what to do next. You choose in Blabee. Codex continues in the same conversation.</p>
+          </div>
+          <ol class="steps-list">
+            <li>
+              <span class="step-number">01</span>
+              <div class="step-signal" aria-hidden="true"><svg viewBox="0 0 200 68" fill="none"><rect class="step-frame" x="1" y="3" width="174" height="60" rx="10"/><path class="step-detail" d="m15 19 5 5-5 5M29 28h22M15 42h103M15 51h70"/><circle class="step-moving-dot" cx="154" cy="23" r="5"/></svg></div>
+              <h3>Codex suggests what’s next</h3>
+              <p>After a response, Codex can propose two to four useful ways to continue the task.</p>
+            </li>
+            <li>
+              <span class="step-number">02</span>
+              <div class="step-signal" aria-hidden="true"><svg viewBox="0 0 200 68" fill="none"><rect class="step-frame" x="1" y="10" width="38" height="44" rx="8"/><rect class="step-key-active" x="47" y="10" width="38" height="44" rx="8"/><rect class="step-frame" x="93" y="10" width="38" height="44" rx="8"/><rect class="step-frame" x="139" y="10" width="38" height="44" rx="8"/><g class="step-key-numbers"><text x="20" y="38">1</text><text x="66" y="38">2</text><text x="112" y="38">3</text><text x="158" y="38">4</text></g></svg></div>
+              <h3>Choose in Blabee</h3>
+              <p>Read the suggestions in the menu bar panel. Click one, or use Option + 1–4 with the default shortcuts.</p>
+            </li>
+            <li>
+              <span class="step-number">03</span>
+              <div class="step-signal" aria-hidden="true"><svg viewBox="0 0 200 68" fill="none"><path class="step-route" d="M15 35h109c36 0 36-27 13-27H82M15 35l12-12M15 35l12 12"/><circle class="step-moving-dot" cx="65" cy="35" r="6"/><path class="step-detail" d="M15 59h100M127 59h35"/></svg></div>
+              <h3>Continue the conversation</h3>
+              <p>Blabee sends your choice to the original Codex conversation as your next message.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section section-beta-scope" aria-labelledby="scope-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">CURRENT PRIVATE BETA</p>
+            <h2 id="scope-title">Start with Codex on Mac.</h2>
+            <p class="section-intro">We’re testing this workflow in a private beta before a public release.</p>
+          </div>
+          <dl class="scope-table">
+            <div><dt>WORKS WITH</dt><dd>Codex · macOS</dd></div>
+            <div><dt>WHAT IT DOES</dt><dd>Show next steps · let you choose · send your choice back to Codex</dd></div>
+            <div><dt>HOW TO JOIN</dt><dd>Request access. Selected testers receive installation instructions.</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="section section-faq" aria-labelledby="faq-title">
+        <div class="container section-grid">
+          <div class="section-heading">
+            <p class="eyebrow">FAQ</p>
+            <h2 id="faq-title">Before you get started</h2>
+            <p class="section-intro">What Blabee does, what you need, and how it fits into your Codex workflow.</p>
+          </div>
+          <div class="faq-list">
+            <details>
+              <summary><span>Does Blabee generate the suggestions?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Codex creates the suggestions. Blabee displays them in a small macOS panel and sends your selection back to Codex.</p>
+            </details>
+            <details>
+              <summary><span>Will I lose my conversation context?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Your choice is sent as your next message in the original Codex conversation. You don’t need to start a new conversation or repeat your instructions.</p>
+            </details>
+            <details>
+              <summary><span>When does Blabee show suggestions?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>When Codex provides useful next steps for a connected conversation. Suggestions can follow coding work or an explanation; they don’t have to appear after every reply.</p>
+            </details>
+            <details>
+              <summary><span>Does the beta support Claude Code?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>The private beta currently supports Codex on macOS. Support for Claude Code and other agents is not confirmed.</p>
+            </details>
+            <details>
+              <summary><span>Do I need another AI API key?</span><span class="faq-icon" aria-hidden="true"></span></summary>
+              <p>No. Blabee uses suggestions from your connected Codex conversation. It does not require a separate AI API key or run another AI model.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-policies" id="policies" aria-labelledby="policies-title">
+        <div class="container policy-surface">
+          <div class="section-heading policy-heading">
+            <p class="eyebrow">POLICIES &amp; SUPPORT</p>
+            <h2 id="policies-title">Your data.<br>Your choices.</h2>
+            <p class="section-intro">See what Blabee plans to collect, what stays optional, and how long information is kept.</p>
+            <dl class="policy-key-facts">
+              <div><dt>Separate choices</dt><dd>Usage statistics &amp; diagnostics</dd></div>
+              <div><dt>Planned storage</dt><dd>Republic of Korea &amp; United States</dd></div>
+              <div><dt>Ordinary retention</dt><dd>Up to one year from collection</dd></div>
+            </dl>
+            <p class="policy-publication-note">Updated September 18, 2026 · Drafts for review. These planned practices and proposed terms are not yet in effect.</p>
+            <a class="policy-guide-link" href="/policies/">Explore the policies <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="policy-documents" aria-label="Policy drafts">
+            <details id="policy-privacy" open>
+              <summary><span class="policy-document-title">Privacy Notice<span class="policy-document-description">What is collected, when, and why.</span></span><span class="policy-status">Draft</span><span class="policy-expand" aria-hidden="true"></span></summary>
+              <div class="policy-document-body">
+                <p>The plan covers account details at login, optional usage statistics, separately consented diagnostics, and feedback you submit. Original questions, answers or suggestions require a preview and separate consent for that submission.</p>
+                <p>Ordinary retention is up to one year, with earlier deletion when no longer needed. Limited legal-record exceptions and active-account details are explained in the draft.</p>
+                <div class="policy-language-links"><a href="/policies/#privacy">Read in English <span aria-hidden="true">↗</span></a><a href="/policies/ko/#privacy" lang="ko">한국어로 읽기 <span aria-hidden="true">↗</span></a></div>
+              </div>
+            </details>
+            <details id="policy-terms">
+              <summary><span class="policy-document-title">Terms of Service<span class="policy-document-description">Using Blabee and understanding your rights.</span></span><span class="policy-status">Draft</span><span class="policy-expand" aria-hidden="true"></span></summary>
+              <div class="policy-document-body"><p>Review the proposed eligibility, external-tool, trial and subscription terms. Legal operator details, the effective date and billing flows are being finalized before these terms take effect.</p><div class="policy-language-links"><a href="/policies/#terms">Read in English <span aria-hidden="true">↗</span></a><a href="/policies/ko/#terms" lang="ko">한국어로 읽기 <span aria-hidden="true">↗</span></a></div></div>
+            </details>
+            <details id="policy-refunds">
+              <summary><span class="policy-document-title">Refunds &amp; Cancellation<span class="policy-document-description">Refund requests and subscription management.</span></span><span class="policy-status">Draft</span><span class="policy-expand" aria-hidden="true"></span></summary>
+              <div class="policy-document-body"><p>The proposed policy explains the 14-day refund offer for each payment, including renewals, and how cancellation differs from a refund. Billing and access flows must be verified before it takes effect.</p><div class="policy-language-links"><a href="/policies/#refunds">Read in English <span aria-hidden="true">↗</span></a><a href="/policies/ko/#refunds" lang="ko">한국어로 읽기 <span aria-hidden="true">↗</span></a></div></div>
+            </details>
+          </div>
+          <div class="policy-contact">
+            <div class="policy-team"><p class="policy-team-name">Blabee, by Biadone.</p><p>The first product from the Biadone team, based in the Republic of Korea.</p></div>
+            <address><a href="mailto:biadone.official@gmail.com">biadone.official@gmail.com</a><a class="policy-phone" href="tel:+821024917742">+82-10-2491-7742</a><span>Support in English &amp; Korean</span></address>
+          </div>
+        </div>
+      </section>
+
+      <section class="signup-section" id="beta" aria-labelledby="signup-title">
+        <div class="container signup-grid">
+          <div class="signup-copy">
+            <p class="eyebrow eyebrow-dark">PRIVATE BETA FOR MAC</p>
+            <h2 id="signup-title">
+              <span>Try Blabee</span>
+              <span>with your next Codex task.</span>
+            </h2>
+            <p>Leave your email to request access to the Mac private beta. We’ll contact selected testers with installation instructions.</p>
+          </div>
+
+          <form class="signup-form glass-soft" data-beta-form data-endpoint="">
+            <div class="form-field">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required disabled data-js-required>
+            </div>
+
+            <fieldset disabled data-js-required>
+              <legend>Which coding agent do you use?</legend>
+              <div class="agent-options">
+                <label><input type="radio" name="agent" value="codex" checked><span>Codex</span></label>
+                <label><input type="radio" name="agent" value="claude-code"><span>Claude Code</span></label>
+                <label><input type="radio" name="agent" value="both"><span>Both</span></label>
+              </div>
+            </fieldset>
+
+            <p class="tool-note">The current Mac beta supports Codex. Your answer helps us understand interest in other agents.</p>
+            <button class="button button-dark form-submit" type="submit" disabled data-js-required>
+              <span data-submit-label>Request beta access ↗</span>
+            </button>
+            <noscript>
+              <p class="noscript-note" data-no-js-form-message>JavaScript is required to submit the private beta application.</p>
+            </noscript>
+            <p class="privacy-note">We’ll email you about beta access and product updates. <a class="policy-form-link" href="#policies">Policies &amp; support</a></p>
+            <p class="form-error" role="alert" data-form-error hidden>We couldn’t send your request. Please try again later.</p>
+
+            <div class="form-success" role="status" data-form-success hidden>
+              <strong>Request received.</strong>
+              <p>We’ll contact you if you’re selected for the Mac beta.</p>
+            </div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <a class="brand footer-brand" href="#top" aria-label="Back to Blabee home">
+          <span class="brand-mark" aria-hidden="true"><img src="/assets/blabee-menu-bar.svg" width="28" height="24" alt=""></span>
+          <span class="brand-wordmark">Blabee</span>
+        </a>
+        <a class="footer-policy-link" href="#policies">Policies &amp; support</a>
+        <p>© 2026 Blabee</p>
+      </div>
+    </footer>
+  </body>
+</html>

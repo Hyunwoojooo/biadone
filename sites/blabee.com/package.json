@@ -1,0 +1,14 @@
+{
+  "name": "blabee-landing",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "preview": "node scripts/preview.mjs",
+    "build:public": "node scripts/build-public.mjs",
+    "check": "node --check js/content.js && node --check js/main.js && node --check js/signal-motion.js && node --check js/real-demo.js && node --check scripts/preview.mjs && node --check scripts/build-public.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}
