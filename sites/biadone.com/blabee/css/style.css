@@ -860,8 +860,7 @@ details[open] .faq-icon::after {
   gap: 9px;
 }
 
-.signup-form label,
-.signup-form legend {
+.signup-form label {
   color: var(--bone);
   font-family: var(--mono);
   font-size: 11px;
@@ -884,18 +883,9 @@ details[open] .faq-icon::after {
   outline-color: var(--yellow);
 }
 
-.signup-form fieldset {
-  padding: 0;
-  border: 0;
-}
-
 .signup-form :disabled {
   cursor: not-allowed;
   opacity: 0.58;
-}
-
-.signup-form legend {
-  margin-bottom: 9px;
 }
 
 .noscript-note {
@@ -908,56 +898,10 @@ details[open] .faq-icon::after {
   line-height: 1.5;
 }
 
-.agent-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.agent-options label {
-  position: relative;
-  display: grid;
-  min-height: 48px;
-  place-items: center;
-  border: 1px solid var(--line-strong);
-  cursor: pointer;
-}
-
-.agent-options label + label {
-  border-left: 0;
-}
-
-.agent-options input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.agent-options label:has(input:checked) {
-  background: var(--yellow);
-}
-
-.agent-options label:has(input:checked) span {
-  color: var(--ink);
-}
-
-.agent-options label:has(input:focus-visible) {
-  outline: 3px solid var(--yellow);
-  outline-offset: 3px;
-}
-
-.tool-note,
 .privacy-note,
 .form-error {
   font-size: 12px;
   line-height: 1.5;
-}
-
-.tool-note {
-  padding-left: 12px;
-  border-left: 2px solid var(--yellow);
-  color: var(--warm-gray);
-  font-weight: 650;
 }
 
 .form-submit {
@@ -1291,15 +1235,6 @@ details[open] .faq-icon::after {
     padding-left: 0;
     border-top: 1px solid var(--line-strong);
     border-left: 0;
-  }
-
-  .agent-options {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-options label + label {
-    border-top: 0;
-    border-left: 1px solid var(--line-strong);
   }
 
   .footer-inner {

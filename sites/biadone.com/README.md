@@ -93,7 +93,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 데이터 모델 / 저장소
 
-현재 이 프로젝트는 **정적 콘텐츠 전용**이며 백엔드 데이터베이스나 Table API를 사용하지 않습니다.
+웹페이지는 정적 HTML/CSS/JavaScript로 제공됩니다. Blabee 베타 신청 폼은 기존 Blabee Supabase의 제한된 공개 RPC를 사용해 이메일과 최초 신청 시각을 저장합니다. 스키마·권한·운영 방법은 [supabase/README.md](supabase/README.md)에 정리했습니다.
 
 - **blabase 베타 가입 폼**은 프론트엔드에서만 동작하며, 제출 시 확인 메시지만 표시할 뿐 실제로 이메일이 저장되지 않습니다. (정적 사이트의 한계로, 실제 이메일 수집이 필요하면 Table API 또는 외부 폼 서비스 연동이 필요합니다.)
 
@@ -101,7 +101,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 아직 구현되지 않은 기능 / 알려진 제한
 
-- 실제 이메일 수집·저장 기능 없음 (원할 경우 RESTful Table API로 `leads` 테이블을 만들어 연동 가능)
+- 메인 페이지의 blabase 폼은 실제 이메일을 저장하지 않습니다. `/blabee/` 신청 폼은 Supabase에 연결합니다.
 - 실제 소셜 증빙(고객 후기, 베타 사용자 수 등) 자료 없음 — 지침서에 따라 확인되지 않은 수치/후기는 넣지 않음
 - 실제 인테그레이션 로고/딥링크 없음 — 카테고리 카드로만 안내 (과장 클레임 방지)
 - 다국어(예: 한국어 버전) 미구현 — 지침에 따라 전체 카피는 영어로만 작성됨
@@ -111,7 +111,7 @@ reference/           원본 빌드 지침 마크다운 보관용(사이트에 �
 
 ## 다음 개발 단계 제안
 
-1. **리드 수집 연동**: `leads` 테이블 스키마(email, source, created_at)를 정의하고 Table API로 실제 베타 가입자 저장
+1. **blabase 리드 수집 연동**: 메인 페이지의 blabase 폼에도 별도 저장 기능 연결
 2. **실제 스크린샷/제품 데모 영상** 삽입 (현재는 CSS/SVG 기반 목업)
 3. **Docs 하위 페이지** 별도 제작 (현재는 Footer 앵커로만 연결됨)
 4. **다국어 버전** (예: 한국어) 필요 시 별도 페이지(`index-ko.html`) 형태로 확장
@@ -154,11 +154,12 @@ _redirects
 ### Blabee 하위 페이지
 
 - 공개 주소: `https://biadone.com/blabee/` (`/blabee`에서도 이동)
-- 2026-09-21 사용자 승인 후 Cloudflare Pages 운영 배포 완료: `https://98f166f7.biadone.pages.dev`.
+- 2026-09-24 이메일 베타 신청 기능 운영 배포: `https://fcfda27f.biadone.pages.dev`. 최초 하위 경로 배포는 2026-09-21에 완료했습니다.
 - 원본: [blabee-landing-page 브랜치](https://github.com/Hyunwoojooo/biadone/tree/blabee-landing-page/sites/blabee.com), 커밋 `cafbe8f8b2735b8592018c37ee4b01706134cba9`
 - 원본 `npm run build:public` 결과 중 HTML/CSS/JS/에셋/정책만 `blabee/`에 복사했습니다. 이 폴더는 공개 파일 전용이며 이후 갱신에도 내부 문서·스크립트·캐시를 넣지 않습니다.
 - 모든 사이트 내부 절대 경로와 canonical·OG URL을 `/blabee/` 기준으로 변경했습니다. 영문·한국어 정책 페이지와 `/blabee/liquid-glass/light/` 호환 경로를 포함합니다.
-- 원본의 베타 신청 API 미연결, 정책 초안 표시, `noindex` 설정을 유지합니다. 신청 정보는 저장되지 않습니다. 공개 접수와 검색 노출은 별도 작업입니다.
+- 베타 신청 폼은 이메일만 받습니다. Supabase의 `blabee_marketing.beta_requests`에 이메일·최초 신청 시각을 저장하며, 같은 이메일은 한 건만 유지합니다. 다른 신청자의 이메일은 공개 API로 조회할 수 없습니다. 계정 생성이나 안내 메일 자동 발송은 하지 않습니다.
+- 정책 초안 표시와 `noindex` 설정은 유지합니다. 신청 API/마이그레이션과 검증 방법은 [supabase/README.md](supabase/README.md)를 참고하세요.
 - 랜딩페이지에 삽입된 36초 시연 MP4·영문 VTT 자막·포스터를 포함합니다. 원본 `media/promos/2026-09-21/`의 한·영 15초 홍보 MP4·SRT는 원본 공개 빌드와 동일하게 배포 대상에서 제외합니다.
 - GSAP Core / ScrollTrigger 3.15.0은 원본의 자체 호스팅 파일과 라이선스 배너를 유지합니다. [GSAP Standard License](https://gsap.com/standard-license/)가 적용됩니다.
 

@@ -43,16 +43,16 @@
       content="Blabee for Codex on macOS, showing a terminal and a light Blabee panel with two suggestion cards."
     >
 
-    <link rel="stylesheet" href="/blabee/css/style.css?v=20260831a">
-    <link rel="stylesheet" href="/blabee/css/liquid-glass.css?v=20260901b">
-    <link rel="stylesheet" href="/blabee/css/liquid-glass-light.css?v=20260910b">
+    <link rel="stylesheet" href="/blabee/css/style.css?v=20260924a">
+    <link rel="stylesheet" href="/blabee/css/liquid-glass.css?v=20260924a">
+    <link rel="stylesheet" href="/blabee/css/liquid-glass-light.css?v=20260924a">
     <link rel="stylesheet" href="/blabee/css/signal-motion.css?v=20260910b">
     <link rel="stylesheet" href="/blabee/css/panel-current.css?v=20260921a">
     <link rel="stylesheet" href="/blabee/css/real-demo.css?v=20260911a">
     <link rel="stylesheet" href="/blabee/css/policies.css?v=20260918a">
     <script defer src="/blabee/js/vendor/gsap.min.js?v=3.15.0"></script>
     <script defer src="/blabee/js/vendor/ScrollTrigger.min.js?v=3.15.0"></script>
-    <script type="module" src="/blabee/js/signal-motion.js?v=20260921a"></script>
+    <script type="module" src="/blabee/js/signal-motion.js?v=20260924a"></script>
     <script type="module" src="/blabee/js/real-demo.js?v=20260911a"></script>
   </head>
   <body class="liquid-glass motion-landing">
@@ -379,29 +379,19 @@
             <p>Leave your email to request access to the Mac private beta. We’ll contact selected testers with installation instructions.</p>
           </div>
 
-          <form class="signup-form glass-soft" data-beta-form data-endpoint="">
+          <form class="signup-form glass-soft" data-beta-form>
             <div class="form-field">
               <label for="email">Email</label>
-              <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required disabled data-js-required>
+              <input id="email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" spellcheck="false" autocapitalize="none" required disabled data-js-required>
             </div>
 
-            <fieldset disabled data-js-required>
-              <legend>Which coding agent do you use?</legend>
-              <div class="agent-options">
-                <label><input type="radio" name="agent" value="codex" checked><span>Codex</span></label>
-                <label><input type="radio" name="agent" value="claude-code"><span>Claude Code</span></label>
-                <label><input type="radio" name="agent" value="both"><span>Both</span></label>
-              </div>
-            </fieldset>
-
-            <p class="tool-note">The current Mac beta supports Codex. Your answer helps us understand interest in other agents.</p>
             <button class="button button-dark form-submit" type="submit" disabled data-js-required>
               <span data-submit-label>Request beta access ↗</span>
             </button>
             <noscript>
               <p class="noscript-note" data-no-js-form-message>JavaScript is required to submit the private beta application.</p>
             </noscript>
-            <p class="privacy-note">We’ll email you about beta access and product updates. <a class="policy-form-link" href="#policies">Policies &amp; support</a></p>
+            <p class="privacy-note">We’ll use your email to contact you about beta access. <a class="policy-form-link" href="#policies">Policies &amp; support</a></p>
             <p class="form-error" role="alert" data-form-error hidden>We couldn’t send your request. Please try again later.</p>
 
             <div class="form-success" role="status" data-form-success hidden>

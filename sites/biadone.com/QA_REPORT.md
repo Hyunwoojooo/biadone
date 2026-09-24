@@ -1,4 +1,64 @@
-# Blabee subpath integration — 2026-09-21
+# Blabee beta signup — 2026-09-24
+
+## Current change
+
+- Both landing URLs now ask only for email. Removed the coding-agent fieldset,
+  explanatory note, and unused fieldset styling/copy.
+- Added the public Supabase RPC client, explicit acknowledgement handling,
+  timeout/retry behavior, disabled pending/success controls, and cache-version
+  updates. The existing static site architecture and dependencies are unchanged.
+- Added a separate private `blabee_marketing.beta_requests` table with normalized
+  email uniqueness and first-request timestamp; RLS and revoked direct grants
+  protect the email list. The public function can only register valid emails.
+- Site-local SQL and tests are excluded from the public upload. There are 37
+  upload files: 35 assets plus `_headers` and `_redirects`.
+
+## Current verification
+
+- `node --test tests/beta-signup.test.mjs`: 4/4 passed, covering request payload,
+  response acknowledgement, rejected configuration, timeout, and retry.
+- JavaScript syntax checks: 5/5 passed. `git diff --check`: passed.
+- Migration and `supabase/tests/beta_requests.sql` passed in isolated PGlite,
+  including anonymous/authenticated calls, invalid inputs, deduplication,
+  timestamp preservation, direct-access denial, and RLS defense. All fixtures
+  rolled back. PGlite was installed only under `/tmp`, not as a site dependency.
+- `tests/beta-form.browser.cjs` passed on local Wrangler 4.135.0 at 1440, 768,
+  and 390px, plus the compatibility URL. Verified validation, failure/retry,
+  pending/success states, duplicate-click prevention, no-JavaScript behavior,
+  JavaScript MIME, and CSP. No application errors, broken local assets, Supabase
+  CSP violations, or horizontal overflow. Desktop/mobile screenshots inspected.
+- Independent source/permissions review found no remaining substantive issue.
+  A stale entry-script cache version found during review was corrected before release.
+
+## Current production verification
+
+- Supabase preflight found no conflicting marketing schema/table/function.
+  Applied only `supabase/migrations/202609240001_blabee_beta_requests.sql` through
+  the existing Blabee project's SQL Editor. Did not replay app analytics SQL or
+  change credentials/environment files.
+- Live owner query confirmed RLS enabled; anonymous/authenticated direct table
+  access denied; RPC execution allowed only for the intended public client roles.
+- Local browser to live Supabase: valid submission and duplicate both returned
+  HTTP 200 `{ "accepted": true }`; the normalized test email had exactly one row.
+- Deployed using the previously authorized Cloudflare Pages workflow, Wrangler
+  4.137.0, project `biadone`, branch `main`. Immutable deployment:
+  `https://fcfda27f.biadone.pages.dev`.
+- Both `https://biadone.com/blabee/` and `/blabee/liquid-glass/light/` submitted
+  successfully to live Supabase and showed success without application errors.
+  Only a generated `example.invalid` test address was submitted; no real person
+  was subscribed and no email was sent.
+- Repeated production submissions kept the same single row and first timestamp.
+  Removed exactly that generated test row after verification. The served `.mjs`
+  module returns HTTP 200 with `application/javascript` and the intended CSP.
+- Screenshots/results: `/tmp/blabee-beta-qa/`. The public request function does
+  not verify inbox ownership, send invitations, or impose a CAPTCHA/rate limit.
+  The existing policy drafts and `noindex` remain in place.
+
+---
+
+# Historical subpath integration — 2026-09-21
+
+The sections below record the initial deployment before the beta API was connected.
 
 ## Scope and source
 

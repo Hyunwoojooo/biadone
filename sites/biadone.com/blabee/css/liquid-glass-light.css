@@ -165,8 +165,6 @@ html:has(body.liquid-glass) { color-scheme: light; }
 .liquid-glass .signup-form.glass-soft { padding: 28px; background: #f6f7f9; }
 .liquid-glass .signup-form input[type="email"] { background: #fff; border-radius: 10px; caret-color: var(--ink); }
 .liquid-glass .signup-form input[type="email"]:focus-visible { outline-color: #807000; }
-.liquid-glass .agent-options label { background: #fff; }
-.liquid-glass .agent-options label:has(input:focus-visible) { outline-color: #807000; }
 .liquid-glass .form-error { border-color: #dcc9a5; background: #fff9ef; border-radius: 10px; color: #70450c; }
 .liquid-glass .form-success { border-radius: 10px; background: #f0f8f2; border-color: #94bda0; }
 .liquid-glass .form-success strong { color: #237151; }

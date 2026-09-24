@@ -1,4 +1,6 @@
-import { COPY } from "./content.js?v=20260921a";
+import { COPY } from "./content.js?v=20260924a";
+import { BETA_SIGNUP } from "./beta-config.js?v=20260924a";
+import { requestBetaAccess } from "./beta-signup.mjs?v=20260924a";
 
 const demo = document.querySelector("[data-product-demo]");
 const demoPrompt = document.querySelector("[data-demo-prompt]");
@@ -329,6 +331,8 @@ function renderFormState(state) {
   const isLoading = state === "loading";
   const isSuccess = state === "success";
   submitButton.disabled = isLoading || isSuccess;
+  betaForm.setAttribute("aria-busy", String(isLoading));
+  betaForm.elements.email.disabled = isLoading || isSuccess;
   submitLabel.textContent = getCopy(isLoading ? "signup.loading" : "signup.submit");
   formError.hidden = state !== "error";
   formSuccess.hidden = !isSuccess;
@@ -369,6 +373,7 @@ document.querySelectorAll(".faq-list details").forEach((details) => {
 
 betaForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (formState === "loading" || formState === "success") return;
   renderFormState("idle");
 
   const emailInput = betaForm.elements.email;
@@ -378,27 +383,10 @@ betaForm?.addEventListener("submit", async (event) => {
     return;
   }
 
+  const email = emailInput.value;
   renderFormState("loading");
-  const endpoint = betaForm.dataset.endpoint?.trim();
-
-  if (!endpoint) {
-    renderFormState("error");
-    return;
-  }
-
-  const formData = new FormData(betaForm);
-
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: formData.get("email"),
-        agent: formData.get("agent")
-      })
-    });
-
-    if (!response.ok) throw new Error(`Beta signup failed with ${response.status}`);
+    await requestBetaAccess(email, BETA_SIGNUP);
     renderFormState("success");
   } catch {
     renderFormState("error");

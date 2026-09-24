@@ -337,22 +337,12 @@
 }
 
 .liquid-glass .signup-form input[type="email"],
-.liquid-glass .agent-options label,
 .liquid-glass .form-error,
 .liquid-glass .form-success {
   border-color: var(--glass-inset-rim);
   background: var(--glass-inset);
 }
 
-.liquid-glass .agent-options label:first-child {
-  border-radius: var(--glass-radius-key) 0 0 var(--glass-radius-key);
-}
-
-.liquid-glass .agent-options label:last-child {
-  border-radius: 0 var(--glass-radius-key) var(--glass-radius-key) 0;
-}
-
-.liquid-glass .agent-options label:has(input:checked),
 .liquid-glass .form-submit {
   background: var(--yellow);
 }
@@ -464,7 +454,6 @@
   .liquid-glass .faq-list,
   .liquid-glass .faq-list details,
   .liquid-glass .signup-form input[type="email"],
-  .liquid-glass .agent-options label,
   .liquid-glass .form-error,
   .liquid-glass .form-success {
     background: #1c1d22;
@@ -577,14 +566,6 @@
 
   .liquid-glass .faq-list details > p {
     padding: 0 36px 24px 16px;
-  }
-
-  .liquid-glass .agent-options label:first-child {
-    border-radius: var(--glass-radius-key) var(--glass-radius-key) 0 0;
-  }
-
-  .liquid-glass .agent-options label:last-child {
-    border-radius: 0 0 var(--glass-radius-key) var(--glass-radius-key);
   }
 
   .liquid-glass .footer-inner {
